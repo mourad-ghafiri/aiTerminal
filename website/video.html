@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>aiTerminal — the film</title>
+<meta name="description" content="An animated introduction to aiTerminal — the fast, light, AI-first terminal written from scratch in Rust.">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<link rel="stylesheet" href="css/main.css">
+<style>
+/* ============================================================================
+   video.html — a 60-second self-playing marketing film, built from the site's
+   own replica engine. Press play, screen-record the browser, done.
+   ========================================================================== */
+html, body { height: 100%; overflow: hidden; }
+body { background: var(--paper); }
+
+/* drifting cinematic glow behind everything */
+.vglow {
+  position: fixed; inset: -20%;
+  background:
+    radial-gradient(720px 480px at 30% 20%, rgba(10, 132, 255, .10), transparent 62%),
+    radial-gradient(640px 460px at 74% 78%, rgba(74, 222, 128, .06), transparent 60%),
+    radial-gradient(560px 420px at 80% 18%, rgba(191, 90, 242, .05), transparent 60%);
+  animation: vdrift 26s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes vdrift {
+  from { transform: translate3d(-2%, -1%, 0) scale(1); }
+  to   { transform: translate3d(2%, 2%, 0) scale(1.06); }
+}
+
+.vstage {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ---------------- scenes ---------------- */
+.vcard {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0; text-align: center; padding: 24px;
+  opacity: 0; visibility: hidden; transform: translateY(14px) scale(.985);
+  transition: opacity .35s ease, transform .35s ease, visibility 0s linear .35s;
+  pointer-events: none;
+}
+.vcard.on {
+  opacity: 1; visibility: visible; transform: none;
+  transition: opacity .35s ease, transform .35s ease;
+}
+
+/* staged entrances — every element carries --d, its moment on the timeline */
+.vcard .rise { opacity: 0; }
+.vcard.on .rise {
+  animation: vrise .6s cubic-bezier(.22,1.1,.36,1) both;
+  animation-delay: var(--d, 0s);
+}
+@keyframes vrise {
+  from { opacity: 0; transform: translateY(26px) scale(.98); filter: blur(6px); }
+  60%  { filter: blur(0); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+
+/* the icon: a spring pop, a halo blooming behind it, then a gentle float */
+.vcard .pop { opacity: 0; }
+.vcard.on .pop {
+  animation: vpop .8s cubic-bezier(.34,1.56,.64,1) both;
+  animation-delay: var(--d, 0s);
+}
+@keyframes vpop {
+  from { opacity: 0; transform: scale(.45) translateY(34px); filter: blur(12px); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+.vfloat { position: relative; animation: vbob 4.5s ease-in-out 1.4s infinite alternate; }
+@keyframes vbob { from { transform: translateY(0); } to { transform: translateY(-9px); } }
+.vfloat::before {
+  content: ""; position: absolute; inset: -70%; z-index: -1;
+  background:
+    radial-gradient(closest-side, rgba(56, 189, 248, .16), transparent 68%),
+    radial-gradient(closest-side at 36% 30%, rgba(74, 222, 128, .10), transparent 60%);
+  opacity: 0;
+}
+.vcard.on .vfloat::before { animation: vhalo 1.6s ease .5s both; }
+@keyframes vhalo { to { opacity: 1; } }
+
+/* word-by-word headline — each word springs up out of a blur */
+.vcard h1 .w { display: inline-block; opacity: 0; }
+.vcard.on h1 .w {
+  animation: vword .55s cubic-bezier(.22,1.2,.36,1) both;
+  animation-delay: var(--d, 0s);
+}
+@keyframes vword {
+  from { opacity: 0; transform: translateY(.45em) rotate(2deg) scale(.94); filter: blur(8px); }
+  70%  { transform: translateY(-.06em); filter: blur(0); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* the URL pill lands with a glow flash */
+.vcard.on .vurl.rise {
+  animation: vurl-in .7s cubic-bezier(.3,1.4,.5,1) both;
+  animation-delay: var(--d, 0s);
+}
+@keyframes vurl-in {
+  from { opacity: 0; transform: scale(.82) translateY(18px); filter: blur(6px); box-shadow: 0 0 0 rgba(56,189,248,0); }
+  70%  { filter: blur(0); box-shadow: 0 0 44px rgba(56,189,248,.35); }
+  to   { opacity: 1; transform: none; box-shadow: 0 0 22px rgba(56,189,248,.14); }
+}
+.vctas span { display: inline-flex; align-items: center; gap: 7px; }
+
+.vlogo { width: 128px; height: 128px; border-radius: 28px; filter: drop-shadow(0 26px 48px rgba(0,0,0,.7)); }
+.vcard h1 {
+  font-family: var(--serif); font-weight: 600; letter-spacing: -0.02em; line-height: 1.08;
+  font-size: clamp(44px, 6.4vw, 88px); margin-top: 30px;
+}
+.vcard h1 em, .vcard h2 em {
+  font-style: italic;
+  background: linear-gradient(92deg, var(--mark-green), var(--mark-blue) 58%, var(--accent));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.vcard .vsub { margin-top: 18px; color: var(--ink-soft); font-size: clamp(16px, 1.7vw, 21px); max-width: 720px; }
+.vcard .vsub b { color: var(--ink); }
+.vfacts { display: flex; gap: 12px 34px; flex-wrap: wrap; justify-content: center; margin-top: 34px; color: var(--muted); font-size: 14px; }
+.vfacts b { font-family: var(--mono); font-size: 22px; color: var(--mark-green); display: block; }
+
+/* ---------------- the terminal scene ---------------- */
+#scene-term { justify-content: center; }
+.vterm { width: min(960px, 94vw); text-align: left; }
+.vcap { min-height: 118px; margin-bottom: 18px; }
+.vcap .tag { display: block; margin-bottom: 8px; }
+.vcap h2 {
+  font-family: var(--serif); font-size: clamp(24px, 3vw, 34px);
+  font-weight: 600; letter-spacing: -0.015em; line-height: 1.15;
+}
+.vcap h2 em { font-style: italic; color: var(--accent-soft); }
+.vcap p { color: var(--ink-soft); font-size: 15px; margin-top: 6px; max-width: 720px; }
+.vcap p code { font-size: .87em; }
+.vcap.swap .tag, .vcap.swap h2, .vcap.swap p { animation: vcap-in .32s cubic-bezier(.2,.7,.2,1) both; }
+.vcap.swap h2 { animation-delay: .04s; }
+.vcap.swap p { animation-delay: .08s; }
+@keyframes vcap-in { from { opacity: 0; transform: translateY(10px); } }
+.vterm .rw { height: min(500px, 56vh); font-size: 13.5px; }
+
+/* ---------------- the 31-plugin grid ---------------- */
+#scene-plugins h2 {
+  font-family: var(--serif); font-size: clamp(28px, 3.6vw, 42px);
+  font-weight: 600; letter-spacing: -0.015em;
+}
+#scene-plugins .lead { color: var(--ink-soft); font-size: 15px; margin-top: 8px; }
+.vpgrid {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 12px; width: min(1160px, 95vw); margin-top: 26px; text-align: left;
+}
+.pg {
+  display: flex; gap: 9px; align-items: center;
+  background: var(--surface); border: 1px solid var(--hair);
+  border-left-width: 3px; border-radius: 9px; padding: 7px 11px;
+}
+.pg.gs { border-left-color: #38BDF8; }
+.pg.gd { border-left-color: #4ADE80; }
+.pg.gu { border-left-color: #FF9F0A; }
+.pg.ga { border-left-color: #BF5AF2; }
+.pg span { font-size: 16px; flex: none; width: 22px; text-align: center; }
+.pg b { display: block; font: 700 12px var(--mono); color: var(--ink); }
+.pg i { font-style: normal; display: block; color: var(--muted); font-size: 11px; line-height: 1.35; }
+
+/* ---------------- outro ---------------- */
+#scene-outro .vurl {
+  margin-top: 34px; font-family: var(--mono); font-size: clamp(15px, 1.8vw, 21px);
+  color: var(--ink); background: var(--surface); border: 1px solid var(--hair);
+  border-radius: 999px; padding: 12px 26px;
+}
+#scene-outro .vurl b { color: var(--accent-soft); font-weight: 700; }
+.vctas { display: flex; gap: 12px 30px; flex-wrap: wrap; justify-content: center; margin-top: 26px; color: var(--ink-soft); font-size: 15px; }
+
+/* ---------------- progress bar ---------------- */
+.vbar { position: fixed; left: 0; right: 0; bottom: 0; height: 3px; background: var(--hair); z-index: 40; transition: opacity .6s ease; }
+.vbar i {
+  display: block; height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--mark-green), var(--mark-blue) 58%, var(--accent));
+}
+.vbar.run i { width: 100%; transition: width 60s linear; }
+.vwm {
+  position: fixed; right: 22px; bottom: 16px; z-index: 40;
+  display: flex; align-items: center; gap: 8px;
+  color: var(--muted); font: 600 12px var(--sans); opacity: 0; transition: opacity .8s ease;
+}
+.vwm img { width: 18px; height: 18px; border-radius: 5px; }
+.vwm.on { opacity: .9; }
+
+/* ---------------- play overlay ---------------- */
+#voverlay {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  transition: opacity .3s ease, visibility 0s linear .3s;
+}
+#voverlay.off { opacity: 0; visibility: hidden; pointer-events: none; }
+#voverlay img { width: 84px; height: 84px; border-radius: 19px; filter: drop-shadow(0 20px 40px rgba(0,0,0,.7)); }
+#voverlay h1 { font-family: var(--serif); font-size: clamp(28px, 3.6vw, 44px); font-weight: 600; letter-spacing: -0.02em; margin-top: 22px; }
+#voverlay p { color: var(--muted); font-size: 14px; margin-top: 10px; }
+#voverlay .row { display: flex; gap: 12px; margin-top: 30px; flex-wrap: wrap; justify-content: center; }
+</style>
+</head>
+<body>
+
+<div class="vglow" aria-hidden="true"></div>
+
+<div class="vstage">
+
+  <!-- 01 · intro -->
+  <section class="vcard" id="scene-intro">
+    <div class="vfloat"><img class="vlogo pop" src="assets/icon.png" alt="aiTerminal"></div>
+    <h1><span class="w" style="--d:.35s">Fast.</span>
+        <span class="w" style="--d:.55s">Light.</span>
+        <em class="w" style="--d:.78s">AI-first.</em></h1>
+  </section>
+
+  <!-- the terminal — one window, seven chapters -->
+  <section class="vcard" id="scene-term">
+    <div class="vterm">
+      <div class="vcap" id="vcap">
+        <span class="tag accent" id="vchap"></span>
+        <h2 id="vtitle"></h2>
+        <p id="vsub"></p>
+      </div>
+      <div class="stage-shadow"><div id="vwindow"></div></div>
+    </div>
+  </section>
+
+  <!-- all 31 plugins, with a one-line use case each -->
+  <section class="vcard" id="scene-plugins">
+    <span class="tag accent rise" style="--d:.02s">11 · plugins — batteries included</span>
+    <h2 class="rise" style="--d:.08s">One terminal. <em>31 builtin plugins.</em></h2>
+    <p class="lead rise" style="--d:.16s">Each one is a <code>plugin.toml</code> — pure data, zero code,
+      nothing slows your prompt. Disable any with <code>@plugin disable &lt;name&gt;</code>.</p>
+    <div class="vpgrid">
+      <div class="pg gs rise" style="--d:0.30s"><span>🎨</span><div><b>syntax-highlight</b><i>commands colorize as you type</i></div></div>
+      <div class="pg gs rise" style="--d:0.34s"><span>👻</span><div><b>autosuggest</b><i>ghost text from your history</i></div></div>
+      <div class="pg gs rise" style="--d:0.39s"><span>🧠</span><div><b>history</b><i>smart, shared, searchable</i></div></div>
+      <div class="pg gs rise" style="--d:0.43s"><span>⌨️</span><div><b>completion</b><i>rich tab completion</i></div></div>
+      <div class="pg gs rise" style="--d:0.48s"><span>✂️</span><div><b>lineedit</b><i>native ⌘/⌥ editing & selection</i></div></div>
+      <div class="pg gs rise" style="--d:0.52s"><span>💡</span><div><b>alias-hints</b><i>reminds you of your own aliases</i></div></div>
+      <div class="pg gs rise" style="--d:0.57s"><span>🚀</span><div><b>prompt</b><i>git-aware, instant</i></div></div>
+      <div class="pg gs rise" style="--d:0.61s"><span>🔼</span><div><b>sudo</b><i>Esc Esc prepends sudo</i></div></div>
+      <div class="pg gs rise" style="--d:0.66s"><span>📁</span><div><b>dir</b><i>smarter cd & listings</i></div></div>
+      <div class="pg gs rise" style="--d:0.71s"><span>🧭</span><div><b>jump</b><i>hop to frecent directories</i></div></div>
+      <div class="pg gs rise" style="--d:0.75s"><span>🌍</span><div><b>term-cwd</b><i>the window follows your cwd</i></div></div>
+      <div class="pg gd rise" style="--d:0.80s"><span>⎇</span><div><b>git</b><i>100+ battle-tested aliases</i></div></div>
+      <div class="pg gd rise" style="--d:0.84s"><span>🐙</span><div><b>github</b><i>gh shortcuts at hand</i></div></div>
+      <div class="pg gd rise" style="--d:0.89s"><span>🐳</span><div><b>docker</b><i>container one-liners</i></div></div>
+      <div class="pg gd rise" style="--d:0.93s"><span>☸️</span><div><b>kubernetes</b><i>kubectl, shortened</i></div></div>
+      <div class="pg gd rise" style="--d:0.98s"><span>🦀</span><div><b>rust</b><i>cargo helpers</i></div></div>
+      <div class="pg gd rise" style="--d:1.02s"><span>🐍</span><div><b>python</b><i>venv & pip helpers</i></div></div>
+      <div class="pg gd rise" style="--d:1.07s"><span>📦</span><div><b>node</b><i>npm / yarn / pnpm helpers</i></div></div>
+      <div class="pg gu rise" style="--d:1.11s"><span>🗜</span><div><b>extract</b><i>x — any archive, no flags</i></div></div>
+      <div class="pg gu rise" style="--d:1.16s"><span>📋</span><div><b>clipboard</b><i>pipe anything to the clipboard</i></div></div>
+      <div class="pg gu rise" style="--d:1.20s"><span>🔐</span><div><b>encode</b><i>base64 / url / hex tools</i></div></div>
+      <div class="pg gu rise" style="--d:1.24s"><span>🔎</span><div><b>web-search</b><i>search the web from the prompt</i></div></div>
+      <div class="pg gu rise" style="--d:1.29s"><span>🌦</span><div><b>weather</b><i>forecast in a command</i></div></div>
+      <div class="pg gu rise" style="--d:1.33s"><span>🕰</span><div><b>world-clock</b><i>timezones at a glance</i></div></div>
+      <div class="pg gu rise" style="--d:1.38s"><span>📝</span><div><b>notes</b><i>quick notes, anywhere</i></div></div>
+      <div class="pg gu rise" style="--d:1.42s"><span>📟</span><div><b>sysinfo</b><i>live system stats</i></div></div>
+      <div class="pg gu rise" style="--d:1.47s"><span>📖</span><div><b>colored-man</b><i>man pages you can read</i></div></div>
+      <div class="pg gu rise" style="--d:1.51s"><span>🧰</span><div><b>common</b><i>everyday one-liners</i></div></div>
+      <div class="pg ga rise" style="--d:1.56s"><span>✦</span><div><b>ai-terminal</b><i>the whole @-command family</i></div></div>
+      <div class="pg ga rise" style="--d:1.60s"><span>🛡</span><div><b>command-guard</b><i>allow · confirm · deny</i></div></div>
+      <div class="pg ga rise" style="--d:1.65s"><span>🕶</span><div><b>redactor</b><i>secrets never leave</i></div></div>
+    </div>
+  </section>
+
+  <!-- outro -->
+  <section class="vcard" id="scene-outro">
+    <div class="vfloat"><img class="vlogo pop" src="assets/icon.png" alt="aiTerminal"></div>
+    <h1><span class="w" style="--d:.25s">Your</span>
+        <span class="w" style="--d:.37s">prompt</span>
+        <span class="w" style="--d:.49s">is</span>
+        <span class="w" style="--d:.61s">about</span>
+        <span class="w" style="--d:.73s">to</span>
+        <span class="w" style="--d:.85s">get</span>
+        <em class="w" style="--d:1.0s">superpowers.</em></h1>
+    <p class="vsub rise" style="--d:1.6s">Free and open source. Bring any AI provider — or none.<br>
+      Your keys stay in your config, and the guard has the last word.</p>
+    <div class="vurl rise" style="--d:2.2s"><b>github.com/</b>mourad-ghafiri/aiTerminal</div>
+    <div class="vctas">
+      <span class="rise" style="--d:2.5s">⭐ Star it</span>
+      <span class="rise" style="--d:2.7s">⬇️ Download for macOS</span>
+      <span class="rise" style="--d:2.9s">🐧 Linux &amp; 🪟 Windows soon</span>
+    </div>
+  </section>
+
+</div>
+
+<div class="vbar"><i id="vfill"></i></div>
+<div class="vwm" id="vwm"><img src="assets/icon.png" alt="">aiTerminal</div>
+
+<!-- play gate: start your screen recording, then press play -->
+<div id="voverlay">
+  <img src="assets/icon.png" alt="aiTerminal">
+  <h1>aiTerminal — the film</h1>
+  <p>Start your screen recording first, then press play. ≈ 90 seconds · best at 1920 × 1080.</p>
+  <div class="row">
+    <button class="btn dark" id="vplay">▶&nbsp; Play</button>
+    <button class="btn" id="vplayfs">⛶&nbsp; Play fullscreen</button>
+  </div>
+</div>
+
+<script src="js/themes.js"></script>
+<script src="js/replica.js"></script>
+<script>
+/* ============================================================================
+   The 60-second timeline. One replica window, seven chapters, an intro and
+   an outro — driven by the exact primitives the site's showcase uses.
+   ========================================================================== */
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const scenes = { intro: $("scene-intro"), term: $("scene-term"), plugins: $("scene-plugins"), outro: $("scene-outro") };
+
+  function show(name) {
+    Object.entries(scenes).forEach(([k, s]) => s.classList.toggle("on", k === name));
+  }
+
+  function chapter(num, title, sub) {
+    const cap = $("vcap");
+    cap.classList.remove("swap");
+    void cap.offsetWidth; /* restart the entrance animation */
+    $("vchap").textContent = num;
+    $("vtitle").innerHTML = title;
+    $("vsub").innerHTML = sub;
+    cap.classList.add("swap");
+  }
+
+  /* the showcase's step runner, minus the epoch machinery (one straight run) */
+  async function run(w, steps) {
+    for (const st of steps) {
+      switch (st.do) {
+        case "cmd": await typeCmd(w, st.text, st); break;
+        case "out": w.line(st.spans, st.paneIdx); await sleep(st.ms || 120); break;
+        case "stream": await streamLine(w, st.spans, st); break;
+        case "think":
+          await streamLine(w, [DIM(st.text)], { paneIdx: st.paneIdx, speed: 7, prefix: [DIM("∴ ")] });
+          break;
+        case "tool":
+          w.line([DIM(`  ⚙ ${st.name} ${st.args} · ${st.ms}ms · ${st.size}`)], st.paneIdx);
+          await sleep(st.wait || 260);
+          break;
+        case "spin": await spinner(w, st.label || "thinking…", st.ms || 800, st); break;
+        case "footer": w.line([S("t-success", st.glyph || "✓"), DIM(" " + st.text)], st.paneIdx); break;
+        case "pause": await sleep(st.ms); break;
+        case "call": await st.fn(w); break;
+      }
+    }
+  }
+
+  async function film() {
+    /* ---- 0:00 · intro ---- */
+    show("intro");
+    $("vwm").classList.add("on");
+    await sleep(2000);
+
+    /* ---- 0:06 · the window rises ---- */
+    const w = makeWindow($("vwindow"), {
+      tabs: [{ title: "Terminal [project][zsh]", active: true }],
+    });
+    w.visible = true; /* the film is always on screen */
+    show("term");
+    await sleep(500);
+
+    /* ---- 01 · @ai ---- */
+    chapter("01 · ask", "<code>@ai</code> — ask in English, <em>run in shell</em>",
+      "Natural language → one command, preloaded at your prompt for review. No app switch, ever.");
+    await run(w, [
+      { do: "cmd", text: "@ai list every port something is listening on", speed: 13 },
+      { do: "spin", label: "thinking…", ms: 1100 },
+      { do: "out", spans: [ACC("❯ "), DIM("press Enter to run (or edit)")] },
+      { do: "out", spans: [ACC("❯ "), ACC2("lsof -iTCP -sTCP:LISTEN -n -P"), S("t-cursor", "")] },
+      { do: "pause", ms: 1300 },
+    ]);
+
+    /* ---- 02 · @coder ---- */
+    chapter("02 · agents", "<code>@coder</code> — a <em>full agent</em> at your prompt",
+      "Live reasoning, tool traces, a streamed answer, a token footer — the whole harness in your scrollback.");
+    await run(w, [
+      { do: "cmd", text: "@coder \"fix the failing parser test\"", speed: 12 },
+      { do: "out", spans: [ACC("✦ @coder"), MUT(" · claude-opus-4-8")] },
+      { do: "spin", label: "thinking…", ms: 1000 },
+      { do: "think", text: "The test expects a trailing newline — the parser drops it on the last line…" },
+      { do: "tool", name: "fs.search", args: '{"q":"parse_flow"}', ms: 18, size: "2.1KB" },
+      { do: "tool", name: "fs.edit", args: '{"path":"src/parser.rs"}', ms: 6, size: "412B" },
+      { do: "tool", name: "sys.run", args: '{"cmd":"cargo test parser"}', ms: 2100, size: "1.4KB" },
+      { do: "stream", spans: [FG("Fixed — the parser dropped the final line; added the flush in "), ACC2("parse_flow()"), FG(".")], speed: 9 },
+      { do: "footer", text: "8.4s · 3 tools · 12.3k in / 1.8k out" },
+      { do: "pause", ms: 1100 },
+    ]);
+
+    /* ---- 03 · @flow ---- */
+    chapter("03 · flows", "<code>@flow</code> — pipelines of <em>specialists</em>",
+      "Explore → implement → verify. Each step its own agent, chained — free text runs the default pipeline.");
+    await run(w, [
+      { do: "call", fn: async (t) => t.clear() },
+      { do: "cmd", text: "@flow add retry logic to the fetch helper", speed: 11 },
+      { do: "out", spans: [FG("▶ flow 'implement' — 3 step(s)")] },
+      { do: "spin", label: "explore…", ms: 650 },
+      { do: "out", spans: [OK("✓"), DIM(" explore · 1.2k in / 340 out")] },
+      { do: "spin", label: "implement…", ms: 750 },
+      { do: "out", spans: [OK("✓"), DIM(" implement · 6.4k in / 1.1k out")] },
+      { do: "spin", label: "verify…", ms: 600 },
+      { do: "out", spans: [OK("✓"), DIM(" verify · 2.1k in / 280 out")] },
+      { do: "stream", spans: [FG("Added exponential backoff (3 attempts) — tests green.")], speed: 9 },
+      { do: "pause", ms: 1100 },
+    ]);
+
+    /* ---- 04 · @loop ---- */
+    chapter("04 · loops", "<code>@loop</code> — until it's <em>actually</em> done",
+      "Iterate against a verifiable goal — a check command grades every pass, so the model never grades itself.");
+    await run(w, [
+      { do: "cmd", text: "@loop \"make the tests pass\" --check \"cargo test\"", speed: 10 },
+      { do: "out", spans: [FG("▶ iteration 1/5")] },
+      { do: "tool", name: "fs.edit", args: '{"path":"src/config.rs"}', ms: 7, size: "610B", wait: 220 },
+      { do: "out", spans: [DIM("  check: exit=1 · assertion failed: default theme")], ms: 420 },
+      { do: "out", spans: [FG("▶ iteration 2/5")] },
+      { do: "tool", name: "fs.edit", args: '{"path":"src/config.rs"}', ms: 5, size: "188B", wait: 220 },
+      { do: "out", spans: [DIM("  check: exit=0")], ms: 320 },
+      { do: "out", spans: [OK("✓ goal reached after 2 iteration(s)")] },
+      { do: "pause", ms: 1100 },
+    ]);
+
+    /* ---- 05 · jobs ---- */
+    chapter("05 · jobs", "<code>@job</code> — background work that <em>survives you</em>",
+      "Detach any agent, flow or loop with <code>--bg</code> — statuses never lie, and every job keeps a log you can <code>tail -f</code>.");
+    await run(w, [
+      { do: "call", fn: async (t) => t.clear() },
+      { do: "cmd", text: "@job audit the deps --agent reviewer --bg", speed: 11 },
+      { do: "out", spans: [FG("▶ background job 1753112000-4242")] },
+      { do: "out", spans: [DIM("  monitor: @job  ·  tail -f ~/.aiTerminal/ai/jobs/…/log.md")] },
+      { do: "pause", ms: 700 },
+      { do: "cmd", text: "@job", speed: 13 },
+      { do: "out", spans: [FG("background jobs (3):")] },
+      { do: "out", spans: [FG("  ▶ 1753112000-4242 running   audit the deps … "), DIM("(2m ago · 2m)")] },
+      { do: "out", spans: [OK("  ✓ "), FG("1753111800-4101 done      create a CHANGELOG … "), DIM("(9m ago · 45s)")] },
+      { do: "out", spans: [MUT("  ⏹ "), FG("1753110900-3980 cancelled refactor the CLI … "), DIM("(24m ago · 12s)")] },
+      { do: "pause", ms: 1300 },
+    ]);
+
+    /* ---- 06 · profiles ---- */
+    chapter("06 · profiles", "Whole identities, <em>one command</em>",
+      "<code>@profile work</code> swaps theme, AI models, plugins and your saved tabs — live, in a second.");
+    await run(w, [
+      { do: "call", fn: async (t) => t.clear() },
+      { do: "cmd", text: "@profile", speed: 13 },
+      { do: "out", spans: [FG("profiles in ~/.aiTerminal/profiles (3):")] },
+      { do: "out", spans: [ACC("  ● 🚀 Default          (default)")] },
+      { do: "out", spans: [MUT("  ○ 💼 Work             (work)")] },
+      { do: "out", spans: [MUT("  ○ 🌙 Night Ops        (night-ops)")] },
+      { do: "pause", ms: 800 },
+      { do: "cmd", text: "@profile work", speed: 12 },
+      { do: "call", fn: async (t) => {
+          t.setTheme("graphite");
+          t.defaultStatus({ profile: "💼 Work", cwd: "~/work/api" });
+          t.setTabs([{ title: "Terminal [api][zsh]", active: true }, { title: "Terminal [infra][zsh]" }]);
+        } },
+      { do: "out", spans: [FG("switched to 'work' — theme, models, plugins and your saved tabs")] },
+      { do: "pause", ms: 1400 },
+    ]);
+
+    /* ---- 07 · themes ---- */
+    chapter("07 · themes", "19 themes. <em>Live. Everywhere.</em>",
+      "One TOML per theme — the chrome, the panes, the status bar and your running shells restyle instantly.");
+    const cycle = ["nebula", "sunset", "gold", "titanium", "midnight"];
+    await run(w, [
+      { do: "call", fn: async (t) => {
+          t.clear(); t.defaultStatus();
+          t.setTabs([{ title: "Terminal [project][zsh]", active: true }]);
+        } },
+      { do: "cmd", text: "@theme nebula", speed: 13 },
+      ...cycle.flatMap((k) => [
+        { do: "call", fn: async (t) => { t.setTheme(k); t.note("@theme " + k); } },
+        { do: "pause", ms: 1000 },
+      ]),
+    ]);
+
+    /* ---- 08 · a real terminal ---- */
+    chapter("08 · terminal", "Splits, tabs, <kbd>⌘P</kbd> — a <em>real</em> terminal",
+      "Every pane its own shell and scrollback. Dockable tab bar, quick switcher, profiles — GPU-rendered, near-zero idle CPU.");
+    await run(w, [
+      { do: "call", fn: async (t) => {
+          t.clear();
+          t.setTabs([{ title: "Terminal [web][zsh]", active: true }, { title: "Terminal [api][zsh]" }]);
+        } },
+      { do: "out", spans: [ACC("~/web"), OK(" ⎇ main"), ACC2(" ❯ "), FG("npm run dev")] },
+      { do: "out", spans: [OK("  ➜  ready "), FG("on http://localhost:3000")] },
+      { do: "call", fn: async (t) => { t.note("⌘D — split right"); await sleep(450); t.split(false); } },
+      { do: "cmd", text: "cargo watch -x test", speed: 10, paneIdx: 1 },
+      { do: "out", spans: [OK("    Finished"), FG(" test — 507 passed")], paneIdx: 1 },
+      { do: "call", fn: async (t) => {
+          t.note("⌘P — quick switcher"); await sleep(500);
+          t.openSwitcher("ap", [
+            { title: "Terminal [web][zsh]", detail: "~/web" },
+            { title: "Terminal [api][zsh]", detail: "~/work/api" },
+            { title: "vim · parser.rs", detail: "~/web" },
+          ], 1);
+        } },
+      { do: "pause", ms: 1300 },
+      { do: "call", fn: async (t) => { t.closeSwitcher(); t.unsplit(); } },
+      { do: "call", fn: async (t) => { t.note("[behavior] tab_bar = left"); t.setTabpos("left"); } },
+      { do: "pause", ms: 1100 },
+      { do: "call", fn: async (t) => { t.note("[behavior] tab_bar = bottom"); t.setTabpos("bottom"); } },
+      { do: "pause", ms: 1100 },
+      { do: "call", fn: async (t) => t.setTabpos("top") },
+    ]);
+
+    /* ---- 09 · memory ---- */
+    chapter("09 · memory", "Agents that <em>remember</em>",
+      "A BM25 memory shared by every agent — what they learn about your project surfaces in the next run. MCP servers plug in the same way.");
+    await run(w, [
+      { do: "call", fn: async (t) => { t.clear(); t.setTabs([{ title: "Terminal [project][zsh]", active: true }]); t.defaultStatus(); } },
+      { do: "cmd", text: "@ai deploy this to staging", speed: 12 },
+      { do: "spin", label: "thinking…", ms: 700 },
+      { do: "out", spans: [DIM("∴ memory · 2 hits — 'deploys go through scripts/deploy.sh --env <env>'")] },
+      { do: "out", spans: [ACC("❯ "), DIM("press Enter to run (or edit)")] },
+      { do: "out", spans: [ACC("❯ "), ACC2("scripts/deploy.sh --env staging"), S("t-cursor", "")] },
+      { do: "pause", ms: 1600 },
+    ]);
+
+    /* ---- 10 · the guard ---- */
+    chapter("10 · safety", "The AI proposes. <em>The guard disposes.</em>",
+      "Allow · ⚠ confirm · ✗ deny — deny always wins, and secrets are redacted before anything leaves your machine.");
+    await run(w, [
+      { do: "cmd", text: "@ai force push my branch", speed: 12 },
+      { do: "spin", label: "thinking…", ms: 600 },
+      { do: "out", spans: [WARN("⚠ "), DIM("review before running — matches a confirm rule")] },
+      { do: "out", spans: [ACC("❯ "), ACC2("git push --force-with-lease origin fix/parser")] },
+      { do: "pause", ms: 1200 },
+      { do: "cmd", text: "@ai wipe the whole disk", speed: 12 },
+      { do: "spin", label: "thinking…", ms: 550 },
+      { do: "out", spans: [ERR("# blocked by guard: matches a deny rule  /rm -rf \\//")] },
+      { do: "pause", ms: 1500 },
+    ]);
+
+    /* ---- 11 · plugins — the top 5, live ---- */
+    chapter("11 · plugins 1/5", "👻 autosuggest — your history, <em>one key away</em>",
+      "Ghost text completes the command as you type — <kbd>→</kbd> accepts it.");
+    await run(w, [
+      { do: "call", fn: async (t) => t.clear() },
+      { do: "call", fn: async (t) => {
+          const l = await typeCmd(t, "docker com", { speed: 55 });
+          const ghost = spanEl(MUT("pose up -d --build"));
+          l.appendChild(ghost);
+          t.note("→ accepts the suggestion");
+          await sleep(1200);
+          ghost.className = "t-fg";
+          await sleep(500);
+        } },
+      { do: "out", spans: [OK(" ✔ Container web  Started"), DIM("  0.4s")] },
+      { do: "pause", ms: 1100 },
+    ]);
+
+    chapter("11 · plugins 2/5", "⎇ git — 100+ aliases, <em>preinstalled</em>",
+      "gst, gco, gcm, glog… the muscle-memory classics, ready on first launch.");
+    await run(w, [
+      { do: "cmd", text: "gst", speed: 70 },
+      { do: "out", spans: [DIM("→ git status -sb")] },
+      { do: "out", spans: [OK("## main...origin/main")] },
+      { do: "out", spans: [WARN(" M "), FG("src/parser.rs")] },
+      { do: "out", spans: [OK("A  "), FG("docs/ai.md")] },
+      { do: "pause", ms: 1400 },
+    ]);
+
+    chapter("11 · plugins 3/5", "🧭 jump — <em>teleport</em> to any project",
+      "<code>j api</code> lands in the directory you mean, ranked by your habits.");
+    await run(w, [
+      { do: "cmd", text: "j api", speed: 60 },
+      { do: "call", fn: async (t) => t.defaultStatus({ cwd: "~/work/api" }) },
+      { do: "out", spans: [DIM("→ ~/work/api")] },
+      { do: "out", spans: [ACC("~/work/api"), OK(" ⎇ main"), ACC2(" ❯ "), S("t-cursor", "")] },
+      { do: "pause", ms: 1400 },
+    ]);
+
+    chapter("11 · plugins 4/5", "🗜 extract — one command, <em>every archive</em>",
+      "<code>x &lt;file&gt;</code> knows tar, zip, gz, bz2, 7z… no flags to remember.");
+    await run(w, [
+      { do: "cmd", text: "x release.tar.gz", speed: 45, prompt: PROMPT("~/work/api") },
+      { do: "out", spans: [DIM("→ tar -xzf release.tar.gz")] },
+      { do: "out", spans: [OK("✓ extracted to ./release/")] },
+      { do: "pause", ms: 1400 },
+    ]);
+
+    chapter("11 · plugins 5/5", "🔼 sudo — <kbd>Esc Esc</kbd> <em>fixes it</em>",
+      "Forgot sudo? Double-tap Esc and the line rewrites itself.");
+    await run(w, [
+      { do: "cmd", text: "cat /var/log/system.log", speed: 40, prompt: PROMPT("~/work/api") },
+      { do: "out", spans: [ERR("cat: /var/log/system.log: Permission denied")] },
+      { do: "call", fn: async (t) => { t.note("Esc Esc"); await sleep(800); } },
+      { do: "out", spans: [ACC("~/work/api"), OK(" ⎇ main"), ACC2(" ❯ "), FG("sudo cat /var/log/system.log"), S("t-cursor", "")] },
+      { do: "pause", ms: 1500 },
+    ]);
+
+    /* ---- and there are 31 of them ---- */
+    show("plugins");
+    await sleep(7200);
+
+    /* ---- outro: 3s animated build + 2s to read, then fade to black ---- */
+    const fill = document.querySelector(".vbar i");
+    fill.style.transitionDuration = "5s"; /* re-time the remaining distance */
+    show("outro");
+    await sleep(5000);
+    show(""); /* every scene off — fade to black */
+    document.querySelector(".vbar").style.opacity = "0";
+    $("vwm").classList.remove("on");
+  }
+
+  function play(fullscreen) {
+    if (fullscreen && document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+    $("voverlay").classList.add("off");
+    const bar = document.querySelector(".vbar");
+    bar.querySelector("i").style.transitionDuration = "90s";
+    bar.classList.add("run");
+    setTimeout(film, 300);
+  }
+
+  $("vplay").addEventListener("click", () => play(false));
+  $("vplayfs").addEventListener("click", () => play(true));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === " " && !$("voverlay").classList.contains("off")) { e.preventDefault(); play(false); }
+  });
+})();
+</script>
+</body>
+</html>
