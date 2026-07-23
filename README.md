@@ -21,6 +21,18 @@ A terminal written **from scratch in Rust** — **zero external crates**, no Ele
 
 ---
 
+<div align="center">
+
+## 🎬 See it in action
+
+![aiTerminal in action](demo.gif)
+
+**[▶️ Watch in full quality](video.mp4)** — 90 seconds. Your prompt is about to get *superpowers*. ✨
+
+</div>
+
+---
+
 It is a *terminal*, full stop: PTY panes, tabs and splits, themes, keymaps, plugins,
 profiles. The AI is woven into the shell itself through one idea:
 
