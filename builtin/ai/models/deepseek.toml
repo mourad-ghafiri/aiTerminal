@@ -1,0 +1,21 @@
+name        = "DeepSeek"
+description = "DeepSeek's OpenAI-compatible API (chat + reasoner)."
+kind        = "deepseek"
+api_key_env = "DEEPSEEK_API_KEY"
+base_url    = "https://api.deepseek.com/v1/chat/completions"
+
+[models.deepseek-chat]
+temperature    = 0.7
+max_tokens     = 8000
+context_window = 64000
+enable_tools   = true
+price_in       = 0.27
+price_out      = 1.1
+
+[models.deepseek-reasoner]
+max_tokens      = 8000
+context_window  = 64000
+enable_thinking = true
+enable_tools    = true
+price_in        = 0.55
+price_out       = 2.19

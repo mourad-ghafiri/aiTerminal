@@ -1,0 +1,41 @@
+# aiTerminal — Cargo workspace.
+#
+# INVARIANT: zero third-party crates. Every member depends ONLY on std and on
+# other members of this workspace via `path = ...`. The mechanical gate in
+# `tools/check_no_crates.sh` fails the build if Cargo.lock ever references a
+# registry/git source, so this constraint cannot be broken by a transitive dep.
+
+[workspace]
+resolver = "2"
+members = [
+    # One crate per layer — core < platform < framework < app, each a single
+    # crate with internal modules and no facade. `app` is the thin composition
+    # root (the `aiTerminal` binary); it depends on `framework` only.
+    "crates/corelib",
+    "crates/platform",
+    "crates/framework",
+    "crates/app",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+publish = false
+
+# Release ships a single self-contained binary per OS.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+# `unwind` (not `abort`) so a panic in one frame/pane/PTY can be caught at the event-loop
+# boundary (`catch_unwind` in `platform::os::macos::window`) and degrade to a dropped frame
+# instead of aborting the whole app. The resilience boundaries + a logging panic hook make
+# the terminal survive a bug in any single render/parse path.
+panic = "unwind"
+strip = true
+
+# Dev/test also unwind so the test harness can catch panics and #[should_panic] works.
+[profile.dev]
+opt-level = 1

@@ -1,0 +1,6 @@
+# Press Esc twice to prefix the current command with sudo — or, on an empty line, the
+# previous command. Press again to remove it. It also toggles back off, and works in zsh and bash.
+name        = "sudo"
+version     = "1.0.0"
+description = "Esc Esc to add (or remove) sudo on the current or previous command"
+author      = "aiTerminal"

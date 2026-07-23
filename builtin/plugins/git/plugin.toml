@@ -1,0 +1,279 @@
+# The flagship git plugin — PURE DATA. There is no git code in the terminal;
+# this plugin derives everything from generic core primitives (read a file, run a
+# command, transform a variable). A live status segment plus a comprehensive
+# alias set, abbreviations, and completions.
+
+name = "git"
+version = "1.2.0"
+description = "Comprehensive git integration: status segment (staged + unstaged dots), 100+ aliases, branch-aware helpers, abbreviations, completions"
+author = "aiTerminal"
+
+# ---- data: derived declaratively from generic primitives ----
+
+[[var]]
+id = "git.present"
+when_path = ".git"
+literal = "1"
+
+# branch comes from simply READING .git/HEAD — no command, instant
+[[var]]
+id = "git.branch"
+when_path = ".git"
+file = ".git/HEAD"
+strip_prefix = "ref: refs/heads/"
+trim = true
+
+# Any change at all (`git status --porcelain` non-empty) — drives the branch colour.
+[[var]]
+id = "git.dirty"
+when_path = ".git"
+exec = "git status --porcelain"
+map_nonempty = "1"
+
+# STAGED changes: porcelain lines whose INDEX column (first char) is set — content
+# already added and ready to commit. (Untracked `??` has an unset index column.)
+[[var]]
+id = "git.staged"
+when_path = ".git"
+exec = "git status --porcelain | awk '/^[MADRCU]/{print; exit}'"
+map_nonempty = "1"
+
+# UNSTAGED / uncommitted changes: porcelain lines whose WORKTREE column (second char)
+# is set — modified-but-unstaged files, plus untracked (`??`).
+[[var]]
+id = "git.unstaged"
+when_path = ".git"
+exec = "git status --porcelain | awk '/^.[^ ]/{print; exit}'"
+map_nonempty = "1"
+
+# segment color (theme roles, resolved against the active theme): warn if dirty,
+# success if clean
+[[var]]
+id = "git.color"
+from = "git.dirty"
+map_nonempty = "warn"
+default = "success"
+
+# ahead/behind vs upstream, formatted to "↑ahead ↓behind" and shown only when non-zero
+# (awk emits "" when in sync, so the segment stays clean) — one exec, memoized per render.
+[[var]]
+id = "git.upstream"
+when_path = ".git"
+trim = true
+exec = "git rev-list --left-right --count @{upstream}...HEAD 2>/dev/null | awk '{s=\"\";if($2>0)s=s\" ↑\"$2;if($1>0)s=s\" ↓\"$1;print s}'"
+
+# ---- status segment ----
+# Branch, then two independent dots, then ahead/behind. Each dot is its own segment so it
+# carries its own colour and shows only when relevant (empty / `when`-false segments are
+# skipped, leaving no gap):
+#   ● success (green) = staged changes    ● warn (yellow) = unstaged/uncommitted changes
+
+[[segment]]
+align = "left"
+when = "git.present"
+template = "⎇ {git.branch}"
+fg = "{git.color}"
+
+[[segment]]
+align = "left"
+when = "git.staged"
+template = "●"
+fg = "success"
+
+[[segment]]
+align = "left"
+when = "git.unstaged"
+template = "●"
+fg = "warn"
+
+[[segment]]
+align = "left"
+when = "git.upstream"
+template = "{git.upstream}"
+fg = "accent"
+
+# ---- aliases (a comprehensive git alias set) ----
+
+[aliases]
+g = "git"
+gst = "git status"
+gss = "git status -s"
+ga = "git add"
+gaa = "git add --all"
+gc = "git commit -v"
+gcm = "git commit -m"
+gca = "git commit -v --amend"
+gcan = "git commit -v --amend --no-edit"
+gco = "git checkout"
+gcb = "git checkout -b"
+gsw = "git switch"
+gswc = "git switch -c"
+gb = "git branch"
+gba = "git branch -a"
+gbd = "git branch -d"
+gp = "git push"
+gpf = "git push --force-with-lease"
+gpu = "git push -u origin HEAD"
+gsync = "git pull --rebase && git push"
+gwip = "git add -A && git commit -m wip --no-verify"
+gundo = "git reset --soft HEAD~1"
+gl = "git pull"
+glr = "git pull --rebase"
+gf = "git fetch"
+gfa = "git fetch --all --prune"
+gd = "git diff"
+gds = "git diff --staged"
+glog = "git log --oneline --graph --decorate"
+glola = "git log --oneline --graph --decorate --all"
+gm = "git merge"
+grb = "git rebase"
+grbi = "git rebase -i"
+grbc = "git rebase --continue"
+grba = "git rebase --abort"
+grs = "git restore"
+grss = "git restore --staged"
+grh = "git reset"
+grhh = "git reset --hard"
+gsta = "git stash push"
+gstp = "git stash pop"
+gstl = "git stash list"
+gcp = "git cherry-pick"
+gclean = "git clean -fd"
+
+# add — staging variants
+gapa = "git add --patch"
+gau = "git add --update"
+gav = "git add --verbose"
+# apply / am — patch workflows
+gap = "git apply"
+gam = "git am"
+gama = "git am --abort"
+gamc = "git am --continue"
+gams = "git am --skip"
+# bisect
+gbs = "git bisect"
+gbss = "git bisect start"
+gbsb = "git bisect bad"
+gbsg = "git bisect good"
+gbsr = "git bisect reset"
+# branch
+gbD = "git branch -D"
+gbm = "git branch -m"
+gbnm = "git branch --no-merged"
+gbr = "git branch --remote"
+gbl = "git blame -w"
+# checkout / switch the main + develop branches (resolved at run time)
+gcor = "git checkout --recurse-submodules"
+gcB = "git checkout -B"
+gcom = "git checkout $(git_main_branch)"
+gcod = "git checkout $(git_develop_branch)"
+gswm = "git switch $(git_main_branch)"
+gswd = "git switch $(git_develop_branch)"
+# commit variants
+gcas = "git commit -a -s"
+gcsm = "git commit -s -m"
+gcn = "git commit -v --no-edit"
+gcfx = "git commit --fixup"
+gcf = "git config --list"
+gcount = "git shortlog -sn"
+# diff
+gdca = "git diff --cached"
+gdcw = "git diff --cached --word-diff"
+gdw = "git diff --word-diff"
+gdup = "git diff @{upstream}"
+gdt = "git diff-tree --no-commit-id --name-only -r"
+gdtool = "git difftool"
+# fetch / clone
+gfo = "git fetch origin"
+gcl = "git clone --recurse-submodules"
+# log
+glo = "git log --oneline --decorate"
+gloga = "git log --oneline --decorate --graph --all"
+glg = "git log --stat"
+glgp = "git log --stat -p"
+glod = "git log --graph --pretty='%C(auto)%h%Creset -%C(auto)%d%Creset %s %Cgreen(%ad) %C(bold blue)<%an>%Creset' --date=short"
+glols = "git log --graph --pretty='%C(auto)%h%Creset -%C(auto)%d%Creset %s %Cgreen(%ar) %C(bold blue)<%an>%Creset' --stat"
+gwch = "git whatchanged -p --abbrev-commit --pretty=medium"
+# merge
+gma = "git merge --abort"
+gmc = "git merge --continue"
+gms = "git merge --squash"
+gmff = "git merge --ff-only"
+gmom = "git merge origin/$(git_main_branch)"
+gmtl = "git mergetool --no-prompt"
+# pull / push (current-branch aware)
+gpr = "git pull --rebase"
+gpra = "git pull --rebase --autostash"
+gprom = "git pull --rebase origin $(git_main_branch)"
+ggpull = "git pull origin $(git_current_branch)"
+gpd = "git push --dry-run"
+gpff = "git push --force"
+gpsup = "git push --set-upstream origin $(git_current_branch)"
+ggpush = "git push origin $(git_current_branch)"
+gpoat = "git push origin --all && git push origin --tags"
+gpod = "git push origin --delete"
+# rebase
+grbo = "git rebase --onto"
+grbs = "git rebase --skip"
+grbm = "git rebase $(git_main_branch)"
+grbom = "git rebase origin/$(git_main_branch)"
+grf = "git reflog"
+# remote
+gr = "git remote"
+grv = "git remote -v"
+gra = "git remote add"
+grrm = "git remote remove"
+grmv = "git remote rename"
+grset = "git remote set-url"
+grup = "git remote update"
+# reset
+gru = "git reset --"
+grhk = "git reset --keep"
+grhs = "git reset --soft"
+groh = "git reset origin/$(git_current_branch) --hard"
+# revert
+grev = "git revert"
+greva = "git revert --abort"
+grevc = "git revert --continue"
+# rm
+grm = "git rm"
+grmc = "git rm --cached"
+# show
+gsh = "git show"
+gsps = "git show --pretty=short --show-signature"
+# stash
+gstall = "git stash --all"
+gstaa = "git stash apply"
+gstc = "git stash clear"
+gstd = "git stash drop"
+gsts = "git stash show -p"
+gstu = "git stash push --include-untracked"
+# status
+gsb = "git status -sb"
+# tag
+gta = "git tag -a"
+gts = "git tag -s"
+gtv = "git tag | sort -V"
+gtl = "git tag --sort=-v:refname -n"
+# worktree
+gwt = "git worktree"
+gwta = "git worktree add"
+gwtls = "git worktree list"
+gwtmv = "git worktree move"
+gwtrm = "git worktree remove"
+# misc
+gignore = "git update-index --assume-unchanged"
+gunignore = "git update-index --no-assume-unchanged"
+gfg = "git ls-files | grep"
+grt = "cd \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\""
+
+# ---- abbreviations (expand on space) ----
+
+[[abbr]]
+trigger = "gcam"
+expansion = "git commit -a -m \""
+
+[[completion]]
+command = "git"
+subcommands = ["status", "add", "commit", "checkout", "switch", "branch", "push", "pull", "fetch", "merge", "rebase", "stash", "log", "diff", "reset", "restore", "cherry-pick", "clean", "remote", "tag", "worktree", "bisect", "reflog", "blame", "show", "revert", "am", "apply", "config", "submodule", "describe"]
+flags = ["--help", "--version", "-v", "--amend", "--force-with-lease", "--all", "--prune", "--rebase", "--autostash", "--no-edit", "--staged", "--word-diff"]

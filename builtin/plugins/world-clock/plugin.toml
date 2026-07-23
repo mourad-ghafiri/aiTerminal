@@ -1,0 +1,8 @@
+# Time & world clocks: shell helpers for any timezone (`tz Europe/London`, `wclock`,
+# `utc`, `unixtime`). The local clock
+# already lives in the status bar (the `prompt` plugin's `{time.hm}`), so this plugin adds NO
+# status segment — use `wclock`/`tz` for other zones.
+name        = "world-clock"
+version     = "1.1.0"
+description = "Timezone shell helpers (tz/wclock/utc)"
+author      = "aiTerminal"

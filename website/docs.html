@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Documentation — aiTerminal</title>
+<meta name="description" content="Full aiTerminal documentation: getting started, the @-command family, configuration, profiles, themes, plugins, keybindings, shell integration, security, AI models, and architecture.">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="nav-brand" href="index.html"><img src="assets/icon.png" alt="">aiTerminal</a>
+    <button class="nav-toggle" aria-label="menu">☰</button>
+    <nav class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="docs.html" class="active">Docs</a>
+      <a href="use-cases.html">Use&nbsp;cases</a>
+      <a href="https://github.com/mourad-ghafiri/aiTerminal" target="_blank" rel="noopener">GitHub</a>
+      <a class="nav-cta" href="index.html#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap docs">
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="docs-nav">
+    <b>Start</b>
+    <a href="#install">Install &amp; first launch</a>
+    <a href="#enable-ai">Enable AI</a>
+    <a href="#layout">The ~/.aiTerminal folder</a>
+    <b>Commands</b>
+    <a href="#cmd-ai">@ai</a>
+    <a href="#cmd-agent">@&lt;agent&gt;</a>
+    <a href="#cmd-flow">@flow</a>
+    <a href="#cmd-loop">@loop</a>
+    <a href="#cmd-job">@job</a>
+    <a href="#cmd-manage">@profile · @theme · @config · @plugin</a>
+    <a href="#exit-codes">Exit codes</a>
+    <b>The terminal</b>
+    <a href="#tabs">Tabs, splits &amp; switcher</a>
+    <a href="#profiles">Profiles &amp; session restore</a>
+    <a href="#themes">Themes</a>
+    <a href="#keys">Keybindings</a>
+    <a href="#i18n">Languages (i18n)</a>
+    <a href="#shell">Shell integration</a>
+    <b>Configuration</b>
+    <a href="#config">config.toml reference</a>
+    <a href="#plugins">Plugins</a>
+    <b>AI in depth</b>
+    <a href="#models">Models &amp; providers</a>
+    <a href="#agents">Agents, skills &amp; prompts</a>
+    <a href="#attachments">Attachments</a>
+    <a href="#memory">Memory &amp; MCP</a>
+    <a href="#tools">The tool catalog</a>
+    <b>Trust</b>
+    <a href="#security">Security</a>
+    <a href="#logging">Logging</a>
+    <a href="#architecture">Architecture</a>
+  </aside>
+
+  <!-- ============ CONTENT ============ -->
+  <main class="docs-main">
+    <h1>Documentation</h1>
+    <p class="lead">A light, AI-first terminal. Everything is a terminal command and every setting
+      is a TOML file — there is no settings UI. This page is the complete reference.</p>
+
+    <h2 id="install">Install &amp; first launch</h2>
+    <p>Grab a build from <a href="https://github.com/mourad-ghafiri/aiTerminal/releases" target="_blank" rel="noopener">GitHub Releases</a> (macOS 12+; Linux and Windows builds land with the next phases) — or build from source:</p>
+    <pre><code><span class="c"># zero external crates — this is the whole build</span>
+git clone https://github.com/mourad-ghafiri/aiTerminal.git
+cd aiTerminal
+cargo build --release
+./target/release/aiTerminal</code></pre>
+    <p>Prefer a real macOS app? One script bundles a self-contained
+      <code>aiTerminal.app</code> (binary + the <code>builtin/</code> data + icon):</p>
+    <pre><code>./tools/bundle-macos.sh          <span class="c"># → dist/aiTerminal.app (+ a distributable .zip)</span>
+open dist/aiTerminal.app         <span class="c"># run it — or install it:</span>
+cp -R dist/aiTerminal.app /Applications/</code></pre>
+    <p>First launch seeds <code>~/.aiTerminal/</code> with the default config, 19 themes, 31 plugins,
+      keymaps, agents, flows and skills — every one an editable file. Nothing is ever overwritten
+      after that: your edits win.</p>
+
+    <h2 id="enable-ai">Enable AI</h2>
+    <p>AI is <b>off until you declare a model</b> — no vendor is assumed. Add one
+      <code>[[ai.model]]</code> to <code>~/.aiTerminal/config.toml</code>:</p>
+    <pre><code><span class="k">[[ai.model]]</span>
+provider = <span class="s">"anthropic"</span>       <span class="c"># or openai · openrouter · deepseek · groq · grok</span>
+id       = <span class="s">"claude-opus-4-8"</span>  <span class="c">#    qwen · kimi · minimax · ollama · lmstudio · local</span>
+api_key  = <span class="s">"sk-…"</span>             <span class="c"># or export the provider's env var instead</span></code></pre>
+    <p>Declare several models and they form a <b>weighted pool</b> with automatic failover.
+      aiTerminal <b>never scans your machine for keys</b> — only config or environment variables
+      supply them.</p>
+
+    <h2 id="layout">The <code>~/.aiTerminal</code> folder</h2>
+    <pre><code>~/.aiTerminal/
+├── config.toml        <span class="c"># the one config file (+ per-profile overlays)</span>
+├── profiles/          <span class="c"># &lt;id&gt;/{profile.toml, config.toml, workspace.toml}</span>
+├── themes/            <span class="c"># 19 builtin + yours</span>
+├── keymaps/           <span class="c"># keybinding layers</span>
+├── plugins/           <span class="c"># user-installed plugins (builtins ship with the app)</span>
+├── i18n/              <span class="c"># locale overrides</span>
+├── ai/
+│   ├── aiTerminal.md  <span class="c"># the global AI instructions — edit the persona</span>
+│   ├── agents/  skills/  prompts/  flows/  mcp/
+│   ├── models/        <span class="c"># provider catalogs (12 ship)</span>
+│   ├── memory/        <span class="c"># BM25-ranked markdown memories</span>
+│   └── jobs/          <span class="c"># &lt;id&gt;/{job.toml, log.md}</span>
+├── logs/  cache/  shell/  crash.log</code></pre>
+
+    <h2 id="cmd-ai">@ai — natural language → one command</h2>
+    <pre><code><span class="p">❯</span> @ai list every port something is listening on
+<span class="p">❯</span> <span class="c">press Enter to run (or edit)</span>
+<span class="p">❯</span> lsof -iTCP -sTCP:LISTEN -n -P</code></pre>
+    <p><code>@ai</code> reads your recent terminal session (shared as a <b>redacted</b> context file),
+      proposes exactly <b>one</b> command, and the guard checks it <em>before</em> your shell sees it:</p>
+    <ul>
+      <li><b>manual</b> (default) — every command preloads at your prompt for review.</li>
+      <li><b>auto</b> — guard-allowed <em>safe-listed</em> commands run immediately; confirm-tier always drops to review; denied prints as a <code>#</code> comment, never runs.</li>
+      <li>Ask a question instead and the answer streams as plain text: <code>@ai why is my docker build slow?</code></li>
+    </ul>
+
+    <h2 id="cmd-agent">@&lt;agent&gt; — full agentic runs</h2>
+    <pre><code><span class="p">❯</span> @coder "fix the failing parser test"
+<span class="a">✦ @coder · claude-opus-4-8</span>
+<span class="c">∴ The test expects a trailing newline …</span>
+<span class="c">  ⚙ fs.search {"q":"parse_flow"} · 18ms · 2.1KB</span>
+<span class="c">  ⚙ fs.edit {"path":"src/…"} · 6ms · 412B</span>
+The fix: the parser dropped the final line …
+<span class="c">✓ 8.4s · 2 tools · 12.3k in / 1.8k out</span></code></pre>
+    <p>An agent is a Markdown file with TOML frontmatter — system prompt, allowed tools, step
+      budget, skills. Five ship:</p>
+    <table>
+      <tr><th>Agent</th><th>Role</th></tr>
+      <tr><td><code>@coder</code></td><td>Senior engineer + orchestrator — explores, makes the smallest correct edit, verifies, delegates sub-agents.</td></tr>
+      <tr><td><code>@explorer</code></td><td>Fast read-only scout — maps relevant code, reports tightly.</td></tr>
+      <tr><td><code>@reviewer</code></td><td>Read-only review — correctness, security, tests, design.</td></tr>
+      <tr><td><code>@tester</code></td><td>Writes and runs tests; reproduces a failure, then fixes it.</td></tr>
+      <tr><td><code>@ai</code></td><td>General assistant — concise answers, commands to review.</td></tr>
+    </table>
+    <p>Live chrome rides stderr, content rides stdout — so piping stays clean:
+      <code>@explorer "map the auth flow" &gt; auth-map.md</code> works.</p>
+
+    <h2 id="cmd-flow">@flow — multi-step pipelines</h2>
+    <pre><code><span class="p">❯</span> @flow                          <span class="c"># list available flows</span>
+<span class="p">❯</span> @flow review the PTY layer     <span class="c"># first word names a flow → run it</span>
+<span class="p">❯</span> @flow add retry logic to fetch <span class="c"># free text → the default `implement` pipeline</span></code></pre>
+    <p>A flow is a TOML file of steps, each a full agent run; with <code>chain = true</code> every
+      step sees the previous answers. Bundled: <code>implement</code> (explore → implement → verify)
+      and <code>review</code> (map → review). A failed step stops the pipeline and exits non-zero.</p>
+    <pre><code><span class="c"># ~/.aiTerminal/ai/flows/ship.toml — your own in 10 lines</span>
+description = <span class="s">"implement, test, and write the changelog"</span>
+chain = true
+<span class="k">[[step]]</span>
+label = <span class="s">"implement"</span>; agent = <span class="s">"coder"</span>;  prompt = <span class="s">"Implement: {{input}}"</span>
+<span class="k">[[step]]</span>
+label = <span class="s">"verify"</span>;    agent = <span class="s">"tester"</span>; prompt = <span class="s">"Verify the change above."</span></code></pre>
+
+    <h2 id="cmd-loop">@loop — iterate to a verified goal</h2>
+    <pre><code><span class="p">❯</span> @loop "make the config tests pass" --check "cargo test -p framework config::"
+🔁 loop 'coder' — up to 5 iteration(s)
+▶ iteration 1/5 … ▶ iteration 2/5 …
+<span class="g">✓ goal reached after 2 iteration(s)</span></code></pre>
+    <p>Loop engineering, properly: the <b>maker</b> works the goal; an independent <b>verifier</b>
+      grades it — either your deterministic <code>--check</code> command (exit 0 = done; it passes
+      the guard first) or a separate read-only reviewer agent that must conclude
+      <code>VERDICT: PASS</code>. The model never grades its own work. Verifier output tails
+      forward into the next iteration.</p>
+    <table>
+      <tr><th>Flag</th><th>Meaning</th></tr>
+      <tr><td><code>--check "&lt;cmd&gt;"</code></td><td>deterministic verifier; killed if it hangs past 10 minutes</td></tr>
+      <tr><td><code>--max N</code></td><td>iteration cap (default 5)</td></tr>
+      <tr><td><code>--budget TOKENS</code></td><td>total token budget across iterations</td></tr>
+      <tr><td><code>--agent &lt;name&gt;</code></td><td>the maker (default <code>coder</code>)</td></tr>
+      <tr><td><code>--bg</code></td><td>run the whole loop as a tracked background job</td></tr>
+    </table>
+    <p>Stop rules: <b>success</b> · <b>max-cap</b> · <b>stalled</b> (identical verifier output twice
+      in a row — no progress, stop burning tokens) · <b>budget</b>.</p>
+
+    <h2 id="cmd-job">@job — tracked &amp; background tasks</h2>
+    <pre><code><span class="p">❯</span> @job create a CHANGELOG from the last 10 commits          <span class="c"># foreground: live + logged</span>
+<span class="p">❯</span> @job audit the deps --agent reviewer --bg                 <span class="c"># detached background run</span>
+▶ background job 1753112000-4242
+<span class="p">❯</span> @job                                                      <span class="c"># list</span>
+background jobs (2):
+  ▶ 1753112000-4242 running   audit the deps …  <span class="c">(2m ago · 2m)</span>
+  <span class="g">✓</span> 1753111800-4101 done      create a CHANGELOG …  <span class="c">(9m ago · 45s)</span></code></pre>
+    <p>Each job is a folder — <code>job.toml</code> (status, timestamps, exit code) +
+      <code>log.md</code> (the full streamed output; <code>tail -f</code> it). Background jobs are
+      fully detached: closing the terminal never kills them. Statuses are always honest:
+      <code>running · done · failed · cancelled · died</code> — a crashed job's record heals to
+      <code>died</code> on the next list, and <code>@job clear</code> prunes everything finished.</p>
+
+    <h2 id="cmd-manage">@profile · @theme · @config · @plugin</h2>
+    <table>
+      <tr><th>Command</th><th>Does</th></tr>
+      <tr><td><code>@profile</code></td><td>list profiles (● marks active)</td></tr>
+      <tr><td><code>@profile work</code></td><td>switch by id or name — a running window applies it within a second</td></tr>
+      <tr><td><code>@profile create|rename|delete|edit</code></td><td>manage profiles; <code>edit</code> opens the overlay in <code>$EDITOR</code></td></tr>
+      <tr><td><code>@theme</code></td><td>list the 19 themes</td></tr>
+      <tr><td><code>@theme sunset</code></td><td>live restyle — window, panes, and running shells' colors</td></tr>
+      <tr><td><code>@theme export nebula</code></td><td>print the full normalized TOML (start your own from it)</td></tr>
+      <tr><td><code>@config</code> / <code>@config path</code></td><td>show effective config / the file path</td></tr>
+      <tr><td><code>@plugin list|install|enable|disable|info</code></td><td>manage plugins from the prompt</td></tr>
+    </table>
+
+    <h2 id="exit-codes">Exit codes &amp; scripting</h2>
+    <p>Every AI command tells the shell the truth, so <code>$?</code>, <code>&amp;&amp;</code> and CI compose:</p>
+    <table>
+      <tr><th>Code</th><th>Meaning</th></tr>
+      <tr><td><code>0</code></td><td>completed (for <code>@loop</code>: the goal verified)</td></tr>
+      <tr><td><code>1</code></td><td>failed — model/transport error, step limit, tool stall; loop stalled/exhausted/out of budget</td></tr>
+      <tr><td><code>2</code></td><td>setup error — unknown agent/flow, AI not configured, guard-blocked check</td></tr>
+      <tr><td><code>130</code></td><td>interrupted — Ctrl+C cancelled cleanly (the in-flight request is killed mid-token)</td></tr>
+    </table>
+
+    <h2 id="tabs">Tabs, splits &amp; the quick switcher</h2>
+    <ul>
+      <li><kbd>⌘T</kbd> new tab · <kbd>⌘W</kbd> close · <kbd>⌘1</kbd>…<kbd>⌘9</kbd> jump · <kbd>⌃Tab</kbd> cycle.</li>
+      <li><kbd>⌘D</kbd> split right · <kbd>⌘⇧D</kbd> split down · <kbd>⌘⌥arrows</kbd> move focus · <kbd>⌘↩</kbd> zoom a pane full.</li>
+      <li>Per-pane font zoom (<kbd>⌘=</kbd>/<kbd>⌘-</kbd>/<kbd>⌘0</kbd>), 10,000-line scrollback, char/word/line mouse selection, ⌘-click links and paths. <kbd>↩</kbd> with a live mouse selection copies it instead of executing.</li>
+      <li>Command-line editing like a text field (the <code>lineedit</code> plugin): <kbd>⌥/⌘ arrows</kbd> jump by word / to the line ends, <kbd>⇧</kbd>+arrows select on a light band (text keeps its colors), typing replaces the selection, <kbd>⌫</kbd>/<kbd>⌦</kbd> delete it, <kbd>Esc</kbd> cancels, <kbd>⌘C</kbd> copies (OSC&nbsp;52). Cursor: block (default), bar or underline.</li>
+      <li><kbd>⌘P</kbd> (or <kbd>⌘K</kbd>) opens the switcher: type a number or fuzzy text over titles <em>and</em> working directories. Tabs auto-name from the running program, folder and shell — including the remote host over SSH.</li>
+      <li>The tab bar docks top, bottom, left or right (<code>[behavior] tab_bar</code>).</li>
+    </ul>
+
+    <h2 id="profiles">Profiles &amp; session restore</h2>
+    <p>A profile = a <code>config.toml</code> overlay (theme, AI pool, plugins, locale…) + a saved
+      workspace (tabs, splits, focus, per-pane zoom and cwd, window size — and the styled pane
+      content itself). Switching restores <em>exactly</em> the state you left, colors included,
+      silently. Autosave: 5 s after a structure change, every 30 s for content (skipped when
+      nothing changed).</p>
+
+    <h2 id="themes">Themes</h2>
+    <p>19 ship: Midnight (default) · Graphite · Alpine · Nebula · Deep Purple · Lavender · Pink ·
+      Product RED · Sage · Gold · Mist Blue · Titanium · Coral · Cosmic Orange · Solar Flare ·
+      Sunset · Sky Blue · Starlight · Light Gold. A theme is one TOML of semantic tokens
+      (<code>bg surface fg muted accent success warn error</code>), a 16-color ANSI palette and
+      filetype colors that drive theme-matched <code>ls</code> output. Drop your own in
+      <code>~/.aiTerminal/themes/</code> — <code>@theme export</code> gives you a starting point.</p>
+
+    <h2 id="keys">Keybindings</h2>
+    <p>Layering, later wins: builtin default → plugin keybindings → your
+      <code>~/.aiTerminal/keymaps/*.toml</code> → <code>config.toml [[keybinding]]</code>:</p>
+    <pre><code><span class="k">[[keybinding]]</span>
+key = <span class="s">"cmd+shift+enter"</span>
+action = <span class="s">"zoom_pane"</span></code></pre>
+    <p>Chords are layout-correct (an AZERTY <kbd>⌘⇧M</kbd> matches the M keycap). <kbd>⌘⇧←/→</kbd> are deliberately unbound at the window level — they reach the shell as select-to-line-edge, like every macOS text field. The full action list ships in the docs folder of the repo.</p>
+
+    <h2 id="i18n">Languages (i18n)</h2>
+    <p>English and French ship; select with <code>[appearance] locale = "fr"</code> — per profile if
+      you like. Every chrome/CLI string flows through the catalog; add
+      <code>~/.aiTerminal/i18n/&lt;locale&gt;.toml</code> to translate or override anything.
+      Missing keys fall back locale → en → key, and CI enforces en/fr parity.</p>
+
+    <h2 id="shell">Shell integration</h2>
+    <p>Non-destructive, and your rc files always win: zsh rides a generated <code>ZDOTDIR</code>
+      that sources your own <code>.zshrc</code> first; bash uses <code>--rcfile</code>. The master
+      switch is <code>[shell] integration = false</code>. What rides in:</p>
+    <ul>
+      <li>Plugin aliases, abbreviations and tab-completions</li>
+      <li>Theme colors as <code>TT_*</code> vars + matching <code>LS_COLORS</code> — re-sourced live on <code>@theme</code></li>
+      <li>The <code>@</code>-command handlers via <code>command_not_found</code> (fires only for <code>@</code>-words)</li>
+      <li><code>TT_SESSION_LOG</code> — the redacted session context <code>@ai</code> grounds on</li>
+    </ul>
+
+    <h2 id="config">config.toml reference</h2>
+    <table>
+      <tr><th>Section</th><th>Keys</th></tr>
+      <tr><td><code>[appearance]</code></td><td><code>theme</code> · <code>locale</code> · <code>font_family</code> (default Menlo) · <code>font_size</code> (default 15) · <code>cursor_style</code> (block / bar / underline)</td></tr>
+      <tr><td><code>[behavior]</code></td><td><code>zoom</code> · <code>tab_bar</code> = top|bottom|left|right · <code>shell</code> · <code>scrollback</code> (default 10000)</td></tr>
+      <tr><td><code>[ai]</code></td><td><code>api_key</code> · <code>fast_model</code> · <code>share_terminal_context</code> · <code>memory</code> · <code>mode</code> = manual|auto · <code>network</code> · <code>[ai.balance] strategy</code></td></tr>
+      <tr><td><code>[[ai.model]]</code></td><td><code>provider</code> · <code>id</code> · <code>api_key</code> · <code>weight</code> · <code>temperature</code> · <code>top_p</code> · <code>top_k</code> · <code>max_tokens</code> · <code>thinking</code></td></tr>
+      <tr><td><code>[plugins]</code></td><td><code>enabled</code> · <code>disabled = [...]</code></td></tr>
+      <tr><td><code>[shell]</code></td><td><code>integration</code></td></tr>
+      <tr><td><code>[logging]</code></td><td><code>level</code> = off|error|warn|info|debug|trace · <code>retention_days</code> (default 7)</td></tr>
+      <tr><td><code>[security]</code></td><td><code>allowed_commands</code> · <code>denied_commands</code> · <code>confirm_commands</code> · <code>auto_safe_commands</code></td></tr>
+      <tr><td><code>[[keybinding]]</code></td><td><code>key</code> · <code>action</code></td></tr>
+      <tr><td><code>[[redact]]</code></td><td><code>pattern</code> · <code>replacement</code> · <code>scope</code> = terminal|ai|all · <code>literal</code></td></tr>
+    </table>
+    <div class="callout"><b>Live reload.</b> A running window follows config edits, profile switches
+      and <code>@theme</code> within a second — and <kbd>⌘,</kbd> reloads instantly.</div>
+
+    <h2 id="plugins">Plugins</h2>
+    <p>A plugin is a folder with a <code>plugin.toml</code> — declarative data over generic core
+      primitives; no plugin code runs inside the terminal process:</p>
+    <pre><code><span class="k">[plugin]</span>
+name = <span class="s">"my-tools"</span>
+description = <span class="s">"my aliases and status segment"</span>
+
+<span class="k">[aliases]</span>
+gs = <span class="s">"git status -sb"</span>
+
+<span class="k">[[segment]]</span>
+align = <span class="s">"right"</span>; template = <span class="s">"🔧 {my.var}"</span>
+
+<span class="c"># plus: [[abbr]] [[completion]] [[keybinding]] [[allow_command]]</span>
+<span class="c"># [[deny_command]] [[confirm_command]] [[redact]] shell.zsh shell.bash</span></code></pre>
+    <p>31 builtins ship (git, docker, kubernetes, rust, python, node, github, extract, jump,
+      autosuggest, syntax-highlight, history, lineedit, sudo, clipboard, encode, weather, web-search, …).
+      Trusted plugin shell snippets are sourced into your shell; third-party installs go under
+      <code>~/.aiTerminal/plugins/</code>.</p>
+
+    <h2 id="models">Models &amp; providers</h2>
+    <p>12 provider catalogs ship as TOML under <code>ai/models/</code> — Anthropic, OpenAI,
+      OpenRouter, DeepSeek, Groq, Grok (xAI), Qwen, Kimi (Moonshot), MiniMax, plus local Ollama,
+      LM Studio and a generic OpenAI-compatible <code>local</code>. Any model id a known provider
+      serves works, even if not pre-declared. Per-model capabilities (<code>vision</code>,
+      <code>document</code>, <code>thinking</code>, <code>tools</code>) gate what each request
+      carries; per-model pricing powers the token accounting in every run footer.</p>
+    <pre><code><span class="c"># a weighted pool: 3 of 4 requests to Opus, 1 to a local model</span>
+<span class="k">[[ai.model]]</span>
+provider = <span class="s">"anthropic"</span>; id = <span class="s">"claude-opus-4-8"</span>; weight = <span class="s">3</span>
+<span class="k">[[ai.model]]</span>
+provider = <span class="s">"ollama"</span>; id = <span class="s">"llama3"</span>; weight = <span class="s">1</span></code></pre>
+
+    <h2 id="agents">Agents, skills &amp; prompts</h2>
+    <p>All plain files under <code>ai/</code>: agents are Markdown + frontmatter (tools, max_steps,
+      skills); 8 skills (<code>code-review concise debugging git orchestration refactoring
+      security-review testing</code>) splice into prompts; 3 prompt templates ship. The global
+      <code>ai/aiTerminal.md</code> is the system-prompt base for <em>every</em> run — edit it to
+      change the persona. Project-local <code>ai/</code> folders shadow the global set, so a repo
+      can ship its own agents.</p>
+
+    <h2 id="attachments">Attachments</h2>
+    <p>Any <code>@&lt;path&gt;</code> token that names a real file becomes an attachment — in
+      <code>@ai</code>, agents, flows and loops alike. Images (png/jpg/gif/webp, ≤4&nbsp;MB) ride as
+      vision blocks; PDFs as document blocks; text files inline fenced (≤48&nbsp;KB, truncated
+      beyond); up to 16 per prompt; everything passes redaction first.</p>
+
+    <h2 id="memory">Memory &amp; MCP</h2>
+    <p><b>Memory</b>: plain Markdown notes in <code>ai/memory/</code>, ranked by a from-scratch BM25
+      retriever — no database, no embeddings service. With <code>[ai] memory = true</code>, relevant
+      memories auto-inject into runs, and agents curate their own via <code>memory.*</code> tools.</p>
+    <p><b>MCP</b>: declare Model-Context-Protocol servers under <code>ai/mcp/</code>; agent runs
+      launch them and expose their tools as <code>mcp.&lt;server&gt;.&lt;tool&gt;</code> beside the
+      native catalog.</p>
+
+    <h2 id="tools">The tool catalog</h2>
+    <p>Native tools agents may call (each agent declares its own allowlist; undeclared tools are
+      refused): <code>fs.*</code> read/search/glob/write/edit (writes sandboxed to your invocation
+      directory) · <code>sys.run</code> (through the guard, output capped) · <code>web/net/http</code>
+      (SSRF-guarded, off with <code>[ai] network=false</code>) · <code>git.*</code> ·
+      <code>memory.*</code> · <code>todo.*</code> · <code>task.run</code> (parallel read-only
+      sub-agents) · <code>data/queue/store</code> · clipboard, clock, codecs and diagnostics.</p>
+
+    <h2 id="security">Security</h2>
+    <p><b>The AI proposes, the guard disposes.</b></p>
+    <ul>
+      <li><b>Command guard</b> — three regex tiers, <b>deny &gt; confirm &gt; allow</b>. Defaults deny fork bombs, <code>rm -rf /</code>, <code>mkfs</code>, raw disk writes; confirm <code>sudo</code>, force-pushes, <code>rm -rf</code>, <code>curl | sh</code>. Auto mode additionally runs only a safe-list of read-only commands.</li>
+      <li><b>Redaction</b> — scoped rules (terminal / ai / all) scrub AWS·OpenAI·GitHub·Slack·Google keys, bearer tokens, JWTs, PEM blocks and <code>KEY=value</code> secrets from everything AI-bound. The engine is step-budgeted: a pathological pattern can never hang your terminal.</li>
+      <li><b>Agent confinement</b> — per-agent tool allowlists; file writes sandboxed to the invocation directory; secret-path reads blocked; sub-agents are read-only and cannot re-delegate; agent names and job ids are validated before touching the filesystem.</li>
+      <li><b>Keys</b> — never searched for on your machine; only config/env supply them; request bodies never appear in process argv.</li>
+    </ul>
+
+    <h2 id="logging">Logging</h2>
+    <p>A leveled async diagnostic logger writes one file per day under
+      <code>~/.aiTerminal/logs/</code>, auto-pruned after <code>retention_days</code> (default 7).
+      Default level is <code>error</code> — silence by default. Panics also append to
+      <code>crash.log</code> (rotated at 1&nbsp;MiB), and the event loop drops the offending frame
+      instead of crashing the app.</p>
+
+    <h2 id="architecture">Architecture</h2>
+    <p>A four-layer Rust workspace — <code>corelib &lt; platform &lt; framework &lt; app</code> —
+      with three CI gates: <b>zero external crates</b> in the lockfile, strict layer edges, and
+      <code>unsafe</code> confined to <code>platform/src/os/</code> (every other crate root forbids
+      it). ~34k lines of Rust, 507 hermetic tests (all AI mocked, no network, temp homes).</p>
+    <p>The performance model: the event loop <b>idles</b> (~0% CPU, one wake per real change,
+      renders paced to 60&nbsp;Hz and damage-tracked to the GPU); every stream, subprocess and
+      transcript carries a named byte cap with an over-cap regression test; every deadline kills
+      its child; the regex engine is step-budgeted; a panic degrades to one dropped frame.</p>
+
+    <div class="callout" style="margin-top:40px"><b>Want the deep details?</b> The repo's
+      <code>docs/</code> folder carries the full engineering documentation — architecture,
+      per-cap performance model, testing policy, packaging.
+      <a href="https://github.com/mourad-ghafiri/aiTerminal" target="_blank" rel="noopener">Read it on GitHub →</a></div>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap foot">
+    <div class="brand"><img src="assets/icon.png" alt="">aiTerminal</div>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="use-cases.html">Use cases</a>
+      <a href="https://github.com/mourad-ghafiri/aiTerminal" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="js/main.js"></script>
+</body>
+</html>

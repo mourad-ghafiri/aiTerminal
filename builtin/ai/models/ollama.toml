@@ -1,0 +1,11 @@
+name        = "Ollama (local)"
+description = "Local OpenAI-compatible models served by Ollama on localhost."
+kind        = "openai"
+api_key_env = "OPENAI_API_KEY"
+base_url    = "http://localhost:11434/v1/chat/completions"
+
+[models.llama3]
+temperature    = 0.7
+max_tokens     = 8000
+context_window = 128000
+enable_tools   = true

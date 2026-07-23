@@ -1,0 +1,168 @@
+# The DEFAULT keymap — the engine's built-in window-chrome bindings (macOS / iTerm
+# style, Cmd-led). This file IS the default keymap: it is embedded in the binary and
+# loaded as the base layer, then plugin keybindings, your ~/.aiTerminal/keymaps/*.toml
+# files, and finally [[keybinding]] in config.toml compose on top (later wins). To CHANGE a default, don't edit this file — override the chord in
+# config.toml or in your own keymap file. Full action list: docs/keybindings.md.
+name = "Default"
+
+# ── Tabs ────────────────────────────────────────────────────────────────────
+[[keybinding]]
+key    = "cmd+t"
+action = "new_tab"
+
+[[keybinding]]
+key    = "cmd+w"
+action = "close_tab"
+
+# Cycle: Ctrl+Tab is the universal, layout-independent convention (browsers, editors).
+# (No brackets — unreachable on AZERTY. Cmd+Shift+←/→ are deliberately NOT bound:
+# they reach the shell as select-to-line-start/end — see the lineedit plugin.)
+[[keybinding]]
+key    = "ctrl+tab"
+action = "next_tab"
+
+[[keybinding]]
+key    = "ctrl+shift+tab"
+action = "prev_tab"
+
+# Quick single-digit jumps; the switcher (Cmd+P / Cmd+K) reaches tab 10+.
+[[keybinding]]
+key    = "cmd+1"
+action = "go_to_tab_1"
+
+[[keybinding]]
+key    = "cmd+2"
+action = "go_to_tab_2"
+
+[[keybinding]]
+key    = "cmd+3"
+action = "go_to_tab_3"
+
+[[keybinding]]
+key    = "cmd+4"
+action = "go_to_tab_4"
+
+[[keybinding]]
+key    = "cmd+5"
+action = "go_to_tab_5"
+
+[[keybinding]]
+key    = "cmd+6"
+action = "go_to_tab_6"
+
+[[keybinding]]
+key    = "cmd+7"
+action = "go_to_tab_7"
+
+[[keybinding]]
+key    = "cmd+8"
+action = "go_to_tab_8"
+
+[[keybinding]]
+key    = "cmd+9"
+action = "go_to_tab_9"
+
+# The tab quick-switcher: Cmd+P (jump-to) and Cmd+K both raise it.
+[[keybinding]]
+key    = "cmd+p"
+action = "tab_switcher"
+
+[[keybinding]]
+key    = "cmd+k"
+action = "tab_switcher"
+
+# ── Splits / panes ──────────────────────────────────────────────────────────
+[[keybinding]]
+key    = "cmd+d"
+action = "split_right"
+
+[[keybinding]]
+key    = "cmd+shift+d"
+action = "split_down"
+
+[[keybinding]]
+key    = "cmd+shift+w"
+action = "close_pane"
+
+[[keybinding]]
+key    = "cmd+alt+left"
+action = "focus_left"
+
+[[keybinding]]
+key    = "cmd+alt+right"
+action = "focus_right"
+
+[[keybinding]]
+key    = "cmd+alt+up"
+action = "focus_up"
+
+[[keybinding]]
+key    = "cmd+alt+down"
+action = "focus_down"
+
+[[keybinding]]
+key    = "cmd+enter"
+action = "zoom_pane"
+
+# ── Clipboard ───────────────────────────────────────────────────────────────
+[[keybinding]]
+key    = "cmd+c"
+action = "copy"
+
+[[keybinding]]
+key    = "cmd+v"
+action = "paste"
+
+# ── Zoom (per selected split) ───────────────────────────────────────────────
+# Both plain and Shift forms of =/- map here, so Cmd-Plus (Shift+= on most layouts) and
+# Cmd-Equal behave identically.
+[[keybinding]]
+key    = "cmd+equal"
+action = "zoom_in_pane"
+
+[[keybinding]]
+key    = "cmd+shift+equal"
+action = "zoom_in_pane"
+
+[[keybinding]]
+key    = "cmd+minus"
+action = "zoom_out_pane"
+
+[[keybinding]]
+key    = "cmd+shift+minus"
+action = "zoom_out_pane"
+
+[[keybinding]]
+key    = "cmd+0"
+action = "reset_zoom"
+
+# ── Config ──────────────────────────────────────────────────────────────────
+[[keybinding]]
+key    = "cmd+comma"
+action = "reload_config"
+
+# ── Scrollback / document scroll (the Shift family) ─────────────────────────
+# Plain keys still reach the shell, vim, less, and focused inputs.
+[[keybinding]]
+key    = "shift+pageup"
+action = "scroll_page_up"
+
+[[keybinding]]
+key    = "shift+pagedown"
+action = "scroll_page_down"
+
+[[keybinding]]
+key    = "shift+up"
+action = "scroll_line_up"
+
+[[keybinding]]
+key    = "shift+down"
+action = "scroll_line_down"
+
+[[keybinding]]
+key    = "shift+home"
+action = "scroll_top"
+
+[[keybinding]]
+key    = "shift+end"
+action = "scroll_bottom"

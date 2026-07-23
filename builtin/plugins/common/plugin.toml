@@ -1,0 +1,64 @@
+# Universal quality-of-life aliases that almost everyone wants — safe, cross-platform
+# (macOS + Linux), and unsurprising. Richer, command-specific packs live in their own
+# plugins (git, dir, …); this is the baseline everybody benefits from.
+name = "common"
+version = "1.2.0"
+description = "Universal quality-of-life aliases + pipe shortcuts (zsh global aliases)"
+author = "aiTerminal"
+
+[aliases]
+# safer, friendlier defaults for the everyday core tools
+grep = "grep --color=auto"
+egrep = "egrep --color=auto"
+fgrep = "fgrep --color=auto"
+diff = "diff --color=auto"
+mv = "mv -i"
+cp = "cp -i"
+ln = "ln -i"
+mkdir = "mkdir -p"
+df = "df -h"
+du = "du -h"
+
+# shell quick-wins
+h = "history"
+c = "clear"
+cls = "clear"
+path = "echo $PATH"
+reload = "exec $SHELL -l"
+e = "${EDITOR:-vi}"
+
+# everyday helpers
+usage = "du -sh *"           # size of each item in the current dir
+ports = "lsof -i -P -n"      # open/listening sockets
+psg = "ps aux | grep -v grep | grep -i"   # find a process: psg <name>
+serve = "python3 -m http.server"          # quick static file server in cwd
+myip = "curl -s https://ifconfig.me"      # your public IP
+now = 'date +"%Y-%m-%d %H:%M:%S"'
+week = "date +%V"            # ISO week number
+epoch = "date +%s"           # unix timestamp
+histg = "history | grep -i"  # search your command history: histg <text>
+sortsize = "du -sh * | sort -h"   # items in cwd, smallest → largest
+dud = "du -d 1 -h"           # size of each immediate subdirectory
+biggest = "du -ah . | sort -rh | head -20"   # the 20 largest files/dirs below cwd
+localip = "ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}'"
+timestamp = "date +%s"       # alias of epoch, common name
+weekday = "date +%A"
+mkdirv = "mkdir -pv"
+cpv = "cp -iv"
+mvv = "mv -iv"
+rmrf = "rm -rf"
+chux = "chmod u+x"
+pubkey = "cat ~/.ssh/id_ed25519.pub 2>/dev/null || cat ~/.ssh/id_rsa.pub 2>/dev/null"
+hgrep = "history | grep -i"  # alternative name for history search
+
+[[abbr]]
+trigger = "please"
+expansion = "sudo "
+
+# Tab-completion for the terminal's own CLI — declarative, so zsh completes
+# `aiTerminal <Tab>` without any hand-written completer (the completion plugin turns
+# this data into a compdef). The model is flat: top-level subcommands + flags.
+[[completion]]
+command = "aiTerminal"
+subcommands = ["plugin", "config", "theme", "profile", "ai"]
+flags = ["--command", "--agent", "--flow", "--loop", "--check", "--max", "--budget", "--bg"]

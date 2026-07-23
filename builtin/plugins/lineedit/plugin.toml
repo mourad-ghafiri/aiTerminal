@@ -1,0 +1,5 @@
+# macOS-style command-line navigation & selection. A shell-snippet plugin (zsh).
+name        = "lineedit"
+version     = "1.0.0"
+description = "Native-feel command editing — ⌥/⌘+arrows jump by word/line, ⇧+arrows select, typing replaces the selection (zsh)"
+author      = "aiTerminal"

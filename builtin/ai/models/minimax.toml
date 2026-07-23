@@ -1,0 +1,17 @@
+name        = "MiniMax"
+description = "MiniMax models via the OpenAI-compatible chat-completions endpoint."
+kind        = "minimax"
+api_key_env = "MINIMAX_API_KEY"
+base_url    = "https://api.minimaxi.chat/v1/text/chatcompletion_v2"
+
+[models."MiniMax-Text-01"]
+temperature    = 0.7
+max_tokens     = 8000
+context_window = 1000000
+enable_tools   = true
+
+[models."abab6.5s-chat"]
+temperature    = 0.7
+max_tokens     = 8000
+context_window = 245000
+enable_tools   = true

@@ -1,0 +1,67 @@
+# command-guard — the default command-safety policy, shipped as a plugin.
+#
+# The guard MECHANISM is native (framework::security, over the regex engine);
+# this plugin supplies the default RULES as declarative data. Plugins can only
+# ADD restrictions, and `deny` always wins over `confirm` over `allow`. Disable
+# or edit this plugin to change the defaults; user config can add more rules.
+name = "command-guard"
+version = "1.0.0"
+description = "Default command-safety rules: deny catastrophic commands, confirm risky ones."
+author = "aiTerminal"
+
+[[deny_command]]
+pattern = ":\\(\\)\\s*\\{\\s*:\\|:"
+# rm -rf / (and -fr /) at the filesystem root
+[[deny_command]]
+pattern = "rm\\s+-[rf]+\\s+/(\\s|$)"
+# Reformat a filesystem
+[[deny_command]]
+pattern = "\\bmkfs\\b"
+# Raw write to a block device
+[[deny_command]]
+pattern = "dd\\s+.*of=/dev/"
+[[deny_command]]
+pattern = ">\\s*/dev/sd"
+
+# --- Risky: require confirmation (blocked in non-interactive agent paths) ---
+[[confirm_command]]
+pattern = "\\bsudo\\b"
+[[confirm_command]]
+pattern = "git\\s+push\\s+.*--force"
+[[confirm_command]]
+pattern = "\\brm\\s+-rf\\b"
+[[confirm_command]]
+pattern = "chmod\\s+-R\\b"
+[[confirm_command]]
+pattern = "curl\\b.*\\|\\s*(sh|bash)"
+
+# --- Auto-pilot SAFE-LIST: the ONLY commands the AI agent auto-runs in Auto mode ---
+# Read-only / inspection / non-mutating dev commands. Anything NOT matched here PROMPTS in
+# Auto mode (deny/confirm above still win). Patterns are `^`-anchored on the program — the
+# guard probes the raw string, the canonical de-quoted argv, AND the program basename, so a
+# basename match (`git`, `cargo`) catches absolute-path invocations too. Add your own with
+# `[security] auto_safe_commands` in config.toml. A `|` after the program restricts to safe
+# subcommands (e.g. `git status|log`, never `git push`).
+
+# Plain inspection utilities (no flags can make these mutate state).
+[[safe_command]]
+pattern = "^(ls|pwd|cat|head|tail|wc|echo|printf|which|whoami|hostname|id|uname|date|env|printenv|tree|file|stat|basename|dirname|realpath|readlink|du|df|ps|top|uptime|sysctl)\\b"
+# Search/read tools (read-only; `find` is excluded — it can `-delete`/`-exec`).
+[[safe_command]]
+pattern = "^(grep|egrep|fgrep|rg|ag|ack|sort|uniq|cut|column|nl|tac|diff|cmp|sha256sum|md5sum|cksum|less|more|jq|yq)\\b"
+# git — read-only subcommands only (status/log/diff/show/branch/remote/blame/...).
+[[safe_command]]
+pattern = "^git\\s+(status|log|diff|show|branch|remote|blame|describe|rev-parse|ls-files|ls-tree|cat-file|shortlog|tag\\s*$|config\\s+--get|config\\s+--list|config\\s+-l)\\b"
+# Rust — non-mutating cargo subcommands (no `install`/`publish`/`add`/`run`).
+[[safe_command]]
+pattern = "^cargo\\s+(check|test|build|clippy|fmt|tree|metadata|doc|bench|version|--version)\\b"
+# Node/JS — the test/lint/build scripts (no `install`/`add`/`publish`/`exec`).
+[[safe_command]]
+pattern = "^(npm|pnpm|yarn)\\s+(test|run|lint|ls|list|why|outdated|--version|-v)\\b"
+# Other language toolchains — read/test/build verbs only.
+[[safe_command]]
+pattern = "^(python3?|node|deno|go|ruby|java|javac|tsc|make)\\s+(--version|-v|version)\\b"
+[[safe_command]]
+pattern = "^go\\s+(test|build|vet|fmt|list|version|env)\\b"
+[[safe_command]]
+pattern = "^python3?\\s+-m\\s+(pytest|unittest)\\b"

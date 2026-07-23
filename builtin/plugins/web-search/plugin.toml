@@ -1,0 +1,7 @@
+# Search the web from the prompt: `google rust traits`, `ddg`, `so` (Stack Overflow),
+# `ghs` (GitHub), `yt` (YouTube), `wiki`, `npmjs`, `mdn`. Opens your browser at
+# the results. Many engines, one cross-platform opener.
+name        = "web-search"
+version     = "1.1.0"
+description = "Search 18 engines from the shell — Google/DuckDuckGo/Brave/Bing, Stack Overflow/GitHub/MDN, npm/PyPI/crates, Reddit/YouTube/Wikipedia, Maps/Translate and more"
+author      = "aiTerminal"

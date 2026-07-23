@@ -1,0 +1,9 @@
+# Real-time command-line syntax highlighting (zsh) — from scratch, no external highlighter.
+# As you type, the command turns green when it's a real command and red when it isn't, while
+# quoted strings, flags, and operators are tinted with the active theme. No external
+# dependency (truecolor from your theme; coexists with
+# autosuggest by re-applying its dim suggestion after rebuilding).
+name        = "syntax-highlight"
+version     = "1.0.0"
+description = "Color the command line as you type: valid vs unknown command, strings, flags, operators"
+author      = "aiTerminal"

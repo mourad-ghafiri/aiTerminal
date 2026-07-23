@@ -1,0 +1,6 @@
+# Weather at the prompt (`weather` / `weather London`), via wttr.in. Deliberately
+# NO status segment — the prompt must never wait on the network.
+name        = "weather"
+version     = "1.0.0"
+description = "Current weather from the shell (`weather <city>`)"
+author      = "aiTerminal"

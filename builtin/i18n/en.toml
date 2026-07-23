@@ -1,0 +1,41 @@
+# English — the base locale. Keys are referenced from the code via
+# `i18n::translate("section.key")`; missing keys fall back to this file, then to
+# the key string itself. Add a locale by dropping `i18n/<locale>.toml` here (the
+# CI parity test requires it to define exactly this key set). Select with
+# `[appearance] locale` in config.toml (per-profile overridable).
+
+[term]
+# The word used in tab titles when no program set its own: "Terminal [dir][zsh]".
+title = "Terminal"
+
+[switcher]
+# The quick-switcher's empty-filter placeholder.
+placeholder = "type a number or name…"
+
+[profile]
+list_header = "profiles in {0} ({1}):"
+switch_hint = "switch:  @profile <id>   ·  settings:  @profile edit   (a running window follows live)"
+switched = "switched to profile '{0}' — a running window applies it within a second"
+
+[job]
+header = "background jobs ({0}):"
+none = "no jobs yet — run one:  @job <task> [--agent <name>] [--bg]"
+cleared = "cleared {0} finished job(s)"
+
+[flow]
+header = "flows ({0}):"
+none = "no flows — add a .toml under {0}"
+run_hint = "run one:  @flow <name> \"<input>\"   ·  monitor background runs:  @job"
+
+[theme]
+switched = "theme '{0}' applied to profile '{1}' — a running window restyles within a second"
+unknown = "no theme named '{0}'. available: {1}"
+switch_hint = "switch:  @theme <name>   ·  export a reference:  @theme export <name>"
+
+[loop]
+start = "loop '{0}' — up to {1} iteration(s)"
+iteration = "iteration {0}/{1}"
+done = "goal reached after {0} iteration(s)"
+stalled = "stopped: no progress between iterations (same verifier output twice)"
+exhausted = "stopped: iteration limit reached without passing the check"
+budget = "stopped: token budget exhausted"

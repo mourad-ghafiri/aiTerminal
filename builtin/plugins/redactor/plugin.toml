@@ -1,0 +1,48 @@
+# redactor — the default secret-redaction policy, shipped as a plugin.
+#
+# The redaction MECHANISM is native (framework::security); this plugin supplies
+# the default RULES. They are scoped to `ai` (applied to context + tool results
+# before anything leaves for a model) — the single source of secret redaction on
+# egress. Add `scope = "terminal"` rules to also mask secrets in the display, or
+# `scope = "all"`. Disable or edit this plugin to change the defaults.
+name = "redactor"
+version = "1.0.0"
+description = "Default secret-redaction rules applied before AI egress."
+author = "aiTerminal"
+
+# AWS access key id
+[[redact]]
+pattern = "AKIA[0-9A-Z]{16}"
+scope = "ai"
+# OpenAI / Anthropic-style keys
+[[redact]]
+pattern = "sk-[A-Za-z0-9_-]{16,}"
+scope = "ai"
+# GitHub tokens (ghp_/gho_/ghu_/ghs_/ghr_)
+[[redact]]
+pattern = "gh[pousr]_[A-Za-z0-9]{20,}"
+scope = "ai"
+# Slack tokens
+[[redact]]
+pattern = "xox[abps]-[A-Za-z0-9-]{8,}"
+scope = "ai"
+# Google API keys
+[[redact]]
+pattern = "AIza[A-Za-z0-9_-]{20,}"
+scope = "ai"
+# Bearer / Authorization tokens
+[[redact]]
+pattern = "(?i)bearer\\s+[A-Za-z0-9._~+/-]+=*"
+scope = "ai"
+# JWTs (header.payload.signature)
+[[redact]]
+pattern = "eyJ[A-Za-z0-9_-]+\\.eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"
+scope = "ai"
+# KEY=VALUE / KEY: VALUE where the key looks sensitive
+[[redact]]
+pattern = "(?i)(api[_-]?key|access[_-]?key|client[_-]?secret|token|secret|password|passwd|credential|auth)[\"']?\\s*[:=]\\s*\\S+"
+scope = "ai"
+# PEM private-key block (multi-line) — e.g. an SSH/TLS key that surfaced in tool output
+[[redact]]
+pattern = "-----BEGIN[A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END[A-Z ]*-----"
+scope = "ai"

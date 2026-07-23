@@ -1,0 +1,25 @@
+name        = "OpenAI"
+description = "OpenAI's models via the Chat Completions API."
+kind        = "openai"
+api_key_env = "OPENAI_API_KEY"
+base_url    = "https://api.openai.com/v1/chat/completions"
+
+[models.gpt-4o]
+temperature     = 0.7
+top_p           = 0.95
+max_tokens      = 16000
+context_window  = 128000
+enable_vision   = true
+enable_document = true
+enable_tools    = true
+price_in        = 2.5
+price_out       = 10.0
+
+[models.gpt-4o-mini]
+temperature     = 0.7
+max_tokens      = 16000
+context_window  = 128000
+enable_vision   = true
+enable_tools    = true
+price_in        = 0.15
+price_out       = 0.6

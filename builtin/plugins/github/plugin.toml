@@ -1,0 +1,56 @@
+# GitHub CLI (gh): pull-request / issue / repo shortcuts and completions —
+# pure data over the declarative SDK.
+name        = "github"
+version     = "1.1.0"
+description = "GitHub CLI mastery: PRs, issues, repos, runs, gists, codespaces — aliases, a clone-and-cd helper, completions"
+author      = "aiTerminal"
+
+[aliases]
+ghpr   = "gh pr"
+ghprc  = "gh pr create"
+ghprv  = "gh pr view"
+ghprl  = "gh pr list"
+ghprc  = "gh pr create --web"
+ghweb  = "gh repo view --web"
+ghprco = "gh pr checkout"
+ghprm  = "gh pr merge"
+ghis   = "gh issue"
+ghisc  = "gh issue create"
+ghisl  = "gh issue list"
+ghrepo = "gh repo"
+ghrv   = "gh repo view --web"
+ghrl   = "gh run list"
+ghrw   = "gh run watch"
+ghd    = "gh dash"
+# pull requests — more
+ghprd  = "gh pr diff"
+ghprs  = "gh pr status"
+ghprch = "gh pr checks"
+ghprr  = "gh pr review"
+ghpro  = "gh pr checkout"
+ghprw  = "gh pr view --web"
+# issues — more
+ghisv  = "gh issue view"
+ghisw  = "gh issue view --web"
+# repo — more
+ghrc   = "gh repo clone"
+ghrf   = "gh repo fork"
+ghrcr  = "gh repo create"
+# runs / workflow
+ghrv2  = "gh run view"
+ghwf   = "gh workflow"
+ghwr   = "gh workflow run"
+# gist / codespace / auth / misc
+ghg    = "gh gist"
+ghgc   = "gh gist create"
+ghce   = "gh codespace"
+ghcl   = "gh codespace list"
+ghauth = "gh auth status"
+ghal   = "gh alias list"
+ghapi  = "gh api"
+ghbr   = "gh browse"
+
+[[completion]]
+command = "gh"
+subcommands = ["pr", "issue", "repo", "run", "release", "gist", "auth", "browse", "api", "workflow", "label", "search"]
+flags = ["--web", "--help", "--repo", "--json"]

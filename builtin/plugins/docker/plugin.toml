@@ -1,0 +1,78 @@
+# Docker + Compose: the aliases you reach for daily, with completions.
+# No daemon-polling status segment by default — a hung/absent daemon must never
+# slow your prompt; use `dps` instead. Covers Docker and Compose.
+name        = "docker"
+version     = "1.1.0"
+description = "Docker & Compose mastery: container/image/network/volume verbs, exec-into-shell, compose — aliases + completions"
+author      = "aiTerminal"
+
+[aliases]
+d      = "docker"
+dps    = "docker ps"
+dpsa   = "docker ps -a"
+di     = "docker images"
+dex    = "docker exec -it"
+dlog   = "docker logs -f"
+drm    = "docker rm"
+drmi   = "docker rmi"
+dstop  = "docker stop"
+dstart = "docker start"
+dbuild = "docker build"
+dpull  = "docker pull"
+dprune = "docker system prune -af"
+dstats = "docker stats"
+dstopall = "docker stop $(docker ps -q)"
+dc     = "docker compose"
+dcu    = "docker compose up -d"
+dcd    = "docker compose down"
+dcl    = "docker compose logs -f"
+dcb    = "docker compose build"
+dcr    = "docker compose restart"
+# container management
+dcls   = "docker container ls"
+dclsa  = "docker container ls -a"
+dcin   = "docker container inspect"
+dlo    = "docker container logs"
+dxc    = "docker container exec"
+dxcit  = "docker container exec -it"
+dr     = "docker container run"
+drit   = "docker container run -it"
+drmf   = "docker rm -f"
+drs    = "docker container restart"
+dpo    = "docker container port"
+dcprune = "docker container prune"
+dsts   = "docker stats"
+dtop   = "docker top"
+dsta   = "docker stop $(docker ps -q)"
+# images
+dils   = "docker image ls"
+dib    = "docker image build"
+dipu   = "docker image push"
+dirm   = "docker image rm"
+dit    = "docker image tag"
+dipru  = "docker image prune -a"
+# networks
+dnls   = "docker network ls"
+dnc    = "docker network create"
+dni    = "docker network inspect"
+dnrm   = "docker network rm"
+dnprune = "docker network prune"
+# volumes
+dvls   = "docker volume ls"
+dvi    = "docker volume inspect"
+dvprune = "docker volume prune"
+# system
+dsprune = "docker system prune"
+# compose extras
+dcps    = "docker compose ps"
+dcrun   = "docker compose run --rm"
+dce     = "docker compose exec"
+dcpull  = "docker compose pull"
+dcstop  = "docker compose stop"
+dcstart = "docker compose start"
+dck     = "docker compose kill"
+
+[[completion]]
+command = "docker"
+subcommands = ["run", "ps", "images", "exec", "logs", "build", "pull", "push", "rm", "rmi", "stop", "start", "restart", "compose", "system", "network", "volume", "container", "image", "inspect", "tag", "stats", "top", "cp", "commit", "save", "load"]
+flags = ["-it", "-d", "--rm", "-p", "-v", "--name", "-e", "-f", "-a", "--all"]

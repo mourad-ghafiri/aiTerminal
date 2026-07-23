@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    name: build + test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+      - name: Test
+        run: cargo test --workspace
+
+      # The load-bearing invariant: no third-party crates may enter the build,
+      # directly or transitively.
+      - name: Zero-crate gate
+        shell: bash
+        run: sh tools/check_no_crates.sh Cargo.lock
+
+      # Strict layered architecture: every cross-layer dependency must be the
+      # immediately-lower facade (core < platform < ai < framework < app).
+      - name: Layer gate
+        shell: bash
+        run: bash tools/check_layers.sh

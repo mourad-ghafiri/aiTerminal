@@ -1,0 +1,10 @@
+# An i18n override file. Install to ~/.aiTerminal/i18n/en.toml (or any locale) —
+# installed files layer OVER the bundled builtin/i18n/<locale>.toml per key, so a
+# partial file is fine. Select the locale with `[appearance] locale` (globally or
+# per profile). Keys are the dotted section.key form below.
+
+[switcher]
+placeholder = "jump to…"
+
+[term]
+title = "Shell"

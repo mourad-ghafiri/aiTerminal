@@ -1,0 +1,6 @@
+# Intelligent tab-completion. A shell-snippet plugin: the engine sources its shell.zsh.
+# Disable/remove in Management to turn completion off.
+name        = "completion"
+version     = "1.0.0"
+description = "Intelligent tab-completion — your aliases complete like the real command"
+author      = "aiTerminal"

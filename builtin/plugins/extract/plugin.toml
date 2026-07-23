@@ -1,0 +1,6 @@
+# Universal archive handling: `x <archive>...` extracts almost any format by extension, and
+# `pack <archive> <files>...` creates one. It also packs, takes multiple files, and covers zstd/7z/rar.
+name        = "extract"
+version     = "1.1.0"
+description = "Extract any archive with `x` (-r remove, -t <dir>), create one with `pack` — tar/zip/gz/bz2/xz/zst/lz4/lzma/7z/rar/deb/rpm/cpio/cab and more"
+author      = "aiTerminal"

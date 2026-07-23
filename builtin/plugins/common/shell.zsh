@@ -1,0 +1,16 @@
+# Pipe shortcuts as zsh GLOBAL aliases — expand anywhere on the line, not just at its head.
+# e.g. `ls -la G conf` == `ls -la | grep conf`. (Global aliases are a zsh feature; bash has none.)
+alias -g G='| grep'
+alias -g GI='| grep -i'
+alias -g GV='| grep -v'
+alias -g L='| less'
+alias -g H='| head'
+alias -g T='| tail'
+alias -g C='| wc -l'
+alias -g S='| sort'
+alias -g SU='| sort -u'
+alias -g SN='| sort -n'
+alias -g J='| jq .'
+alias -g NE='2>/dev/null'
+alias -g NUL='>/dev/null 2>&1'
+alias -g X='| xargs'

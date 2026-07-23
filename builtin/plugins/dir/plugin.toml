@@ -1,0 +1,26 @@
+# Directory navigation essentials: the cwd status segment, nav aliases, plus a shell
+# snippet adding directory HISTORY (Alt-←/→ walk where you've been, Alt-↑ goes up) and
+# mkcd/take (create a directory and step into it). Directory history + take, in one plugin.
+name = "dir"
+version = "1.1.0"
+description = "Working-directory segment, navigation aliases, dir-history keys, and mkcd/take"
+author = "aiTerminal"
+
+[[segment]]
+align = "left"
+template = "📁 {cwd.short}"
+fg = "accent"
+
+[aliases]
+".." = "cd .."
+"..." = "cd ../.."
+"...." = "cd ../../.."
+"....." = "cd ../../../.."
+ll = "ls -lah"
+la = "ls -A"
+l = "ls -CF"
+ld = "ls -d */"
+md = "mkdir -p"
+rd = "rmdir"
+dl = "cd ~/Downloads"
+dt = "cd ~/Desktop"

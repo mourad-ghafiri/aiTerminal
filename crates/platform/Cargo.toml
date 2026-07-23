@@ -1,0 +1,18 @@
+# Platform layer — one crate. The OS seam (`traits`), the macOS FFI (`os`, the one
+# module with `unsafe`), the render engines (`term`/`md`/`diagram`), egress
+# (`transport`/`rpc`), and the AI-agnostic services (`jobs`/`sched`/`orchestrator`),
+# all as internal modules. No facade, no re-exports; depends only on `corelib`.
+[package]
+name = "platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Exposes the offline `testkit` mocks to downstream test builds (dev-deps enable it).
+testkit = []
+
+[dependencies]
+corelib = { path = "../corelib" }

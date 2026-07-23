@@ -1,0 +1,35 @@
+name        = "OpenRouter"
+description = "One key, many models — OpenRouter's OpenAI-compatible gateway."
+kind        = "openrouter"
+api_key_env = "OPENROUTER_API_KEY"
+base_url    = "https://openrouter.ai/api/v1/chat/completions"
+
+[models."anthropic/claude-3.5-sonnet"]
+temperature     = 0.7
+max_tokens      = 8000
+context_window  = 200000
+enable_vision   = true
+enable_tools    = true
+price_in        = 3.0
+price_out       = 15.0
+
+[models."openai/gpt-4o"]
+temperature    = 0.7
+max_tokens     = 8000
+context_window = 128000
+enable_vision  = true
+enable_tools   = true
+price_in       = 2.5
+price_out      = 10.0
+
+[models."meta-llama/llama-3.1-70b-instruct"]
+temperature    = 0.7
+max_tokens     = 8000
+context_window = 131072
+enable_tools   = true
+
+[models."deepseek/deepseek-chat"]
+temperature    = 0.7
+max_tokens     = 8000
+context_window = 64000
+enable_tools   = true

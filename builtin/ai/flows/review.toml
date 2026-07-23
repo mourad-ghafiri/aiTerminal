@@ -1,0 +1,15 @@
+# A multi-step AI workflow, run from the terminal:  @flow review "<what to review>"
+# Each [[step]] is a full agent run; with `chain = true` every step sees the
+# previous steps' answers, so later agents build on earlier ones.
+description = "Explore the relevant code, then review it"
+chain = true
+
+[[step]]
+label  = "map"
+agent  = "explorer"
+prompt = "Map the code relevant to: {{input}}. List the key files and how they relate."
+
+[[step]]
+label  = "review"
+agent  = "reviewer"
+prompt = "Using the map above, review the code for: {{input}}. Report concrete findings with file:line references."

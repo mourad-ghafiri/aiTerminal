@@ -1,0 +1,51 @@
+# An example declarative plugin — pure DATA plus an optional shell snippet.
+#
+# Install:  copy this folder to ~/.aiTerminal/plugins/hello/  and restart
+# (or `@plugin enable hello`). Disable with `@plugin disable hello` or
+# `[plugins] disabled = ["hello"]` in config.toml.
+
+name        = "hello"
+version     = "1.0.0"
+description = "Example: segment, aliases, abbreviation, completion, guard + redaction rules"
+author      = "you"
+
+# ---- a status-bar segment -------------------------------------------------
+# `[[var]]` derives data declaratively (literal / file / exec / when_path);
+# `[[segment]]` renders it with theme-role colors (never hard-coded hex).
+[[var]]
+id      = "hello.mark"
+literal = "✦"
+
+[[segment]]
+align    = "right"
+template = "{hello.mark} hello"
+fg       = "accent"
+
+# ---- shell aliases + an expand-on-space abbreviation ----------------------
+[aliases]
+hi  = "echo hello from the hello plugin"
+lsa = "ls -la"
+
+[[abbr]]
+name  = "gcm"
+value = "git commit -m "
+
+# ---- declarative tab-completion for any command ---------------------------
+[[completion]]
+command     = "hello-tool"
+subcommands = ["build", "test", "ship"]
+flags       = ["--verbose", "--dry-run"]
+
+# ---- a keybinding contribution (any built-in action name) -----------------
+[[keybinding]]
+key    = "cmd+alt+t"
+action = "cycle_tab_bar"
+
+# ---- security contributions (plugins can only ADD restrictions) -----------
+[[confirm_command]]
+pattern = "\\bhello-tool\\s+ship\\b"      # ask before shipping
+
+[[redact]]
+pattern     = "HELLO_TOKEN=\\S+"
+replacement = "HELLO_TOKEN=«hidden»"
+scope       = "ai"                         # masked before anything reaches a model

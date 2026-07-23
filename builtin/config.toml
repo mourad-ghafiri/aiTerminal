@@ -1,0 +1,176 @@
+# aiTerminal — configuration (TOML)
+# Edit and reload live with Cmd-, (or restart). Missing keys use defaults.
+# Seeded into ~/.aiTerminal/config.toml on first run; yours is never overwritten.
+#
+# This is the GLOBAL config. A PROFILE can override any of these keys for itself: each
+# profile keeps a config.toml under ~/.aiTerminal/profiles/<id>/ that layers on top of this
+# file (theme, ai, plugins, keymaps, security…). Manage profiles from the terminal with
+# `@profile` (list/create/rename/delete/switch) — each profile also remembers its own
+# tabs/splits (workspace). See docs/configuration.md.
+
+[appearance]
+# The theme collection (semantic colors over neutral chrome): midnight (default),
+# graphite, alpine, deep-purple, pink, product-red, gold, sunset, cosmic-orange, sage,
+# lavender, mist-blue, sky-blue (light), light-gold (light), titanium, solar-flare,
+# nebula, coral, starlight (light) — or a custom themes/<name>.toml
+theme       = "midnight"
+locale      = "en"         # language for the terminal's own strings — an i18n/<locale>.toml
+                           # (en + fr ship in builtin/i18n; add your own file to override)
+font_family = "Menlo"      # any installed monospace font
+font_size   = 15           # base point size
+cursor_style = "block"     # block (classic filled cell) | bar (thin caret) | underline
+
+[behavior]
+zoom       = 1.0           # default zoom multiplier (per split, adjust with Cmd +/-)
+tab_bar    = "top"         # top | bottom (horizontal) · left/vertical | right (vertical)
+                           # — or cycle live with Cmd-Alt-T
+shell      = ""            # leave empty to use $SHELL
+scrollback = 10000         # terminal history lines kept for scrollback (Shift+PageUp/↑/
+                           # Home scroll up; the mouse wheel scrolls too; typing snaps
+                           # back to the live bottom)
+
+# Custom keybindings — rebind any built-in action (snake_case; full list of action
+# names in docs/keybindings.md). Uncomment and add [[keybinding]] tables:
+# [[keybinding]]
+# key    = "cmd+shift+x"   # chord: cmd/ctrl/alt/shift + key (matches the keycap on any layout)
+# action = "split_down"    # e.g. split_down, go_to_tab_3, next_tab, tab_switcher
+
+[ai]
+# The AI engine is model- and provider-INDEPENDENT — no vendor is assumed. Models are
+# self-describing: each ai/models/<provider>.toml file declares its provider
+# (kind/base_url/key env) ONCE, then a [models.<id>] table per model with that model's
+# full definition (sampling params, capabilities, context window, pricing). The bundled
+# files (anthropic, openai, openrouter, deepseek, groq, grok, qwen, kimi, minimax,
+# ollama, lmstudio, local) are a reference catalog — pick ANY of them, or any provider.
+#
+# ── Quick start: enable @ai / @<agent> (no model is configured by default) ──────
+# Until you add a model, AI is OFF. To turn it on, uncomment ONE [[ai.model]] and give
+# it a key (set `api_key`, OR leave it empty and export the provider's env var):
+#
+# [[ai.model]]
+# provider = "anthropic"          # any provider (see ai/models/*.toml)
+# id       = "claude-opus-4-8"    # any model that provider serves
+# api_key  = ""                   # this model's key — or export $ANTHROPIC_API_KEY
+#
+# You can name ANY model the provider serves; it need NOT be pre-declared in
+# ai/models/<provider>.toml — just set `provider` (so the engine knows the endpoint +
+# key var) and any `id`.
+
+# ── API keys ──────────────────────────────────────────────────────────────────
+# THREE ways to supply a key, most-specific first:
+#   1. per model     → `api_key` INSIDE a [[ai.model]] table  (best for mixing providers)
+#   2. global        → `[ai] api_key` here  (used for every model without its own key)
+#   3. environment   → leave keys empty + export each provider's var
+#                      (e.g. $ANTHROPIC_API_KEY, $OPENAI_API_KEY, $OPENROUTER_API_KEY)
+# The global key applies to EVERY model with no per-model key, so when mixing providers
+# give each [[ai.model]] its OWN api_key.
+api_key     = ""                    # global key (or leave empty + use per-model / env)
+
+# The fast model (the NL→command translator behind `@ai <request>`). Leave empty and
+# it uses a model FROM YOUR POOL (same provider + key) — never a different provider.
+# Set it to any catalog id to override, e.g. a small/cheap model:
+# fast_model = "<a-small-model-id>"
+
+# ── Multiple models / providers + load balancing ──────────────────────────────
+# Declare MANY [[ai.model]] tables to pool across models (and providers). The config is
+# AUTHORITATIVE — the engine only uses what you declare. Each request picks a model by
+# the [ai.balance] strategy; `weight` sets its share. Example weighted, multi-provider
+# pool — note the PER-MODEL keys:
+#
+# [ai.balance]
+# strategy = "weighted"   # weighted (default) | round_robin | cost | failover
+#
+# [[ai.model]]            # 10% — keep the pricey one rare
+# provider = "anthropic"
+# id       = "claude-opus-4-8"
+# api_key  = "sk-ant-…"
+# weight   = 10
+# temperature = 0.3       # per-model sampling overrides (all optional):
+# top_p       = 0.95      #   top_p / top_k nucleus + top-k sampling
+# top_k       = 40
+# max_tokens  = 8000      #   response cap (clamped 1–200000)
+# thinking    = true      #   force extended thinking on/off (else the catalog cap)
+#
+# [[ai.model]]            # 90% across two OpenRouter models (per-model keys)
+# provider = "openrouter"
+# id       = "deepseek/deepseek-chat"
+# api_key  = "sk-or-v1-…"
+# weight   = 45
+#
+# [[ai.model]]
+# provider = "openrouter"
+# id       = "openai/gpt-4o"
+# api_key  = "sk-or-v1-…"
+# weight   = 45
+#
+# `@ai`, `@<agent>` and `@flow` all draw from this pool per the balance strategy.
+
+# Let `@ai` / agents see your FOCUSED terminal pane's recent session (commands +
+# output, secrets redacted) so they can resolve "it"/"that" — e.g. after `mkdir x`,
+# `@ai go into it` → `cd x`. Default true; set false to send only your request.
+share_terminal_context = true
+
+# Memory — a structured, retrieval-based memory the AI recalls automatically
+# (a from-scratch BM25 ranker; model-agnostic, no DB). Each run the most relevant
+# memories are injected into the AI context, and agents curate their own store via
+# the memory.* tools. Stored as plain Markdown files in ~/.aiTerminal/ai/memory/.
+# Default true (auto-recall on); set false to disable injection — tools still work.
+memory = true
+
+# How a shell `@ai <request>` suggestion is applied:
+#   "manual" (default) — preload the command for review; press Enter (or edit) to run.
+#   "auto"             — run a guard-ALLOWED suggestion immediately. A guard-*confirm*
+#                        command (e.g. `rm -rf`) always drops to review either way, so
+#                        auto can never silently run a risky command.
+mode = "manual"
+
+# Whether AI tools may reach the network (web.read / net.get / http.*). Off → agents
+# get a clear "network is disabled" error instead of egress.
+network = true
+
+[plugins]
+enabled  = true            # master switch for the whole declarative plugin system
+# Every plugin in ~/.aiTerminal/plugins/<name>/plugin.toml loads automatically
+# (the builtins — git, dir, common, … — are seeded here on first run). Their shell
+# aliases (g, gst, ll, ..) + status segments are active when integration is on.
+disabled = []              # turn specific plugins off, e.g. ["git"]
+
+[shell]
+integration = true         # master switch: inject the plugins' aliases + shell snippets
+                           # (completion, autosuggest, history, prompt, alias-hints —
+                           # each a builtin PLUGIN you can disable/remove in Management)
+                           # + theme file-type ls colors. Off → a bare, untouched shell.
+
+[registry]
+# Where the builtin plugins/themes/AI/keymaps are seeded FROM. Empty = auto-resolve
+# a bundled `builtin/` (next to the binary, or the repo in dev). The builtins are
+# seeded into ~/.aiTerminal/ on first run; updates land here.
+dir = ""
+
+[logging]
+# Diagnostic logging to ~/.aiTerminal/logs/ — ONE file per day (logs/YYYY-MM-DD.log),
+# written on a background thread (never blocks the UI) and auto-pruned by age.
+# level: off | error | warn | info | debug | trace   (default: error)
+level          = "error"
+# How many daily log files to keep; older ones are pruned on rollover. 0 = keep all.
+retention_days = 7
+
+[security]
+# Command guard — what AI-suggested commands and agent `sys.run` may run. Patterns are regex.
+# Defaults below (empty) = everything allowed, nothing denied (zero friction).
+#   allowed_commands : OPTIONAL whitelist — enforced only when non-empty.
+#   denied_commands  : ALWAYS enforced, and WINS over the allow-list.
+allowed_commands = []      # e.g. ["^git\\b", "^ls\\b", "^cd\\b"]
+denied_commands  = []      # e.g. ["^sudo\\b"]
+confirm_commands = []      # ask before running, e.g. ["\\bforce\\b"]  (deny > confirm > allow)
+# The AI's Auto-mode SAFE-LIST: the only commands the agent auto-runs un-prompted in Auto
+# mode (anything else prompts). Defaults ship in the `command-guard` plugin; add yours here.
+auto_safe_commands = []    # e.g. ["^docker\\s+ps\\b", "^kubectl\\s+get\\b"]
+
+# Redaction — replace string/regex matches with a placeholder before they are
+# shown or sent. scope = "terminal" | "ai" | "all" (default "all").
+# Add rules as top-level [[redact]] tables, e.g.:
+# [[redact]]
+# pattern     = "token=\\S+"     # regex (or set literal = true for an exact string)
+# replacement = "token=«hidden»"
+# scope       = "ai"             # only redact when sending to the AI

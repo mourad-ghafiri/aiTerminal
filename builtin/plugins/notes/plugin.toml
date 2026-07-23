@@ -1,0 +1,7 @@
+# Quick scratch notes at the shell: `note <text>` appends (timestamped) to a plain
+# notes file, `notes` lists them, `noteclear` wipes them. Pure shell + a text file —
+# grep it, sync it, pipe it.
+name        = "notes"
+version     = "1.0.0"
+description = "Quick `note` capture and to-do helpers at the shell"
+author      = "aiTerminal"
