@@ -1,0 +1,8 @@
+# Frecency directory jumping + named bookmarks. Every directory you visit is scored by
+# frequency × recency; `j foo` jumps to the best-scoring directory whose path matches all
+# the terms you give. Named marks: `mark [name]`, `marks`, `unmark name`, and `j @name`.
+# One plugin: frecency ranking AND explicit marks, zsh + bash.
+name        = "jump"
+version     = "1.0.0"
+description = "Jump to frequently-used directories by name (frecency) plus named bookmarks"
+author      = "aiTerminal"

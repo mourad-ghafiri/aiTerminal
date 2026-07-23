@@ -1,0 +1,7 @@
+# A gentle "there's a shorter alias for that" hint (zsh + bash). Uses the engine-exported
+# TT_ALIAS_BY_HEAD index to suggest the LONGEST alias whose expansion is a token-prefix of
+# whatever you typed — so `git commit -m "msg"` → gcm, regardless of args/quoting.
+name        = "alias-hints"
+version     = "1.0.0"
+description = "Suggests the shortest alias for any command you type — even with args (once per alias)"
+author      = "aiTerminal"

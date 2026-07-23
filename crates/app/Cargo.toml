@@ -1,0 +1,18 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "aiTerminal"
+path = "src/main.rs"
+
+[dependencies]
+# The thin composition root depends on the Framework layer ONLY. The GUI runtime,
+# the headless renderers, and the CLI subcommands all live in `framework`; this
+# crate just parses args and dispatches into framework functions that return plain
+# data (Vec<u8>/String/i32) or framework types — so it names NO corelib/platform path.
+framework = { path = "../framework" }

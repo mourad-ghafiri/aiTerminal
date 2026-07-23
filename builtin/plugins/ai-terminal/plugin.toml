@@ -1,0 +1,14 @@
+# A first-class AI terminal. Type `@ai <request>` to turn natural language into a
+# shell command (reviewed, or auto-run per `[ai] mode`), `@<agent> <task>` to run a
+# named agent (add `--bg` to track it as a job), `@flow <name>` to run a multi-step
+# workflow, `@loop <goal>` to iterate an agent until a verifiable goal is met,
+# `@job` to monitor background runs, and `@profile`/`@config`/`@theme`/
+# `@plugin` to manage the terminal — everything is a command, no settings UI.
+# A guard-confirm command always drops to review; if the AI isn't configured/working
+# the error is shown as a comment (never silence). A shell-snippet plugin: it hooks
+# `command_not_found_handler`, so it ONLY ever fires for an `@`-prefixed line (never
+# a real command) — normal typing, git, vim, less, etc. are completely unaffected.
+name        = "ai-terminal"
+version     = "1.0.0"
+description = "@ai · @<agent> · @flow · @loop · @job · @profile · @config · @theme · @plugin — the terminal command family"
+author      = "aiTerminal"

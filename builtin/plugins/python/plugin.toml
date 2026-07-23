@@ -1,0 +1,75 @@
+# Python toolchain: python / pip / venv / pytest shortcuts, completions,
+# and a status segment (🐍 version) shown only inside a Python project (gated on
+# pyproject.toml, so the version exec never runs elsewhere). `pip` is left untouched so it always resolves to the active environment's pip.
+name        = "python"
+version     = "1.1.0"
+description = "Python toolchain: python/pip/venv/pytest + uv & poetry shortcuts, a __pycache__ cleaner, completions, and a project version segment"
+author      = "aiTerminal"
+
+[[var]]
+id = "py.present"
+when_path = "pyproject.toml"
+literal = "1"
+
+[[var]]
+id = "py.ver"
+when_path = "pyproject.toml"
+exec = "python3 --version 2>&1 | cut -d' ' -f2"
+trim = true
+
+[[segment]]
+align = "left"
+when = "py.present"
+template = "🐍 {py.ver}"
+fg = "accent2"
+
+[aliases]
+py    = "python3"
+pi    = "pip install"
+pir   = "pip install -r requirements.txt"
+pun   = "pip uninstall"
+pf    = "pip freeze"
+pfr   = "pip freeze > requirements.txt"
+venv  = "python3 -m venv .venv"
+mkvenv = "python3 -m venv .venv && source .venv/bin/activate"
+pyt   = "python3 -m pytest"
+act   = "source .venv/bin/activate"
+deact = "deactivate"
+ptest = "python3 -m pytest"
+pym   = "python3 -m"
+# pip — more
+pipu   = "pip install -U"
+pipup  = "pip install -U pip"
+pipl   = "pip list"
+pips   = "pip show"
+pipout = "pip list --outdated"
+pipe   = "pip install -e ."
+# pytest / coverage / tooling
+ptv   = "python3 -m pytest -v"
+ptk   = "python3 -m pytest -k"
+ptw   = "python3 -m pytest --maxfail=1 -q"
+pcov  = "python3 -m pytest --cov"
+pruff = "python3 -m ruff check ."
+pfmt  = "python3 -m black ."
+pmypy = "python3 -m mypy ."
+pserve = "python3 -m http.server"
+pjson  = "python3 -m json.tool"
+# uv (fast resolver) + poetry
+uvs  = "uv sync"
+uvr  = "uv run"
+uva  = "uv add"
+uvrm = "uv remove"
+poi  = "poetry install"
+por  = "poetry run"
+poa  = "poetry add"
+posh = "poetry shell"
+
+[[completion]]
+command = "pip"
+subcommands = ["install", "uninstall", "freeze", "list", "show", "download", "check", "config"]
+flags = ["-r", "--user", "-U", "--upgrade", "-e"]
+
+[[completion]]
+command = "python3"
+subcommands = ["-m"]
+flags = ["-m", "-c", "--version", "-i"]

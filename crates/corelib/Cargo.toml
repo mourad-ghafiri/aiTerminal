@@ -1,0 +1,12 @@
+# Core layer — one crate. Pure, portable, OS-free foundations (wire/gfx/types/
+# theme/unicode) as internal modules. No facade, no re-exports; higher layers
+# name the real module path (`corelib::wire::Json`, …). Depends on nothing.
+[package]
+name = "corelib"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

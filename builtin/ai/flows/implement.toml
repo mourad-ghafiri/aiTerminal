@@ -1,0 +1,21 @@
+# Explore → implement → test, from one terminal command:
+#   @flow implement "add a --verbose flag to the CLI"
+# Run it in the background and monitor it like any job:
+#   @flow implement --bg "…"   ·   @job   ·   tail -f <log>
+description = "Explore the codebase, implement the change, then verify it"
+chain = true
+
+[[step]]
+label  = "explore"
+agent  = "explorer"
+prompt = "Map the code relevant to this change and note the patterns to follow: {{input}}"
+
+[[step]]
+label  = "implement"
+agent  = "coder"
+prompt = "Implement this change, following the map and existing patterns above: {{input}}"
+
+[[step]]
+label  = "verify"
+agent  = "tester"
+prompt = "Verify the change above (build/tests). Report what passed, what failed, and any follow-ups."

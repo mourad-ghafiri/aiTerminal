@@ -1,0 +1,12 @@
+# A user keymap file. Install to ~/.aiTerminal/keymaps/mine.toml — files load
+# sorted, composing over the built-in defaults (later wins); [[keybinding]] in
+# config.toml wins over everything. Full action list: docs/keybindings.md.
+name = "Mine"
+
+[[keybinding]]
+key    = "cmd+shift+enter"
+action = "zoom_pane"
+
+[[keybinding]]
+key    = "ctrl+alt+right"
+action = "next_tab"

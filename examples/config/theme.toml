@@ -1,0 +1,15 @@
+# A minimal custom theme. Install to ~/.aiTerminal/themes/ember.toml, then set
+# `[appearance] theme = "ember"` (globally, or in one profile's overlay).
+# Missing tokens (hover/border shades, ANSI palette, file-type colors) are
+# derived — start minimal, or dump a full reference with:
+#   @theme export midnight > ~/.aiTerminal/themes/ember.toml
+name = "Ember"
+
+bg      = "#1A1412"
+surface = "#241C18"
+fg      = "#F2E5DC"
+muted   = "#8A7A70"
+accent  = "#FF7A45"
+success = "#7DC383"
+warn    = "#E5B567"
+error   = "#E5636F"

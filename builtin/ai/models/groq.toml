@@ -1,0 +1,21 @@
+name        = "Groq"
+description = "Fast OpenAI-compatible inference via the Groq cloud API."
+kind        = "openai"
+api_key_env = "GROQ_API_KEY"
+base_url    = "https://api.groq.com/openai/v1/chat/completions"
+
+[models."llama-3.1-70b-versatile"]
+temperature    = 0.7
+max_tokens     = 8000
+context_window = 131072
+enable_tools   = true
+price_in       = 0.59
+price_out      = 0.79
+
+[models."llama-3.1-8b-instant"]
+temperature    = 0.7
+max_tokens     = 8000
+context_window = 131072
+enable_tools   = true
+price_in       = 0.05
+price_out      = 0.08

@@ -1,0 +1,15 @@
+# A per-profile config overlay. Lives at ~/.aiTerminal/profiles/<id>/config.toml
+# (created automatically by `@profile create`). Only the keys you set here
+# override the global config — everything else is inherited. Applies live when
+# the profile is active (`@profile switch <id>`).
+
+[appearance]
+theme = "graphite"
+
+[behavior]
+tab_bar = "left"
+
+# This profile uses a cheaper model pool than the global one.
+[[ai.model]]
+provider = "openrouter"
+id       = "deepseek/deepseek-chat"

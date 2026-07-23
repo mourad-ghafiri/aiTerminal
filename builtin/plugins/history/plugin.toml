@@ -1,0 +1,5 @@
+# Big, shared, de-duped history + ↑/↓ prefix search. A shell-snippet plugin.
+name        = "history"
+version     = "1.0.0"
+description = "Remembers everything, searchably — type a prefix, ↑ walks matching history"
+author      = "aiTerminal"

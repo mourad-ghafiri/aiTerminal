@@ -1,0 +1,8 @@
+# Clipboard helpers that work across macOS (pbcopy), Wayland (wl-copy) and X11 (xclip/xsel):
+# `copypath [path]` copies an absolute path, `copyfile <file>` copies a file's contents, and
+# Ctrl-O copies the current command line. Combines copy-path + copy-file +
+# copy-buffer into one cross-platform plugin.
+name        = "clipboard"
+version     = "1.1.0"
+description = "Copy/paste a path, file, command line, or any pipe to/from the system clipboard (clip, clippaste, copypath, copyfile, copyline)"
+author      = "aiTerminal"

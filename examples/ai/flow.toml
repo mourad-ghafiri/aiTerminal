@@ -1,0 +1,30 @@
+# A multi-step AI workflow. Install to ~/.aiTerminal/ai/flows/ship.toml, then:
+#
+#   @flow ship "add pagination to the users endpoint"
+#   @flow ship --bg "…"        # detached; monitor with @job
+#
+# Each [[step]] is a full agent run; with `chain = true` later steps see every
+# earlier step's answer. `{{input}}` is replaced with the CLI input.
+
+description = "Explore → implement → verify → summarize a change"
+chain = true
+
+[[step]]
+label  = "explore"
+agent  = "explorer"
+prompt = "Map the code relevant to this change and the conventions to follow: {{input}}"
+
+[[step]]
+label  = "implement"
+agent  = "coder"
+prompt = "Implement the change, following the map above: {{input}}"
+
+[[step]]
+label  = "verify"
+agent  = "tester"
+prompt = "Build and test the change above; report failures precisely."
+
+[[step]]
+label  = "summarize"
+agent  = "reviewer"
+prompt = "Summarize what changed, what was verified, and any follow-ups — for a commit message."

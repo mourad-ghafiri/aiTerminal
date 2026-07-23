@@ -1,0 +1,87 @@
+# Node.js toolchain: npm / yarn / pnpm shortcuts, completions, and a
+# status segment showing the Node version — but only inside a project (gated on package.json,
+# so the `node -v` exec never runs elsewhere). One plugin, all three package managers.
+name        = "node"
+version     = "1.1.0"
+description = "Node toolchain: comprehensive npm/yarn/pnpm shortcuts, a `nps` script lister, completions, and a project Node-version segment"
+author      = "aiTerminal"
+
+[[var]]
+id = "node.pkg"
+when_path = "package.json"
+literal = "1"
+
+[[var]]
+id = "node.ver"
+when_path = "package.json"
+exec = "node -v 2>/dev/null"
+trim = true
+
+[[segment]]
+align = "left"
+when = "node.pkg"
+template = "⬢ {node.ver}"
+fg = "success"
+
+[aliases]
+ni   = "npm install"
+nis  = "npm install --save"
+nid  = "npm install --save-dev"
+nr   = "npm run"
+nrd  = "npm run dev"
+nrb  = "npm run build"
+nrt  = "npm run test"
+nrs  = "npm run start"
+nx   = "npx"
+nci  = "npm ci"
+nup  = "npm update"
+nout = "npm outdated"
+y    = "yarn"
+ya   = "yarn add"
+yad  = "yarn add --dev"
+yr   = "yarn run"
+yb   = "yarn build"
+yd   = "yarn dev"
+pn   = "pnpm"
+pni  = "pnpm install"
+pnr  = "pnpm run"
+pnd  = "pnpm dev"
+# npm — more daily verbs
+nig  = "npm install -g"
+nit  = "npm install && npm test"
+nrl  = "npm run lint"
+nrtw = "npm run test -- --watch"
+nl   = "npm list"
+nl0  = "npm list --depth=0"
+naud = "npm audit"
+nauf = "npm audit fix"
+npub = "npm publish"
+ninit = "npm init"
+ncc  = "npm cache clean --force"
+# yarn — more
+yi    = "yarn install"
+yui   = "yarn upgrade-interactive"
+yrm   = "yarn remove"
+ytest = "yarn test"
+yst   = "yarn start"
+ycl  = "yarn clean"
+ygl  = "yarn global list"
+# pnpm — more
+pna  = "pnpm add"
+pnad = "pnpm add -D"
+pnb  = "pnpm build"
+pnt  = "pnpm test"
+pnx  = "pnpm dlx"
+pnrm = "pnpm remove"
+pnup = "pnpm update"
+pnout = "pnpm outdated"
+
+[[completion]]
+command = "npm"
+subcommands = ["install", "run", "ci", "update", "outdated", "publish", "init", "test", "start", "audit", "exec", "uninstall", "link"]
+flags = ["--save", "--save-dev", "-g", "--global", "--force"]
+
+[[completion]]
+command = "yarn"
+subcommands = ["add", "remove", "install", "run", "build", "dev", "test", "upgrade", "why", "workspaces"]
+flags = ["--dev", "--frozen-lockfile"]

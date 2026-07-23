@@ -1,0 +1,7 @@
+# Colorized man pages, themed to match the terminal: section titles in the accent color,
+# options underlined in the success color, the status line in accent2. It follows the
+# active theme via truecolor instead of fixed ANSI.
+name        = "colored-man"
+version     = "1.0.0"
+description = "Themed, colorized man pages (LESS_TERMCAP, truecolor from your theme)"
+author      = "aiTerminal"

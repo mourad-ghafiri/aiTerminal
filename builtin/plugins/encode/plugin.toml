@@ -1,0 +1,7 @@
+# Encoders, decoders and hashing at the shell — pure functions. Combines base64 +
+# URL tools + JSON pretty-printing and adds hex, SHA-1/256/512, ROT13 and UUID,
+# with zero external dependencies.
+name        = "encode"
+version     = "1.1.0"
+description = "Base64/hex/URL/JSON/ROT13 + SHA-1/256/512/UUID encode, decode & hash — shell helpers"
+author      = "aiTerminal"

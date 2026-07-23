@@ -1,0 +1,35 @@
+# Anthropic — one provider among the bundled set (no provider is the default).
+# One file per provider declares the transport identity (kind/base_url/api_key_env)
+# once; each [models.<id>] table is one model's FULL definition: sampling params,
+# capabilities, context window, and per-million-token pricing (USD) so the harness
+# can estimate session cost.
+name        = "Anthropic"
+description = "Anthropic's Claude models via the Messages API."
+kind        = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+base_url    = "https://api.anthropic.com/v1/messages"
+# No `default = true`: nothing is auto-selected. Declare an [[ai.model]] in
+# config.toml to choose the active model (any provider). A model file MAY set
+# `default = true` to self-flag, but the shipped files deliberately do not.
+
+[models.claude-opus-4-8]
+temperature     = 0.7
+top_p           = 0.95
+max_tokens      = 16000
+context_window  = 1000000
+enable_thinking = false         # adaptive thinking (omits sampling params when on)
+enable_vision   = true
+enable_document = true
+enable_tools    = true
+price_in        = 5.0           # USD / 1M input tokens
+price_out       = 25.0          # USD / 1M output tokens
+
+[models.claude-haiku-4-5-20251001]
+temperature     = 0.7
+max_tokens      = 8000
+context_window  = 200000
+enable_vision   = true
+enable_document = true
+enable_tools    = true
+price_in        = 1.0
+price_out       = 5.0

@@ -1,0 +1,36 @@
+# Français — doit définir exactement le même ensemble de clés que en.toml
+# (le test de parité CI l'exige).
+
+[term]
+title = "Terminal"
+
+[switcher]
+placeholder = "tapez un numéro ou un nom…"
+
+[profile]
+list_header = "profils dans {0} ({1}) :"
+switch_hint = "changer :  @profile <id>   ·  réglages :  @profile edit   (une fenêtre ouverte suit en direct)"
+switched = "profil '{0}' activé — une fenêtre ouverte l'applique en une seconde"
+
+[job]
+header = "tâches d'arrière-plan ({0}) :"
+none = "aucune tâche — lancez-en une :  @job <tâche> [--agent <nom>] [--bg]"
+cleared = "{0} tâche(s) terminée(s) supprimée(s)"
+
+[flow]
+header = "flux ({0}) :"
+none = "aucun flux — ajoutez un .toml sous {0}"
+run_hint = "exécuter :  @flow <nom> \"<entrée>\"   ·  suivre les tâches de fond :  @job"
+
+[theme]
+switched = "thème '{0}' appliqué au profil '{1}' — une fenêtre ouverte se restyle en une seconde"
+unknown = "aucun thème nommé '{0}'. disponibles : {1}"
+switch_hint = "changer :  @theme <nom>   ·  exporter une référence :  @theme export <nom>"
+
+[loop]
+start = "boucle '{0}' — au plus {1} itération(s)"
+iteration = "itération {0}/{1}"
+done = "objectif atteint après {0} itération(s)"
+stalled = "arrêt : aucun progrès entre les itérations (même sortie du vérificateur deux fois)"
+exhausted = "arrêt : limite d'itérations atteinte sans réussir la vérification"
+budget = "arrêt : budget de jetons épuisé"

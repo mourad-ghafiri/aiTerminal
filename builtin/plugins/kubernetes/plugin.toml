@@ -1,0 +1,141 @@
+# Kubernetes (kubectl + helm): the daily shortcuts, completions, and a
+# status segment showing the CURRENT context + namespace (⎈) — the killer feature of a k8s
+# prompt, read from your local kubeconfig (no network).
+name        = "kubernetes"
+version     = "1.1.0"
+description = "Full kubectl matrix (get/describe/edit/delete × every resource, rollout, scale, logs) + helm, JSON/YAML helpers, and a context·namespace status segment"
+author      = "aiTerminal"
+
+# current context + namespace from the local kubeconfig (fast; empty → segment hidden)
+[[var]]
+id = "k8s.ctx"
+exec = "kubectl config current-context 2>/dev/null"
+trim = true
+
+[[var]]
+id = "k8s.ns"
+exec = "kubectl config view --minify -o jsonpath={..namespace} 2>/dev/null"
+trim = true
+
+[[var]]
+id = "k8s.ns_disp"
+from = "k8s.ns"
+prefix = ":"
+
+[[segment]]
+align = "left"
+when = "k8s.ctx"
+template = "⎈ {k8s.ctx}{k8s.ns_disp}"
+fg = "accent2"
+
+[aliases]
+k    = "kubectl"
+kg   = "kubectl get"
+kgp  = "kubectl get pods"
+kgs  = "kubectl get svc"
+kgd  = "kubectl get deploy"
+kga  = "kubectl get all"
+kdesc = "kubectl describe"
+kdp  = "kubectl describe pod"
+kl   = "kubectl logs -f"
+kex  = "kubectl exec -it"
+kaf  = "kubectl apply -f"
+kdel = "kubectl delete"
+kns  = "kubectl config set-context --current --namespace"
+kctx = "kubectl config use-context"
+kctxs = "kubectl config get-contexts"
+kgev = "kubectl get events --sort-by=.lastTimestamp"
+kgc  = "kubectl config get-contexts"
+hl   = "helm list"
+hin  = "helm install"
+hup  = "helm upgrade"
+hun  = "helm uninstall"
+# apply / delete by file or kustomize
+kak   = "kubectl apply -k"
+kdelf = "kubectl delete -f"
+kdelk = "kubectl delete -k"
+keti  = "kubectl exec -t -i"
+# config / context / namespace
+kcuc = "kubectl config use-context"
+kcsc = "kubectl config set-context"
+kcdc = "kubectl config delete-context"
+kccc = "kubectl config current-context"
+kcn  = "kubectl config set-context --current --namespace"
+# events
+kge  = "kubectl get events --sort-by=.lastTimestamp"
+# pods
+kgpa    = "kubectl get pods --all-namespaces"
+kgpw    = "kubectl get pods --watch"
+kgpwide = "kubectl get pods -o wide"
+kgpsl   = "kubectl get pods --show-labels"
+kep     = "kubectl edit pods"
+kdelp   = "kubectl delete pods"
+# services
+kgsa    = "kubectl get svc --all-namespaces"
+kgswide = "kubectl get svc -o wide"
+kes     = "kubectl edit svc"
+kds     = "kubectl describe svc"
+kdels   = "kubectl delete svc"
+# ingress
+kgi   = "kubectl get ingress"
+kgia  = "kubectl get ingress --all-namespaces"
+kei   = "kubectl edit ingress"
+kdi   = "kubectl describe ingress"
+kdeli = "kubectl delete ingress"
+# namespaces
+kgns   = "kubectl get namespaces"
+kens   = "kubectl edit namespace"
+kdns   = "kubectl describe namespace"
+kdelns = "kubectl delete namespace"
+# configmaps / secrets
+kgcm   = "kubectl get configmaps"
+kecm   = "kubectl edit configmap"
+kdcm   = "kubectl describe configmap"
+kdelcm = "kubectl delete configmap"
+kgsec   = "kubectl get secret"
+kdsec   = "kubectl describe secret"
+kdelsec = "kubectl delete secret"
+# deployments
+kgda    = "kubectl get deployment --all-namespaces"
+kgdw    = "kubectl get deployment --watch"
+kgdwide = "kubectl get deployment -o wide"
+ked     = "kubectl edit deployment"
+kdd     = "kubectl describe deployment"
+kdeld   = "kubectl delete deployment"
+ksd     = "kubectl scale deployment"
+krsd    = "kubectl rollout status deployment"
+krrd    = "kubectl rollout restart deployment"
+# rollouts / replicasets
+kgrs = "kubectl get replicaset"
+krh  = "kubectl rollout history"
+kru  = "kubectl rollout undo"
+# statefulsets
+kgss  = "kubectl get statefulset"
+kess  = "kubectl edit statefulset"
+kdss  = "kubectl describe statefulset"
+ksss  = "kubectl scale statefulset"
+krsss = "kubectl rollout status statefulset"
+krrss = "kubectl rollout restart statefulset"
+# daemonsets / jobs / cronjobs
+kgds = "kubectl get daemonset"
+kgcj = "kubectl get cronjob"
+kgj  = "kubectl get job"
+# nodes / pvc
+kgno  = "kubectl get nodes"
+keno  = "kubectl edit node"
+kdno  = "kubectl describe node"
+kgpvc = "kubectl get pvc"
+kdpvc = "kubectl describe pvc"
+kdelpvc = "kubectl delete pvc"
+# logs / cp / port-forward / all
+kl1h = "kubectl logs --since 1h"
+kl1m = "kubectl logs --since 1m"
+klf  = "kubectl logs -f"
+kcp  = "kubectl cp"
+kpf  = "kubectl port-forward"
+kgaa = "kubectl get all --all-namespaces"
+
+[[completion]]
+command = "kubectl"
+subcommands = ["get", "describe", "apply", "delete", "logs", "exec", "config", "rollout", "scale", "port-forward", "top", "edit", "create", "expose", "label", "annotate"]
+flags = ["-n", "-f", "-o", "--all-namespaces", "-it", "-l", "--context"]

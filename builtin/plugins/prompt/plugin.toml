@@ -1,0 +1,39 @@
+# Default right-side status: user@host, system vitals (CPU / memory), and a clock.
+name = "prompt"
+version = "1.0.0"
+description = "Default status segments (user@host, CPU, memory, clock)"
+author = "aiTerminal"
+
+[[segment]]
+align = "right"
+template = "{user}@{host}"
+fg = "muted"
+
+# CPU: summed per-process %cpu normalized by core count → one honest percentage.
+[[var]]
+id = "sys.cpu"
+exec = "n=$(sysctl -n hw.ncpu 2>/dev/null || nproc); ps -A -o %cpu= | awk -v n=$n '{s+=$1} END {printf \"%.0f%%\", s/n}'"
+trim = true
+
+[[segment]]
+align = "right"
+when = "sys.cpu"
+template = "CPU {sys.cpu}"
+fg = "muted"
+
+# Memory in use (active + wired pages), honoring the machine's page size.
+[[var]]
+id = "sys.mem"
+exec = "vm_stat | awk '/page size of/ {ps=$8} /Pages (active|wired)/ {gsub(\"\\\\.\",\"\"); s+=$NF} END {printf \"%.1fG\", s*ps/1073741824}'"
+trim = true
+
+[[segment]]
+align = "right"
+when = "sys.mem"
+template = "MEM {sys.mem}"
+fg = "muted"
+
+[[segment]]
+align = "right"
+template = "{time.hm}"
+fg = "muted"

@@ -1,0 +1,23 @@
+name        = "Kimi (Moonshot)"
+description = "Moonshot AI's Kimi models via the OpenAI-compatible endpoint."
+kind        = "moonshot"
+api_key_env = "MOONSHOT_API_KEY"
+base_url    = "https://api.moonshot.ai/v1/chat/completions"
+
+[models."kimi-k2-0711-preview"]
+temperature    = 0.6
+max_tokens     = 8000
+context_window = 131072
+enable_tools   = true
+
+[models."moonshot-v1-128k"]
+temperature    = 0.6
+max_tokens     = 8000
+context_window = 131072
+enable_tools   = true
+
+[models."moonshot-v1-32k"]
+temperature    = 0.6
+max_tokens     = 8000
+context_window = 32768
+enable_tools   = true

@@ -1,0 +1,11 @@
+name        = "LM Studio (local)"
+description = "Local OpenAI-compatible models served by LM Studio on localhost:1234."
+kind        = "openai"
+api_key_env = "OPENAI_API_KEY"
+base_url    = "http://localhost:1234/v1/chat/completions"
+
+[models.local-model]
+temperature    = 0.7
+max_tokens     = 8000
+context_window = 32000
+enable_tools   = true

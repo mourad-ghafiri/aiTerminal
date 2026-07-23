@@ -1,0 +1,8 @@
+# Reports the shell's working directory (and host) to the terminal via OSC 7 on every
+# prompt and `cd`. This is what makes the status bar show the live folder + user@host
+# instantly — and the REMOTE path/host when the shell is running over SSH. Pure shell
+# data (a `shell.zsh` / `shell.bash` snippet); the engine just sources it.
+name        = "term-cwd"
+version     = "1.0.0"
+description = "Report the working directory + host to the terminal via OSC 7 (instant, SSH-aware status bar)"
+author      = "aiTerminal"

@@ -1,0 +1,14 @@
+# Rust build output
+/target
+
+# Packaged app bundle + portable artifacts (built by tools/bundle-macos.sh)
+/dist
+
+# Cargo.lock IS committed on purpose: the zero-crate CI gate inspects it, and we
+# ship binaries.
+
+# macOS
+.DS_Store
+
+# Claude Code local session data
+.claude/

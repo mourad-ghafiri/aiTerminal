@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Use cases — aiTerminal</title>
+<meta name="description" content="40 real-world aiTerminal workflows: shipping features with @flow, fixing CI with @loop, incident response, code review, DevOps, data wrangling, automation and everyday shell superpowers.">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+
+<!-- ================= NAV ================= -->
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="../index.html"><img src="assets/icon.png" alt="aiTerminal icon">aiTerminal</a>
+    <button class="nav-toggle" aria-label="menu">☰</button>
+    <nav class="nav-links">
+      <a href="index.html#showcase">Features</a>
+      <a href="index.html#plugins">Plugins</a>
+      <a href="docs.html">Docs</a>
+      <a href="use-cases.html" class="on">Use&nbsp;cases</a>
+      <a href="https://github.com/mourad-ghafiri/aiTerminal" target="_blank" rel="noopener">GitHub</a>
+      <a class="btn-ink" href="index.html#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ================= HEAD ================= -->
+<section class="page-head">
+  <div class="wrap">
+    <span class="tag accent">40 real workflows, real prompts</span>
+    <h1>What people actually <em>do with it.</em></h1>
+    <p class="sub">Every one of these runs at a normal shell prompt — no context switch, no
+      copy-paste. The AI sees your (redacted) session, the guard reviews every command, and
+      everything scripts with honest exit codes.</p>
+  </div>
+</section>
+
+<main class="wrap" style="padding-bottom:40px">
+
+  <!-- ═══════════ SHIP FASTER ═══════════ -->
+  <div class="uc-cat reveal">
+    <span class="tag">01 · ship faster</span>
+    <h2>From "could you…" to merged</h2>
+    <div class="uc-grid">
+
+      <div class="uc">
+        <h3><span class="em">🚢</span>Ship a small feature, end to end</h3>
+        <p>The default <code>implement</code> pipeline explores your codebase, edits, then verifies — three specialists chained.</p>
+        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> add a --json flag to the export command</span>
+▶ flow 'implement' — 3 step(s)
+<span class="g">✓</span> explore · <span class="g">✓</span> implement · <span class="g">✓</span> verify
+<span class="d">✓ 58s · 11 tools · 32k in / 4.1k out</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🔴</span>Make CI green while you make coffee</h3>
+        <p><code>@loop</code> iterates until <em>your</em> test command exits 0 — the model never grades its own work.</p>
+        <pre><span class="p">❯</span> <span class="ab">@loop</span><span class="c"> "fix the flaky auth tests" --check "npm test -- auth" --bg</span>
+▶ background job 1753113020-5127
+<span class="p">❯</span> tail -f ~/.aiTerminal/ai/jobs/…/log.md</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🧪</span>Reproduce → test → fix</h3>
+        <p><code>@tester</code> writes the failing test first, then makes it pass.</p>
+        <pre><span class="p">❯</span> <span class="ab">@tester</span><span class="c"> "totals drift when qty is 0 — reproduce and fix"</span>
+<span class="d">  ⚙ fs.write {"path":"tests/totals.rs"} · 4ms · 1.1KB</span>
+<span class="d">  ⚙ sys.run {"cmd":"cargo test totals"} · 2.9s · 2.2KB</span>
+Reproduced: rounding applied before the zero-check …</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🧹</span>Refactor with a budget</h3>
+        <p>Cap tokens so an ambitious refactor can't run away — the loop stops honestly at the budget.</p>
+        <pre><span class="p">❯</span> <span class="ab">@loop</span><span class="c"> "extract retry logic into one helper" --check "cargo test" --budget 60000</span>
+🔁 loop 'coder' — up to 5 iteration(s)
+<span class="g">✓ goal reached after 3 iteration(s)</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">✍️</span>Commit messages that write themselves</h3>
+        <p>Grounded on the actual staged diff in your session — review, edit, commit.</p>
+        <pre><span class="p">❯</span> git diff --staged --stat
+<span class="p">❯</span> <span class="ab">@ai</span><span class="c"> write a conventional commit message for this</span>
+<span class="p">❯</span> <span class="d">press Enter to run (or edit)</span>
+<span class="p">❯</span> <span class="c">git commit -m "fix(parser): keep the final line without a trailing newline"</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">⬆️</span>Dependency bumps that prove themselves</h3>
+        <p>Bump, build, test — looped until everything passes, or stopped honestly.</p>
+        <pre><span class="p">❯</span> <span class="ab">@loop</span><span class="c"> "bump tokio to 1.40 and fix what breaks" --check "cargo test --workspace"</span>
+▶ iteration 1/5 … <span class="d">check: exit=1 · E0308 in net.rs</span>
+▶ iteration 2/5 … <span class="d">check: exit=0</span>
+<span class="g">✓ goal reached after 2 iteration(s)</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📝</span>Release notes as a background job</h3>
+        <p>Fire it, forget it, read the markdown log later — the job survives closing the window.</p>
+        <pre><span class="p">❯</span> <span class="ab">@job</span><span class="c"> write release notes from the last 20 commits --bg</span>
+▶ background job 1753114100-6001
+<span class="p">❯</span> <span class="ab">@job</span>
+  <span class="g">✓</span> 1753114100-6001 done  write release notes … <span class="d">(3m ago · 41s)</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🚦</span>Gate your push on a green loop</h3>
+        <p>Every AI command exits honestly (0/1/2/130) — so loops compose with <code>&amp;&amp;</code> and CI.</p>
+        <pre><span class="p">❯</span> <span class="ab">@loop</span><span class="c"> "make clippy clean" --check "cargo clippy -- -D warnings"</span> && git push
+<span class="g">✓ goal reached after 2 iteration(s)</span>
+<span class="d">→ push runs only because the loop exited 0</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🧬</span>Write your own flow in ten lines</h3>
+        <p>A flow is a TOML file in <code>ai/flows/</code> — your pipeline, your agents, chained.</p>
+        <pre><span class="d"># ~/.aiTerminal/ai/flows/ship.toml</span>
+<span class="d">[[step]] label="implement"; agent="coder";  prompt="Implement: {{input}}"</span>
+<span class="d">[[step]] label="verify";    agent="tester"; prompt="Verify the change above."</span>
+<span class="p">❯</span> <span class="ab">@flow</span><span class="c"> ship add rate limiting to the login route</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🏗</span>Scaffold with your conventions, not the internet's</h3>
+        <p>Your <code>ai/aiTerminal.md</code> and memories teach it the house style once — every run after follows it.</p>
+        <pre><span class="p">❯</span> <span class="ab">@coder</span><span class="c"> "add a new /health endpoint following our handler pattern"</span>
+<span class="d">∴ recalling: handlers live in api/handlers, one file per route, table-driven tests…</span>
+<span class="d">  ⚙ fs.write {"path":"api/handlers/health.rs"} · 5ms · 890B</span></pre>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════ UNDERSTAND & REVIEW ═══════════ -->
+  <div class="uc-cat reveal">
+    <span class="tag">02 · understand &amp; review</span>
+    <h2>Read code like you wrote it</h2>
+    <div class="uc-grid">
+
+      <div class="uc">
+        <h3><span class="em">🗺</span>Learn a codebase you just cloned</h3>
+        <p><code>@explorer</code> is read-only and fast — pipe the map straight into a file.</p>
+        <pre><span class="p">❯</span> git clone github.com/org/service && cd service
+<span class="p">❯</span> <span class="ab">@explorer</span><span class="c"> "map the request lifecycle from route to DB"</span> > MAP.md
+<span class="d">✓ 22s · 9 tools · 18k in / 1.2k out</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">👀</span>Pre-merge review without leaving the repo</h3>
+        <p>The <code>review</code> flow maps the touched code first, then a read-only reviewer reports concrete findings.</p>
+        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> review the changes on this branch vs main</span>
+<span class="g">✓</span> map · <span class="g">✓</span> review
+1. parser.rs:88 — CRLF input splits wrong …
+2. cache.rs:41 — eviction races the reader …</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🔐</span>Security audit sweep</h3>
+        <p>A read-only reviewer with a security skill — it can look, it cannot touch.</p>
+        <pre><span class="p">❯</span> <span class="ab">@reviewer</span><span class="c"> "audit the auth module: injection, secrets, unsafe patterns"</span>
+<span class="d">  ⚙ fs.search {"q":"password"} · 12ms · 3.4KB</span>
+1. login.rs:52 — the SQL string is concatenated …</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📄</span>Spec vs implementation</h3>
+        <p>Attach the PDF and the source file; get a compliance diff in plain language.</p>
+        <pre><span class="p">❯</span> <span class="ab">@reviewer</span><span class="c"> does the parser match the spec? @rfc.pdf @src/parser.rs</span>
+Mostly — §3.2 requires CRLF tolerance; parser.rs:88
+only splits on \n. §4.1 limits are enforced. …</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🖼</span>Debug from a screenshot</h3>
+        <p>Attach images with <code>@path</code> — vision models read them inline.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> why does the layout break like this? @shots/bug.png</span>
+The sidebar's flex container is missing min-width:0 —
+the table forces it wider than its track …</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🏛</span>Git archaeology</h3>
+        <p>"Why does this line exist?" — the session context carries the blame output into the question.</p>
+        <pre><span class="p">❯</span> git log -S "retry_after" --oneline | head -3
+<span class="p">❯</span> <span class="ab">@ai</span><span class="c"> summarize why this was introduced and what depends on it</span>
+Added in a1c2f3 after the 429-storm incident: the backoff…</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🎓</span>Explain before you run</h3>
+        <p>Paste-from-the-internet safety: ask what it does first — and the guard still checks it after.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> explain: curl -fsSL get.example.sh | sh</span>
+Downloads a script and pipes it straight to your shell —
+you're executing unreviewed remote code. …
+<span class="w">⚠ curl | sh is confirm-tier by default</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📎</span>Attach the log, not a paste</h3>
+        <p>Any <code>@&lt;path&gt;</code> text file inlines into the prompt (≤48 KB, redacted first).</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> why did this build fail? @build.log</span>
+The linker error at line 214 comes from two versions of
+zlib — your Makefile pins one, pkg-config found the other…</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🐙</span>One agent, parallel scouts</h3>
+        <p><code>@coder</code> delegates read-only sub-agents with <code>task.run</code> — parallel exploration, bounded and safe.</p>
+        <pre><span class="p">❯</span> <span class="ab">@coder</span><span class="c"> "compare how auth works in api/ vs legacy/"</span>
+<span class="d">  └ task.run → 2 sub-agent(s): @explorer @explorer</span>
+Both wrap JWTs, but legacy/ refreshes in middleware while
+api/ refreshes at the client — that's your drift.</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📚</span>Docs from the code that's actually there</h3>
+        <p>An agent that reads the real functions writes docs that don't lie.</p>
+        <pre><span class="p">❯</span> <span class="ab">@job</span><span class="c"> document the public API of src/client.rs into docs/client.md --bg</span>
+▶ background job 1753115400-7210
+<span class="d">  monitor: @job · tail -f …/log.md</span></pre>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════ OPERATE ═══════════ -->
+  <div class="uc-cat reveal">
+    <span class="tag">03 · operate with confidence</span>
+    <h2>Production, without the panic</h2>
+    <div class="uc-grid">
+
+      <div class="uc">
+        <h3><span class="em">🚨</span>Incident response, 2 a.m.</h3>
+        <p>Ask in plain words; run what you can read. "It" resolves to the crashing pod you just saw.</p>
+        <pre><span class="p">❯</span> kubectl get pods | grep -v Running
+api-7d4b… CrashLoopBackOff
+<span class="p">❯</span> <span class="ab">@ai</span><span class="c"> show me the last 50 log lines of it, previous container</span>
+<span class="p">❯</span> <span class="c">kubectl logs api-7d4b… --previous --tail=50</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🔎</span>Log forensics without awk golf</h3>
+        <p>Describe the slice you need; review the pipeline it builds.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> count 5xx by endpoint in access.log for the last hour</span>
+<span class="p">❯</span> <span class="d">press Enter to run (or edit)</span>
+<span class="p">❯</span> <span class="c">awk -v d="$(date -v-1H +%H)" '$4~d && $9~/^5/ {c[$7]++} END {for (k in c) print c[k], k}' access.log | sort -rn</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🐳</span>Container hygiene, safely</h3>
+        <p>In <code>manual</code> mode (the default) every AI-proposed command preloads for review — nothing runs until you press Enter.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> clean everything unused</span>
+<span class="p">❯</span> <span class="d">press Enter to run (or edit)</span>
+<span class="p">❯</span> <span class="c">docker system prune -af --volumes</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📊</span>Babysit a long migration</h3>
+        <p>Split the window: migration left, a watcher right — one glance, whole picture.</p>
+        <pre><span class="d"># pane 1</span> <span class="p">❯</span> ./migrate --all
+<span class="d"># pane 2</span> <span class="p">❯</span> <span class="ab">@ai</span><span class="c"> watch the error rate in api.log every 10s</span>
+<span class="p">❯</span> <span class="c">watch -n10 "grep -c ERROR api.log"</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🌍</span>SSH without losing your bearings</h3>
+        <p>OSC-7 keeps the status bar showing the <em>remote</em> host and path; the switcher finds the tab by "prod".</p>
+        <pre><span class="p">❯</span> ssh deploy@prod
+<span class="d"># status bar: 📁 /var/www · deploy@prod</span>
+<span class="d"># ⌘P "prod" → jump straight back here</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🔏</span>Cert &amp; expiry checks on demand</h3>
+        <p>Nobody remembers the openssl incantation. Nobody has to.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> when does the TLS cert on api.example.com expire?</span>
+<span class="p">❯</span> <span class="c">echo | openssl s_client -connect api.example.com:443 2>/dev/null | openssl x509 -noout -enddate</span>
+notAfter=Oct 12 08:21:44 2026 GMT</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🧯</span>Your own guard rules</h3>
+        <p>The three tiers are config: add a <code>[security] confirm_commands</code> pattern and it binds you <em>and</em> every agent.</p>
+        <pre><span class="d"># config.toml: confirm_commands = ["reset --hard"]</span>
+<span class="p">❯</span> <span class="ab">@ai</span><span class="c"> roll back to the previous release tag</span>
+<span class="w">⚠ review before running — matches a confirm rule  /reset --hard/</span>
+<span class="p">❯</span> <span class="c">git reset --hard v2.4.1</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">✈️</span>Fully local, fully private</h3>
+        <p>Point the pool at Ollama or LM Studio and nothing ever leaves your machine — <code>@ai</code> works on a plane.</p>
+        <pre><span class="d"># [[ai.model]] provider = "ollama"; id = "llama3"</span>
+<span class="p">❯</span> <span class="ab">@ai</span><span class="c"> summarize the failing tests in @test.log</span>
+<span class="d">∴ local model · no network egress</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🛟</span>AI that fails over</h3>
+        <p>Weighted pools: cloud first, local fallback — a provider outage doesn't stop your run.</p>
+        <pre><span class="d"># anthropic weight 3 · ollama weight 1</span>
+<span class="p">❯</span> <span class="ab">@coder</span><span class="c"> "fix the flaky retry test"</span>
+<span class="d">provider timeout → failing over to llama3 (local)</span>
+<span class="g">✓</span> <span class="d">34s · 5 tools — the run finished anyway</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">⚡</span>Hands-free read-only ops</h3>
+        <p><code>[ai] mode = "auto"</code>: safe-listed inspection commands run immediately; anything mutating still stops for you.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> how far is this branch behind main?</span>
+<span class="p">❯</span> <span class="c">git rev-list --count HEAD..origin/main</span>   <span class="d">← ran (read-only git is safe-listed)</span>
+<span class="t-fg">14</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📟</span>Vitals at a glance</h3>
+        <p>The sysinfo plugin keeps load and battery in the status bar; a dashboard when you want more.</p>
+        <pre><span class="p">❯</span> sysinfo
+cpu 12% · mem 9.2/32 GB · disk 412/994 GB
+load 2.1 1.8 1.6 · battery 84% (charging)</pre>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════ AUTOMATE ═══════════ -->
+  <div class="uc-cat reveal">
+    <span class="tag">04 · automate the boring</span>
+    <h2>Jobs do it while you don't</h2>
+    <div class="uc-grid">
+
+      <div class="uc">
+        <h3><span class="em">📦</span>Multi-repo sweeps</h3>
+        <p>Read-only agents shine at boring audits — fan them out as background jobs.</p>
+        <pre><span class="p">❯</span> for r in api web infra; do
+    (cd $r && <span class="ab">@job</span><span class="c"> list GPL deps with versions --agent reviewer --bg</span>)
+  done
+<span class="p">❯</span> <span class="ab">@job</span>   <span class="d"># three jobs running, three logs</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🧾</span>Data wrangling without man pages</h3>
+        <p>Stop googling <code>awk</code> syntax. Review the one-liner, then run it.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> sum column 3 of sales.csv grouped by column 1</span>
+<span class="p">❯</span> <span class="c">awk -F, '{s[$1]+=$3} END {for (k in s) print k, s[k]}' sales.csv</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🗂</span>Batch renames, reviewed first</h3>
+        <p>The command is printed before anything moves — edit it, then commit.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> rename all *.jpeg here to *.jpg</span>
+<span class="p">❯</span> <span class="d">press Enter to run (or edit)</span>
+<span class="p">❯</span> <span class="c">for f in *.jpeg; do mv "$f" "${f%.jpeg}.jpg"; done</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🗓</span>The Friday report, from git</h3>
+        <p>Your week, summarized from what actually merged — as a job, into a file.</p>
+        <pre><span class="p">❯</span> <span class="ab">@job</span><span class="c"> summarize this week's merged PRs into WEEK.md --bg</span>
+▶ background job 1753116000-8104
+<span class="g">✓</span> <span class="d">done · 38s — WEEK.md written</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🔤</span>Convert anything, hash anything</h3>
+        <p>The encode plugin: base64, hex, URL, JSON, SHA, UUID — no web tools, nothing leaves your machine.</p>
+        <pre><span class="p">❯</span> b64 "user:pass"        <span class="d"># dXNlcjpwYXNz</span>
+<span class="p">❯</span> sha release.tar.gz     <span class="d"># 9f86d08…a4c2</span>
+<span class="p">❯</span> uuid                   <span class="d"># 8f4e…-…-c21a</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🔌</span>Plug your company tools in — MCP</h3>
+        <p>Declare a Model-Context-Protocol server under <code>ai/mcp/</code>; its tools join the catalog as <code>mcp.&lt;server&gt;.&lt;tool&gt;</code>.</p>
+        <pre><span class="d"># ~/.aiTerminal/ai/mcp/jira.toml</span>
+<span class="p">❯</span> <span class="ab">@coder</span><span class="c"> "what's assigned to me this sprint?"</span>
+<span class="d">  ⚙ mcp.jira.search {"assignee":"me"} · 240ms · 1.8KB</span>
+Three tickets: API-231 (rate limits), API-238, INFRA-12.</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🌐</span>Translate your terminal's strings</h3>
+        <p>i18n as data: hand the catalog to an agent, get a locale back.</p>
+        <pre><span class="p">❯</span> <span class="ab">@job</span><span class="c"> translate i18n/en.toml to German into i18n/de.toml --bg</span>
+<span class="g">✓</span> <span class="d">done — 41 keys, same structure, CI parity holds</span></pre>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════ EVERYDAY ═══════════ -->
+  <div class="uc-cat reveal">
+    <span class="tag">05 · everyday superpowers</span>
+    <h2>The thousand little wins</h2>
+    <div class="uc-grid">
+
+      <div class="uc">
+        <h3><span class="em">🏝</span>Work / personal / ops identities</h3>
+        <p>Profiles switch theme, AI models, plugins and the whole saved workspace in one command.</p>
+        <pre><span class="p">❯</span> <span class="ab">@profile</span><span class="c"> work</span>
+switched to profile 'work' — applies within a second
+<span class="d"># Opus for work, local Ollama for personal — different pools per profile</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🧠</span>A terminal that remembers</h3>
+        <p>Agents curate a BM25-ranked markdown memory (<code>memory.*</code> tools) — recalled automatically in every future run.</p>
+        <pre><span class="p">❯</span> <span class="ab">@coder</span><span class="c"> "remember: deploys go through make ship, never push main directly"</span>
+<span class="d">  ⚙ memory.add {"kind":"decision"} · 3ms · 96B</span>
+<span class="d">recalled automatically in future runs — plain markdown, no database</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">✂️</span>Edit the command like a text field</h3>
+        <p>⌥/⌘ arrows jump by word or line ends; add ⇧ to select. Type to replace, ⌫ deletes, Esc cancels, ⌘C copies — pure zsh, the <code>lineedit</code> plugin.</p>
+        <pre><span class="p">❯</span> cargo test <span class="sel">--workspace</span>   <span class="d"># ⇧⌥← selected the flag</span>
+<span class="p">❯</span> cargo test --doc          <span class="d"># typed over it — replaced in place</span>
+<span class="d"># a light band, your syntax colors stay on top · Enter on a mouse selection copies it</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🗜</span>Extract anything, jump anywhere</h3>
+        <p><code>x</code> handles 15+ archive formats; <code>jump</code> learns your directories by frecency.</p>
+        <pre><span class="p">❯</span> x release.tar.zst        <span class="d"># extracted → ./release/</span>
+<span class="p">❯</span> j terminal               <span class="d"># → ~/Data/Projects/the-terminal</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📝</span>Notes at the prompt</h3>
+        <p>Capture the thought without leaving the flow — <code>notes</code> lists them back.</p>
+        <pre><span class="p">❯</span> note "rotate the staging certs before Friday"
+<span class="p">❯</span> note "bump MSRV after 1.96 lands"
+<span class="p">❯</span> notes   <span class="d"># 2 notes</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🔎</span>Search 18 engines without a browser tab first</h3>
+        <p>Google, Stack Overflow, GitHub, MDN, crates.io, PyPI — straight from the prompt.</p>
+        <pre><span class="p">❯</span> so "borrow checker E0502 split at mut"
+<span class="p">❯</span> crates "toml parser no_std"</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🎨</span>Make the 20th theme yours</h3>
+        <p><code>@theme export</code> prints the full normalized TOML — the perfect starting point.</p>
+        <pre><span class="p">❯</span> <span class="ab">@theme</span><span class="c"> export midnight</span> > ~/.aiTerminal/themes/mine.toml
+<span class="p">❯</span> vim ~/.aiTerminal/themes/mine.toml   <span class="d"># change accent, done</span>
+<span class="p">❯</span> <span class="ab">@theme</span><span class="c"> mine</span>
+theme 'mine' applied — running shells restyle too</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📦</span>Ship agents inside the repo</h3>
+        <p>A project-local <code>ai/</code> folder shadows the global set — clone the repo, get its agents.</p>
+        <pre><span class="p">❯</span> ls ai/agents/
+api-reviewer.md   migration-writer.md
+<span class="p">❯</span> <span class="ab">@api-reviewer</span><span class="c"> "check my changes against our API rules"</span>
+<span class="d">✦ @api-reviewer · claude-opus-4-8   ← the repo's own agent</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🤝</span>Onboard the new teammate</h3>
+        <p>Point them at the repo with aiTerminal installed — the codebase explains itself.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> where do I add a new API route in this project?</span>
+Routes live in api/routes.rs; each handler is a file in
+api/handlers/. Register it in ROUTES, add a table test…</pre>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="reveal" style="text-align:center;margin:70px 0 30px">
+    <a class="btn dark" href="index.html#download"><span>Get aiTerminal →</span></a>
+  </div>
+</main>
+
+<!-- ================= FOOTER ================= -->
+<footer>
+  <div class="wrap foot">
+    <a class="brand" href="../index.html"><img src="assets/icon.png" alt="">aiTerminal</a>
+    <nav>
+      <a href="../index.html">Home</a>
+      <a href="docs.html">Documentation</a>
+      <a href="https://github.com/mourad-ghafiri/aiTerminal" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/mourad-ghafiri/aiTerminal/releases" target="_blank" rel="noopener">Releases</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+/* refresh always lands at the top (see index.html — same opt-out on reload) */
+if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+window.addEventListener("hashchange", () =>
+  history.replaceState(null, "", location.pathname + location.search));
+const navEntry = performance.getEntriesByType("navigation")[0];
+if (navEntry && navEntry.type === "reload") {
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+  window.addEventListener("load", () => window.scrollTo(0, 0));
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const io = new IntersectionObserver((es) => es.forEach((e) => {
+    if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+  }), { rootMargin: "-30px" });
+  document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+  document.querySelector(".nav-toggle")?.addEventListener("click", () =>
+    document.querySelector(".nav-links").classList.toggle("open"));
+});
+</script>
+</body>
+</html>

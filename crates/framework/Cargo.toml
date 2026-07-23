@@ -1,0 +1,20 @@
+# Framework layer — one crate. The construct language (`view`), security, the
+# bridge, the native-object capabilities + Host seam (`caps`), the app/plugin/theme
+# constructs (`registry`/`app`/`plugin`), configuration/theme/keymap, and the
+# provider-agnostic AI runtime (`ai`), all as internal modules. No facade, no
+# re-exports; depends on `platform` and `corelib` directly.
+[package]
+name = "framework"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+corelib = { path = "../corelib" }
+platform = { path = "../platform" }
+
+[dev-dependencies]
+# The view tests render text through the offline shaper mock.
+platform = { path = "../platform", features = ["testkit"] }

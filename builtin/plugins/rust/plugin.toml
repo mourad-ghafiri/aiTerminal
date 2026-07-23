@@ -1,0 +1,66 @@
+# Rust toolchain: cargo shortcuts, completions, and a status segment showing the
+# crate name (🦀) — only inside a crate (gated on Cargo.toml). Avoids shadowing
+# real tools (e.g. `cc`): cargo check is `cch`.
+name        = "rust"
+version     = "1.1.0"
+description = "Rust toolchain: comprehensive cargo shortcuts (build/test/clippy/fix/nextest/watch/tree), completions, and a crate-name status segment"
+author      = "aiTerminal"
+
+[[var]]
+id = "rust.present"
+when_path = "Cargo.toml"
+literal = "1"
+
+[[var]]
+id = "rust.crate"
+when_path = "Cargo.toml"
+exec = "awk -F'\"' '/^name/{print $2; exit}' Cargo.toml"
+trim = true
+
+[[segment]]
+align = "left"
+when = "rust.present"
+template = "🦀 {rust.crate}"
+fg = "warn"
+
+[aliases]
+cb     = "cargo build"
+cbr    = "cargo build --release"
+cr     = "cargo run"
+crr    = "cargo run --release"
+ct     = "cargo test"
+cch    = "cargo check"
+ccl    = "cargo clippy"
+cfmt   = "cargo fmt"
+cadd   = "cargo add"
+crm    = "cargo remove"
+cup    = "cargo update"
+cdoc   = "cargo doc --open"
+cbench = "cargo bench"
+cclean = "cargo clean"
+# build / check variants
+cba    = "cargo build --all-targets"
+caf    = "cargo build --all-features"
+ccla   = "cargo clippy --all-targets --all-features"
+cclf   = "cargo clippy --fix --allow-dirty --allow-staged"
+cfmtc  = "cargo fmt --check"
+# test variants
+ctn    = "cargo test -- --nocapture"
+ctr    = "cargo test --release"
+cnext  = "cargo nextest run"
+# project / deps
+cnew   = "cargo new"
+cinit  = "cargo init"
+ctree  = "cargo tree"
+cout   = "cargo outdated"
+cfix   = "cargo fix --allow-dirty --allow-staged"
+cexp   = "cargo expand"
+cinst  = "cargo install"
+cunin  = "cargo uninstall"
+cwatch = "cargo watch -x check"
+cpub   = "cargo publish"
+
+[[completion]]
+command = "cargo"
+subcommands = ["build", "run", "test", "check", "clippy", "fmt", "add", "remove", "update", "doc", "bench", "clean", "install", "publish", "new", "init", "tree", "fix"]
+flags = ["--release", "--all-features", "--workspace", "-p", "--all-targets", "--no-default-features"]

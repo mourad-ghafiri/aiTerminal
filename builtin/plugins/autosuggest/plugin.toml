@@ -1,0 +1,5 @@
+# History-based inline autosuggestions. A shell-snippet plugin (zsh).
+name        = "autosuggest"
+version     = "1.0.0"
+description = "Inline suggestions from history as you type — press → to accept (zsh)"
+author      = "aiTerminal"

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>aiTerminal — a fast, light, AI-first terminal. Written from scratch in Rust.</title>
+<meta name="description" content="aiTerminal is a fast, light, AI-first terminal written from scratch in Rust — zero external crates. @ai agents at your prompt, 19 live themes, splits, a dockable tab bar, profiles, 31 declarative plugins.">
+<link rel="icon" type="image/png" href="website/assets/icon.png">
+<link rel="stylesheet" href="website/css/main.css">
+</head>
+<body>
+
+<!-- ================= NAV ================= -->
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="index.html"><img src="website/assets/icon.png" alt="aiTerminal icon">aiTerminal</a>
+    <button class="nav-toggle" aria-label="menu">☰</button>
+    <nav class="nav-links">
+      <a href="#showcase">Features</a>
+      <a href="#plugins">Plugins</a>
+      <a href="website/docs.html">Docs</a>
+      <a href="website/use-cases.html">Use&nbsp;cases</a>
+      <a href="https://github.com/mourad-ghafiri/aiTerminal" target="_blank" rel="noopener">GitHub</a>
+      <a class="btn-ink" href="#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ================= HERO ================= -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <h1>Fast. Light. AI-first.</h1>
+      <div class="hero-ctas">
+        <a class="btn dark" href="https://github.com/mourad-ghafiri/aiTerminal/releases" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+          <span>Download for macOS<span class="os">Apple Silicon · macOS 12+</span></span>
+        </a>
+        <a class="btn" href="https://github.com/mourad-ghafiri/aiTerminal" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span>View on GitHub</span>
+        </a>
+      </div>
+      <p class="hero-plat">Linux &amp; Windows builds coming soon — <a href="https://github.com/mourad-ghafiri/aiTerminal/releases" target="_blank" rel="noopener">watch the releases</a></p>
+    </div>
+    <div class="hero-logo" aria-hidden="true">
+      <img src="website/assets/icon.png" alt="">
+    </div>
+  </div>
+</section>
+
+<!-- ================= THE SHOWCASE: one full window, every feature ================= -->
+<section class="showcase" id="showcase">
+  <div class="wrap">
+    <div class="showcase-grid">
+
+      <!-- feature menu -->
+      <aside class="menu" aria-label="features">
+        <span class="tag">Terminal</span>
+        <button class="mrow active" data-feature="themes"><span class="n">01</span>Themes — live, everywhere</button>
+        <button class="mrow" data-feature="splits"><span class="n">02</span>Tabs &amp; splits</button>
+        <button class="mrow" data-feature="tabdock"><span class="n">03</span>Dock the tab bar</button>
+        <button class="mrow" data-feature="switcher"><span class="n">04</span>Quick switcher ⌘P</button>
+        <button class="mrow" data-feature="profiles"><span class="n">05</span>Profiles &amp; restore</button>
+        <span class="tag">AI at the prompt</span>
+        <button class="mrow" data-feature="ai"><span class="n">06</span>@ai — ask → command</button>
+        <button class="mrow" data-feature="agent"><span class="n">07</span>@coder — full agent</button>
+        <button class="mrow" data-feature="flow"><span class="n">08</span>@flow — pipelines</button>
+        <button class="mrow" data-feature="loop"><span class="n">09</span>@loop — verified</button>
+        <button class="mrow" data-feature="job"><span class="n">10</span>@job — background</button>
+        <button class="mrow" data-feature="guard"><span class="n">11</span>The command guard</button>
+      </aside>
+
+      <!-- the caption + the complete window -->
+      <div class="stage-col">
+        <div class="cap" id="showcase-caption"></div>
+        <div class="stage-shadow"><div id="showcase-window"></div></div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ================= PLUGINS: the same live showcase ================= -->
+<section class="section" id="plugins">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag accent">31 builtin plugins</span>
+      <h2>Batteries <em>included.</em></h2>
+      <p class="lead">A plugin is a <code>plugin.toml</code> — pure data, nothing compiles, nothing
+        slows your prompt. Pick one; the window shows it working.</p>
+    </div>
+
+    <!-- accordion of categories left · the window right -->
+    <div class="showcase-grid" style="margin-top:34px">
+      <aside class="plug-acc" aria-label="plugins">
+
+        <div class="pacc g-shell open">
+          <button class="pacc-head"><span class="pacc-label">shell ux</span><span class="pacc-count">11</span><span class="pacc-chev">▾</span></button>
+          <div class="pacc-body">
+            <button class="prow active" data-plugin="syntax-highlight"><span>🎨</span>syntax-highlight</button>
+            <button class="prow" data-plugin="autosuggest"><span>👻</span>autosuggest</button>
+            <button class="prow" data-plugin="history"><span>🧠</span>history</button>
+            <button class="prow" data-plugin="completion"><span>⌨️</span>completion</button>
+            <button class="prow" data-plugin="lineedit"><span>✂️</span>lineedit</button>
+            <button class="prow" data-plugin="alias-hints"><span>💡</span>alias-hints</button>
+            <button class="prow" data-plugin="prompt"><span>🚀</span>prompt</button>
+            <button class="prow" data-plugin="sudo"><span>🔼</span>sudo</button>
+            <button class="prow" data-plugin="dir"><span>📁</span>dir</button>
+            <button class="prow" data-plugin="jump"><span>🧭</span>jump</button>
+            <button class="prow" data-plugin="term-cwd"><span>🌍</span>term-cwd</button>
+          </div>
+        </div>
+
+        <div class="pacc g-dev">
+          <button class="pacc-head"><span class="pacc-label">git &amp; dev</span><span class="pacc-count">7</span><span class="pacc-chev">▾</span></button>
+          <div class="pacc-body">
+            <button class="prow" data-plugin="git"><span>⎇</span>git</button>
+            <button class="prow" data-plugin="github"><span>🐙</span>github</button>
+            <button class="prow" data-plugin="docker"><span>🐳</span>docker</button>
+            <button class="prow" data-plugin="kubernetes"><span>☸️</span>kubernetes</button>
+            <button class="prow" data-plugin="rust"><span>🦀</span>rust</button>
+            <button class="prow" data-plugin="python"><span>🐍</span>python</button>
+            <button class="prow" data-plugin="node"><span>📦</span>node</button>
+          </div>
+        </div>
+
+        <div class="pacc g-util">
+          <button class="pacc-head"><span class="pacc-label">utilities</span><span class="pacc-count">10</span><span class="pacc-chev">▾</span></button>
+          <div class="pacc-body">
+            <button class="prow" data-plugin="extract"><span>🗜</span>extract</button>
+            <button class="prow" data-plugin="clipboard"><span>📋</span>clipboard</button>
+            <button class="prow" data-plugin="encode"><span>🔐</span>encode</button>
+            <button class="prow" data-plugin="web-search"><span>🔎</span>web-search</button>
+            <button class="prow" data-plugin="weather"><span>🌦</span>weather</button>
+            <button class="prow" data-plugin="world-clock"><span>🕰</span>world-clock</button>
+            <button class="prow" data-plugin="notes"><span>📝</span>notes</button>
+            <button class="prow" data-plugin="sysinfo"><span>📟</span>sysinfo</button>
+            <button class="prow" data-plugin="colored-man"><span>📖</span>colored-man</button>
+            <button class="prow" data-plugin="common"><span>🧰</span>common</button>
+          </div>
+        </div>
+
+        <div class="pacc g-ai">
+          <button class="pacc-head"><span class="pacc-label">ai &amp; safety</span><span class="pacc-count">3</span><span class="pacc-chev">▾</span></button>
+          <div class="pacc-body">
+            <button class="prow" data-plugin="ai-terminal"><span>✦</span>ai-terminal</button>
+            <button class="prow" data-plugin="command-guard"><span>🛡</span>command-guard</button>
+            <button class="prow" data-plugin="redactor"><span>🕶</span>redactor</button>
+          </div>
+        </div>
+
+      </aside>
+
+      <div class="stage-col">
+        <div class="cap" id="plugins-caption"></div>
+        <div class="stage-shadow"><div id="plugins-window"></div></div>
+      </div>
+    </div>
+  </section>
+
+<!-- ================= KEYMAPS ================= -->
+<section class="section" id="keys">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag accent">keymaps</span>
+      <h2>Your muscle memory, <em>respected.</em></h2>
+      <p class="lead">iTerm-style defaults; rebind anything with a <code>[[keybinding]]</code> —
+        layout-correct on AZERTY and friends.</p>
+    </div>
+    <div class="keys reveal">
+      <div class="keyrow"><span>New tab / close tab</span><span><kbd>⌘T</kbd> <kbd>⌘W</kbd></span></div>
+      <div class="keyrow"><span>Split right / down</span><span><kbd>⌘D</kbd> <kbd>⌘⇧D</kbd></span></div>
+      <div class="keyrow"><span>Quick switcher</span><span><kbd>⌘P</kbd> / <kbd>⌘K</kbd></span></div>
+      <div class="keyrow"><span>Jump to tab</span><span><kbd>⌘1</kbd>…<kbd>⌘9</kbd></span></div>
+      <div class="keyrow"><span>Focus pane</span><span><kbd>⌘⌥←↑↓→</kbd></span></div>
+      <div class="keyrow"><span>Zoom pane</span><span><kbd>⌘↩</kbd></span></div>
+      <div class="keyrow"><span>Per-pane font zoom</span><span><kbd>⌘=</kbd> <kbd>⌘−</kbd> <kbd>⌘0</kbd></span></div>
+      <div class="keyrow"><span>Scroll history</span><span><kbd>⇧PgUp</kbd> <kbd>⇧PgDn</kbd></span></div>
+      <div class="keyrow"><span>Reload config live</span><span><kbd>⌘,</kbd></span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= DOWNLOAD ================= -->
+<div class="band" id="download">
+  <div class="wrap" style="text-align:center">
+    <img src="website/assets/icon.png" alt="" style="width:72px;height:72px;border-radius:17px;margin-bottom:18px">
+    <h2>Your prompt is about to get <em>superpowers.</em></h2>
+    <p class="lead" style="margin-left:auto;margin-right:auto">Free and open source. Bring any AI
+      provider — or none. Your keys stay in your config, your secrets get redacted, and the
+      guard has the last word.</p>
+    <div class="hero-ctas" style="justify-content:center">
+      <a class="btn dark" href="https://github.com/mourad-ghafiri/aiTerminal/releases" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+        <span>Download for macOS<span class="os">Apple Silicon · macOS 12+</span></span>
+      </a>
+      <a class="btn" href="https://github.com/mourad-ghafiri/aiTerminal/releases" target="_blank" rel="noopener"><span>Linux</span><span class="soon">soon</span></a>
+      <a class="btn" href="https://github.com/mourad-ghafiri/aiTerminal/releases" target="_blank" rel="noopener"><span>Windows</span><span class="soon">soon</span></a>
+      <a class="btn" href="https://github.com/mourad-ghafiri/aiTerminal" target="_blank" rel="noopener"><span>★ Star on GitHub</span></a>
+    </div>
+  </div>
+</div>
+
+<!-- ================= FOOTER ================= -->
+<footer>
+  <div class="wrap foot">
+    <a class="brand" href="index.html"><img src="website/assets/icon.png" alt="">aiTerminal</a>
+    <nav>
+      <a href="website/docs.html">Documentation</a>
+      <a href="website/use-cases.html">Use cases</a>
+      <a href="https://github.com/mourad-ghafiri/aiTerminal" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/mourad-ghafiri/aiTerminal/releases" target="_blank" rel="noopener">Releases</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="website/js/themes.js"></script>
+<script src="website/js/replica.js"></script>
+<script src="website/js/showcase.js"></script>
+<script src="website/js/plugins.js"></script>
+<script>
+/* refresh always lands at the top: the browser restores scroll position and
+   re-jumps to any #anchor left in the URL, so opt out of both on reload.
+   Anchor clicks still scroll normally — the hash just never sticks in the
+   address bar — and deep links opened fresh (not reloaded) still work. */
+if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+window.addEventListener("hashchange", () =>
+  history.replaceState(null, "", location.pathname + location.search));
+const navEntry = performance.getEntriesByType("navigation")[0];
+if (navEntry && navEntry.type === "reload") {
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+  window.addEventListener("load", () => window.scrollTo(0, 0));
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  /* reveal on scroll — subtle, once */
+  const io = new IntersectionObserver((es) => es.forEach((e) => {
+    if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+  }), { rootMargin: "-30px" });
+  document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+
+  /* mobile nav */
+  document.querySelector(".nav-toggle")?.addEventListener("click", () =>
+    document.querySelector(".nav-links").classList.toggle("open"));
+
+});
+</script>
+</body>
+</html>
