@@ -418,7 +418,17 @@ impl Term {
                     self.screen.lines[cy][x] = Cell::blank_with(&pen);
                 }
             }
+            3 => {
+                // ED 3 (`ESC[3J`): clear the SCROLLBACK, not the screen. `clear(1)`
+                // sends `ESC[H ESC[2J ESC[3J` — 2 wipes the visible screen, 3 purges the
+                // saved history. Without this the deque keeps every old line, so a
+                // workspace save after `clear` still dumps them (they reappear on
+                // restore). Snap the viewport back to the live bottom too.
+                self.scrollback.clear();
+                self.scroll_offset = 0;
+            }
             _ => {
+                // ED 2 (and any other value): blank the whole visible screen.
                 for y in 0..self.rows {
                     for cell in self.screen.lines[y].iter_mut() {
                         *cell = Cell::blank_with(&pen);
@@ -1016,6 +1026,28 @@ mod tests {
     }
 
     #[test]
+    fn ed3_clears_scrollback_so_clear_truly_clears() {
+        // The reported bug: `clear`, close, reopen → the old commands were back.
+        // `clear` sends `ESC[2J` (screen) + `ESC[3J` (scrollback); ED 3 must purge the
+        // deque, or the workspace save still dumps the history that `clear` "removed".
+        let mut t = Term::with_scrollback(20, 3, 100);
+        for i in 0..30 {
+            t.feed(format!("cmd-{i}\r\n").as_bytes()); // overflow the screen → scrollback fills
+        }
+        assert!(t.scrollback_len() > 0, "precondition: history accumulated");
+        t.feed(b"\x1b[H\x1b[2J\x1b[3J"); // exactly what `clear(1)` emits
+        assert_eq!(t.scrollback_len(), 0, "ED 3 purges the scrollback deque");
+        assert!(t.content_ansi(1000, None).is_empty(), "a cleared terminal saves nothing");
+        // ED 2 alone (no 3) must NOT drop history — scrolling up still shows it live.
+        for i in 0..30 {
+            t.feed(format!("again-{i}\r\n").as_bytes());
+        }
+        let before = t.scrollback_len();
+        t.feed(b"\x1b[2J");
+        assert_eq!(t.scrollback_len(), before, "ED 2 leaves scrollback intact");
+    }
+
+    #[test]
     fn content_ansi_drops_the_live_prompt_line() {
         // The reported bug: every close + reopen stacked one more "~ ❯" — the live
         // prompt row (where the cursor waits for input) was saved as content, then
@@ -1247,6 +1279,34 @@ mod tests {
         t.resize(3, 2);
         assert_eq!(t.cols(), 3);
         assert_eq!(line_text(&t, 0), "hel");
+    }
+
+    #[test]
+    fn restoring_at_the_saved_width_keeps_wide_lines_on_one_row() {
+        // The restore-scramble bug: a line wider than the restore grid re-wraps. The fix
+        // rebuilds the pane at the SAVED width, so a dump replays to identical rows.
+        let mut t = Term::with_scrollback(100, 6, 500);
+        let wide: String = (0..90).map(|i| char::from(b'a' + (i % 26) as u8)).collect(); // 90 cols > 80
+        t.feed(format!("{wide}\r\nsecond line\r\n").as_bytes());
+        let dump = t.content_ansi(1000, None);
+
+        // Replaying at the SAVED width (100) — the 90-char line stays ONE physical row.
+        let mut same = Term::with_scrollback(100, 6, 500);
+        for l in &dump {
+            same.feed(l.as_bytes());
+            same.feed(b"\r\n");
+        }
+        assert_eq!(line_text(&same, 0), wide, "wide line intact on one row at the saved width");
+        assert_eq!(line_text(&same, 1), "second line");
+
+        // Replaying at the OLD fixed 80 width would have split the 90-char line across two
+        // rows — proving why the pane must be rebuilt at its saved size.
+        let mut narrow = Term::with_scrollback(80, 6, 500);
+        for l in &dump {
+            narrow.feed(l.as_bytes());
+            narrow.feed(b"\r\n");
+        }
+        assert_ne!(line_text(&narrow, 1), "second line", "at 80 the wide line wraps and shoves everything down");
     }
 
     #[test]

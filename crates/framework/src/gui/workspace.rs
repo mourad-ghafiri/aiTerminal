@@ -46,9 +46,15 @@ const CONTENT_SAVE_LINES: usize = 1000;
 /// buffer content WITH styling (ANSI escapes), so the reopened pane silently
 /// shows exactly the session you left, colors included.
 fn snapshot_pane(p: &Pane, sel_band: (u8, u8, u8)) -> Toml {
+    // The grid size at save time — the restore rebuilds the terminal at exactly these
+    // dims so the replayed content reproduces its physical rows (same width → same
+    // wrapping); without it, a wider saved line re-wraps and the restore looks scrambled.
+    let (cols, rows) = p.session.grid_size();
     let mut kvs = vec![
         ("kind".into(), Toml::Str("terminal".into())),
         ("zoom".into(), Toml::Float(p.zoom as f64)),
+        ("cols".into(), Toml::Int(cols as i64)),
+        ("rows".into(), Toml::Int(rows as i64)),
     ];
     if let Some((_, path)) = p.session.cwd() {
         kvs.push(("cwd".into(), Toml::Str(path)));
@@ -70,7 +76,16 @@ fn restore_pane(factory: &PaneFactory, t: &Toml) -> Option<Pane> {
     }
     let cwd = t.get("cwd").and_then(|v| v.as_str()).map(expand_tilde);
     let content = t.get("content").and_then(|v| v.as_str());
-    let mut pane = factory.terminal_pane_at(cwd.as_deref(), content).ok()?;
+    // Rebuild at the saved grid size so the content replays without re-wrapping (the
+    // first layout then resizes the pane to its real rect). Both must be present and
+    // sane, else fall back to the default 80×24.
+    let dims = t
+        .get("cols")
+        .and_then(|v| v.as_num())
+        .zip(t.get("rows").and_then(|v| v.as_num()))
+        .filter(|(c, r)| *c >= 1.0 && *r >= 1.0)
+        .map(|(c, r)| (c as u16, r as u16));
+    let mut pane = factory.terminal_pane_at(cwd.as_deref(), content, dims).ok()?;
     if let Some(z) = t.get("zoom").and_then(|v| v.as_num()) {
         pane.zoom = z as f32;
     }
@@ -153,17 +168,40 @@ mod tests {
 
     #[test]
     fn terminal_pane_snapshot_round_trips_through_toml() {
-        // A terminal-pane snapshot table round-trips kind/zoom/cwd through TOML text — the
-        // exact path workspace.toml takes (the full Pane is rebuilt by the live factory).
+        // A terminal-pane snapshot table round-trips kind/zoom/cwd/dims through TOML text —
+        // the exact path workspace.toml takes (the full Pane is rebuilt by the live factory).
         let t = Toml::Table(vec![
             ("kind".into(), Toml::Str("terminal".into())),
             ("zoom".into(), Toml::Float(1.25)),
+            ("cols".into(), Toml::Int(132)),
+            ("rows".into(), Toml::Int(43)),
             ("cwd".into(), Toml::Str("/work/My Project".into())),
         ]);
         let back = Toml::parse(&t.to_string()).unwrap();
         assert_eq!(back.get("kind").and_then(|v| v.as_str()), Some("terminal"));
         assert_eq!(back.get("zoom").and_then(|v| v.as_num()), Some(1.25));
+        assert_eq!(back.get("cols").and_then(|v| v.as_num()), Some(132.0));
+        assert_eq!(back.get("rows").and_then(|v| v.as_num()), Some(43.0));
         assert_eq!(back.get("cwd").and_then(|v| v.as_str()), Some("/work/My Project"));
+    }
+
+    #[test]
+    fn restore_reads_saved_grid_dims_with_a_default_fallback() {
+        // The dims parser mirrors restore_pane: both present and ≥1 → Some; missing or
+        // garbage → None, so the pane falls back to the classic 80×24.
+        let dims = |t: &Toml| {
+            t.get("cols")
+                .and_then(|v| v.as_num())
+                .zip(t.get("rows").and_then(|v| v.as_num()))
+                .filter(|(c, r)| *c >= 1.0 && *r >= 1.0)
+                .map(|(c, r)| (c as u16, r as u16))
+        };
+        let full = Toml::Table(vec![("cols".into(), Toml::Int(120)), ("rows".into(), Toml::Int(30))]);
+        assert_eq!(dims(&full), Some((120, 30)));
+        assert_eq!(dims(&Toml::Table(vec![("cols".into(), Toml::Int(120))])), None, "rows missing → fallback");
+        assert_eq!(dims(&Toml::Table(vec![])), None, "both missing → fallback");
+        let zero = Toml::Table(vec![("cols".into(), Toml::Int(0)), ("rows".into(), Toml::Int(30))]);
+        assert_eq!(dims(&zero), None, "a zero dimension is rejected");
     }
 
     #[test]
