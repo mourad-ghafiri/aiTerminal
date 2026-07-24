@@ -275,20 +275,38 @@ impl Term {
         rev
     }
 
-    /// Resize the grid. Phase 0 uses clamp (no soft-wrap reflow yet): content is
-    /// preserved top-left, lines truncated/extended to the new width.
+    /// Resize the grid **losslessly and reversibly** — the property split/close depends
+    /// on: shrinking a pane (a new split steals its space) then growing it back (the split
+    /// closes) must restore the pane byte-for-byte.
+    ///
+    /// - **Height**: overflow rows scroll off the TOP into scrollback (never chopped off the
+    ///   bottom, which would drop the cursor line + recent output); growing pulls those
+    ///   rows back from scrollback before padding with blanks. This is exactly how a real
+    ///   terminal reflows its height, and it round-trips.
+    /// - **Width**: never truncated. A line keeps its full content; anything past `cols` is
+    ///   simply clipped at render (readers already clamp to `cols`), so a widen reveals it
+    ///   again intact. Lines only ever GROW to satisfy the `len() >= cols` write invariant.
+    ///
+    /// Scrollback rows keep their historical width (re-widening thousands of them per resize
+    /// was O(scrollback × events) on a window drag).
     pub fn resize(&mut self, cols: u16, rows: u16) {
         let cols = cols.max(1) as usize;
         let rows = rows.max(1) as usize;
         self.gen = self.gen.wrapping_add(1);
-        resize_screen(&mut self.screen, cols, rows);
-        if let Some(p) = self.saved_primary.as_mut() {
-            resize_screen(p, cols, rows);
+        // The PRIMARY screen owns the scrollback; resize it with row overflow/refill. The
+        // ALT screen (vim/less) is transient and keeps no history — clamp it, no scrollback.
+        // Distinct fields → disjoint borrows.
+        let sb = &mut self.scrollback;
+        let sb_max = self.scrollback_max;
+        let so = &mut self.scroll_offset;
+        if self.in_alt {
+            resize_alt_screen(&mut self.screen, cols, rows);
+            if let Some(p) = self.saved_primary.as_mut() {
+                resize_primary_screen(p, sb, sb_max, so, cols, rows);
+            }
+        } else {
+            resize_primary_screen(&mut self.screen, sb, sb_max, so, cols, rows);
         }
-        // Scrollback lines KEEP their historical width — re-widening thousands of
-        // history rows on every resize event made a live window drag O(scrollback ×
-        // events). The read contract instead: a scrollback row may be any width, and
-        // every reader clamps (`row.get(x)` / iterate `row.len()`), never indexes 0..cols.
         self.cols = cols;
         self.rows = rows;
     }
@@ -442,9 +460,14 @@ impl Term {
         let pen = self.screen.pen;
         let cy = self.screen.cy;
         let cx = self.screen.cx.min(self.cols - 1);
+        // Clear to the PHYSICAL end of the row, not just `cols`: a width-shrink keeps a
+        // line's off-screen right tail (so a later grow restores it losslessly), and an
+        // erase-to-EOL must wipe that hidden tail too — otherwise stale cells resurface
+        // when the pane widens again.
+        let end = self.screen.lines[cy].len();
         match mode {
             0 => {
-                for x in cx..self.cols {
+                for x in cx..end {
                     self.screen.lines[cy][x] = Cell::blank_with(&pen);
                 }
             }
@@ -454,7 +477,7 @@ impl Term {
                 }
             }
             _ => {
-                for x in 0..self.cols {
+                for x in 0..end {
                     self.screen.lines[cy][x] = Cell::blank_with(&pen);
                 }
             }
@@ -559,10 +582,68 @@ impl Term {
     }
 }
 
-fn resize_screen(s: &mut Screen, cols: usize, rows: usize) {
+/// Grow every line to at least `cols` so the write paths (`lines[y][x]`, `x < cols`)
+/// stay in bounds. NEVER shrinks a line: a width-shrink keeps the off-screen tail so a
+/// later widen restores it (the renderer clips to `cols`).
+fn grow_lines_to(s: &mut Screen, cols: usize) {
     for line in s.lines.iter_mut() {
-        line.resize(cols, Cell::BLANK);
+        if line.len() < cols {
+            line.resize(cols, Cell::BLANK);
+        }
     }
+}
+
+/// Resize the PRIMARY screen losslessly against its scrollback: height overflow scrolls
+/// off the TOP into history and refills from it on grow, so a shrink→grow round-trips.
+fn resize_primary_screen(
+    s: &mut Screen,
+    scrollback: &mut std::collections::VecDeque<Line>,
+    scrollback_max: usize,
+    scroll_offset: &mut usize,
+    cols: usize,
+    rows: usize,
+) {
+    grow_lines_to(s, cols);
+    let cur = s.lines.len();
+    if rows < cur {
+        // Shrink. Keep the cursor anchored and stable — the property a window-resize drag
+        // (and a split) needs. Two stages:
+        //   1. Drop TRAILING BLANK rows below the cursor first. A shell pane is usually a
+        //      few lines of prompt/output with empty space beneath it, so this alone
+        //      absorbs the shrink WITHOUT moving anything the user can see.
+        //   2. Only if the cursor still would not fit, scroll the remaining TOP rows into
+        //      scrollback (nothing is ever lost — it becomes history).
+        let mut d = cur - rows;
+        while d > 0 && s.lines.len() > s.cy + 1 && line_is_blank(s.lines.last().expect("non-empty").as_slice()) {
+            s.lines.pop();
+            d -= 1;
+        }
+        for _ in 0..d {
+            scrollback.push_back(s.lines.remove(0));
+        }
+        while scrollback.len() > scrollback_max {
+            scrollback.pop_front();
+        }
+        s.cy = s.cy.saturating_sub(d);
+    } else if rows > cur {
+        // Grow: append blank rows at the BOTTOM. Deliberately NOT pulling history up from
+        // scrollback — that would move the cursor/prompt and make a resize drag jump around.
+        // The prompt stays put; new space opens below it, exactly reversing stage 1 above.
+        for _ in 0..(rows - cur) {
+            s.lines.push(vec![Cell::BLANK; cols]);
+        }
+    }
+    s.scroll_top = 0;
+    s.scroll_bot = rows - 1;
+    s.cx = s.cx.min(cols - 1);
+    s.cy = s.cy.min(rows - 1);
+    *scroll_offset = (*scroll_offset).min(scrollback.len());
+}
+
+/// Resize the ALT screen (vim/less): transient, no scrollback — clamp rows by
+/// truncate/extend at the bottom (the program redraws on SIGWINCH). Width still only grows.
+fn resize_alt_screen(s: &mut Screen, cols: usize, rows: usize) {
+    grow_lines_to(s, cols);
     if rows > s.lines.len() {
         for _ in s.lines.len()..rows {
             s.lines.push(vec![Cell::BLANK; cols]);
@@ -1273,12 +1354,68 @@ mod tests {
     }
 
     #[test]
-    fn resize_preserves_topleft() {
-        let mut t = Term::new(10, 3);
+    fn resize_height_shrink_scrolls_top_into_scrollback_not_the_bottom() {
+        // Shrinking height must keep the cursor line + recent output on screen, pushing the
+        // TOP rows into scrollback — the OLD code chopped the BOTTOM, deleting the cursor
+        // line and latest output (what made a vertical split wreck its sibling).
+        let mut t = Term::with_scrollback(20, 5, 100);
+        t.feed(b"r0\r\nr1\r\nr2\r\nr3\r\nr4"); // cursor on "r4" (bottom row)
+        assert_eq!(t.scrollback_len(), 0);
+        t.resize(20, 3); // 5 → 3 rows
+        // The bottom (recent) rows stay; the top scrolled into history.
+        assert_eq!(line_text(&t, 0), "r2");
+        assert_eq!(line_text(&t, 2), "r4", "the cursor line + newest output are kept");
+        assert_eq!(t.scrollback_len(), 2, "the 2 top rows went to scrollback");
+    }
+
+    #[test]
+    fn resize_shrink_then_grow_round_trips_exactly() {
+        // The split/close + window-resize guarantee, on a REALISTIC pane: a few lines of
+        // output then a prompt, with blank space below (the normal shell state). Steal the
+        // pane's space on both axes (a split appears) then give it back (it closes) →
+        // byte-identical, and nothing moved into scrollback.
+        let mut t = Term::with_scrollback(40, 12, 500);
+        t.feed(b"line-0-aaaaaaaaaaaaaaaaaaaaaaaaaa\r\nline-1-bbbbbbbbbbbbbbbbbbbbbbbbbb\r\n~ > "); // prompt, blanks below
+        let before: Vec<String> = (0..12).map(|y| line_text(&t, y)).collect();
+        t.resize(18, 5); // a neighbouring split squeezes this pane on both axes…
+        t.resize(40, 12); // …then the split closes.
+        let after: Vec<String> = (0..12).map(|y| line_text(&t, y)).collect();
+        assert_eq!(before, after, "shrink→grow restored every row exactly");
+        assert_eq!(t.scrollback_len(), 0, "a pane with headroom never spills into scrollback on resize");
+    }
+
+    #[test]
+    fn resize_keeps_the_prompt_visible_not_buried_in_scrollback() {
+        // The window-resize disorder: a fresh split pane has its prompt near the TOP with
+        // blank space beneath. Shrinking must drop the trailing BLANK rows, keeping the
+        // prompt on screen — the old code scrolled the top (the prompt!) into scrollback,
+        // leaving a blank pane and a prompt that jumped around during a drag.
+        let mut t = Term::with_scrollback(40, 20, 500);
+        t.feed(b"~/project > "); // one prompt line at the top, 19 blank rows below
+        for target in [14, 9, 5, 3, 18, 20] {
+            t.resize(40, target); // simulate a resize drag oscillating the height
+            assert_eq!(line_text(&t, 0), "~/project >", "the prompt stays on the top row at height {target}");
+            assert_eq!(t.scrollback_len(), 0, "no history is fabricated by resizing an empty-ish pane");
+        }
+    }
+
+    #[test]
+    fn resize_width_is_lossless_and_reversible() {
+        // A width-shrink must NOT destroy content (the old clamp truncated to "hel", so a
+        // split that squeezed a pane then closed left the pane clipped forever). The line
+        // keeps its full text off-screen; the RENDERER clips to `cols`, and a widen reveals
+        // it again intact.
+        let mut t = Term::new(10, 2);
         t.feed(b"hello");
-        t.resize(3, 2);
+        t.resize(3, 2); // width 10 → 3, same rows (isolate the width axis)
         assert_eq!(t.cols(), 3);
-        assert_eq!(line_text(&t, 0), "hel");
+        assert_eq!(line_text(&t, 0), "hello", "content survives the shrink (clipped only at render)");
+        // The visible slice is clipped to cols — what the user actually sees.
+        let visible: String = t.display_row(0).iter().take(t.cols() as usize).map(|c| c.ch).collect::<String>().trim_end().to_string();
+        assert_eq!(visible, "hel", "the render clips to the narrow width");
+        // Grow back → the full line is whole again. Split-then-close is a no-op.
+        t.resize(10, 2);
+        assert_eq!(line_text(&t, 0), "hello");
     }
 
     #[test]
