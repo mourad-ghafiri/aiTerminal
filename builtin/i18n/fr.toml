@@ -1,9 +1,6 @@
 # Français — doit définir exactement le même ensemble de clés que en.toml
 # (le test de parité CI l'exige).
 
-[term]
-title = "Terminal"
-
 [switcher]
 placeholder = "tapez un numéro ou un nom…"
 

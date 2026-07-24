@@ -215,7 +215,14 @@ impl Session {
         scrollback: usize,
         cwd: Option<&str>,
         restore: Option<&str>,
+        dims: Option<(u16, u16)>,
     ) -> std::io::Result<Session> {
+        // Start the grid at the pane's SAVED size when restoring a workspace, so the
+        // replayed content reproduces its exact physical rows (the VT parser wraps a line
+        // the same way only at the same width — spawning at a fixed 80 col re-wrapped every
+        // wider line, scrambling the restore). A fresh pane uses the classic 80×24 until
+        // the first layout resizes it to the real rect.
+        let (cols, rows) = dims.map(|(c, r)| (c.max(1), r.max(1))).unwrap_or((80, 24));
         // An interactive login shell: argv[0]=`-<name>`, cwd=$HOME (or an explicit `cwd`
         // when restoring a saved workspace), TERM exported — so the window works correctly
         // even when launched from the desktop (Dock). Shell integration (aliases / file
@@ -223,14 +230,14 @@ impl Session {
         let cmd = PtyCommand {
             program: shell.to_string(),
             args: integ.args,
-            cols: 80,
-            rows: 24,
+            cols,
+            rows,
             login: integ.login,
             env: integ.env,
             cwd: cwd.map(str::to_string),
         };
         let pty: Arc<dyn Pty> = Arc::from(platform::os::spawn_pty(&cmd)?);
-        let term = Arc::new(Mutex::new(Term::with_scrollback(80, 24, scrollback)));
+        let term = Arc::new(Mutex::new(Term::with_scrollback(cols, rows, scrollback)));
         // Replay the saved session CONTENT (with its ANSI styling) into the buffer
         // BEFORE the reader thread starts — the restored pane silently shows exactly
         // what was on screen, colors included, with the fresh prompt right below.
@@ -290,12 +297,18 @@ impl Session {
             .filter(|s| !s.is_empty())
             .map(String::from)
             .unwrap_or_else(|| "shell".into());
-        Ok(Session { pty, term, cols: 80, rows: 24, selection: None, shell_name, exited })
+        Ok(Session { pty, term, cols, rows, selection: None, shell_name, exited })
     }
 
     /// Whether the shell process has ended (so the host can reap this pane).
     fn exited(&self) -> bool {
         self.exited.load(SeqCst)
+    }
+
+    /// The current grid size (cols, rows) — persisted per pane so a restore rebuilds
+    /// the terminal at exactly this width and the saved content never re-wraps.
+    fn grid_size(&self) -> (u16, u16) {
+        (self.cols, self.rows)
     }
 
     fn resize(&mut self, cols: u16, rows: u16) {
@@ -344,12 +357,11 @@ impl Session {
             return t; // a program (vim / ssh / …) set its own title — keep it
         }
         // No program title — name the open folder + the shell. With the tab's index +
-        // icon prefix this reads e.g. "3 - 🖥 Terminal [the-terminal][zsh]".
-        let word = crate::i18n::translate("term.title", &[]);
+        // icon prefix this reads e.g. "3 - 🖥 the-terminal [zsh]".
         let shell = self.shell_name.trim_start_matches('-');
         match self.cwd().and_then(|(_host, path)| folder_label(&path)) {
-            Some(folder) => format!("{word} [{folder}][{shell}]"),
-            None => format!("{word} [{shell}]"),
+            Some(folder) => format!("{folder} [{shell}]"),
+            None => format!("[{shell}]"),
         }
     }
 }
@@ -403,8 +415,8 @@ impl Pane {
     fn terminal(s: Session, zoom: f32) -> Pane {
         Pane { zoom, session: s }
     }
-    /// The pane NAME only (no icon): the program/`Terminal [shell]` title. The
-    /// renderer composes `index - icon name`.
+    /// The pane NAME only (no icon): a program's own title, else `<folder> [<shell>]`.
+    /// The renderer composes `index - icon name`.
     fn title(&self) -> String {
         self.session.title()
     }

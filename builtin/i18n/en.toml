@@ -4,10 +4,6 @@
 # CI parity test requires it to define exactly this key set). Select with
 # `[appearance] locale` in config.toml (per-profile overridable).
 
-[term]
-# The word used in tab titles when no program set its own: "Terminal [dir][zsh]".
-title = "Terminal"
-
 [switcher]
 # The quick-switcher's empty-filter placeholder.
 placeholder = "type a number or name…"

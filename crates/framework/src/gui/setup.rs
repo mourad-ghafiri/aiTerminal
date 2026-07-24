@@ -37,19 +37,21 @@ impl PaneFactory {
     /// plugin aliases + theme-driven file colors + (optional) prompt — from the
     /// active plugins + theme, regenerated per spawn so a new tab reflects the theme.
     pub fn terminal_pane(&self) -> std::io::Result<Pane> {
-        self.terminal_pane_at(None, None)
+        self.terminal_pane_at(None, None, None)
     }
 
     /// A fresh terminal pane started in `cwd` (when restoring a saved workspace), else
     /// the default login-shell `$HOME`; `restore` is the previous session's text
-    /// content, replayed into the buffer above the fresh prompt. Shares all of
+    /// content, replayed into the buffer above the fresh prompt; `dims` is the pane's
+    /// saved grid size, so the replay reproduces the exact wrapping (a `None` uses the
+    /// classic 80×24 until the first layout). Shares all of
     /// [`terminal_pane`](Self::terminal_pane)'s shell-integration setup.
-    pub fn terminal_pane_at(&self, cwd: Option<&str>, restore: Option<&str>) -> std::io::Result<Pane> {
+    pub fn terminal_pane_at(&self, cwd: Option<&str>, restore: Option<&str>, dims: Option<(u16, u16)>) -> std::io::Result<Pane> {
         let registry = crate::plugin::load_registry(&self.config);
         let theme = Config::resolve_theme(&self.config.theme);
         let integ = crate::shell::prepare(&self.config, &registry, &theme, &self.config.shell);
         Ok(Pane::terminal(
-            Session::spawn(&self.dirty, &self.config.shell, self.policy.clone(), integ, self.config.scrollback, cwd, restore)?,
+            Session::spawn(&self.dirty, &self.config.shell, self.policy.clone(), integ, self.config.scrollback, cwd, restore, dims)?,
             self.default_zoom,
         ))
     }
