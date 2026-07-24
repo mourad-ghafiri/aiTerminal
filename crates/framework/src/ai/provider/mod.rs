@@ -271,27 +271,15 @@ impl ModelCatalog {
         (!self.default_model.is_empty()).then(|| self.get(&self.default_model)).flatten()
     }
 
-    /// Resolve the runtime pair: the primary model (by id, else default) and the
-    /// fast model (by id, else the next model of the same provider, else primary).
-    pub fn resolve(&self, primary_id: &str, fast_id: &str) -> (ModelDef, ModelDef) {
-        let primary = (!primary_id.trim().is_empty())
-            .then(|| self.get(primary_id))
+    /// Resolve a model by id, falling back to the catalog default. Every request
+    /// rides a pool member; there is no separate "fast" tier.
+    pub fn resolve(&self, id: &str) -> ModelDef {
+        (!id.trim().is_empty())
+            .then(|| self.get(id))
             .flatten()
             .or_else(|| self.default())
             .cloned()
-            .unwrap_or_default();
-        let fast = (!fast_id.trim().is_empty())
-            .then(|| self.get(fast_id))
-            .flatten()
-            .cloned()
-            .or_else(|| {
-                self.models
-                    .iter()
-                    .find(|m| m.provider == primary.provider && m.id != primary.id)
-                    .cloned()
-            })
-            .unwrap_or_else(|| primary.clone());
-        (primary, fast)
+            .unwrap_or_default()
     }
 
     /// `[{name, kind, models, default}]` grouped by provider — for `ai.providers`
@@ -512,13 +500,11 @@ enable_vision=true\nenable_document=true\nenable_tools=true\nprice_in=5.0\nprice
     }
 
     #[test]
-    fn catalog_resolves_primary_and_fast() {
+    fn catalog_resolves_by_id_else_default() {
         let cat = ModelCatalog { default_model: "claude-opus-4-8".into(), models: parse_models_doc(ANTHROPIC, "anthropic") };
-        let (p, f) = cat.resolve("", "");
-        assert_eq!(p.id, "claude-opus-4-8"); // default
-        assert_eq!(f.id, "claude-haiku-4-5-20251001"); // next of same provider
-        let (p2, _) = cat.resolve("claude-haiku-4-5-20251001", "");
-        assert_eq!(p2.id, "claude-haiku-4-5-20251001"); // explicit id wins
+        assert_eq!(cat.resolve("").id, "claude-opus-4-8"); // empty → the default
+        assert_eq!(cat.resolve("claude-haiku-4-5-20251001").id, "claude-haiku-4-5-20251001"); // explicit id wins
+        assert_eq!(cat.resolve("no-such-model").id, "claude-opus-4-8"); // unknown → the default
     }
 
     #[test]

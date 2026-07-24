@@ -266,23 +266,101 @@ expose their tools as
 
 Models are **data**: one `ai/models/<provider>.toml` per provider (anthropic,
 openai, openrouter, deepseek, groq, grok, qwen, kimi, minimax, ollama, lmstudio,
-local) declaring its endpoint/key-env once, plus per-model definitions (params,
-context window, pricing). Enable AI with one block in `config.toml`:
+local) declaring its endpoint and key variable once, plus per-model definitions
+(params, capabilities, context window, pricing).
+
+There is **one pool and one strategy** — no separate "fast" tier, no global key.
+Every request (`@ai`, `@<agent>`, `@flow`, `@loop`) draws a model from the same
+pool, weighted by config. AI is **off** until you declare a model; no vendor is
+assumed.
+
+Declare models under `MODELS` at the end of the `[ai]` section. They belong last
+because TOML gives every `key = value` to the table header above it — an `[ai]`
+setting written after an `[[ai.model]]` block would become part of that model.
+
+### Getting started — one model
 
 ```toml
 [[ai.model]]
-provider = "anthropic"
-id       = "claude-opus-4-8"
-api_key  = ""              # or export ANTHROPIC_API_KEY
+provider = "openrouter"                # any provider (see ai/models/*.toml)
+id       = "deepseek/deepseek-chat"    # any id that provider serves
+api_key  = "sk-or-v1-…"
 ```
 
-Declare several `[[ai.model]]` tables to load-balance
-(`[ai.balance] strategy = "weighted" | round_robin | cost | failover`, per-model
-`weight`, sampling overrides, and a `thinking = true|false` cap override).
-Each model's catalog entry declares its capabilities — `vision`, `document`,
-`thinking`, `tools` — and the engine sends each candidate only what it supports. Any model id a known provider serves works — it need
-not be pre-declared. The **fast model** (NL→command) is drawn from your pool unless
-`fast_model` overrides it.
+That is the whole setup. `weight` is optional — a lone model serves every request.
+
+### API keys, three ways
+
+Keys belong to the model that needs them, so a mixed pool carries one key per
+provider:
+
+| In `config.toml` | Resolves to |
+| --- | --- |
+| `api_key = "sk-…"` | the key itself |
+| `api_key = "$MY_KEY"` or `"${MY_KEY}"` | that environment variable's value |
+| *`api_key` omitted* | the provider's own variable — `$ANTHROPIC_API_KEY`, `$OPENAI_API_KEY`, `$OPENROUTER_API_KEY`, `$DEEPSEEK_API_KEY`, … (declared by `ai/models/<provider>.toml`) |
+
+Expansion happens **at request time**, never at parse time, so exporting or
+rotating a key takes effect without touching `config.toml`. An unset variable
+resolves to nothing (never the literal `"$MY_KEY"`), and you get the setup hint
+naming exactly which variable to set. Local providers (`ollama`, `lmstudio`) need
+no key at all:
+
+```toml
+[[ai.model]]
+provider = "ollama"
+id       = "llama3.1"
+```
+
+### A pool of several models
+
+Add more blocks. `weight` is each model's share of requests; omit it and a model
+gets a full 100:
+
+```toml
+[[ai.model]]                # ~10% — keep the pricey one rare
+provider    = "anthropic"
+id          = "claude-opus-4-8"
+api_key     = "$ANTHROPIC_API_KEY"
+weight      = 10
+temperature = 0.3           # 0.0–1.0, lower is more deterministic
+max_tokens  = 8000          # response cap (clamped 1–200000)
+thinking    = true          # force extended thinking on/off
+
+[[ai.model]]                # ~90% — the everyday workhorse
+provider = "openrouter"
+id       = "deepseek/deepseek-chat"
+api_key  = "sk-or-v1-…"
+weight   = 90
+top_p    = 0.95             # nucleus sampling
+top_k    = 40               # top-k sampling
+```
+
+Sampling settings are optional per model — leave them out and the model's catalog
+defaults apply.
+
+### How the pool picks
+
+**Weighted** by default; omit `[ai.balance]` entirely unless you want another
+strategy. It must sit *above* your `[[ai.model]]` blocks:
+
+```toml
+[ai.balance]
+strategy = "weighted"       # weighted (default) | round_robin | cost | failover
+```
+
+- **weighted** — random, proportional to `weight`.
+- **round_robin** — cycle the entries, one per request.
+- **cost** — always the cheapest by `price_in + price_out`.
+- **failover** — the first entry, with the rest as ordered fallbacks the agent
+  path retries on a hard error.
+
+Any model id a known provider serves works — it need not be pre-declared in
+`ai/models/<provider>.toml`; just set `provider` so the engine knows the endpoint
+and key variable. Each model's catalog entry declares its capabilities —
+`vision`, `document`, `thinking`, `tools` — and the engine sends each candidate
+only what it supports.
+
 
 ## Context & privacy
 

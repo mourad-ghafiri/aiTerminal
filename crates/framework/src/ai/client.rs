@@ -86,9 +86,10 @@ impl<T: Transport> Client<T> {
         self.run(&self.primary, qa_request(&self.primary, prompt, context))
     }
 
-    /// Translate natural language to a shell command (fast model).
+    /// Translate natural language to a shell command — on the same pool-chosen model
+    /// as every other request (one pool, one strategy; there is no separate fast tier).
     pub fn to_command(&self, nl: &str, context: &str) -> Receiver<StreamEvent> {
-        self.run(&self.settings.fast_model, command_request(&self.settings.fast_model, nl, context))
+        self.run(&self.primary, command_request(&self.primary, nl, context))
     }
 
 
@@ -226,16 +227,15 @@ mod tests {
     /// the wire must declare a real model — built here from the reference catalog.
     fn settings_with(env: &str) -> AiSettings {
         let cat = crate::ai::provider::builtin_default();
-        let (mut primary, mut fast) = cat.resolve("claude-opus-4-8", "claude-haiku-4-5-20251001");
+        let mut primary = cat.resolve("claude-opus-4-8");
         primary.api_key_env = env.into();
-        fast.api_key_env = env.into();
-        AiSettings { pool: ModelPool::single(primary), fast_model: fast, api_key: None }
+        AiSettings { pool: ModelPool::single(primary) }
     }
 
     /// A configured Anthropic model (id overridable) — the base for failover tests
     /// that need a real `kind`/decoder, not the neutral default.
     fn anthropic_model(id: &str, env: &str) -> ModelDef {
-        let mut m = crate::ai::provider::builtin_default().resolve("claude-opus-4-8", "").0;
+        let mut m = crate::ai::provider::builtin_default().resolve("claude-opus-4-8");
         m.id = id.into();
         m.api_key_env = env.into();
         m
@@ -262,7 +262,9 @@ mod tests {
     }
 
     #[test]
-    fn qa_uses_primary_command_uses_fast_model() {
+    fn qa_and_command_both_ride_the_pool_model() {
+        // One pool, one strategy: `ask` and `to_command` hit the SAME chosen model —
+        // there is no separate fast tier that could reach another provider.
         let env = "TT_TEST_AI_KEY_MODEL";
         std::env::set_var(env, "test-key");
         let s = settings_with(env);
@@ -273,7 +275,7 @@ mod tests {
         let _ = collect(&qa.ask("q", ""));
         let cmd = Client::new(
             s,
-            MockTransport::expecting(text_sse("ok", 1, 1), &["claude-haiku-4-5-20251001", "Request: list files"]),
+            MockTransport::expecting(text_sse("ok", 1, 1), &["\"model\":\"claude-opus-4-8\"", "Request: list files"]),
         );
         let _ = collect(&cmd.to_command("list files", ""));
         std::env::remove_var(env);
@@ -296,8 +298,6 @@ mod tests {
                 ],
                 strategy: Strategy::Failover,
             },
-            fast_model: anthropic_model("good-model", env),
-            api_key: None,
         };
         let client = Client::new(s, MockTransport::from_fixture(text_sse("recovered", 3, 2)));
         let mut streamed = String::new();

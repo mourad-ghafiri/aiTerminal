@@ -128,7 +128,8 @@ impl PoolEntry {
 
 /// A set of candidate models + the strategy that picks among them. Plain value
 /// data (`Clone + PartialEq`); the selection cursor/RNG live in module state.
-#[derive(Clone, Debug, PartialEq)]
+/// `Default` is the EMPTY pool — AI is off until a model is declared.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelPool {
     pub entries: Vec<PoolEntry>,
     pub strategy: Strategy,
@@ -377,7 +378,7 @@ mod tests {
     #[test]
     fn thinking_override_flips_the_catalog_cap() {
         let cat = crate::ai::provider::builtin_default();
-        let (model, _) = cat.resolve("claude-opus-4-8", "");
+        let model = cat.resolve("claude-opus-4-8");
         let on = PoolEntry::new(model.clone(), 1, ModelOverrides { thinking: Some(true), ..Default::default() });
         assert!(on.resolved().caps.enable_thinking, "thinking = true forces it on");
         let off = PoolEntry::new(model, 1, ModelOverrides { thinking: Some(false), ..Default::default() });

@@ -43,67 +43,8 @@ scrollback = 10000         # terminal history lines kept for scrollback (Shift+P
 # files (anthropic, openai, openrouter, deepseek, groq, grok, qwen, kimi, minimax,
 # ollama, lmstudio, local) are a reference catalog — pick ANY of them, or any provider.
 #
-# ── Quick start: enable @ai / @<agent> (no model is configured by default) ──────
-# Until you add a model, AI is OFF. To turn it on, uncomment ONE [[ai.model]] and give
-# it a key (set `api_key`, OR leave it empty and export the provider's env var):
-#
-# [[ai.model]]
-# provider = "anthropic"          # any provider (see ai/models/*.toml)
-# id       = "claude-opus-4-8"    # any model that provider serves
-# api_key  = ""                   # this model's key — or export $ANTHROPIC_API_KEY
-#
-# You can name ANY model the provider serves; it need NOT be pre-declared in
-# ai/models/<provider>.toml — just set `provider` (so the engine knows the endpoint +
-# key var) and any `id`.
-
-# ── API keys ──────────────────────────────────────────────────────────────────
-# THREE ways to supply a key, most-specific first:
-#   1. per model     → `api_key` INSIDE a [[ai.model]] table  (best for mixing providers)
-#   2. global        → `[ai] api_key` here  (used for every model without its own key)
-#   3. environment   → leave keys empty + export each provider's var
-#                      (e.g. $ANTHROPIC_API_KEY, $OPENAI_API_KEY, $OPENROUTER_API_KEY)
-# The global key applies to EVERY model with no per-model key, so when mixing providers
-# give each [[ai.model]] its OWN api_key.
-api_key     = ""                    # global key (or leave empty + use per-model / env)
-
-# The fast model (the NL→command translator behind `@ai <request>`). Leave empty and
-# it uses a model FROM YOUR POOL (same provider + key) — never a different provider.
-# Set it to any catalog id to override, e.g. a small/cheap model:
-# fast_model = "<a-small-model-id>"
-
-# ── Multiple models / providers + load balancing ──────────────────────────────
-# Declare MANY [[ai.model]] tables to pool across models (and providers). The config is
-# AUTHORITATIVE — the engine only uses what you declare. Each request picks a model by
-# the [ai.balance] strategy; `weight` sets its share. Example weighted, multi-provider
-# pool — note the PER-MODEL keys:
-#
-# [ai.balance]
-# strategy = "weighted"   # weighted (default) | round_robin | cost | failover
-#
-# [[ai.model]]            # 10% — keep the pricey one rare
-# provider = "anthropic"
-# id       = "claude-opus-4-8"
-# api_key  = "sk-ant-…"
-# weight   = 10
-# temperature = 0.3       # per-model sampling overrides (all optional):
-# top_p       = 0.95      #   top_p / top_k nucleus + top-k sampling
-# top_k       = 40
-# max_tokens  = 8000      #   response cap (clamped 1–200000)
-# thinking    = true      #   force extended thinking on/off (else the catalog cap)
-#
-# [[ai.model]]            # 90% across two OpenRouter models (per-model keys)
-# provider = "openrouter"
-# id       = "deepseek/deepseek-chat"
-# api_key  = "sk-or-v1-…"
-# weight   = 45
-#
-# [[ai.model]]
-# provider = "openrouter"
-# id       = "openai/gpt-4o"
-# api_key  = "sk-or-v1-…"
-# weight   = 45
-#
-# `@ai`, `@<agent>` and `@flow` all draw from this pool per the balance strategy.
+# AI is OFF until you declare a model. Scroll to "MODELS" at the end of this section
+# and uncomment one block — that is the whole setup.
 
 # Let `@ai` / agents see your FOCUSED terminal pane's recent session (commands +
 # output, secrets redacted) so they can resolve "it"/"that" — e.g. after `mkdir x`,
@@ -127,6 +68,62 @@ mode = "manual"
 # Whether AI tools may reach the network (web.read / net.get / http.*). Off → agents
 # get a clear "network is disabled" error instead of egress.
 network = true
+
+
+# ══ MODELS ════════════════════════════════════════════════════════════════════
+# Every request — @ai, @<agent>, @flow, @loop — draws one model from this pool.
+# Add as many [[ai.model]] blocks as you like; each request picks one by `weight`.
+#
+# `api_key` takes three forms — pick whichever suits you:
+#   api_key = "sk-…"                 the key itself
+#   api_key = "$MY_KEY"              read from that environment variable
+#   (omit it)                        read the provider's own variable, e.g.
+#                                    $ANTHROPIC_API_KEY · $OPENAI_API_KEY ·
+#                                    $OPENROUTER_API_KEY · $DEEPSEEK_API_KEY
+# Local providers (ollama, lmstudio) need no key at all.
+#
+# ── Get started: uncomment ONE block, set `id` + your key ──────────────────────
+# [[ai.model]]
+# provider = "openrouter"                       # any provider (see ai/models/*.toml)
+# id       = "deepseek/deepseek-chat"           # any model that provider serves
+# api_key  = "sk-or-v1-…"                       # or omit → $OPENROUTER_API_KEY
+#
+# `weight` is optional — one model always serves 100% of requests.
+
+# ── A pool of several models (and providers) ──────────────────────────────────
+# `weight` is each model's share; omit it and a model gets a full 100. Give every
+# block its own key when mixing providers. Sampling settings are optional too —
+# leave them out and the model's catalog defaults apply.
+#
+# [[ai.model]]                # ~10% of requests — keep the pricey one rare
+# provider    = "anthropic"
+# id          = "claude-opus-4-8"
+# api_key     = "$ANTHROPIC_API_KEY"   # read from the environment
+# weight      = 10
+# temperature = 0.3           # 0.0–1.0, lower is more deterministic
+# max_tokens  = 8000          # response cap (clamped 1–200000)
+# thinking    = true          # force extended thinking on/off
+#
+# [[ai.model]]                # ~90% — the everyday workhorse
+# provider    = "openrouter"
+# id          = "deepseek/deepseek-chat"
+# api_key     = "sk-or-v1-…"
+# weight      = 90
+# top_p       = 0.95          # nucleus sampling
+# top_k       = 40            # top-k sampling
+#
+# [[ai.model]]                # a local model needs no key
+# provider = "ollama"
+# id       = "llama3.1"
+# weight   = 10
+
+# ── How the pool picks (optional) ─────────────────────────────────────────────
+# Default is "weighted". Uncomment to change it — and keep it ABOVE your
+# [[ai.model]] blocks, since a bare key always joins the table declared above it.
+#
+# [ai.balance]
+# strategy = "weighted"       # weighted (default) | round_robin | cost | failover
+
 
 [plugins]
 enabled  = true            # master switch for the whole declarative plugin system

@@ -29,7 +29,7 @@ pub use agent::{run_agent, AgentObserver, AgentRun, AgentSpec, NoopObserver, Run
 pub use client::Client;
 pub use context::{capture_context, TermContext};
 pub use mcp::{load_servers, McpHub, McpServer};
-pub use model::AiSettings;
+pub use model::{key_env_name, AiSettings};
 pub use orchestrate::{run_orchestration, Orchestration, OrchestrationStep, StepResult};
 pub use memory::{MemoryEntry, MemoryService};
 pub use pool::{ModelOverrides, ModelPool, PoolEntry, Strategy};

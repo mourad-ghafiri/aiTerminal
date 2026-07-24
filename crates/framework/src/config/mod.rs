@@ -26,6 +26,10 @@ pub struct Redaction {
     pub literal: bool,
 }
 
+/// The share a `[[ai.model]]` gets when it declares no `weight` — a full 100, so a
+/// single model needs no weight at all and a hand-written pool reads as percentages.
+pub const DEFAULT_WEIGHT: u32 = 100;
+
 /// One `[[ai.model]]` pool member (raw config form). [`Config::ai_settings`]
 /// resolves `id` (optionally qualified by `provider`, or by a `provider:id` prefix)
 /// against the model catalog, applies the overrides, and weights it in the pool.
@@ -70,10 +74,6 @@ pub struct Config {
     /// The load-balancing strategy across the pool (`[ai.balance] strategy`):
     /// `weighted` (default) | `round_robin` | `cost` | `failover`.
     pub ai_strategy: String,
-    /// Optional fast-model override (empty → the next model of the same provider).
-    pub ai_fast_model: String,
-    /// Explicit key from config (empty → read from the model's key env var).
-    pub ai_api_key: String,
     /// Share the focused terminal pane's recent session (commands + output, secrets
     /// redacted) with `@ai` / agents so they can resolve "it"/"that". Default `true`.
     pub ai_share_terminal_context: bool,
@@ -141,8 +141,6 @@ impl Default for Config {
             scrollback: 10_000,
             ai_pool: Vec::new(),
             ai_strategy: String::new(),
-            ai_fast_model: String::new(),
-            ai_api_key: String::new(),
             ai_share_terminal_context: true,
             ai_memory: true,
             ai_command_mode: "manual".into(),
@@ -594,14 +592,6 @@ impl Config {
             }
         }
         if let Some(ai) = doc.get("ai") {
-            if let Some(v) = ai.get("fast_model").and_then(|v| v.as_str()) {
-                if !v.trim().is_empty() {
-                    c.ai_fast_model = v.to_string();
-                }
-            }
-            if let Some(v) = ai.get("api_key").and_then(|v| v.as_str()) {
-                c.ai_api_key = v.to_string();
-            }
             if let Some(v) = ai.get("share_terminal_context").and_then(|v| v.as_bool()) {
                 c.ai_share_terminal_context = v;
             }
@@ -631,13 +621,14 @@ impl Config {
                     let Some(id) = m.get("id").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) else {
                         continue;
                     };
+                    warn_swallowed_ai_keys(id, m);
                     let posu32 = |k: &str| m.get(k).and_then(|v| v.as_int()).filter(|n| *n > 0).map(|n| n as u32);
                     let unit = |k: &str| m.get(k).and_then(|v| v.as_num()).map(|n| (n as f32).clamp(0.0, 1.0));
                     c.ai_pool.push(AiModelSpec {
                         id: id.trim().to_string(),
                         provider: m.get("provider").and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
                         api_key: m.get("api_key").and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-                        weight: m.get("weight").and_then(|v| v.as_int()).filter(|n| *n >= 0).map(|n| n as u32).unwrap_or(1),
+                        weight: m.get("weight").and_then(|v| v.as_int()).filter(|n| *n >= 0).map(|n| n as u32).unwrap_or(DEFAULT_WEIGHT),
                         temperature: unit("temperature"),
                         top_p: unit("top_p"),
                         top_k: posu32("top_k"),
@@ -776,27 +767,34 @@ impl Config {
         // pool is EMPTY — AI is off (no vendor assumed) until the user adds a model, and
         // the runtime surfaces the setup hint. (A model file may still self-flag
         // `default = true`; that flows in via an explicit entry, not here.)
-        let pool = ModelPool { entries, strategy: Strategy::parse(&self.ai_strategy) };
-        // The fast model (NL→command + /compact): an explicit `fast_model` id if it
-        // resolves, else a model FROM THE POOL (same provider + key — so `@ai <cmd>`
-        // and `/compact` never reach a different provider), else the catalog fast.
-        let fast_model = if !self.ai_fast_model.trim().is_empty() {
-            cat.get(&self.ai_fast_model).cloned().unwrap_or_else(|| pool.representative())
-        } else if self.ai_pool.is_empty() {
-            cat.resolve("", "").1
-        } else {
-            pool.representative()
-        };
-        crate::ai::AiSettings {
-            pool,
-            fast_model,
-            api_key: Some(self.ai_api_key.clone()).filter(|k| !k.trim().is_empty()),
-        }
+        crate::ai::AiSettings { pool: ModelPool { entries, strategy: Strategy::parse(&self.ai_strategy) } }
     }
 
     pub fn is_dark(&self) -> bool {
         self.theme.to_lowercase() != "daylight"
     }
+}
+
+/// Keys that only ever belong to `[ai]` — a model table has no use for any of them.
+/// Finding one inside a `[[ai.model]]` means the user wrote their model table ABOVE
+/// their `[ai]` settings, and TOML handed those settings to the model instead.
+const AI_ONLY_KEYS: [&str; 4] = ["share_terminal_context", "memory", "mode", "network"];
+
+/// Warn when a `[[ai.model]]` table has swallowed `[ai]` settings. This is silent data
+/// loss otherwise: the settings never reach `[ai]`, and a stray `api_key = ""` written
+/// after the model overwrites the key the user set on it — the "AI key missing" report.
+fn warn_swallowed_ai_keys(id: &str, m: &Toml) {
+    let stolen: Vec<&str> = AI_ONLY_KEYS.into_iter().filter(|k| m.get(k).is_some()).collect();
+    if stolen.is_empty() {
+        return;
+    }
+    eprintln!(
+        "aiTerminal: [[ai.model]] '{id}' contains [ai] settings ({}) — in TOML every key \
+         after a table header joins THAT table, so these never reached [ai] (and an \
+         `api_key = \"\"` written below the model wipes the key you set on it). \
+         Fix: move every [[ai.model]] block BELOW all the plain [ai] settings.",
+        stolen.join(", "),
+    );
 }
 
 /// Resolve an [`AiModelSpec`] to a [`ModelDef`]. Matches by `id` + an optional
@@ -1006,7 +1004,6 @@ mod tests {
              [[ai.model]]\nid = \"claude-opus-4-8\"\nweight = 10\ntemperature = 0.3\nmax_tokens = 8000\nthinking = true\n\
              [[ai.model]]\nprovider = \"openrouter\"\nid = \"deepseek/deepseek-chat\"\nweight = 30\n",
         );
-        assert_eq!(c.ai_api_key, "sk-test-FAKE");
         assert_eq!(c.ai_strategy, "failover");
         assert_eq!(c.ai_pool.len(), 2);
         assert_eq!(c.ai_pool[0].id, "claude-opus-4-8");
@@ -1014,9 +1011,7 @@ mod tests {
         assert_eq!(c.ai_pool[0].temperature, Some(0.3));
         assert_eq!(c.ai_pool[0].max_tokens, Some(8000));
         assert_eq!(c.ai_pool[1].provider.as_deref(), Some("openrouter"));
-        // ai_settings() promotes a non-empty key to Some and builds the pool.
         let s = c.ai_settings();
-        assert_eq!(s.api_key.as_deref(), Some("sk-test-FAKE"));
         assert_eq!(s.pool.strategy, crate::ai::Strategy::Failover);
         // The opus entry resolves with its temperature override folded in.
         let opus = s.pool.entries.iter().find(|e| e.model.id == "claude-opus-4-8").unwrap();
@@ -1081,9 +1076,8 @@ mod tests {
         // No [[ai.model]] → an EMPTY pool: AI is off (no vendor assumed) until the user
         // declares a model. The selected model is unconfigured and resolves no key, so
         // the runtime surfaces the setup hint rather than defaulting to Anthropic.
-        let c = Config::from_toml("[ai]\napi_key = \"\"\n");
+        let c = Config::from_toml("[ai]\nmemory = true\n");
         let s = c.ai_settings();
-        assert!(s.api_key.is_none(), "empty config key → use env");
         assert!(s.pool.entries.is_empty(), "no implicit default model");
         assert!(!s.choose().is_configured(), "selected model is the neutral, unconfigured one");
         assert!(s.resolve_key().is_none(), "no key resolves with no model configured");
@@ -1148,24 +1142,137 @@ mod tests {
         assert_eq!(chosen.api_key_env, "OPENROUTER_API_KEY");
         assert_eq!(chosen.kind, crate::ai::ProviderKind::OpenAi);
         assert!(chosen.base_url.contains("openrouter.ai"), "uses OpenRouter's endpoint, not Anthropic");
-        // The fast model must ALSO come from the pool (same provider), never Anthropic.
-        assert_eq!(s.fast_model.provider, "openrouter");
-        assert_eq!(s.fast_model.api_key_env, "OPENROUTER_API_KEY");
+        // Every request draws from the pool — there is no separate fast tier.
+        assert_eq!(s.primary().provider, "openrouter");
+        assert_eq!(s.primary().api_key_env, "OPENROUTER_API_KEY");
     }
 
     #[test]
-    fn per_model_api_key_wins_over_global_and_env() {
-        let c = Config::from_toml(
-            "[ai]\napi_key = \"GLOBAL\"\n\
-             [[ai.model]]\nprovider = \"openrouter\"\nid = \"x/y\"\napi_key = \"PERMODEL\"\nweight = 1\n",
-        );
+    fn model_key_is_literal_or_an_env_var_reference() {
+        // Each model owns its key: a literal, a `$VAR` / `${VAR}` reference, or — with
+        // no `api_key` at all — the provider's standard variable. No global fallback.
+        let env = "TT_TEST_CFG_KEY";
+        std::env::set_var(env, "FROM-NAMED-VAR");
+        std::env::set_var("OPENROUTER_API_KEY", "FROM-PROVIDER-VAR");
+        let s = Config::from_toml(
+            "[[ai.model]]\nprovider = \"openrouter\"\nid = \"a/lit\"\napi_key = \"LITERAL\"\n\
+             [[ai.model]]\nprovider = \"openrouter\"\nid = \"a/named\"\napi_key = \"$TT_TEST_CFG_KEY\"\n\
+             [[ai.model]]\nprovider = \"openrouter\"\nid = \"a/braced\"\napi_key = \"${TT_TEST_CFG_KEY}\"\n\
+             [[ai.model]]\nprovider = \"openrouter\"\nid = \"a/bare\"\n",
+        )
+        .ai_settings();
+        let key_of = |id: &str| {
+            let m = s.pool.entries.iter().find(|e| e.model.id == id).unwrap().model.clone();
+            s.resolve_key_for(&m)
+        };
+        assert_eq!(key_of("a/lit").as_deref(), Some("LITERAL"));
+        assert_eq!(key_of("a/named").as_deref(), Some("FROM-NAMED-VAR"), "$VAR expands");
+        assert_eq!(key_of("a/braced").as_deref(), Some("FROM-NAMED-VAR"), "the braced form expands too");
+        assert_eq!(key_of("a/bare").as_deref(), Some("FROM-PROVIDER-VAR"), "no api_key → the provider's var");
+        // An unset variable resolves to nothing rather than the literal "$NOPE".
+        std::env::remove_var("TT_TEST_CFG_ABSENT");
+        let none = Config::from_toml(
+            "[[ai.model]]\nprovider = \"openrouter\"\nid = \"a/z\"\napi_key = \"$TT_TEST_CFG_ABSENT\"\n",
+        )
+        .ai_settings();
+        assert!(none.resolve_key().is_none(), "an unset $VAR is not a key");
+        std::env::remove_var(env);
+        std::env::remove_var("OPENROUTER_API_KEY");
+    }
+
+    #[test]
+    fn a_model_without_weight_gets_a_full_share() {
+        let c = Config::from_toml("[[ai.model]]\nprovider = \"openrouter\"\nid = \"x/y\"\n");
+        assert_eq!(c.ai_pool[0].weight, DEFAULT_WEIGHT, "no weight → a full 100 share");
+    }
+
+    /// Uncomment the FIRST commented-out `[[ai.model]]` block in a config template
+    /// (what a user does to the quick-start), filling its `api_key` with `key`.
+    fn uncomment_first_model_block(text: &str, key: &str) -> String {
+        let mut out = Vec::new();
+        let (mut inside, mut done) = (false, false);
+        for line in text.lines() {
+            let t = line.trim_start();
+            if !done && !inside && t.starts_with("# [[ai.model]]") {
+                inside = true;
+                out.push("[[ai.model]]".to_string());
+                continue;
+            }
+            if inside {
+                let body = t.strip_prefix("# ").unwrap_or("");
+                if t.starts_with('#') && body.contains('=') {
+                    out.push(if body.trim_start().starts_with("api_key") {
+                        format!("api_key = \"{key}\"")
+                    } else {
+                        body.to_string()
+                    });
+                    continue;
+                }
+                inside = false;
+                done = true;
+            }
+            out.push(line.to_string());
+        }
+        out.join("\n")
+    }
+
+    #[test]
+    fn seeded_config_quick_start_model_keeps_its_api_key() {
+        // The reported bug: uncommenting the shipped quick-start [[ai.model]] gave
+        // "AI key missing" while the SAME table lower down (the multi-model section)
+        // worked. In TOML every bare `key = value` after a table header belongs to
+        // THAT table — so any `[ai]` scalar written after the quick-start block (the
+        // template's `api_key = ""`, `memory`, `mode`, …) silently lands INSIDE the
+        // model table and overwrites the user's key with "".
+        let text = uncomment_first_model_block(DEFAULT_CONFIG, "sk-test-quickstart");
+        let c = Config::from_toml(&text);
         let s = c.ai_settings();
-        let chosen = s.choose();
-        // The chosen model carries its own key, which wins over the global one.
-        assert_eq!(s.resolve_key_for(&chosen).as_deref(), Some("PERMODEL"));
-        // A model WITHOUT its own key falls back to the global key.
-        let mut bare = chosen.clone();
-        bare.api_key = None;
-        assert_eq!(s.resolve_key_for(&bare).as_deref(), Some("GLOBAL"));
+        assert_eq!(s.pool.entries.len(), 1, "the quick-start model is the whole pool");
+        assert_eq!(
+            s.resolve_key().as_deref(),
+            Some("sk-test-quickstart"),
+            "the quick-start model keeps the key the user typed"
+        );
+        // The `[ai]` scalars must still reach [ai], not the model table.
+        assert!(c.ai_memory, "[ai] memory survives");
+        assert_eq!(c.ai_command_mode, "manual", "[ai] mode survives");
+        assert!(c.ai_share_terminal_context, "[ai] share_terminal_context survives");
+    }
+
+    #[test]
+    fn seeded_config_writes_no_bare_ai_key_after_a_model_table() {
+        // The invariant that keeps the bug fixed: inside the shipped `[ai]` section,
+        // every bare scalar must appear BEFORE the first `[[ai.model]]` example —
+        // commented or not, since a user uncommenting one must not absorb them.
+        let mut in_ai = false;
+        let mut model_at = None;
+        for (n, line) in DEFAULT_CONFIG.lines().enumerate() {
+            let raw = line.trim_start();
+            let commented = raw.starts_with('#');
+            let t = raw.trim_start_matches('#').trim_start();
+            if t.starts_with('[') {
+                if t.starts_with("[[ai.model]]") {
+                    model_at.get_or_insert(n + 1);
+                    continue;
+                }
+                in_ai = t.starts_with("[ai]") || t.starts_with("[ai.");
+                continue;
+            }
+            // Only a LIVE scalar parses; a commented one is example prose. A live one
+            // after any model example is the footgun — commented or not, the moment the
+            // user uncomments that block this key joins the model table instead of [ai].
+            if in_ai && !commented && t.contains('=') {
+                if let Some(at) = model_at {
+                    panic!(
+                        "config.toml:{}: `{}` is a live [ai] key written after the \
+                         [[ai.model]] example on line {at} — uncommenting that model \
+                         swallows this key into the model table. Move every [ai] scalar \
+                         ABOVE the model examples.",
+                        n + 1,
+                        t.split('=').next().unwrap_or(t).trim(),
+                    );
+                }
+            }
+        }
     }
 }

@@ -89,10 +89,11 @@ cp -R dist/aiTerminal.app /Applications/</code></pre>
     <pre><code><span class="k">[[ai.model]]</span>
 provider = <span class="s">"anthropic"</span>       <span class="c"># or openai · openrouter · deepseek · groq · grok</span>
 id       = <span class="s">"claude-opus-4-8"</span>  <span class="c">#    qwen · kimi · minimax · ollama · lmstudio · local</span>
-api_key  = <span class="s">"sk-…"</span>             <span class="c"># or export the provider's env var instead</span></code></pre>
-    <p>Declare several models and they form a <b>weighted pool</b> with automatic failover.
-      aiTerminal <b>never scans your machine for keys</b> — only config or environment variables
-      supply them.</p>
+api_key  = <span class="s">"sk-…"</span>             <span class="c"># or "$MY_VAR", or omit → $ANTHROPIC_API_KEY</span></code></pre>
+    <p>Declare several models and they form a <b>weighted pool</b> — every request draws one from
+      it. aiTerminal <b>never scans your machine for keys</b>: only your config or an environment
+      variable supplies them. See <a href="#models">Models &amp; providers</a> for pools,
+      strategies and per-model tuning.</p>
 
     <h2 id="layout">The <code>~/.aiTerminal</code> folder</h2>
     <pre><code>~/.aiTerminal/
@@ -271,7 +272,7 @@ action = <span class="s">"zoom_pane"</span></code></pre>
       <tr><th>Section</th><th>Keys</th></tr>
       <tr><td><code>[appearance]</code></td><td><code>theme</code> · <code>locale</code> · <code>font_family</code> (default Menlo) · <code>font_size</code> (default 15) · <code>cursor_style</code> (block / bar / underline)</td></tr>
       <tr><td><code>[behavior]</code></td><td><code>zoom</code> · <code>tab_bar</code> = top|bottom|left|right · <code>shell</code> · <code>scrollback</code> (default 10000)</td></tr>
-      <tr><td><code>[ai]</code></td><td><code>api_key</code> · <code>fast_model</code> · <code>share_terminal_context</code> · <code>memory</code> · <code>mode</code> = manual|auto · <code>network</code> · <code>[ai.balance] strategy</code></td></tr>
+      <tr><td><code>[ai]</code></td><td><code>share_terminal_context</code> · <code>memory</code> · <code>mode</code> = manual|auto · <code>network</code> — then <code>[ai.balance] strategy</code> + the <code>[[ai.model]]</code> blocks, last</td></tr>
       <tr><td><code>[[ai.model]]</code></td><td><code>provider</code> · <code>id</code> · <code>api_key</code> · <code>weight</code> · <code>temperature</code> · <code>top_p</code> · <code>top_k</code> · <code>max_tokens</code> · <code>thinking</code></td></tr>
       <tr><td><code>[plugins]</code></td><td><code>enabled</code> · <code>disabled = [...]</code></td></tr>
       <tr><td><code>[shell]</code></td><td><code>integration</code></td></tr>
@@ -310,11 +311,69 @@ align = <span class="s">"right"</span>; template = <span class="s">"🔧 {my.var
       serves works, even if not pre-declared. Per-model capabilities (<code>vision</code>,
       <code>document</code>, <code>thinking</code>, <code>tools</code>) gate what each request
       carries; per-model pricing powers the token accounting in every run footer.</p>
-    <pre><code><span class="c"># a weighted pool: 3 of 4 requests to Opus, 1 to a local model</span>
-<span class="k">[[ai.model]]</span>
-provider = <span class="s">"anthropic"</span>; id = <span class="s">"claude-opus-4-8"</span>; weight = <span class="s">3</span>
-<span class="k">[[ai.model]]</span>
-provider = <span class="s">"ollama"</span>; id = <span class="s">"llama3"</span>; weight = <span class="s">1</span></code></pre>
+    <div class="callout warn">
+      <b>⚠️ Keep <code>[[ai.model]]</code> blocks LAST in the <code>[ai]</code> section.</b>
+      <code>config.toml</code> is plain TOML: every bare <code>key = value</code> belongs to the
+      table header <em>above</em> it. A model block opens a new table, so an <code>[ai]</code>
+      setting written below one silently joins <em>that model</em>. The seeded file is already
+      laid out this way, and aiTerminal warns at startup if it ever happens.
+    </div>
+
+    <h3>Getting started — one model</h3>
+    <p>There is one pool and one strategy: every request (<code>@ai</code>, agents, flows,
+      loops) draws a model from it. No separate “fast” tier, no global key.</p>
+    <pre><code><span class="k">[[ai.model]]</span>
+provider = <span class="s">"openrouter"</span>                <span class="c"># any provider (see ai/models/*.toml)</span>
+id       = <span class="s">"deepseek/deepseek-chat"</span>    <span class="c"># any id that provider serves</span>
+api_key  = <span class="s">"sk-or-v1-…"</span></code></pre>
+    <p>That is the whole setup — <code>weight</code> is optional, a lone model serves every
+      request.</p>
+
+    <h3>API keys — three ways</h3>
+    <p>Keys belong to the model that needs them, so a mixed pool carries one key per provider.</p>
+    <table>
+      <tr><th>In <code>config.toml</code></th><th>Resolves to</th></tr>
+      <tr><td><code>api_key = "sk-…"</code></td><td>the key itself</td></tr>
+      <tr><td><code>api_key = "$MY_KEY"</code> or <code>"${MY_KEY}"</code></td><td>that environment variable's value</td></tr>
+      <tr><td><em><code>api_key</code> omitted</em></td><td>the provider's own variable — <code>$ANTHROPIC_API_KEY</code>, <code>$OPENAI_API_KEY</code>, <code>$OPENROUTER_API_KEY</code>, <code>$DEEPSEEK_API_KEY</code>, …</td></tr>
+    </table>
+    <p>Expansion happens <b>at request time</b>, so exporting or rotating a key takes effect
+      without touching <code>config.toml</code>. An unset variable resolves to nothing (never
+      the literal <code>"$MY_KEY"</code>) and you get a hint naming the variable to set. Local
+      providers need no key at all:</p>
+    <pre><code><span class="k">[[ai.model]]</span>
+provider = <span class="s">"ollama"</span>
+id       = <span class="s">"llama3.1"</span></code></pre>
+
+    <h3>A pool of several models</h3>
+    <p>Add more blocks. <code>weight</code> is each model's share of requests; omit it and a
+      model gets a full 100. Sampling settings are optional per model.</p>
+    <pre><code><span class="k">[[ai.model]]</span>                <span class="c"># ~10% — keep the pricey one rare</span>
+provider    = <span class="s">"anthropic"</span>
+id          = <span class="s">"claude-opus-4-8"</span>
+api_key     = <span class="s">"$ANTHROPIC_API_KEY"</span>
+weight      = <span class="s">10</span>
+temperature = <span class="s">0.3</span>           <span class="c"># 0.0–1.0, lower is more deterministic</span>
+max_tokens  = <span class="s">8000</span>          <span class="c"># response cap (clamped 1–200000)</span>
+thinking    = <span class="s">true</span>          <span class="c"># force extended thinking on/off</span>
+
+<span class="k">[[ai.model]]</span>                <span class="c"># ~90% — the everyday workhorse</span>
+provider = <span class="s">"openrouter"</span>
+id       = <span class="s">"deepseek/deepseek-chat"</span>
+api_key  = <span class="s">"sk-or-v1-…"</span>
+weight   = <span class="s">90</span>
+top_p    = <span class="s">0.95</span>             <span class="c"># nucleus sampling</span>
+top_k    = <span class="s">40</span>               <span class="c"># top-k sampling</span></code></pre>
+
+    <h3>How the pool picks</h3>
+    <p><b>Weighted</b> by default — omit <code>[ai.balance]</code> unless you want another
+      strategy, and keep it above your model blocks.</p>
+    <pre><code><span class="k">[ai.balance]</span>
+strategy = <span class="s">"weighted"</span>       <span class="c"># weighted (default) | round_robin | cost | failover</span></code></pre>
+    <p><code>weighted</code> picks at random proportional to <code>weight</code>;
+      <code>round_robin</code> cycles the entries; <code>cost</code> always takes the cheapest;
+      <code>failover</code> uses the first with the rest as ordered fallbacks the agent path
+      retries on a hard error.</p>
 
     <h2 id="agents">Agents, skills &amp; prompts</h2>
     <p>All plain files under <code>ai/</code>: agents are Markdown + frontmatter (tools, max_steps,

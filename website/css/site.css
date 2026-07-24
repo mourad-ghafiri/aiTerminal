@@ -273,6 +273,13 @@ footer { border-top: 1px solid var(--border); margin-top: 70px; padding: 40px 0 
   border-radius: 12px; padding: 14px 18px; margin: 16px 0; font-size: 14.5px; color: var(--muted);
 }
 .docs-main .callout b { color: var(--fg); }
+.docs-main .callout.warn {
+  border-color: color-mix(in srgb, var(--warn, #FF9F0A) 45%, var(--border));
+  background: color-mix(in srgb, var(--warn, #FF9F0A) 9%, transparent);
+}
+.docs-main .callout pre { margin: 12px 0 0; }
+.docs-main pre .bad { color: #FF453A; }
+.docs-main pre .good { color: #30D158; }
 
 /* use-case cards */
 .uc { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 22px; margin-top: 18px; }

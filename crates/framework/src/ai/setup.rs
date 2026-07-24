@@ -22,10 +22,11 @@ pub fn setup_hint(settings: &AiSettings) -> String {
     let m = settings.primary();
     let config_path = config_path();
     if m.is_configured() {
-        let action = if m.api_key_env.trim().is_empty() {
+        let var = crate::ai::key_env_name(&m);
+        let action = if var.is_empty() {
             "Add `api_key` to its [[ai.model]]".to_string()
         } else {
-            format!("Set ${}, or add `api_key` to its [[ai.model]]", m.api_key_env)
+            format!("Set ${var}, or add `api_key` to its [[ai.model]]")
         };
         format!(
             "AI key missing for {} model '{}'. {action} in {config_path}. See {DOCS}.",
@@ -49,7 +50,8 @@ pub fn setup_hint_short(settings: &AiSettings) -> String {
     let m = settings.primary();
     let config_path = config_path();
     if m.is_configured() {
-        let env = (!m.api_key_env.trim().is_empty()).then(|| format!("set ${} or ", m.api_key_env)).unwrap_or_default();
+        let var = crate::ai::key_env_name(&m);
+        let env = (!var.is_empty()).then(|| format!("set ${var} or ")).unwrap_or_default();
         format!("AI key missing for '{}' — {env}add api_key in {config_path} (see {DOCS})", m.id)
     } else {
         format!("AI isn't set up — add an [[ai.model]] + api_key in {config_path} (see {DOCS})")
@@ -79,7 +81,7 @@ mod tests {
             Some(m) => ModelPool::single(m),
             None => ModelPool { entries: Vec::new(), strategy: Strategy::Weighted },
         };
-        AiSettings { pool, fast_model: ModelDef::default(), api_key: None }
+        AiSettings { pool }
     }
 
     #[test]
@@ -102,6 +104,23 @@ mod tests {
         let h = setup_hint(&settings_with(Some(m)));
         assert!(h.contains("Acme") && h.contains("some-model"));
         assert!(h.contains("$ACME_API_KEY"), "names the configured model's OWN env var");
+    }
+
+    #[test]
+    fn hint_names_the_variable_the_user_actually_referenced() {
+        // `api_key = "$MY_VAR"` must be echoed back as $MY_VAR — telling the user to set
+        // the provider's default variable instead would send them to the wrong place.
+        let mut m = ModelDef::default();
+        m.id = "some-model".into();
+        m.provider = "openrouter".into();
+        m.api_key_env = "OPENROUTER_API_KEY".into();
+        m.api_key = Some("$MY_VAR".into());
+        assert!(setup_hint(&settings_with(Some(m.clone()))).contains("$MY_VAR"));
+        m.api_key = Some("${BRACED_VAR}".into());
+        assert!(setup_hint_short(&settings_with(Some(m.clone()))).contains("$BRACED_VAR"));
+        // A literal key falls back to naming the provider's own variable.
+        m.api_key = Some("sk-literal".into());
+        assert!(setup_hint(&settings_with(Some(m))).contains("$OPENROUTER_API_KEY"));
     }
 
     #[test]

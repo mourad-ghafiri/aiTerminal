@@ -1,34 +1,57 @@
 //! The user-facing AI settings — the resolved runtime configuration. Each model
 //! is self-describing (a [`ModelDef`] carries its provider transport, params,
-//! capabilities and pricing), so settings hold a [`ModelPool`] of primary
-//! candidates (with their load-balancing strategy) plus the resolved fast model.
+//! capabilities and pricing), so settings are just a [`ModelPool`] of candidates
+//! plus their load-balancing strategy.
 
 use crate::ai::pool::ModelPool;
 use crate::ai::provider::ModelDef;
 
 /// Configuration for the AI runtime.
 ///
-/// The primary request is served by one model **chosen from the pool** per request
-/// ([`choose`](Self::choose)) — weighted by config so e.g. an expensive model can be
-/// kept rare. The key may be supplied two ways: an explicit [`api_key`](Self::api_key)
-/// (from the config file), or — preferred — left `None` so it is read at runtime from
-/// the env var named by the *chosen* model's `api_key_env`. An explicit key wins.
-#[derive(Clone, Debug, PartialEq)]
+/// **Every** request — `@ai`, agents, flows, loops — is served by one model chosen
+/// from the pool ([`choose`](Self::choose)), weighted by config so e.g. an expensive
+/// model can be kept rare. There is no second "fast" tier: one pool, one strategy.
+/// Keys belong to the model that needs them — see [`resolve_key_for`](Self::resolve_key_for).
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct AiSettings {
-    /// The primary-model candidates + load-balancing strategy.
+    /// The model candidates + load-balancing strategy.
     pub pool: ModelPool,
-    /// The fast model (NL→command, summarization) — not load-balanced.
-    pub fast_model: ModelDef,
-    /// Explicit key from config; `None` → fall back to the chosen model's env var.
-    pub api_key: Option<String>,
 }
 
-impl Default for AiSettings {
-    fn default() -> Self {
-        let cat = crate::ai::provider::builtin_default();
-        let (model, fast_model) = cat.resolve("", "");
-        AiSettings { pool: ModelPool::single(model), fast_model, api_key: None }
+/// `$VAR` / `${VAR}` → that environment variable's value; anything else is the key
+/// itself. Resolved at request time, never at parse time, so exporting a key (or
+/// rotating one) takes effect without touching `config.toml`.
+fn expand(raw: &str) -> Option<String> {
+    let Some(rest) = raw.strip_prefix('$') else {
+        return Some(raw.to_string()); // a literal key
+    };
+    let name = rest.strip_prefix('{').and_then(|r| r.strip_suffix('}')).unwrap_or(rest);
+    from_env(name)
+}
+
+/// The environment variable a user should set to key this model: the one its
+/// `api_key = "$VAR"` names, else the provider's standard variable. Empty when the
+/// provider declares none (a local model that needs no key). Drives the setup hint,
+/// so it always names the variable the user actually wrote.
+pub fn key_env_name(model: &ModelDef) -> &str {
+    if let Some(raw) = model.api_key.as_deref().map(str::trim) {
+        if let Some(rest) = raw.strip_prefix('$') {
+            let name = rest.strip_prefix('{').and_then(|r| r.strip_suffix('}')).unwrap_or(rest).trim();
+            if !name.is_empty() {
+                return name;
+            }
+        }
     }
+    model.api_key_env.trim()
+}
+
+/// A non-empty value for the named environment variable.
+fn from_env(name: &str) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    std::env::var(name).ok().filter(|k| !k.trim().is_empty())
 }
 
 impl AiSettings {
@@ -50,22 +73,20 @@ impl AiSettings {
         self.pool.representative()
     }
 
-    /// Resolve the key for a specific model, most-specific first:
-    /// 1. the model's own key (`[[ai.model]] api_key`) — lets a mixed pool carry one
-    ///    key per provider; 2. the global `[ai] api_key`; 3. the model's named env var.
-    /// `None` if none is set (non-empty).
+    /// Resolve the key for a specific model. Each model owns its key, so a mixed pool
+    /// carries one key per provider with no global fallback to get confused by:
+    ///
+    /// 1. `api_key = "sk-…"` — the literal key;
+    /// 2. `api_key = "$MY_VAR"` / `"${MY_VAR}"` — read that environment variable;
+    /// 3. `api_key` omitted — read the provider's standard variable (`api_key_env`,
+    ///    e.g. `OPENROUTER_API_KEY`).
+    ///
+    /// `None` when nothing resolves to a non-empty value.
     pub fn resolve_key_for(&self, model: &ModelDef) -> Option<String> {
-        if let Some(k) = &model.api_key {
-            if !k.trim().is_empty() {
-                return Some(k.clone());
-            }
+        match model.api_key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
+            Some(raw) => expand(raw),
+            None => from_env(&model.api_key_env),
         }
-        if let Some(k) = &self.api_key {
-            if !k.trim().is_empty() {
-                return Some(k.clone());
-            }
-        }
-        std::env::var(&model.api_key_env).ok().filter(|k| !k.trim().is_empty())
     }
 
     /// Whether AI is usable at all: a key resolves for the representative model

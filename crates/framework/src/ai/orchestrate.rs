@@ -132,10 +132,9 @@ mod tests {
         // The default is now UNCONFIGURED; the fixtures are Anthropic SSE, so build a
         // real Anthropic model keyed to the test env var.
         let cat = crate::ai::provider::builtin_default();
-        let (mut primary, mut fast) = cat.resolve("claude-opus-4-8", "claude-haiku-4-5-20251001");
+        let mut primary = cat.resolve("claude-opus-4-8");
         primary.api_key_env = "TT_TEST_ORCH_KEY".into();
-        fast.api_key_env = "TT_TEST_ORCH_KEY".into();
-        AiSettings { pool: ModelPool::single(primary), fast_model: fast, api_key: None }
+        AiSettings { pool: ModelPool::single(primary) }
     }
 
     #[test]

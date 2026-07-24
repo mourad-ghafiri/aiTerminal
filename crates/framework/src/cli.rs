@@ -2373,10 +2373,9 @@ mod tests {
     fn keyed_settings() -> crate::ai::AiSettings {
         std::env::set_var("TT_TEST_LOOP_KEY", "k");
         let cat = crate::ai::builtin_default();
-        let (mut primary, mut fast) = cat.resolve("claude-opus-4-8", "claude-haiku-4-5-20251001");
+        let mut primary = cat.resolve("claude-opus-4-8");
         primary.api_key_env = "TT_TEST_LOOP_KEY".into();
-        fast.api_key_env = "TT_TEST_LOOP_KEY".into();
-        crate::ai::AiSettings { pool: crate::ai::ModelPool::single(primary), fast_model: fast, api_key: None }
+        crate::ai::AiSettings { pool: crate::ai::ModelPool::single(primary) }
     }
 
     fn maker() -> crate::ai::AgentSpec {

@@ -28,18 +28,23 @@ on your PATH and run it directly.
 
 ## Enable AI
 
-AI is off until you declare a model. Open `~/.aiTerminal/config.toml`, uncomment one
-`[[ai.model]]`, and either set its `api_key` or export the provider's env var:
+AI is off until you declare a model. Open `~/.aiTerminal/config.toml`, scroll to
+`MODELS` at the end of the `[ai]` section, and uncomment one block:
 
 ```toml
 [[ai.model]]
 provider = "anthropic"
 id       = "claude-opus-4-8"
-api_key  = ""                 # or: export ANTHROPIC_API_KEY=…
+api_key  = "sk-ant-…"         # or "$MY_VAR", or omit → $ANTHROPIC_API_KEY
 ```
 
+That's the whole setup — every request (`@ai`, agents, flows, loops) uses it. Add
+more `[[ai.model]]` blocks to pool across models and providers, each with its own
+`weight` and key.
+
 Any provider in `ai/models/*.toml` works (openai, openrouter, deepseek, groq,
-ollama, lmstudio, …) — including local servers.
+ollama, lmstudio, …) — including local servers, which need no key at all. See
+[ai.md](ai.md#models--pools) for pools, key handling and per-model tuning.
 
 ## First commands
 

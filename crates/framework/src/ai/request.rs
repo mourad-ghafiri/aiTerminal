@@ -151,10 +151,11 @@ mod tests {
     }
 
     #[test]
-    fn command_request_uses_fast_model_and_is_deterministic() {
+    fn command_request_uses_the_pool_model_and_is_deterministic() {
         let s = AiSettings::default();
-        let req = command_request(&s.fast_model, "list files", "");
-        assert_eq!(req.model, s.fast_model.id);
+        let m = s.choose();
+        let req = command_request(&m, "list files", "");
+        assert_eq!(req.model, m.id);
         assert_eq!(req.temperature, Some(0.0));
         assert!(req.messages[0].content.contains("Request: list files"));
     }

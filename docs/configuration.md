@@ -35,7 +35,7 @@ AI works for you.
 | --- | --- |
 | `[appearance]` | `theme`, `locale` (i18n — see below), `font_family`, `font_size`, `cursor_style` (`block` \| `bar` \| `underline`) |
 | `[behavior]` | `zoom`, `tab_bar` (top/bottom/left/right), `shell`, `scrollback` |
-| `[ai]` | `api_key`, `fast_model`, `share_terminal_context`, `memory`, `mode` (manual/auto), `network`, `[ai.balance] strategy`, `[[ai.model]]` pool tables (weight, sampling overrides, `thinking`) |
+| `[ai]` | `share_terminal_context`, `memory`, `mode` (manual/auto), `network`; then `[ai.balance] strategy` and the `[[ai.model]]` pool blocks — see [ai.md](ai.md#models--pools) |
 | `[plugins]` | `enabled`, `disabled = ["name", …]` |
 | `[shell]` | `integration` (master switch for injected aliases/snippets/colors) |
 | `[registry]` | `dir` — where the bundled `builtin/` lives (empty = auto-resolve) |
@@ -45,6 +45,35 @@ AI works for you.
 | `[[redact]]` | `pattern`, `replacement`, `scope` (terminal/ai/all), `literal` |
 
 The seeded `config.toml` documents every key inline — it is the reference.
+
+### ⚠️ Table order matters
+
+TOML assigns every bare `key = value` to the table header **above** it. Array-of-table
+blocks — `[[ai.model]]`, `[[keybinding]]`, `[[redact]]` — open a new table, so any
+plain section key written after one joins *that* block instead of the section:
+
+```toml
+[ai]
+[[ai.model]]        # ❌ opens a new table here
+id = "…"
+api_key = "sk-…"
+
+memory = true       # ← lands inside [[ai.model]], NOT [ai]
+```
+
+Write a section's plain keys first and its `[[…]]` blocks last:
+
+```toml
+[ai]
+memory = true       # ✅ [ai]'s own keys first
+
+[[ai.model]]        # ✅ blocks last
+id = "…"
+api_key = "sk-…"
+```
+
+The seeded file is already laid out this way, and aiTerminal warns at startup if an
+`[[ai.model]]` block has swallowed `[ai]` settings — it never drops them silently.
 
 ## Profiles
 
