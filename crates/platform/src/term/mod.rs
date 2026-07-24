@@ -251,12 +251,17 @@ impl Term {
         // The PRIMARY screen even while the alt screen is live (vim/less content is
         // transient; the shell session underneath is what a restore should show).
         let primary = self.saved_primary.as_ref().unwrap_or(&self.screen);
+        // The cursor row and everything below it are live input — the shell prompt
+        // awaiting a command, a half-typed line, a completion menu — never history.
+        // Saving them replays a stale prompt above the fresh shell's own, stacking
+        // one more "~ ❯" per close/reopen cycle.
+        let history = &primary.lines[..primary.cy.min(primary.lines.len())];
         // Walk BACKWARD (screen bottom → scrollback top) collecting only the lines
         // the cap keeps — a 10 000-line scrollback must never be styled in full to
         // save its last 1000 (this runs under the term lock the render thread needs).
         let mut rev: Vec<String> = Vec::new();
         let mut at_tail = true;
-        for cells in primary.lines.iter().rev().chain(self.scrollback.iter().rev()) {
+        for cells in history.iter().rev().chain(self.scrollback.iter().rev()) {
             if rev.len() >= max_lines {
                 break;
             }
@@ -1011,13 +1016,29 @@ mod tests {
     }
 
     #[test]
+    fn content_ansi_drops_the_live_prompt_line() {
+        // The reported bug: every close + reopen stacked one more "~ ❯" — the live
+        // prompt row (where the cursor waits for input) was saved as content, then
+        // the fresh shell printed its own prompt beneath it. The cursor row and
+        // everything below it are live input, never history.
+        let mut t = Term::new(20, 5);
+        t.feed("echo hi\r\nhi\r\n~ \u{276F} ".as_bytes()); // finished output, then the prompt
+        let dump = t.content_ansi(100, None);
+        assert_eq!(dump.len(), 2, "the live prompt row is not saved: {dump:?}");
+        assert!(dump[1].contains("hi"));
+        // A typed-but-unsubmitted command sits on the cursor row too — also transient.
+        t.feed(b"cargo tes");
+        assert_eq!(t.content_ansi(100, None).len(), 2);
+    }
+
+    #[test]
     fn content_ansi_scrubs_the_selection_band_background() {
         // The reported bug: a live shift-selection at save time was baked into the
         // restored content as an un-dismissable highlight. The host passes its
         // selection-band color; those backgrounds serialize as DEFAULT. Other
         // backgrounds (real program output) are preserved untouched.
         let mut t = Term::new(20, 3);
-        t.feed(b"\x1b[48;2;80;83;88mselected\x1b[0m plain \x1b[48;2;200;0;0mred\x1b[0m");
+        t.feed(b"\x1b[48;2;80;83;88mselected\x1b[0m plain \x1b[48;2;200;0;0mred\x1b[0m\r\n");
         let scrubbed = t.content_ansi(10, Some((80, 83, 88))).join("\n");
         assert!(!scrubbed.contains("48;2;80;83;88"), "band scrubbed: {scrubbed:?}");
         assert!(scrubbed.contains("48;2;200;0;0"), "real bg colors survive: {scrubbed:?}");
@@ -1232,7 +1253,7 @@ mod tests {
     fn content_ansi_round_trips_styles_through_a_fresh_term() {
         let mut t = Term::with_scrollback(20, 3, 100);
         // Colored + attributed content across scrollback and screen.
-        t.feed(b"\x1b[31mred\x1b[0m plain\r\n\x1b[1;38;5;42mbold-green\x1b[0m\r\n\x1b[48;2;10;20;30mbgtc\x1b[0m tail\r\nlast");
+        t.feed(b"\x1b[31mred\x1b[0m plain\r\n\x1b[1;38;5;42mbold-green\x1b[0m\r\n\x1b[48;2;10;20;30mbgtc\x1b[0m tail\r\nlast\r\n");
         let dump = t.content_ansi(100, None);
         assert_eq!(dump.len(), 4);
         assert!(dump[0].contains("\x1b["), "styling survives the dump: {:?}", dump[0]);
