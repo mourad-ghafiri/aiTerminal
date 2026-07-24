@@ -17,7 +17,7 @@ theme       = "midnight"
 locale      = "en"         # language for the terminal's own strings — an i18n/<locale>.toml
                            # (en + fr ship in builtin/i18n; add your own file to override)
 font_family = "Menlo"      # any installed monospace font
-font_size   = 15           # base point size
+font_size   = 13           # base point size
 cursor_style = "block"     # block (classic filled cell) | bar (thin caret) | underline
 
 [behavior]

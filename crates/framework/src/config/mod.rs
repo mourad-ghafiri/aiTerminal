@@ -134,7 +134,7 @@ impl Default for Config {
             locale: "en".into(),
             font_family: "Menlo".into(),
             cursor_style: "block".into(),
-            font_size: 15.0,
+            font_size: 13.0,
             zoom: 1.0,
             tab_bar: "top".into(),
             shell: String::new(),
@@ -868,7 +868,7 @@ mod tests {
     fn defaults_are_sane() {
         let c = Config::default();
         assert_eq!(c.theme, "midnight");
-        assert_eq!(c.font_size, 15.0);
+        assert_eq!(c.font_size, 13.0);
         assert_eq!(c.tab_bar, "top");
         assert!(c.is_dark());
     }
