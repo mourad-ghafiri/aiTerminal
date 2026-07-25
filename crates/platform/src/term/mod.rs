@@ -315,19 +315,21 @@ impl Term {
 
     fn linefeed(&mut self) {
         if self.screen.cy == self.screen.scroll_bot {
-            self.scroll_up(1);
+            self.scroll_up(1, true); // natural scroll at the bottom → history capture
         } else if self.screen.cy < self.rows - 1 {
             self.screen.cy += 1;
         }
     }
 
-    /// Scroll the active scroll region up by `n`, evicting top lines of a
-    /// full-screen primary region into scrollback.
-    fn scroll_up(&mut self, n: usize) {
+    /// Scroll the active scroll region up by `n`. `capturable` is the CALLER'S intent:
+    /// only a natural bottom-of-screen linefeed evicts to scrollback; an explicit `DL`
+    /// (delete-line) or a DECSTBM sub-region must NEVER push its transient/deleted rows
+    /// into history. The final capture also requires a true full-screen region.
+    fn scroll_up(&mut self, n: usize, capturable: bool) {
         let top = self.screen.scroll_top;
         let bot = self.screen.scroll_bot;
         let n = n.min(bot - top + 1);
-        let capture = !self.in_alt && top == 0;
+        let capture = capturable && !self.in_alt && top == 0 && bot == self.rows - 1;
         let pen = self.screen.pen;
         for _ in 0..n {
             let evicted = self.screen.lines.remove(top);
@@ -378,6 +380,22 @@ impl Term {
         recycled
     }
 
+    /// A wide (CJK/emoji) glyph occupies a lead cell + a `WIDE_SPACER` to its right.
+    /// Overwriting only ONE half would strand the other (a hole, or a doubled glyph).
+    /// Before writing at `(x, y)`, blank the partner of any wide pair this cell belongs to.
+    fn clear_wide_partner(&mut self, x: usize, y: usize) {
+        let line = &mut self.screen.lines[y];
+        if line.get(x).is_some_and(Cell::is_wide_spacer) {
+            // Overwriting the RIGHT half → its lead on the left is now orphaned.
+            if x > 0 {
+                line[x - 1] = Cell::BLANK;
+            }
+        } else if line.get(x + 1).is_some_and(Cell::is_wide_spacer) {
+            // Overwriting a LEAD → its spacer on the right is now orphaned.
+            line[x + 1] = Cell::BLANK;
+        }
+    }
+
     fn put_char(&mut self, c: char, width: usize) {
         if width == 0 {
             return; // Phase 0: skip combining marks (attach to prev cell later)
@@ -390,6 +408,12 @@ impl Term {
         let x = self.screen.cx;
         let y = self.screen.cy;
         let pen = self.screen.pen;
+        // Clean up any wide-pair partner BEFORE writing (compute against the OLD cells, so a
+        // wide write over existing wide glyphs never leaves an orphaned lead or spacer).
+        self.clear_wide_partner(x, y);
+        if width == 2 && x + 1 < self.cols {
+            self.clear_wide_partner(x + 1, y);
+        }
         self.screen.lines[y][x] = Cell { ch: c, fg: pen.fg, bg: pen.bg, flags: pen.flags };
         if width == 2 && x + 1 < self.cols {
             self.screen.lines[y][x + 1] = Cell {
@@ -412,7 +436,9 @@ impl Term {
 
     fn erase_in_display(&mut self, mode: u16) {
         let pen = self.screen.pen;
-        let (cx, cy) = (self.screen.cx.min(self.cols - 1), self.screen.cy);
+        // Clamp BOTH cx and cy defensively — `cy` is used raw as `lines[cy]` below (unlike
+        // `erase_in_line`), so a stray out-of-range cursor must not panic.
+        let (cx, cy) = (self.screen.cx.min(self.cols - 1), self.screen.cy.min(self.rows - 1));
         match mode {
             0 => {
                 // cursor to end of screen
@@ -481,6 +507,49 @@ impl Term {
                     self.screen.lines[cy][x] = Cell::blank_with(&pen);
                 }
             }
+        }
+    }
+
+    /// ECH — blank `n` cells from the cursor within the visible width (no shift).
+    fn erase_chars(&mut self, n: usize) {
+        let cx = self.screen.cx.min(self.cols - 1);
+        let cy = self.screen.cy.min(self.rows - 1);
+        let pen = self.screen.pen;
+        let end = (cx + n).min(self.cols);
+        for x in cx..end {
+            self.screen.lines[cy][x] = Cell::blank_with(&pen);
+        }
+    }
+
+    /// ICH — insert `n` blank cells at the cursor, shifting the rest of the line right
+    /// within `[0, cols)`; cells pushed past the right margin fall off.
+    fn insert_chars(&mut self, n: usize) {
+        let cx = self.screen.cx.min(self.cols - 1);
+        let cy = self.screen.cy.min(self.rows - 1);
+        let pen = self.screen.pen;
+        let n = n.min(self.cols - cx);
+        let line = &mut self.screen.lines[cy];
+        for x in (cx + n..self.cols).rev() {
+            line[x] = line[x - n];
+        }
+        for x in cx..cx + n {
+            line[x] = Cell::blank_with(&pen);
+        }
+    }
+
+    /// DCH — delete `n` cells at the cursor, shifting the remainder left within `[0, cols)`
+    /// and blank-filling the vacated right end.
+    fn delete_chars(&mut self, n: usize) {
+        let cx = self.screen.cx.min(self.cols - 1);
+        let cy = self.screen.cy.min(self.rows - 1);
+        let pen = self.screen.pen;
+        let n = n.min(self.cols - cx);
+        let line = &mut self.screen.lines[cy];
+        for x in cx..self.cols - n {
+            line[x] = line[x + n];
+        }
+        for x in self.cols - n..self.cols {
+            line[x] = Cell::blank_with(&pen);
         }
     }
 
@@ -569,6 +638,15 @@ impl Term {
             b'B' | b'e' => self.screen.cy = (self.screen.cy + p0).min(self.rows - 1),
             b'C' | b'a' => self.screen.cx = (self.screen.cx + p0).min(self.cols - 1),
             b'D' => self.screen.cx = self.screen.cx.saturating_sub(p0),
+            // CNL / CPL — move down / up `p0` rows AND to column 0 (start of line).
+            b'E' => {
+                self.screen.cy = (self.screen.cy + p0).min(self.rows - 1);
+                self.screen.cx = 0;
+            }
+            b'F' => {
+                self.screen.cy = self.screen.cy.saturating_sub(p0);
+                self.screen.cx = 0;
+            }
             b'G' | b'`' => self.screen.cx = (p0 - 1).min(self.cols - 1),
             b'd' => self.screen.cy = (p0 - 1).min(self.rows - 1),
             b'H' | b'f' => {
@@ -704,11 +782,20 @@ impl Perform for Term {
 
     fn csi(&mut self, params: &[u16], _inter: &[u8], private: Option<u8>, action: u8) {
         match action {
-            b'A' | b'B' | b'C' | b'D' | b'E' | b'a' | b'e' | b'G' | b'`' | b'd' | b'H' | b'f' => {
+            b'A' | b'B' | b'C' | b'D' | b'E' | b'F' | b'a' | b'e' | b'G' | b'`' | b'd' | b'H' | b'f' => {
                 self.csi_cursor(action, params);
             }
             b'J' => self.erase_in_display(param_or(params, 0, 0)),
             b'K' => self.erase_in_line(param_or(params, 0, 0)),
+            // ECH — erase (blank) `n` cells from the cursor, no shift.
+            b'X' => self.erase_chars(param_or(params, 0, 1).max(1) as usize),
+            // ICH / DCH — insert / delete `n` blank cells at the cursor, shifting the rest.
+            b'@' => self.insert_chars(param_or(params, 0, 1).max(1) as usize),
+            b'P' => self.delete_chars(param_or(params, 0, 1).max(1) as usize),
+            // SU / SD — scroll the region up / down `n` lines (explicit scroll: SU never
+            // captures to history, matching xterm — programs that use it own their display).
+            b'S' => self.scroll_up(param_or(params, 0, 1).max(1) as usize, false),
+            b'T' => self.scroll_down(param_or(params, 0, 1).max(1) as usize),
             b'm' => self.apply_sgr(params),
             b'L' => {
                 self.clamp_cursor();
@@ -727,7 +814,7 @@ impl Perform for Term {
                 if self.screen.cy >= self.screen.scroll_top && self.screen.cy <= self.screen.scroll_bot {
                     let save_top = self.screen.scroll_top;
                     self.screen.scroll_top = self.screen.cy;
-                    self.scroll_up(n);
+                    self.scroll_up(n, false); // DL: deleted lines are NOT history
                     self.screen.scroll_top = save_top;
                 }
             }
@@ -782,8 +869,9 @@ impl Perform for Term {
                 }
             }
             b'c' => {
-                // RIS — full reset
-                *self = Term::new(self.cols as u16, self.rows as u16);
+                // RIS — full reset. Preserve the CONFIGURED scrollback cap (`Term::new`
+                // would silently revert it to the 10 000 default after any program's `reset`).
+                *self = Term::with_scrollback(self.cols as u16, self.rows as u16, self.scrollback_max);
             }
             _ => {}
         }
@@ -1104,6 +1192,74 @@ mod tests {
         t.feed(b"hi\r\nthere");
         assert_eq!(line_text(&t, 0), "hi");
         assert_eq!(line_text(&t, 1), "there");
+    }
+
+    #[test]
+    fn delete_line_at_row0_does_not_pollute_scrollback() {
+        // DL (`ESC[M`) at the top row temporarily set scroll_top=0 and scroll_up'd, which
+        // (with the old `top==0` capture) pushed DELETED lines into history. They must not.
+        let mut t = Term::with_scrollback(20, 4, 100);
+        t.feed(b"aaa\r\nbbb\r\nccc\r\nddd");
+        t.feed(b"\x1b[H"); // cursor home (row 0)
+        t.feed(b"\x1b[2M"); // delete 2 lines at row 0
+        assert_eq!(t.scrollback_len(), 0, "deleted lines are gone, never history");
+        assert_eq!(line_text(&t, 0), "ccc", "content below shifted up");
+    }
+
+    #[test]
+    fn ris_preserves_the_configured_scrollback_cap() {
+        // RIS (`ESC c`) must not silently revert a custom scrollback cap to the 10 000 default.
+        let mut t = Term::with_scrollback(20, 3, 250);
+        t.feed(b"\x1bc");
+        for i in 0..400 {
+            t.feed(format!("row-{i}\r\n").as_bytes());
+        }
+        assert_eq!(t.scrollback_len(), 250, "the 250-line cap survived RIS");
+    }
+
+    #[test]
+    fn overwriting_a_wide_char_half_leaves_no_orphan() {
+        // Writing a narrow char over one half of a CJK pair must clean up the partner cell,
+        // not strand a hole (orphan spacer) or a doubled glyph (orphan lead).
+        let mut t = Term::new(10, 1);
+        t.feed("你好".as_bytes()); // two wide chars → cells 0-1 (你), 2-3 (好)
+        t.feed(b"\x1b[1G"); // cursor to column 1 (col index 0)
+        t.feed(b"x"); // overwrite the LEAD of 你
+        let row = t.row(0);
+        assert_eq!(row[0].ch, 'x');
+        assert!(!row[1].is_wide_spacer(), "the orphaned spacer was cleared");
+        // Now overwrite the SPACER half of 好 (col index 3).
+        t.feed(b"\x1b[4G");
+        t.feed(b"y");
+        let row = t.row(0);
+        assert_eq!(row[3].ch, 'y');
+        assert_eq!(row[2].ch, ' ', "the orphaned lead was cleared");
+    }
+
+    #[test]
+    fn echo_ich_dch_edit_the_line_correctly() {
+        // ECH blanks in place; ICH shifts right; DCH shifts left — the ncurses editing ops.
+        let mut t = Term::new(10, 1);
+        t.feed(b"abcdef");
+        t.feed(b"\x1b[1G\x1b[2X"); // home, erase 2 chars → "  cdef"
+        assert_eq!(line_text(&t, 0), "  cdef");
+        t.feed(b"abcdef");
+        t.feed(b"\x1b[1G\x1b[2@"); // home, insert 2 blanks at the front → "  abcdef"
+        assert_eq!(line_text(&t, 0), "  abcdef");
+        t.feed(b"\x1b[1G\x1b[2P"); // home, delete 2 → "abcdef"
+        assert_eq!(line_text(&t, 0), "abcdef");
+    }
+
+    #[test]
+    fn cnl_cpl_move_to_column_zero() {
+        // CNL (E) / CPL (F): down/up N rows AND to column 0.
+        let mut t = Term::new(10, 4);
+        t.feed(b"\x1b[2;5H"); // row 2, col 5
+        t.feed(b"\x1b[1E"); // CNL 1 → row 3, col 0
+        assert_eq!(t.cursor(), (0, 2));
+        t.feed(b"\x1b[2;5H");
+        t.feed(b"\x1b[1F"); // CPL 1 → row 1, col 0
+        assert_eq!(t.cursor(), (0, 0));
     }
 
     #[test]

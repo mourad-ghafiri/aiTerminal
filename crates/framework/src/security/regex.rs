@@ -77,7 +77,7 @@ impl Regex {
             None => (false, pattern),
         };
         let chars: Vec<char> = pat.chars().collect();
-        let mut p = Parser { chars: &chars, i: 0 };
+        let mut p = Parser { chars: &chars, i: 0, depth: 0 };
         let root = p.parse_alt()?;
         if p.i != chars.len() {
             return Err(format!("unexpected `{}` at position {}", chars[p.i], p.i));
@@ -333,9 +333,16 @@ fn class1(it: ClassItem) -> Node {
     Node::Class { neg: false, items: vec![it] }
 }
 
+/// Hard caps so a hostile pattern (from a config/plugin regex, compiled at startup)
+/// cannot exhaust memory or the stack at COMPILE time. `MAX_REPEAT` bounds the node
+/// blow-up from `{n,m}` desugaring; `MAX_DEPTH` bounds recursion through groups/alts.
+const MAX_REPEAT: usize = 4096;
+const MAX_DEPTH: u32 = 128;
+
 struct Parser<'a> {
     chars: &'a [char],
     i: usize,
+    depth: u32,
 }
 
 impl Parser<'_> {
@@ -351,11 +358,18 @@ impl Parser<'_> {
     }
 
     fn parse_alt(&mut self) -> Result<Node, String> {
+        // Every nested group re-enters here; bound the recursion so `(((…)))` can't
+        // overflow the stack at compile time.
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err("pattern nested too deeply".to_string());
+        }
         let mut alts = vec![self.parse_concat()?];
         while self.peek() == Some('|') {
             self.bump();
             alts.push(self.parse_concat()?);
         }
+        self.depth -= 1;
         Ok(if alts.len() == 1 { alts.pop().unwrap() } else { Node::Alt(alts) })
     }
 
@@ -411,6 +425,16 @@ impl Parser<'_> {
         };
         if self.bump() != Some('}') {
             return Err("missing `}`".to_string());
+        }
+        // Bound the desugaring: `a{2000000000}` would clone billions of nodes → OOM at
+        // compile. A rule needing >4096 repeats is pathological; reject it instead.
+        if min > MAX_REPEAT || max.is_some_and(|m| m > MAX_REPEAT) {
+            return Err(format!("repetition count exceeds {MAX_REPEAT}"));
+        }
+        if let Some(m) = max {
+            if m < min {
+                return Err("repetition max < min".to_string());
+            }
         }
         let greedy = self.greedy();
         // Desugar into copies of `atom` over the existing node kinds.
@@ -699,5 +723,19 @@ mod tests {
         assert!(Regex::new("[abc").is_err());
         assert!(Regex::new("(ab").is_err());
         assert!(Regex::new(r"\").is_err());
+    }
+
+    #[test]
+    fn pathological_patterns_are_rejected_at_compile() {
+        // Unbounded `{n,m}` desugaring would clone billions of nodes → OOM. Rejected.
+        assert!(Regex::new("a{2000000000}").is_err());
+        assert!(Regex::new("a{0,999999999}").is_err());
+        // Deep group nesting would overflow the parser stack. Rejected.
+        let deep = format!("{}a{}", "(".repeat(1000), ")".repeat(1000));
+        assert!(Regex::new(&deep).is_err());
+        // Reasonable bounded repetition still compiles and matches.
+        let r = Regex::new("a{2,4}").unwrap();
+        assert!(r.is_match("aaa"));
+        assert!(!r.is_match("a"));
     }
 }

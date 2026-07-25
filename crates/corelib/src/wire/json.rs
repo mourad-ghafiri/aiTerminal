@@ -108,7 +108,7 @@ impl Json {
     // --- parse ---
 
     pub fn parse(input: &str) -> Result<Json, String> {
-        let mut p = Parser { b: input.as_bytes(), i: 0 };
+        let mut p = Parser { b: input.as_bytes(), i: 0, depth: 0 };
         p.ws();
         let v = p.value()?;
         p.ws();
@@ -137,9 +137,14 @@ fn write_escaped(s: &str, out: &mut String) {
     out.push('"');
 }
 
+/// Max object/array nesting — bounds recursion so a deeply nested document
+/// (`[[[[…]]]]`) can't overflow the stack (JSON here is untrusted tool/State input).
+const MAX_JSON_DEPTH: u32 = 128;
+
 struct Parser<'a> {
     b: &'a [u8],
     i: usize,
+    depth: u32,
 }
 
 impl<'a> Parser<'a> {
@@ -156,8 +161,8 @@ impl<'a> Parser<'a> {
     fn value(&mut self) -> Result<Json, String> {
         self.ws();
         match self.peek() {
-            Some(b'{') => self.object(),
-            Some(b'[') => self.array(),
+            Some(b'{') => self.nested(Self::object),
+            Some(b'[') => self.nested(Self::array),
             Some(b'"') => Ok(Json::Str(self.string()?)),
             Some(b't') | Some(b'f') => self.boolean(),
             Some(b'n') => self.null(),
@@ -165,6 +170,18 @@ impl<'a> Parser<'a> {
             Some(c) => Err(format!("unexpected byte '{}' at {}", c as char, self.i)),
             None => Err("unexpected end of input".into()),
         }
+    }
+
+    /// Run a container parser (`object`/`array`) one nesting level deeper, enforcing
+    /// [`MAX_JSON_DEPTH`] so hostile nesting can't overflow the stack.
+    fn nested(&mut self, f: fn(&mut Self) -> Result<Json, String>) -> Result<Json, String> {
+        self.depth += 1;
+        if self.depth > MAX_JSON_DEPTH {
+            return Err("json nested too deeply".into());
+        }
+        let v = f(self)?;
+        self.depth -= 1;
+        Ok(v)
     }
 
     fn expect(&mut self, lit: &str) -> Result<(), String> {
@@ -231,13 +248,24 @@ impl<'a> Parser<'a> {
                             let cp = self.hex4()?;
                             // surrogate pair?
                             if (0xD800..=0xDBFF).contains(&cp) {
+                                // A high surrogate must be followed by a LOW surrogate
+                                // (0xDC00..=0xDFFF). Validate it before combining — otherwise
+                                // `lo - 0xDC00` underflows u16 (debug panic / release wrap) on
+                                // malformed input like `"\uD800A"` or `"\uD800A"`.
                                 if self.b[self.i..].starts_with(b"\\u") {
                                     self.i += 2;
                                     let lo = self.hex4()?;
-                                    let c = 0x10000
-                                        + (((cp - 0xD800) as u32) << 10)
-                                        + (lo - 0xDC00) as u32;
-                                    s.push(char::from_u32(c).unwrap_or('\u{FFFD}'));
+                                    if (0xDC00..=0xDFFF).contains(&lo) {
+                                        let c = 0x10000
+                                            + (((cp - 0xD800) as u32) << 10)
+                                            + (lo - 0xDC00) as u32;
+                                        s.push(char::from_u32(c).unwrap_or('\u{FFFD}'));
+                                    } else {
+                                        // Unpaired high surrogate + some other \u escape: emit
+                                        // a replacement for each, never a wrapped code point.
+                                        s.push('\u{FFFD}');
+                                        s.push(char::from_u32(lo as u32).unwrap_or('\u{FFFD}'));
+                                    }
                                 } else {
                                     s.push('\u{FFFD}');
                                 }
@@ -412,5 +440,23 @@ mod tests {
     fn integers_have_no_dot_zero() {
         assert_eq!(Json::Num(7.0).to_string(), "7");
         assert_eq!(Json::Num(7.5).to_string(), "7.5");
+    }
+
+    #[test]
+    fn malformed_surrogate_pair_does_not_panic() {
+        // A high surrogate followed by a non-low-surrogate `\u` used to underflow u16
+        // (`lo - 0xDC00`). It must now decode to replacement chars, never panic.
+        assert!(Json::parse(r#""\uD800A""#).is_ok());
+        assert!(Json::parse(r#""\uD834\uD834""#).is_ok()); // two highs in a row
+        // A valid pair still decodes to the astral char (U+1D11E, 𝄞).
+        assert_eq!(Json::parse(r#""𝄞""#).unwrap().as_str(), Some("\u{1D11E}"));
+    }
+
+    #[test]
+    fn deeply_nested_json_is_rejected_not_overflowed() {
+        let deep = format!("{}{}", "[".repeat(5000), "]".repeat(5000));
+        assert!(Json::parse(&deep).is_err(), "excessive nesting is an error, not a stack overflow");
+        // A reasonable depth still parses.
+        assert!(Json::parse(&format!("{}1{}", "[".repeat(50), "]".repeat(50))).is_ok());
     }
 }

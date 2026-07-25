@@ -83,23 +83,23 @@ impl Policy {
     /// Add a command allow-list pattern (regex). Returns the pattern on a
     /// compile error so the caller can warn.
     pub fn add_allow(&mut self, pattern: &str) -> Result<(), String> {
-        self.allow.push(compile(pattern)?);
+        self.allow.push(compile(non_empty(pattern)?)?);
         Ok(())
     }
     /// Add a command deny-list pattern (regex).
     pub fn add_deny(&mut self, pattern: &str) -> Result<(), String> {
-        self.deny.push(compile(pattern)?);
+        self.deny.push(compile(non_empty(pattern)?)?);
         Ok(())
     }
     /// Add a confirm-before-run pattern (regex) — matched commands prompt the user.
     pub fn add_confirm(&mut self, pattern: &str) -> Result<(), String> {
-        self.confirm.push(compile(pattern)?);
+        self.confirm.push(compile(non_empty(pattern)?)?);
         Ok(())
     }
     /// Add an **auto-safe** command pattern (regex). Auto mode auto-runs a shell command only
     /// when one of these matches (and it isn't denied/confirmed); anything else prompts.
     pub fn add_safe(&mut self, pattern: &str) -> Result<(), String> {
-        self.safe.push(compile(pattern)?);
+        self.safe.push(compile(non_empty(pattern)?)?);
         Ok(())
     }
     /// Add a redaction rule. `literal` true → exact-substring; false → regex.
@@ -150,13 +150,23 @@ impl Policy {
         if c.is_empty() {
             return Verdict::Allow;
         }
-        if let Some(r) = self.deny.iter().find(|r| r.is_match(c)) {
-            return Verdict::Deny { reason: format!("matches a deny rule  /{}/", r.as_str()) };
+        // A pasted / AI-suggested command may span MULTIPLE lines, all of which run. `^`/`$`
+        // anchor to the whole string, so a benign first line would otherwise shield a
+        // `sudo rm -rf /` on line two from a `^sudo`-anchored deny rule. Evaluate each
+        // non-empty line independently; the precedence stays deny > confirm > allow-list.
+        let lines: Vec<&str> = c.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        for line in &lines {
+            if let Some(r) = self.deny.iter().find(|r| r.is_match(line)) {
+                return Verdict::Deny { reason: format!("matches a deny rule  /{}/", r.as_str()) };
+            }
         }
-        if let Some(r) = self.confirm.iter().find(|r| r.is_match(c)) {
-            return Verdict::Confirm { reason: format!("matches a confirm rule  /{}/", r.as_str()) };
+        for line in &lines {
+            if let Some(r) = self.confirm.iter().find(|r| r.is_match(line)) {
+                return Verdict::Confirm { reason: format!("matches a confirm rule  /{}/", r.as_str()) };
+            }
         }
-        if !self.allow.is_empty() && !self.allow.iter().any(|r| r.is_match(c)) {
+        // Allow-list mode: EVERY line must be allow-listed, else the whole command is denied.
+        if !self.allow.is_empty() && lines.iter().any(|line| !self.allow.iter().any(|r| r.is_match(line))) {
             return Verdict::Deny { reason: "not in the allow-list".to_string() };
         }
         Verdict::Allow
@@ -171,8 +181,10 @@ impl Policy {
     /// hard guard (`check_command`) is consulted separately and still wins. An empty
     /// safe-list means *nothing* auto-qualifies (Auto then prompts for every command).
     pub fn is_safe_command(&self, cmd: &str) -> bool {
-        let c = cmd.trim();
-        !c.is_empty() && self.safe.iter().any(|r| r.is_match(c))
+        // Auto-run requires EVERY line to be safe — a multi-line command is only as safe as
+        // its least-safe line (same anti-shielding reasoning as `check_command`).
+        let lines: Vec<&str> = cmd.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        !lines.is_empty() && lines.iter().all(|line| self.safe.iter().any(|r| r.is_match(line)))
     }
 
     /// Apply every redaction rule whose scope matches `scope` (or is `All`).
@@ -204,6 +216,17 @@ impl Policy {
 
 fn compile(pattern: &str) -> Result<Regex, String> {
     Regex::new(pattern).map_err(|e| format!("invalid pattern `{pattern}`: {e}"))
+}
+
+/// Reject an empty command pattern: an empty regex matches at every position, so an
+/// empty deny/confirm rule would silently block or prompt on EVERY command (and an
+/// empty allow/safe rule would allow everything). A templating slip (`denied = [""]`)
+/// must fail loudly, exactly as [`add_redaction`] already guards its patterns.
+fn non_empty(pattern: &str) -> Result<&str, String> {
+    if pattern.is_empty() {
+        return Err("empty command pattern matches everything — rejected".to_string());
+    }
+    Ok(pattern)
 }
 
 #[cfg(test)]
@@ -337,6 +360,35 @@ mod tests {
         let mut p = Policy::new();
         assert!(p.add_deny("[unclosed").is_err());
         assert!(!p.has_command_rules()); // skipped, policy still usable
+    }
+
+    #[test]
+    fn empty_command_pattern_is_rejected() {
+        // `denied_commands = [""]` would deny EVERY command (empty regex matches anywhere).
+        // All four command lists must reject an empty pattern like redaction already does.
+        let mut p = Policy::new();
+        assert!(p.add_deny("").is_err());
+        assert!(p.add_allow("").is_err());
+        assert!(p.add_confirm("").is_err());
+        assert!(p.add_safe("").is_err());
+        assert!(!p.has_command_rules(), "no rule was actually added");
+        assert!(p.is_allowed("rm -rf /"), "an empty deny didn't secretly block everything");
+    }
+
+    #[test]
+    fn multiline_command_cannot_shield_a_denied_line() {
+        // The bypass: `^sudo` anchors to the whole string, so a benign first line used to
+        // hide `sudo …` on line two. Every line is now checked independently.
+        let mut p = Policy::new();
+        p.add_deny("^sudo\\b").unwrap();
+        assert!(matches!(p.check_command("sudo rm -rf /"), Verdict::Deny { .. }));
+        assert!(matches!(p.check_command("echo hi\nsudo rm -rf /"), Verdict::Deny { .. }), "the hidden sudo line is caught");
+        assert!(matches!(p.check_command("echo hi\necho bye"), Verdict::Allow));
+        // Auto-safe likewise requires every line to be safe.
+        let mut s = Policy::new();
+        s.add_safe("^echo\\b").unwrap();
+        assert!(s.is_safe_command("echo hi"));
+        assert!(!s.is_safe_command("echo hi\nsudo rm -rf /"), "one unsafe line makes the whole command unsafe");
     }
 }
 

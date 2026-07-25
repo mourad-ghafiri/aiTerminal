@@ -258,7 +258,16 @@ fn node_restore<T>(
         return Some(Node::Leaf { id, content });
     }
     let axis = if toml.get("axis").and_then(|v| v.as_str()) == Some("v") { Axis::Vertical } else { Axis::Horizontal };
-    let ratio = toml.get("ratio").and_then(|v| v.as_num()).unwrap_or(0.5) as f32;
+    // Clamp the split ratio: a corrupt/hand-edited workspace.toml (`ratio = 5.0`, `-1`, NaN)
+    // would otherwise collapse one pane to zero width. `as f32` of NaN stays NaN → clamp with
+    // an explicit finite fallback.
+    let ratio = toml
+        .get("ratio")
+        .and_then(|v| v.as_num())
+        .map(|r| r as f32)
+        .filter(|r| r.is_finite())
+        .unwrap_or(0.5)
+        .clamp(0.05, 0.95);
     let first = Box::new(node_restore(toml.get("first")?, g, next_id, order)?);
     let second = Box::new(node_restore(toml.get("second")?, g, next_id, order)?);
     Some(Node::Split { axis, ratio, first, second })

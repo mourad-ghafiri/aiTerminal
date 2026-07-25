@@ -84,7 +84,10 @@ pub fn expanded(term: &Term, pos: Pos, mode: SelectionMode) -> Selection {
             }
         }
         SelectionMode::Word => {
-            let row = term.row(pos.row);
+            // `display_row`, not `row`: selection coordinates are DISPLAY rows (from
+            // `cell_at`), so a double-click while scrolled up into history must read the
+            // visible scrollback content, not the live screen underneath.
+            let row = term.display_row(pos.row);
             let len = row.len() as u16;
             let mut a = pos.col.min(len.saturating_sub(1));
             let mut b = a;
@@ -108,7 +111,9 @@ pub fn text(term: &Term, sel: &Selection) -> String {
     let cols = term.cols();
     let mut out = String::new();
     for row in s.row..=e.row.min(term.rows().saturating_sub(1)) {
-        let cells = term.row(row);
+        // Display coordinates (honor `scroll_offset`) so copying while scrolled up yields
+        // the visible history, matching what the renderer draws.
+        let cells = term.display_row(row);
         let start_col = if row == s.row { s.col } else { 0 };
         let end_col = if row == e.row { e.col } else { cols.saturating_sub(1) };
         let mut line = String::new();
@@ -185,5 +190,21 @@ mod tests {
         assert!(sel.contains(2, 1, 10));
         assert!(!sel.contains(0, 0, 10));
         assert!(!sel.contains(3, 1, 10));
+    }
+
+    #[test]
+    fn selection_reads_history_when_scrolled_up() {
+        // Selecting while scrolled into scrollback must extract the VISIBLE (history) rows,
+        // not the live screen underneath — the renderer uses display coordinates, so must we.
+        let mut t = Term::new(20, 2); // 2-row screen
+        t.feed(b"history-line\r\nlive-a\r\nlive-b");
+        t.scroll_view(1); // scroll up one → display row 0 shows "history-line"
+        // Word-expand and line-select on display row 0 both see the scrolled-in history,
+        // never the live "live-a" that occupies the live screen's row 0.
+        let word = expanded(&t, Pos::new(0, 0), SelectionMode::Word);
+        let wt = text(&t, &word);
+        assert!(wt.starts_with("history") && !wt.contains("live"), "word read history, not live: {wt:?}");
+        let line = expanded(&t, Pos::new(3, 0), SelectionMode::Line);
+        assert_eq!(text(&t, &line), "history-line");
     }
 }

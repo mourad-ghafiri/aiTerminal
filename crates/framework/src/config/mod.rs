@@ -551,7 +551,16 @@ impl Config {
     /// REPLACES the inherited pool (not merged); scalars/maps override in place; the
     /// `keybinding`/`redact` lists append (the keymap is "later wins", redaction is additive).
     fn apply_toml(&mut self, text: &str) {
-        let doc = Toml::parse(text).unwrap_or(Toml::Table(Vec::new()));
+        // A syntax error collapses the WHOLE document to empty, silently reverting every
+        // setting to its default — warn so the user learns their config wasn't applied
+        // (rather than mysteriously losing all customization to one stray bracket).
+        let doc = match Toml::parse(text) {
+            Ok(d) => d,
+            Err(e) => {
+                platform::warn!("config.toml parse error — using defaults for this document: {e}");
+                Toml::Table(Vec::new())
+            }
+        };
         let c = self;
 
         if let Some(a) = doc.get("appearance") {
@@ -568,7 +577,7 @@ impl Config {
                     c.font_family = v.to_string();
                 }
             }
-            if let Some(v) = a.get("font_size").and_then(|v| v.as_num()) {
+            if let Some(v) = a.get("font_size").and_then(|v| v.as_num()).filter(|v| v.is_finite()) {
                 c.font_size = (v as f32).clamp(6.0, 96.0);
             }
             if let Some(v) = a.get("cursor_style").and_then(|v| v.as_str()) {
@@ -578,7 +587,7 @@ impl Config {
             }
         }
         if let Some(b) = doc.get("behavior") {
-            if let Some(v) = b.get("zoom").and_then(|v| v.as_num()) {
+            if let Some(v) = b.get("zoom").and_then(|v| v.as_num()).filter(|v| v.is_finite()) {
                 c.zoom = (v as f32).clamp(0.4, 3.0);
             }
             if let Some(v) = b.get("tab_bar").and_then(|v| v.as_str()) {
@@ -588,7 +597,9 @@ impl Config {
                 c.shell = v.to_string();
             }
             if let Some(v) = b.get("scrollback").and_then(|v| v.as_int()) {
-                c.scrollback = v.max(0) as usize;
+                // Clamp BOTH ends: a config typo (`scrollback = 999999999999`) must not drive a
+                // multi-gigabyte buffer allocation. 1M lines is already far beyond any real use.
+                c.scrollback = v.clamp(0, 1_000_000) as usize;
             }
         }
         if let Some(ai) = doc.get("ai") {
@@ -871,6 +882,25 @@ mod tests {
         assert_eq!(c.font_size, 13.0);
         assert_eq!(c.tab_bar, "top");
         assert!(c.is_dark());
+    }
+
+    #[test]
+    fn non_finite_and_out_of_range_numerics_are_rejected() {
+        // `nan`/`inf` slip through `clamp` (comparisons are false), so they must be filtered
+        // out and leave the default; a giant scrollback must clamp, not drive a huge alloc.
+        let c = Config::from_toml("[appearance]\nfont_size = nan\n[behavior]\nzoom = inf\nscrollback = 999999999999\n");
+        assert_eq!(c.font_size, Config::default().font_size, "nan font_size ignored");
+        assert!(c.font_size.is_finite());
+        assert_eq!(c.zoom, Config::default().zoom, "inf zoom ignored");
+        assert!(c.zoom.is_finite());
+        assert_eq!(c.scrollback, 1_000_000, "scrollback clamped to the upper bound");
+    }
+
+    #[test]
+    fn malformed_config_falls_back_to_defaults_without_panic() {
+        // A stray bracket must not panic; the doc collapses to defaults (and logs a warning).
+        let c = Config::from_toml("[appearance\ntheme = \"nope\"\n");
+        assert_eq!(c.theme, Config::default().theme);
     }
 
     #[test]

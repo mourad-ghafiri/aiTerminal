@@ -117,8 +117,17 @@ impl Parser {
 
     fn ground<P: Perform>(&mut self, b: u8, p: &mut P) {
         match b {
-            0x1b => self.state = State::Escape,
-            0x00..=0x1f => p.execute(b),
+            // An ESC or a C0 control INTERRUPTS any partial multibyte sequence. Reset the
+            // decoder so its stale state can't later swallow an unrelated continuation byte
+            // (e.g. `0xE4  ESC[m  0xBD` would otherwise corrupt into one glyph).
+            0x1b => {
+                self.utf8.reset();
+                self.state = State::Escape;
+            }
+            0x00..=0x1f => {
+                self.utf8.reset();
+                p.execute(b);
+            }
             _ => {
                 if let Some(c) = self.utf8.feed(b) {
                     p.print(c);
@@ -196,7 +205,10 @@ impl Parser {
     fn csi_param<P: Perform>(&mut self, b: u8, p: &mut P) {
         match b {
             b'0'..=b'9' => {
-                self.cur_param = self.cur_param.saturating_mul(10) + (b - b'0') as u32;
+                // Saturate BOTH ops: `saturating_mul(10)` alone still lets the following add
+                // overflow u32 on a long numeric param (`ESC[9999999999m`) — a debug-build
+                // panic on adversarial PTS output. `push_param` clamps to u16 later regardless.
+                self.cur_param = self.cur_param.saturating_mul(10).saturating_add((b - b'0') as u32);
                 self.has_param = true;
             }
             b';' => self.push_param(),
@@ -279,6 +291,12 @@ struct Utf8Decoder {
 impl Utf8Decoder {
     fn new() -> Self {
         Utf8Decoder { buf: [0; 4], needed: 0, have: 0 }
+    }
+
+    /// Drop any partial multibyte sequence — called when an ESC/control interrupts.
+    fn reset(&mut self) {
+        self.needed = 0;
+        self.have = 0;
     }
 
     fn feed(&mut self, b: u8) -> Option<char> {
@@ -420,5 +438,29 @@ mod tests {
         let r = run(b"\x1b(Bok");
         assert_eq!(r.prints, "ok");
         assert_eq!(r.escs, vec![b'B']);
+    }
+
+    #[test]
+    fn control_interrupt_resets_a_partial_utf8_sequence() {
+        // A lead byte, then an ESC sequence, then a continuation byte: the stale partial
+        // must NOT absorb the continuation into a corrupt glyph. It resets to a replacement
+        // char, and the (now-standalone) continuation byte is its own replacement.
+        let r = run(&[0xE4, 0x1b, b'[', b'm', 0xBD, b'A']);
+        assert!(r.prints.ends_with('A'), "the trailing ASCII prints cleanly: {:?}", r.prints);
+        assert!(r.prints.contains('\u{FFFD}'), "the broken bytes became replacement chars");
+        assert_eq!(r.csis.len(), 1, "the ESC[m in the middle still dispatched");
+        // A CLEAN multibyte char split only by nothing still decodes (no false reset).
+        let ok = run("é".as_bytes());
+        assert_eq!(ok.prints, "é");
+    }
+
+    #[test]
+    fn huge_numeric_param_does_not_overflow() {
+        // `ESC[9999999999m` overflowed u32 (`saturating_mul` then a plain add) → debug panic.
+        // It must parse, saturate to u16::MAX, and dispatch cleanly.
+        let r = run(b"\x1b[9999999999m");
+        assert_eq!(r.csis.len(), 1);
+        assert_eq!(r.csis[0].2, b'm');
+        assert_eq!(r.csis[0].0, vec![u16::MAX]);
     }
 }

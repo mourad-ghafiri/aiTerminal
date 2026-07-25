@@ -352,8 +352,13 @@ fn push_array(table: &mut Vec<(String, Toml)>, key: &str, elem: Toml) {
     if let Some(slot) = table.iter_mut().find(|(k, _)| k == key) {
         if let Toml::Array(a) = &mut slot.1 {
             a.push(elem);
-            return;
+        } else {
+            // The key exists but isn't an array (e.g. a `[key]` table preceded this
+            // `[[key]]`). Reuse the slot as an array so `get(key)` finds the elements —
+            // pushing a second entry with the same key would silently orphan the data.
+            slot.1 = Toml::Array(vec![elem]);
         }
+        return;
     }
     table.push((key.to_string(), Toml::Array(vec![elem])));
 }
@@ -379,9 +384,20 @@ fn strip_comment(line: &str) -> &str {
     line
 }
 
+/// Max inline array/table nesting — bounds `parse_value` recursion so a deeply nested
+/// inline value (`a = [[[[…]]]]`) in an untrusted config can't overflow the stack.
+const MAX_TOML_DEPTH: u32 = 128;
+
 fn parse_value(s: &str) -> Result<Toml, String> {
+    parse_value_depth(s, 0)
+}
+
+fn parse_value_depth(s: &str, depth: u32) -> Result<Toml, String> {
     if s.is_empty() {
         return Err("empty value".into());
+    }
+    if depth > MAX_TOML_DEPTH {
+        return Err("value nested too deeply".into());
     }
     if let Some(rest) = s.strip_prefix('"') {
         let body = rest.strip_suffix('"').ok_or("unterminated string")?;
@@ -393,7 +409,7 @@ fn parse_value(s: &str) -> Result<Toml, String> {
         for part in split_top_commas(inner) {
             let p = part.trim();
             if !p.is_empty() {
-                items.push(parse_value(p)?);
+                items.push(parse_value_depth(p, depth + 1)?);
             }
         }
         return Ok(Toml::Array(items));
@@ -410,7 +426,7 @@ fn parse_value(s: &str) -> Result<Toml, String> {
             let path = split_dotted(k.trim());
             let (parent, last) = path.split_at(path.len() - 1);
             let tbl = table_at_path(&mut t, parent).ok_or("inline table: bad dotted key")?;
-            set_key(tbl, &last[0], parse_value(v.trim())?);
+            set_key(tbl, &last[0], parse_value_depth(v.trim(), depth + 1)?);
         }
         return Ok(Toml::Table(t));
     }
@@ -710,5 +726,23 @@ name = \"local\"
         assert_eq!(a.len(), 2);
         assert_eq!(a[0].as_str(), Some("a\",b"));
         assert_eq!(a[1].as_str(), Some("z"));
+    }
+
+    #[test]
+    fn deeply_nested_inline_value_is_rejected_not_overflowed() {
+        let deep = format!("x = {}{}", "[".repeat(5000), "]".repeat(5000));
+        assert!(Toml::parse(&deep).is_err(), "excessive inline nesting is an error, not a stack overflow");
+        assert!(Toml::parse(&format!("x = {}1{}", "[".repeat(40), "]".repeat(40))).is_ok());
+    }
+
+    #[test]
+    fn array_of_tables_after_a_table_is_reachable() {
+        // `[a]` then `[[a]]` used to push a SECOND `a` key; `get("a")` found the first
+        // (the table) and the array-of-tables data was silently orphaned. Now the array wins
+        // and `get` returns it.
+        let d = Toml::parse("[a]\nx = 1\n[[a]]\ny = 2\n").unwrap();
+        let arr = d.get("a").and_then(|v| v.as_array()).expect("`a` resolves to the array-of-tables");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0].get("y").and_then(|v| v.as_int()), Some(2));
     }
 }

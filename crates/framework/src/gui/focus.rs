@@ -76,14 +76,24 @@ impl GuiApp {
         for (id, zoom, rect) in per {
             let px = base_px * zoom;
             let m = self.cache.as_mut().unwrap().metrics(px);
-            let cols = (((rect.w - 2.0 * PAD) / m.cell_w).floor() as i32).max(1) as u16;
-            let rows = (((rect.h - 2.0 * PAD) / m.cell_h).floor() as i32).max(1) as u16;
+            // Guard against a degenerate font (zero cell advance → division by zero →
+            // `inf as i32` → a 65535×65535 grid) and clamp BOTH ends so a huge surface with a
+            // tiny font can't exceed u16 and silently wrap to a wrong (tiny) grid size.
+            let (cw, ch) = (m.cell_w.max(1.0), m.cell_h.max(1.0));
+            let cols = (((rect.w - 2.0 * PAD) / cw).floor() as i32).clamp(1, u16::MAX as i32) as u16;
+            let rows = (((rect.h - 2.0 * PAD) / ch).floor() as i32).clamp(1, u16::MAX as i32) as u16;
             if let Some(Pane { session: s, .. }) = self.tabs.active_mut().get_mut(id) {
                 s.resize(cols, rows);
             }
         }
         self.panes_area = area;
         self.layout = layout;
+        // Prune the incremental-render stamp cache to the panes that are actually live now.
+        // `pane_stamps` is insert-only in the render loop, so without this it grows for the
+        // life of the session as panes are split and closed. `relayout` runs on every
+        // structural change and tab switch, so this is the natural GC point.
+        let live: std::collections::HashSet<PaneId> = self.layout.iter().map(|(id, _)| *id).collect();
+        self.pane_stamps.retain(|id, _| live.contains(id));
         self.dirty.set();
     }
 

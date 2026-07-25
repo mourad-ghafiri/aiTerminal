@@ -22,16 +22,25 @@ fn fnv(s: &str) -> u64 {
 
 impl GuiApp {
     pub(in crate::gui) fn render(&mut self, gpu: &mut dyn Gpu) {
-        // A shell that exited (`exit`/EOF) closes its tab/split instead of freezing.
-        self.reap_exited_terminals();
+        // While the user is mid-interaction — the quick-switcher is open, or a tab-reorder /
+        // text-selection drag is in flight — DON'T mutate the tab set or focus underneath
+        // them. Reaping an exited shell or following an external profile switch here would
+        // shift tab indices and yank focus, landing a drop/selection on the wrong target.
+        let interacting = self.switcher.state_mut().is_some() || self.tab_drag.is_some() || self.dragging.is_some();
+        if !interacting {
+            // A shell that exited (`exit`/EOF) closes its tab/split instead of freezing.
+            self.reap_exited_terminals();
+        }
         // An in-session `cd` (OSC 7) → wake the status worker so the path updates at once.
         self.poll_focus_cwd();
         // Refresh the redacted terminal-session file that `@ai`/agents read for grounding
         // (rewrites only when the focused terminal changed; gated by config).
         self.update_session_context();
-        // Follow external changes live (throttled poll): a profile switch, or a
-        // config edit (`@theme`, `@profile`, a hand-edited TOML).
-        self.follow_external_changes();
+        if !interacting {
+            // Follow external changes live (throttled poll): a profile switch, or a
+            // config edit (`@theme`, `@profile`, a hand-edited TOML).
+            self.follow_external_changes();
+        }
         self.maybe_autosave_workspace();
         // A program (or the lineedit plugin answering ⌘C) staged clipboard text
         // via OSC 52 — perform the real OS write here, outside the emulator.
@@ -170,7 +179,11 @@ impl GuiApp {
             if let Some(Pane { session: s, .. }) = self.tabs.active_mut().get_mut(*id) {
                 let t = s.term.lock().unwrap_or_else(|e| e.into_inner());
                 let stamp = fnv(&format!(
-                    "{}:{}:{:?}:{:?}:{}:{}",
+                    // `active_i` disambiguates the per-tab `PaneId` (which restarts at 0 in
+                    // every tab): without it, two tabs' pane 0 share a cache slot and the
+                    // incremental path could skip a redraw if their chrome ever matched.
+                    "{}:{}:{}:{:?}:{:?}:{}:{}",
+                    active_i,
                     t.generation(),
                     t.scroll_offset(),
                     s.selection,

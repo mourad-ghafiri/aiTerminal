@@ -91,7 +91,12 @@ impl GuiApp {
     pub(in crate::gui) fn cell_at(&mut self, id: PaneId, rect: Rect, pos: Point) -> Pos {
         let scale = self.scale as f32;
         let px = self.pane_px(id);
-        let m = self.cache.as_mut().map(|c| c.metrics(px)).unwrap();
+        // The cache is normally set by `init` before events arrive, but a mouse event that
+        // races init (or a font-family change that nulled the cache) must not panic — fall
+        // back to the origin cell. Zero-advance metrics would divide by zero → guard them.
+        let Some(m) = self.cache.as_mut().map(|c| c.metrics(px)).filter(|m| m.cell_w > 0.0 && m.cell_h > 0.0) else {
+            return Pos::new(0, 0);
+        };
         let cx = (((pos.x * scale - rect.x - PAD) / m.cell_w).floor() as i32).max(0) as u16;
         let cy = (((pos.y * scale - rect.y - PAD) / m.cell_h).floor() as i32).max(0) as u16;
         let (mc, mr) = match self.tabs.active().get(id) {

@@ -83,7 +83,10 @@ fn restore_pane(factory: &PaneFactory, t: &Toml) -> Option<Pane> {
         .get("cols")
         .and_then(|v| v.as_num())
         .zip(t.get("rows").and_then(|v| v.as_num()))
-        .filter(|(c, r)| *c >= 1.0 && *r >= 1.0)
+        // A sane range (both finite, ≥1, and within a real grid): a corrupt `cols = 70000`
+        // would otherwise wrap through `as u16` to a wrong (tiny) size. The first layout
+        // resizes to the true rect anyway; this just needs to be non-degenerate.
+        .filter(|(c, r)| c.is_finite() && r.is_finite() && *c >= 1.0 && *r >= 1.0 && *c <= 10_000.0 && *r <= 10_000.0)
         .map(|(c, r)| (c as u16, r as u16));
     let mut pane = factory.terminal_pane_at(cwd.as_deref(), content, dims).ok()?;
     if let Some(z) = t.get("zoom").and_then(|v| v.as_num()) {
