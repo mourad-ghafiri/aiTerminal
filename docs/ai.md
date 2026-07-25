@@ -13,11 +13,13 @@ AI is **off by default** — no vendor is assumed. Enable it by declaring a mode
 
 `@ai` is **dual-mode**: the model turns your request into a single shell **command** —
 proposed at your prompt to review, edit, and run — or, for a question, a prose **answer**.
-It never runs anything itself; you stay in control.
+It never runs anything itself; you stay in control. Under the hood it uses a small
+model-agnostic JSON contract (`{"cmd":…}` / `{"answer":…}`) parsed leniently, so *any* model —
+weak or strong — routes reliably however it decorates its reply.
 
 ```text
 ❯ @ai list files
-touch hamid                          ← the command, formed live (dim)
+du -sh .                             ← the proposed command
 ❯ press Enter to run (or edit)       ← preloaded — edit it or hit Enter
 
 ❯ @ai why is my docker build slow?
@@ -25,7 +27,7 @@ The most common causes are cache invalidation and copying node_modules…
 ✓ 2.1s · 1.2k in / 340 out · ~$0.004
 ```
 
-**Command mode** — the suggestion is collected fully, run through the **command guard**
+**Command mode** — the suggestion is run through the **command guard**
 *before* it can reach the shell, then:
 
 - `[ai] mode = "manual"` (default) — the command is preloaded into your prompt for review;
@@ -35,11 +37,11 @@ The most common causes are cache invalidation and copying node_modules…
 - A guard-**denied** command, a model refusal, or an error prints as a `#` comment —
   never silent, never executed.
 
-**Answer mode** — for a question or anything needing explanation, `@ai` streams a prose
+**Answer mode** — for a question or anything needing explanation, `@ai` shows a prose
 answer and preloads nothing. `@ai` grounds on your cwd, shell, recent terminal output
 (redacted; see `share_terminal_context`), and recalled memory — so `mkdir x` then
-`@ai go into it` yields `cd x`. (Reasoning stays hidden behind the spinner; a broken or
-tool-call-shaped reply is shown as an answer, never preloaded as a command.)
+`@ai go into it` yields `cd x`. (Reasoning stays hidden behind the spinner; a reply that
+doesn't parse to a command is shown as an answer, never preloaded — no misfire, no hang.)
 
 ## `@<agent>` — agentic runs
 

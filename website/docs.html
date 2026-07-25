@@ -114,14 +114,15 @@ api_key  = <span class="s">"sk-…"</span>             <span class="c"># or "$MY
 
     <h2 id="cmd-ai">@ai — a command to run, or an answer</h2>
     <pre><code><span class="p">❯</span> @ai list files
-touch hamid                          <span class="c"># the command, formed live</span>
+du -sh .                             <span class="c"># the proposed command</span>
 <span class="p">❯</span> <span class="c">press Enter to run (or edit)</span>   <span class="c"># preloaded — edit or Enter</span>
 
 <span class="p">❯</span> @ai why is my docker build slow?
 The most common causes are cache invalidation and copying node_modules…</code></pre>
     <p><code>@ai</code> is <b>dual-mode</b>: it turns your request into one shell command — proposed
       at your prompt to review, edit, and run — or, for a question, a prose answer. It never runs
-      anything itself.</p>
+      anything itself. A tiny model-agnostic JSON contract (<code>{"cmd":…}</code> / <code>{"answer":…}</code>),
+      parsed leniently, keeps routing reliable across any model.</p>
     <ul>
       <li><b>Command</b> — collected fully and checked by the guard <em>before</em> your shell
         sees it: <b>manual</b> (default) preloads it for review (Enter runs it); <b>auto</b> runs

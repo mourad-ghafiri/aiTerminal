@@ -76,27 +76,26 @@ The user's recent terminal context (with secrets redacted) may be provided for g
     )
 }
 
-/// The sentinel a prose answer begins with in the dual-mode `@ai` reply. Chosen to be
-/// something no real shell command starts with, so detection is unambiguous even across
-/// streamed-chunk boundaries.
-pub const ANSWER_SENTINEL: &str = "%%ANSWER%%";
-
-/// The `@ai` dual-mode system prompt: produce EITHER one bare shell command (preloaded for
-/// the user to edit/run) OR a `%%ANSWER%%` prose answer. Hardened so a weak model behaves:
-/// no tool-call syntax, and shell-safe quoting of URLs/globs.
+/// The `@ai` system prompt: a strict, model-agnostic JSON CONTRACT. The model returns ONE
+/// JSON object — `{"cmd": …}` to propose a shell command (the terminal preloads it for the
+/// user to edit/run) or `{"answer": …}` to answer a question. The harness extracts the object
+/// leniently (`cli::extract_json_object`), so any decoration the model adds (fences, stray
+/// prose) is tolerated by one generic rule instead of per-format special cases. Few-shot
+/// examples are what make weak models comply.
 fn command_system() -> String {
-    format!(
-        "You are the AI at a developer's terminal. The user typed `@ai <request>`. You produce a \
-         COMMAND for the user to review and run, or an ANSWER — you do NOT execute anything, and \
-         you CANNOT call tools: never emit `<tool_call>`, `@tool`, `<arg_key>`, XML, or JSON. Decide:\n\
-         - If a single shell command satisfies the request, output ONLY that command as raw text on \
-         the first line — no Markdown fences, no backticks, no `$`/`>` prompt, no prose. Quote URLs \
-         and globs so the shell won't expand them (e.g. `curl -s 'https://wttr.in/Paris?format=3'`).\n\
-         - If the request is a QUESTION, needs explanation, or no single command fits, begin your \
-         reply with the exact token `{ANSWER_SENTINEL}` followed by a concise GitHub-flavored Markdown answer.\n\
-         - If a command is unsafe, ambiguous, or impossible, output a single line beginning with '# ' explaining why.\n\
-         Never mix the two: either one bare command line, or `{ANSWER_SENTINEL}` + prose."
-    )
+    "You are the AI at a developer's terminal. The user typed `@ai <request>`. Reply with ONLY a \
+     single JSON object and NOTHING else — no prose, no Markdown, no code fences. Use exactly one \
+     of these two shapes:\n\
+     {\"cmd\": \"<one shell command that does what the user asked>\"}\n\
+     {\"answer\": \"<a concise GitHub-flavored Markdown answer>\"}\n\
+     Choose \"cmd\" when a shell command accomplishes the request (the user will review, edit, and \
+     run it); choose \"answer\" for a question, explanation, or when no single command fits. Put a \
+     valid, safely-quoted command in \"cmd\" (quote URLs/globs so the shell won't expand them). \
+     Do NOT execute anything and do NOT call tools.\n\
+     Examples:\n\
+     Request: list files here → {\"cmd\": \"ls -la\"}\n\
+     Request: why is my docker build slow → {\"answer\": \"Common causes are cache invalidation and copying node_modules…\"}"
+        .to_string()
 }
 
 fn user_message(context: &str, body: &str) -> Vec<Message> {
@@ -141,16 +140,6 @@ pub fn command_request(model: &ModelDef, nl: &str, context: &str) -> ChatRequest
     }
 }
 
-/// Extract the first runnable command line from a command answer. Tolerant of decoration:
-/// skips blank lines, `# `-prefixed refusals, and Markdown fence lines; strips a leading
-/// `$ `/`> ` prompt. So a fenced `du -sh .` yields the bare command, not the fence.
-pub fn first_command_line(full: &str) -> Option<String> {
-    full.lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("```"))
-        .map(|l| l.trim_start_matches("$ ").trim_start_matches("> ").to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,16 +156,16 @@ mod tests {
     }
 
     #[test]
-    fn command_request_is_deterministic_and_forbids_tools() {
+    fn command_request_is_a_deterministic_json_contract() {
         let s = AiSettings::default();
         let m = s.choose();
         let req = command_request(&m, "list files", "");
         assert_eq!(req.temperature, Some(0.0));
         assert!(req.messages[0].content.contains("Request: list files"));
-        // The system prompt must steer a weak model away from tool-call syntax.
+        // The contract offers exactly the two JSON shapes and forbids prose/fences.
         let sys = req.system.unwrap();
-        assert!(sys.contains("CANNOT call tools"));
-        assert!(sys.contains(ANSWER_SENTINEL));
+        assert!(sys.contains("\"cmd\"") && sys.contains("\"answer\""));
+        assert!(sys.contains("no code fences"));
     }
 
     #[test]
@@ -185,13 +174,5 @@ mod tests {
         let content = &req.messages[0].content;
         assert!(content.starts_with("ctx-block"));
         assert!(content.contains("why?"));
-    }
-
-    #[test]
-    fn first_command_line_unwraps_decoration() {
-        assert_eq!(first_command_line("# unsafe\nrm -rf /"), Some("rm -rf /".into()));
-        assert_eq!(first_command_line("$ ls -la\n"), Some("ls -la".into()));
-        assert_eq!(first_command_line("```\ndu -sh .\n```").as_deref(), Some("du -sh ."));
-        assert_eq!(first_command_line("# nope"), None);
     }
 }

@@ -35,7 +35,7 @@ pub use orchestrate::{run_orchestration, Orchestration, OrchestrationStep, StepR
 pub use memory::{MemoryEntry, MemoryService};
 pub use session::Session;
 pub use pool::{ModelOverrides, ModelPool, PoolEntry, Strategy};
-pub use request::{command_request, first_command_line, qa_request, ChatRequest, ImageData, Message, Role, ANSWER_SENTINEL};
+pub use request::{command_request, qa_request, ChatRequest, ImageData, Message, Role};
 pub use setup::{setup_hint, setup_hint_short};
 pub use stream::StreamEvent;
 pub use tools::{DEFAULT_CODER_TOOLS, DEFAULT_SAFE_TOOLS};

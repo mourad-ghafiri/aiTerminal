@@ -161,58 +161,27 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
     let _sigint = wire_sigint(cancel.clone());
     let client = crate::ai::Client::new(settings, crate::ai::CurlTransport::default()).with_images(media).with_cancel(cancel);
 
-    // `@ai` is DUAL-MODE: the model returns EITHER one bare shell command — which we run
-    // through the guard and PRELOAD for the user to review, edit, and run (or auto-run per
-    // `[ai] mode`) — OR a `%%ANSWER%%` prose answer, which streams and preloads nothing. The
-    // chrome rides stderr (the shell shows it live while stdout carries the one marker line);
-    // reasoning is hidden behind the spinner unless `[ai] show_reasoning`.
+    // `@ai` uses a MODEL-AGNOSTIC JSON CONTRACT: the model returns `{"cmd":…}` (a shell
+    // command we guard and PRELOAD for the user to edit/run — or auto-run per `[ai] mode`) or
+    // `{"answer":…}` (shown, preloads nothing). We buffer the short reply behind the spinner
+    // (reasoning hidden unless `[ai] show_reasoning`), then extract the JSON object with ONE
+    // generic rule (`extract_json_object`) — any decoration is tolerated, and an unparseable
+    // reply falls back to being shown as an answer (never mis-run). No per-format special cases.
     if as_command {
         let started = std::time::Instant::now();
         let mut spinner = Some(Spinner::start("thinking\u{2026}".into()));
         let (dim, r) = (muted(), reset());
-        let sentinel = crate::ai::ANSWER_SENTINEL;
-        let mut buf = String::new(); // full raw model output (for command extraction)
-        let mut head = String::new(); // undecided prefix while it could still be the sentinel
-        let mut mode: Option<bool> = None; // None = undecided; Some(true) = prose; Some(false) = command
-        let mut streamed_any = false;
+        let mut buf = String::new();
         let (mut tin, mut tout) = (0u64, 0u64);
         for ev in client.to_command(prompt, &ctx) {
             match ev {
-                crate::ai::StreamEvent::Delta(s) => {
-                    if let Some(mut sp) = spinner.take() {
-                        sp.stop();
-                    }
-                    buf.push_str(&s);
-                    streamed_any = true;
-                    match mode {
-                        Some(true) => eprint!("{s}"),          // prose, readable
-                        Some(false) => eprint!("{dim}{s}{r}"), // command, dim (exact bytes)
-                        None => {
-                            head.push_str(&s);
-                            let h = head.trim_start();
-                            if h.len() < sentinel.len() && sentinel.starts_with(h) {
-                                continue; // still a possible sentinel prefix — keep buffering
-                            }
-                            if let Some(rest) = h.strip_prefix(sentinel) {
-                                mode = Some(true);
-                                eprint!("{}", rest.trim_start());
-                            } else {
-                                mode = Some(false);
-                                eprint!("{dim}{head}{r}");
-                            }
-                            head.clear();
-                        }
-                    }
-                }
-                crate::ai::StreamEvent::Thinking(_) => {
-                    // Hidden by default: keep the `∴ thinking…` spinner running, print nothing.
+                crate::ai::StreamEvent::Delta(s) => buf.push_str(&s),
+                crate::ai::StreamEvent::Thinking(t) => {
                     if cfg.ai_show_reasoning {
                         if let Some(mut sp) = spinner.take() {
                             sp.stop();
                         }
-                        if let crate::ai::StreamEvent::Thinking(t) = &ev {
-                            eprint!("{dim}{t}{r}");
-                        }
+                        eprint!("{dim}{t}{r}");
                     }
                 }
                 crate::ai::StreamEvent::Done { input_tokens, output_tokens, .. } => {
@@ -228,22 +197,24 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
             }
         }
         drop(spinner.take());
-        if streamed_any {
-            eprintln!();
-        }
-        eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget));
-        // Route: a `%%ANSWER%%` prose reply preloads nothing; otherwise extract the command.
-        // Safety net for weak models: never preload text that carries tool-call junk or an
-        // unbalanced quote (that would hang the shell at `quote>`) — show it as an answer.
-        if prose_answer(&buf).is_some() || looks_like_tool_junk(&buf) {
-            println!("{ANSWER_MARK}");
-            record_session_run(session.as_ref(), "@ai", prompt, "answered");
+        let obj = extract_json_object(&buf);
+        let cmd = obj.as_ref().and_then(|o| o.get("cmd")).and_then(|v| v.as_str()).map(str::trim).filter(|c| !c.is_empty());
+        if let Some(cmd) = cmd {
+            // A command to propose: show it, guard it, then emit the marker the shell acts on.
+            eprint!("{dim}{cmd}{r}\n");
+            eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget));
+            let verdict = policy.check_command(cmd);
+            println!("{}", command_marker(Some(cmd), Some(verdict), &cfg.ai_command_mode, cmd));
+            record_session_run(session.as_ref(), "@ai", prompt, cmd);
             return 0;
         }
-        let cmd = crate::ai::first_command_line(&buf).filter(|c| quote_balanced(c));
-        let verdict = cmd.as_deref().map(|c| policy.check_command(c));
-        println!("{}", command_marker(cmd.as_deref(), verdict, &cfg.ai_command_mode, &buf));
-        record_session_run(session.as_ref(), "@ai", prompt, cmd.as_deref().unwrap_or("(no command)"));
+        // Otherwise it's an answer: the `answer` field if present, else the raw reply (safe
+        // fallback for a model that ignored the contract). Shown; nothing preloaded.
+        let answer = obj.as_ref().and_then(|o| o.get("answer")).and_then(|v| v.as_str()).unwrap_or_else(|| buf.trim());
+        eprintln!("{}", answer.trim());
+        eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget));
+        println!("{ANSWER_MARK}");
+        record_session_run(session.as_ref(), "@ai", prompt, "answered");
         return 0;
     }
 
@@ -440,35 +411,48 @@ fn error_comment(msg: &str) -> String {
     format!("# \u{26A0} {msg}")
 }
 
-/// If a dual-mode `@ai` reply is a PROSE answer (begins with the answer sentinel), return
-/// the prose with the sentinel stripped; else `None` (it's a command). The routing contract.
-fn prose_answer(buf: &str) -> Option<&str> {
-    buf.trim_start().strip_prefix(crate::ai::ANSWER_SENTINEL).map(str::trim_start)
-}
-
-/// A weak model sometimes tries to CALL a tool in `@ai` (which can't run tools) — its output
-/// then carries tool-call markers. Treat that as an answer, never preload the junk as a command.
-fn looks_like_tool_junk(buf: &str) -> bool {
-    ["<tool_call>", "<arg_key>", "[TOOL_CALLS]", "<|python_tag|>", "@tool "].iter().any(|m| buf.contains(m))
-}
-
-/// Even count of unescaped single and double quotes. An odd count is an unterminated quote
-/// that would hang the shell at a `quote>` continuation prompt if preloaded — so we don't.
-fn quote_balanced(s: &str) -> bool {
-    let (mut single, mut double, mut esc) = (0usize, 0usize, false);
-    for ch in s.chars() {
-        if esc {
-            esc = false;
-            continue;
-        }
-        match ch {
-            '\\' => esc = true,
-            '\'' => single += 1,
-            '"' => double += 1,
-            _ => {}
+/// Find and parse the first embedded JSON object in `text` — the ONE generic rule behind the
+/// `@ai` contract. Scans for each `{`, brace-matches to its close (string- and escape-aware so
+/// braces inside strings don't miscount), and returns the first slice that parses as a JSON
+/// object. This tolerates any decoration the model adds — Markdown fences, leading reasoning,
+/// trailing prose — without a special case per format. `None` if no object parses.
+fn extract_json_object(text: &str) -> Option<corelib::wire::Json> {
+    let bytes = text.as_bytes();
+    for (start, _) in text.char_indices().filter(|&(_, c)| c == '{') {
+        let mut depth = 0i32;
+        let mut quote = false;
+        let mut esc = false;
+        let mut i = start;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if quote {
+                if esc {
+                    esc = false;
+                } else if b == b'\\' {
+                    esc = true;
+                } else if b == b'"' {
+                    quote = false;
+                }
+            } else {
+                match b {
+                    b'"' => quote = true,
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            if let Ok(v @ corelib::wire::Json::Obj(_)) = corelib::wire::Json::parse(&text[start..=i]) {
+                                return Some(v);
+                            }
+                            break; // this `{` didn't yield an object; try the next one
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            i += 1;
         }
     }
-    single % 2 == 0 && double % 2 == 0
+    None
 }
 
 /// Turn a tool-call's raw args string into `(key, value)` pairs for `caps::run`.
@@ -3321,15 +3305,21 @@ mod tests {
     }
 
     #[test]
-    fn ai_command_routing_preloads_and_answers_safely() {
-        // The dual-mode `@ai` routing helpers: a `%%ANSWER%%` reply is prose (preload nothing);
-        // tool-call junk / unbalanced quotes are NOT preloaded as commands (no shell hang).
-        assert!(super::prose_answer(&format!("{} here you go", crate::ai::ANSWER_SENTINEL)).is_some());
-        assert!(super::prose_answer("ls -la").is_none(), "a bare command is not prose");
-        assert!(super::looks_like_tool_junk("<tool_call>web.read"), "tool-call attempt detected");
-        assert!(!super::looks_like_tool_junk("git commit -m \"wip\""));
-        assert!(super::quote_balanced("touch hamid") && super::quote_balanced("echo 'hi' > f"));
-        assert!(!super::quote_balanced("echo 'unterminated"), "odd quote → not preloaded");
+    fn extract_json_object_is_generic_and_lenient() {
+        use super::extract_json_object;
+        let cmd = |t: &str| extract_json_object(t).and_then(|o| o.get("cmd").and_then(|v| v.as_str().map(str::to_string)));
+        let ans = |t: &str| extract_json_object(t).and_then(|o| o.get("answer").and_then(|v| v.as_str().map(str::to_string)));
+        // Plain object.
+        assert_eq!(cmd("{\"cmd\":\"ls -la\"}").as_deref(), Some("ls -la"));
+        // Wrapped in a Markdown fence (the reported failure) — extracted, no special case.
+        assert_eq!(cmd("```json\n{\"cmd\":\"du -sh .\"}\n```").as_deref(), Some("du -sh ."));
+        // Surrounded by prose / reasoning.
+        assert_eq!(ans("Sure: {\"answer\":\"hi there\"} — done.").as_deref(), Some("hi there"));
+        // Braces INSIDE a string don't break brace-matching.
+        assert_eq!(cmd("{\"cmd\":\"echo {} > f\"}").as_deref(), Some("echo {} > f"));
+        // No / malformed JSON → None (the caller falls back to showing the reply as an answer).
+        assert!(extract_json_object("just some prose, no json").is_none());
+        assert!(extract_json_object("{not valid").is_none());
     }
 
     #[test]
