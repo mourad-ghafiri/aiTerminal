@@ -132,6 +132,7 @@ mod tests {
             remote_enabled: true,
             origin: "terminal://ai/".into(),
             sandbox: None,
+            memory_dir: None,
         };
         (TodoObj, ctx, dir)
     }

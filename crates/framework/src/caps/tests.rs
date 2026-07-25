@@ -16,14 +16,14 @@ fn glob_matches_star_doublestar_question() {
 }
 
 fn ctx() -> CapCtx {
-    CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None }
+    CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None }
 }
 
 
 
 
 fn ctx_ws(root: &std::path::Path) -> CapCtx {
-    CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: None, remote_enabled: true, origin: String::new(), sandbox: Some(root.to_path_buf()) }
+    CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: None, remote_enabled: true, origin: String::new(), sandbox: Some(root.to_path_buf()), memory_dir: None }
 }
 
 fn tmpdir(tag: &str) -> PathBuf {
@@ -250,7 +250,7 @@ fn web_read_md_fixture_and_remote_guards() {
     let r = run("web.read", &[("url".into(), format!("md://{}", f.display()))], &ctx()).unwrap();
     assert!(r.get("markdown").and_then(Json::as_str).unwrap().contains("# Doc"));
     // https with remote disabled → error (no egress)
-    let no_remote = CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None };
+    let no_remote = CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: None };
     assert!(run("web.read", &[("url".into(), "https://example.com".into())], &no_remote).is_err());
     // an SSRF host is blocked even with remote enabled
     assert!(run("web.read", &[("url".into(), "https://localhost/x".into())], &ctx()).is_err());
@@ -263,7 +263,7 @@ fn web_read_md_fixture_and_remote_guards() {
 fn sys_run_guard_sees_canonical_argv_not_quoted_bypass() {
     let mut policy = crate::security::Policy::new();
     policy.add_deny("^rm\\b").unwrap(); // an anchored deny rule
-    let ctx = CapCtx { policy: Arc::new(policy), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None };
+    let ctx = CapCtx { policy: Arc::new(policy), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
     // Quoting used to slip past `^rm` (raw string starts with `"`); now the guard sees
     // the canonical de-quoted command, so it is still blocked.
     assert!(run("sys.run", &[("cmd".into(), "\"rm\" -rf /tmp/whatever".into())], &ctx).unwrap_err().contains("blocked"));
@@ -302,7 +302,7 @@ fn ssrf_blocks_private_and_encoded_hosts() {
 fn sec_is_query_only() {
     let mut policy = crate::security::Policy::new();
     policy.add_deny("rm").unwrap();
-    let ctx = CapCtx { policy: Arc::new(policy), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None };
+    let ctx = CapCtx { policy: Arc::new(policy), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
     let r = run("sec.check_command", &[("cmd".into(), "rm -rf x".into())], &ctx).unwrap();
     assert_eq!(r.get("verdict").and_then(Json::as_str), Some("deny"));
 }
@@ -311,7 +311,7 @@ fn sec_is_query_only() {
 fn sys_run_blocked_by_guard() {
     let mut policy = crate::security::Policy::new();
     policy.add_deny("^danger").unwrap();
-    let ctx = CapCtx { policy: Arc::new(policy), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None };
+    let ctx = CapCtx { policy: Arc::new(policy), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
     // `danger --now` is an INERT literal — the guard rejects it, it never runs.
     assert!(run("sys.run", &[("cmd".into(), "danger --now".into())], &ctx).is_err());
 }
@@ -323,7 +323,7 @@ fn sys_run_confirm_is_blocked_in_noninteractive_path() {
     // inert literal; the confirm rule rejects it before any exec.)
     let mut policy = crate::security::Policy::new();
     policy.add_confirm("^git ").unwrap();
-    let ctx = CapCtx { policy: Arc::new(policy), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None };
+    let ctx = CapCtx { policy: Arc::new(policy), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
     let r = run("sys.run", &[("cmd".into(), "git status".into())], &ctx);
     assert!(r.is_err(), "Confirm-class command must not run unprompted");
     assert!(format!("{}", r.unwrap_err()).contains("confirmation"));
@@ -334,7 +334,7 @@ fn store_requires_app_sandbox() {
     assert!(run("store.get", &[("key".into(), "x".into())], &ctx()).is_err());
     let dir = std::env::temp_dir().join(format!("tt-caps-store-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let c = CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: Some(dir.clone()), remote_enabled: true, origin: String::new(), sandbox: None };
+    let c = CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: Some(dir.clone()), remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
     run("store.set", &[("key".into(), "pref".into()), ("value".into(), "{\"x\":1}".into())], &c).unwrap();
     let got = run("store.get", &[("key".into(), "pref".into())], &c).unwrap();
     assert_eq!(got.get("x").and_then(Json::as_f64), Some(1.0));
@@ -419,7 +419,7 @@ fn pure_families_work_with_no_host() {
 // BEFORE any socket — on the [ai] network switch or the https-only rule) ──────
 
 fn ctx_offline() -> CapCtx {
-    CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None }
+    CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: None }
 }
 
 #[test]

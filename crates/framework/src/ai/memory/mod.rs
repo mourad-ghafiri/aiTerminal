@@ -192,6 +192,15 @@ impl MemoryService {
         Self::with_dirs(global.clone(), vec![global])
     }
 
+    /// Open a FOLDER-scoped store: writes land in the folder's session memory, and
+    /// recall reads the folder store FIRST, then the global store (first-wins shadowing).
+    /// So an agent working in a project remembers project facts locally while still
+    /// recalling everything durable from the global store.
+    pub fn for_folder(folder_mem: PathBuf) -> Self {
+        let global = crate::config::Config::memory_dir();
+        Self::with_dirs(folder_mem.clone(), vec![folder_mem, global])
+    }
+
     /// Every memory across the read dirs (first dir wins on a same-id collision).
     /// Served from the process-wide corpus cache while the dirs' stamp is unchanged.
     fn load_all(&self) -> std::sync::Arc<Vec<(PathBuf, MemoryEntry)>> {
@@ -486,6 +495,28 @@ mod tests {
         let s = MemoryService::with_dirs(proj.clone(), vec![proj, global]);
         assert_eq!(s.list().len(), 1, "deduped by id");
         assert_eq!(s.get(&e.id).unwrap().body, "project value", "project shadows global");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn for_folder_writes_folder_and_recalls_folder_then_global() {
+        // A folder-scoped service writes to the folder store and recalls across BOTH the
+        // folder and global stores — the mechanism behind per-folder AI memory.
+        let base = std::env::temp_dir().join(format!("aiterm-mem-folder-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let folder = base.join("proj-mem");
+        let global = base.join("global-mem");
+        // A global fact + a folder-scoped fact via the for_folder-style constructor.
+        MemoryService::with_dirs(global.clone(), vec![global.clone()])
+            .add("fact", vec![], "the org standard formatter is rustfmt").unwrap();
+        let svc = MemoryService::with_dirs(folder.clone(), vec![folder.clone(), global.clone()]);
+        let added = svc.add("decision", vec![], "this project deploys via scripts/ship.sh").unwrap();
+        // The folder write landed in the FOLDER dir, not global.
+        assert!(folder.join(format!("{}.md", added.id)).exists(), "folder write goes to the folder store");
+        assert!(!global.join(format!("{}.md", added.id)).exists());
+        // Recall reaches both stores.
+        assert!(svc.search("ship deploy", 5).iter().any(|(e, _)| e.body.contains("ship.sh")), "folder fact recalled");
+        assert!(svc.search("formatter", 5).iter().any(|(e, _)| e.body.contains("rustfmt")), "global fact still recalled");
         let _ = std::fs::remove_dir_all(&base);
     }
 

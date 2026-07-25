@@ -307,8 +307,8 @@ impl Config {
 
 
     /// The global AI memory store (`ai/memory/*.md`) — structured, retrieval-based
-    /// memory the harness recalls into context. Project-local memory lives under
-    /// `<root>/.terminal/memory/` and shadows the global on a same-id collision.
+    /// memory the harness recalls into context. A folder's own memory lives under its
+    /// session (`ai/sessions/<id>/memory/`) and shadows the global on a same-id collision.
     pub fn memory_dir() -> PathBuf {
         Self::ai_dir().join("memory")
     }
@@ -341,6 +341,14 @@ impl Config {
     /// `aiTerminal ai --bg …`, listed by `aiTerminal ai jobs`.
     pub fn jobs_dir() -> PathBuf {
         Self::ai_dir().join("jobs")
+    }
+
+    /// Per-folder AI sessions (`ai/sessions/<id>/{meta.toml,session.md,memory/}`) — a
+    /// folder's remembered AI context (recent-run digest + folder-scoped memory), so
+    /// returning to a project restores what the AI knows about it. `<id>` derives from
+    /// the folder's project root (git top-level, else cwd) — see `ai::session`.
+    pub fn sessions_dir() -> PathBuf {
+        Self::ai_dir().join("sessions")
     }
 
     /// The panic/crash log appended by the top-level resilience guard
@@ -384,6 +392,7 @@ impl Config {
             Self::memory_dir(),
             Self::models_dir(),
             Self::jobs_dir(),
+            Self::sessions_dir(),
         ] {
             let _ = std::fs::create_dir_all(dir);
         }

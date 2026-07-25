@@ -295,6 +295,7 @@ mod tests {
             remote_enabled: true,
             origin: "terminal://ai/".into(),
             sandbox: None,
+            memory_dir: None,
         };
         (DataObj, ctx, dir)
     }
@@ -344,6 +345,7 @@ mod tests {
             remote_enabled: true,
             origin: String::new(),
             sandbox: None,
+            memory_dir: None,
         };
         assert!(DataObj.invoke("data.tables", &[], &ctx, &mut crate::caps::host::NullHost).is_err());
     }

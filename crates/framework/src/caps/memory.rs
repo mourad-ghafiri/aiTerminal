@@ -36,8 +36,14 @@ impl NativeObject for MemoryObj {
     fn methods(&self) -> &'static [MethodSpec] {
         SPECS
     }
-    fn invoke(&self, method: &str, args: &[(String, String)], _ctx: &CapCtx, _host: &mut dyn Host) -> Result<Json, String> {
-        let svc = MemoryService::open();
+    fn invoke(&self, method: &str, args: &[(String, String)], ctx: &CapCtx, _host: &mut dyn Host) -> Result<Json, String> {
+        // In a folder run, curate the FOLDER store (recall folder-first, then global);
+        // otherwise the global store. This makes `@coder`'s mid-loop `memory.add` remember
+        // project facts where the project can find them again.
+        let svc = match &ctx.memory_dir {
+            Some(dir) => MemoryService::for_folder(dir.clone()),
+            None => MemoryService::open(),
+        };
         let arg = |name: &str| args.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str()).unwrap_or("");
         let k = arg("k").parse::<usize>().ok().filter(|n| *n > 0).unwrap_or(5);
         let tags = |name: &str| {

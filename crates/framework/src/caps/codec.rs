@@ -129,6 +129,7 @@ mod tests {
             remote_enabled: true,
             origin: String::new(),
             sandbox: None,
+            memory_dir: None,
         };
         let a: Vec<(String, String)> = args.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         CodecObj.invoke(method, &a, &ctx, &mut crate::caps::host::NullHost)

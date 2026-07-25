@@ -121,10 +121,19 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
         &crate::ai::TermContext { cwd: cwd.as_deref(), shell: &shell, recent_lines: &recent_lines },
         40,
     );
-    // The global aiTerminal.md instructions lead, then auto-recalled memories (BM25,
-    // gated by `[ai] memory`), the terminal grounding, and any attached files.
-    // Everything is redacted below before egress.
-    let ctx = format!("{}{}{term}{file_ctx}", instructions_preamble(), memory_preamble(&cfg, prompt));
+    // This folder's persisted session — its recent-run digest + folder-scoped memory —
+    // so a run in a project it has seen before starts with that context restored.
+    let session = crate::ai::Session::for_cwd();
+    let folder_mem = session.as_ref().map(|s| s.memory_dir());
+    // The global aiTerminal.md instructions lead, then this folder's recent-activity
+    // digest, auto-recalled memories (folder-first then global, gated by `[ai] memory`),
+    // the terminal grounding, and any attached files. Everything is redacted before egress.
+    let ctx = format!(
+        "{}{}{}{term}{file_ctx}",
+        instructions_preamble(),
+        session_preamble(session.as_ref()),
+        memory_preamble(&cfg, prompt, folder_mem.as_deref()),
+    );
     // Apply the user's AI-scope redaction rules (config + plugins) before egress.
     let registry = crate::plugin::load_registry(&cfg);
     let policy = crate::security::build_policy(&cfg, &registry);
@@ -134,13 +143,18 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
 
     // `--flow <name>` runs a declarative multi-step agent sequence.
     if let Some(name) = flow {
-        return run_flow_cli(&cfg, settings, &name, prompt, &ctx, workspace_root, policy, media);
+        let code = run_flow_cli(&cfg, settings, &name, prompt, &ctx, workspace_root, policy, media);
+        record_session_run(session.as_ref(), "@flow", prompt, &outcome_label(code));
+        return code;
     }
 
     // `--agent <name>` runs the agent's full tool loop (tools = native objects via a
     // pure `caps::run` runner), streaming live — no GUI/host needed.
     if let Some(name) = agent {
-        return run_agent_cli(&cfg, settings, &name, prompt, &ctx, workspace_root, policy, media);
+        let mode = format!("@{name}");
+        let code = run_agent_cli(&cfg, settings, &name, prompt, &ctx, workspace_root, policy, media);
+        record_session_run(session.as_ref(), &mode, prompt, &outcome_label(code));
+        return code;
     }
 
     let cancel = crate::ai::CancelToken::new();
@@ -212,6 +226,8 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
         let cmd = crate::ai::first_command_line(&buf);
         let verdict = cmd.as_deref().map(|c| policy.check_command(c));
         println!("{}", command_marker(cmd.as_deref(), verdict, &cfg.ai_command_mode, &buf));
+        // Remember the NL→command mapping for this folder (the most useful digest entry).
+        record_session_run(session.as_ref(), "@ai", prompt, cmd.as_deref().unwrap_or("(no command)"));
         return 0;
     }
 
@@ -264,7 +280,25 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
     }
     println!();
     eprintln!("{dim}{}{r}", run_footer(started.elapsed(), 0, tin, tout));
+    record_session_run(session.as_ref(), "@ai (q&a)", prompt, "answered");
     0
+}
+
+/// A compact outcome label from an exit code, for the folder-session digest.
+fn outcome_label(code: i32) -> String {
+    match code {
+        0 => "ok".into(),
+        2 => "setup error".into(),
+        130 => "interrupted".into(),
+        _ => "failed".into(),
+    }
+}
+
+/// Append one run to this folder's session digest — best-effort, never blocks/fails a run.
+fn record_session_run(session: Option<&crate::ai::Session>, mode: &str, prompt: &str, outcome: &str) {
+    if let Some(s) = session {
+        s.record_run(mode, prompt, outcome);
+    }
 }
 
 /// The global AI instructions (`~/.aiTerminal/aiTerminal.md`) — the system-prompt
@@ -301,13 +335,18 @@ fn session_lines() -> Vec<String> {
 }
 
 /// The recalled-memory preamble for `query` — the top relevant memories (BM25,
-/// read-only) as a fenced block, so `@ai`/agents ground on durable memory. Empty when
+/// read-only) as a fenced block, so `@ai`/agents ground on durable memory. When a folder
+/// memory dir is given, recall is folder-first-then-global; else global only. Empty when
 /// `[ai] memory` is off or nothing is relevant.
-fn memory_preamble(cfg: &crate::config::Config, query: &str) -> String {
+fn memory_preamble(cfg: &crate::config::Config, query: &str, folder_mem: Option<&std::path::Path>) -> String {
     if !cfg.ai_memory || query.trim().is_empty() {
         return String::new();
     }
-    let hits = crate::ai::MemoryService::open().recall(query, 5);
+    let svc = match folder_mem {
+        Some(dir) => crate::ai::MemoryService::for_folder(dir.to_path_buf()),
+        None => crate::ai::MemoryService::open(),
+    };
+    let hits = svc.recall(query, 5);
     if hits.is_empty() {
         return String::new();
     }
@@ -319,6 +358,19 @@ fn memory_preamble(cfg: &crate::config::Config, query: &str) -> String {
     }
     s.push('\n');
     s
+}
+
+/// The folder-session preamble — the recent-run digest for this project, so a returning
+/// run "remembers" what was done here. Bounded (the digest is byte-capped on disk).
+/// Empty when there's no session yet.
+fn session_preamble(session: Option<&crate::ai::Session>) -> String {
+    let Some(session) = session else { return String::new() };
+    let digest = session.digest();
+    let digest = digest.trim();
+    if digest.is_empty() {
+        return String::new();
+    }
+    format!("## This folder's recent AI activity (for continuity)\n{digest}\n\n")
 }
 
 // The `@ai --command` path emits EXACTLY ONE line to stdout (the shell's pending
@@ -910,6 +962,12 @@ fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::AiSettings, w
     // The agent's file WRITES are confined to the invocation directory; MCP servers
     // come from the global `ai/mcp/` declarations.
     let workspace = workspace_root.or_else(|| std::env::current_dir().ok());
+    // Folder-scoped memory: the agent's `memory.*` tools read/write THIS project's session
+    // store (recall folder-first, then global). Derived from the same workspace that bounds
+    // fs writes, so identity is consistent — no separate plumbing.
+    let memory_dir = workspace
+        .as_ref()
+        .map(|w| crate::ai::Session::at(w, &crate::config::Config::sessions_dir()).memory_dir());
     let mcp = if with_mcp {
         let mcp_dirs = vec![crate::config::Config::mcp_dir()];
         let servers = crate::ai::load_servers(&mcp_dirs);
@@ -923,7 +981,7 @@ fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::AiSettings, w
         None
     };
     CliToolRunner {
-        ctx: crate::caps::CapCtx { policy, app_data: None, remote_enabled: cfg.ai_network, origin: "terminal://ai/".into(), sandbox: workspace },
+        ctx: crate::caps::CapCtx { policy, app_data: None, remote_enabled: cfg.ai_network, origin: "terminal://ai/".into(), sandbox: workspace, memory_dir },
         mcp,
         sub: SubAgentCtx {
             settings: settings.clone(),
@@ -1492,10 +1550,20 @@ fn run_loop_cli(goal: &str, opts: LoopOpts) -> i32 {
     let registry = crate::plugin::load_registry(&cfg);
     let policy = std::sync::Arc::new(crate::security::build_policy(&cfg, &registry));
     let workspace = std::env::current_dir().ok();
+    let session = crate::ai::Session::for_cwd();
     let Some(mut maker) = build_agent_spec(&opts.agent) else {
         eprintln!("aiTerminal: no agent '{}' — {}", opts.agent, available_agents_hint());
         return 2;
     };
+    // Give the maker this folder's remembered context (recent-run digest + folder-first
+    // memory recall on the goal), redacted, folded into its system prompt — so the loop
+    // starts knowing the project. `drive_loop`'s per-turn `context` stays empty (unchanged).
+    let folder_mem = session.as_ref().map(|s| s.memory_dir());
+    let folder_ctx = format!("{}{}", session_preamble(session.as_ref()), memory_preamble(&cfg, goal, folder_mem.as_deref()));
+    if !folder_ctx.trim().is_empty() {
+        let folder_ctx = policy.redact(&folder_ctx, crate::security::RedactScope::Ai);
+        maker.system = format!("{}\n\n{}", maker.system.trim_end(), folder_ctx);
+    }
     let cancel = crate::ai::CancelToken::new();
     let _sigint = wire_sigint(cancel.clone());
     let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default()).with_images(media).with_cancel(cancel);
@@ -1518,32 +1586,34 @@ fn run_loop_cli(goal: &str, opts: LoopOpts) -> i32 {
     let mut obs = CliObserver::new(std::io::stdout());
     let outcome = drive_loop(&client, &maker, &mut runner, &mut obs, goal, max, opts.budget, opts.check.as_deref(), verify);
     let _ = { use std::io::Write; std::io::stdout().write_all(b"\n") };
-    match outcome {
+    let (code, digest) = match outcome {
         LoopOutcome::Done(k) => {
             eprintln!("\u{2713} {}", crate::i18n::translate("loop.done", &[k.to_string()]));
-            0
+            (0, format!("goal reached in {k} iteration(s)"))
         }
         LoopOutcome::Stalled => {
             eprintln!("\u{26D4} {}", crate::i18n::translate("loop.stalled", &[]));
-            1
+            (1, "stalled (no progress)".into())
         }
         LoopOutcome::Budget => {
             eprintln!("\u{26D4} {}", crate::i18n::translate("loop.budget", &[]));
-            1
+            (1, "hit the token budget".into())
         }
         LoopOutcome::Exhausted => {
             eprintln!("\u{26D4} {}", crate::i18n::translate("loop.exhausted", &[]));
-            1
+            (1, "exhausted the iteration cap".into())
         }
         LoopOutcome::Error(e) => {
             eprintln!("aiTerminal: {e}");
-            2
+            (2, "error".into())
         }
         LoopOutcome::Cancelled => {
             eprintln!("\u{23f9} interrupted");
-            130
+            (130, "interrupted".into())
         }
-    }
+    };
+    record_session_run(session.as_ref(), "@loop", goal, &digest);
+    code
 }
 
 // ===== background jobs (run + track + monitor from the terminal) =============
@@ -1683,8 +1753,21 @@ fn run_prompt_as_agent(agent: &str, prompt: &str, log: Option<std::fs::File>) ->
     }
     let registry = crate::plugin::load_registry(&cfg);
     let policy = std::sync::Arc::new(crate::security::build_policy(&cfg, &registry));
-    let ctx = policy.redact(&file_ctx, crate::security::RedactScope::Ai);
-    run_agent_streaming(&cfg, settings, agent, &prompt, &ctx, std::env::current_dir().ok(), policy, media, log)
+    // A job gets the same grounding as any AI run: global instructions + this folder's
+    // session digest + folder-first memory recall + attachments (all redacted). Its
+    // `memory.*` writes are folder-scoped via `build_runner`.
+    let session = crate::ai::Session::for_cwd();
+    let folder_mem = session.as_ref().map(|s| s.memory_dir());
+    let ctx = format!(
+        "{}{}{}{file_ctx}",
+        instructions_preamble(),
+        session_preamble(session.as_ref()),
+        memory_preamble(&cfg, &prompt, folder_mem.as_deref()),
+    );
+    let ctx = policy.redact(&ctx, crate::security::RedactScope::Ai);
+    let code = run_agent_streaming(&cfg, settings, agent, &prompt, &ctx, std::env::current_dir().ok(), policy, media, log);
+    record_session_run(session.as_ref(), "@job", &prompt, &outcome_label(code));
+    code
 }
 
 /// `aiTerminal ai job [clear]` — list background jobs (newest first), or prune
@@ -2820,5 +2903,35 @@ mod tests {
             log: std::path::PathBuf::new(),
         };
         assert_eq!(j.timing(1180), "3m ago \u{b7} 45s");
+    }
+
+    #[test]
+    fn folder_session_flows_into_context_and_runner() {
+        // End-to-end wiring (no network): a folder's session digest + folder memory feed
+        // the context preamble, and `build_runner` scopes the agent's memory tools to the
+        // folder store — so a returning run "remembers" the project.
+        let (_h, _home) = crate::test_home::lock_home("cli-folder-session");
+        let cfg = crate::config::Config::load();
+        let ws = crate::config::Config::dir().join("proj-x");
+        std::fs::create_dir_all(&ws).unwrap();
+        let session = crate::ai::Session::at(&ws, &crate::config::Config::sessions_dir());
+
+        // 1) A prior run's digest shows up in the session preamble.
+        session.record_run("@ai", "list rust files", "fd -e rs");
+        let pre = super::session_preamble(Some(&session));
+        assert!(pre.contains("list rust files") && pre.contains("fd -e rs"), "digest injected: {pre:?}");
+        assert!(super::session_preamble(None).is_empty(), "no session → no preamble");
+
+        // 2) A folder-scoped memory is recalled by the folder-aware memory preamble.
+        crate::ai::MemoryService::for_folder(session.memory_dir())
+            .add("decision", vec![], "this project ships via scripts/release.sh").unwrap();
+        let mem = super::memory_preamble(&cfg, "how do we release?", Some(session.memory_dir().as_path()));
+        assert!(mem.contains("release.sh"), "folder memory recalled: {mem:?}");
+
+        // 3) build_runner scopes the agent's memory.* tools to THIS folder's session store.
+        let settings = cfg.ai_settings();
+        let policy = std::sync::Arc::new(crate::security::Policy::new());
+        let runner = super::build_runner(&cfg, &settings, Some(ws.clone()), policy, false);
+        assert_eq!(runner.ctx.memory_dir.as_deref(), Some(session.memory_dir().as_path()), "runner memory is folder-scoped");
     }
 }

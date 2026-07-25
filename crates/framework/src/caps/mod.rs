@@ -48,6 +48,10 @@ pub struct CapCtx {
     /// confined to it (outside / `None` = denied); read-only `fs` browsing is
     /// unaffected.
     pub sandbox: Option<PathBuf>,
+    /// The folder-scoped memory dir for this run (`ai/sessions/<id>/memory/`). When set,
+    /// the `memory.*` family writes here and recalls folder-first-then-global; `None`
+    /// falls back to the global store. Threaded from the run's project session.
+    pub memory_dir: Option<PathBuf>,
 }
 
 /// The standard-library registry (pure families). Built once per process; each
