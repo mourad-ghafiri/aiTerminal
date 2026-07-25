@@ -128,7 +128,9 @@ The most common causes are cache invalidation and copying node_modules…</code>
         sees it: <b>manual</b> (default) preloads it for review (Enter runs it); <b>auto</b> runs
         a guard-allowed command immediately (confirm-tier — <code>rm -rf</code>, <code>sudo</code> —
         always drops to review; denied prints as a <code>#</code> comment).</li>
-      <li><b>Answer</b> — a question streams a prose answer and preloads nothing.</li>
+      <li><b>Answer</b> — a question is rendered as styled <b>Markdown</b> (headings, lists,
+        tables, boxed code, links) by a from-scratch engine, and preloads nothing. Piped output
+        stays raw Markdown.</li>
       <li>It grounds on your recent terminal session (shared as a <b>redacted</b> context file)
         and recalled memory; reasoning stays hidden behind the spinner.</li>
     </ul>

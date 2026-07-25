@@ -174,6 +174,13 @@ pub fn render_grid(
         }
     }
 
+    // Composite native inline diagrams over their reserved rows (primary screen only, and
+    // only while fully in view — a partially-scrolled diagram is hidden until fully visible,
+    // so drawing never bleeds outside this pane's grid rectangle).
+    if !term.in_alt_screen() {
+        draw_placements(surface, term, theme, cache, px, ox, oy, m.cell_w, m.cell_h, cols, rows);
+    }
+
     // A scrollback indicator on the right edge when scrolled up into history.
     let sb = term.scrollback_len();
     if sb > 0 && term.scroll_offset() > 0 {
@@ -185,6 +192,131 @@ pub fn render_grid(
         let thumb_y = oy + frac * (grid_h - thumb_h);
         let tw = (m.cell_w * 0.18).clamp(3.0, 5.0);
         surface.fill_rounded_rect(Rect::new(ox + cols as f32 * m.cell_w - tw, thumb_y, tw, thumb_h), tw * 0.5, theme.muted);
+    }
+}
+
+/// Linear blend of two colors (`t` in 0..=1), opaque.
+fn mix(a: Rgba8, b: Rgba8, t: f32) -> Rgba8 {
+    let l = |x: u8, y: u8| (x as f32 * (1.0 - t) + y as f32 * t).round() as u8;
+    Rgba8::rgb(l(a.r, b.r), l(a.g, b.g), l(a.b, b.b))
+}
+
+/// A thick line segment drawn as a quad (there is no stroke_line primitive).
+fn draw_seg(surface: &mut Surface, a: (f32, f32), b: (f32, f32), thick: f32, color: Rgba8) {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let len = (dx * dx + dy * dy).sqrt().max(0.001);
+    let (nx, ny) = (-dy / len * thick / 2.0, dx / len * thick / 2.0);
+    surface.fill_polygon(&[(a.0 + nx, a.1 + ny), (b.0 + nx, b.1 + ny), (b.0 - nx, b.1 - ny), (a.0 - nx, a.1 - ny)], color);
+}
+
+/// A filled triangle arrowhead whose tip is at `tip`, pointing away from `from`.
+fn draw_arrowhead(surface: &mut Surface, tip: (f32, f32), from: (f32, f32), size: f32, color: Rgba8) {
+    let (dx, dy) = (tip.0 - from.0, tip.1 - from.1);
+    let len = (dx * dx + dy * dy).sqrt().max(0.001);
+    let (ux, uy) = (dx / len, dy / len);
+    let (px, py) = (-uy, ux);
+    let base = (tip.0 - ux * size, tip.1 - uy * size);
+    let l = (base.0 + px * size * 0.5, base.1 + py * size * 0.5);
+    let r = (base.0 - px * size * 0.5, base.1 - py * size * 0.5);
+    surface.fill_polygon(&[tip, l, r], color);
+}
+
+/// Composite each fully-visible diagram placement onto the pane surface.
+#[allow(clippy::too_many_arguments)]
+fn draw_placements(surface: &mut Surface, term: &Term, theme: &Theme, cache: &mut GlyphCache, px: f32, ox: f32, oy: f32, cw: f32, ch: f32, cols: u16, rows: u16) {
+    let sb = term.scrollback_len() as isize;
+    let off = term.scroll_offset() as isize;
+    for p in term.placements() {
+        let y_top = p.g as isize - sb + off;
+        let y_bot = y_top + p.rows as isize;
+        if y_top < 0 || y_bot > rows as isize {
+            continue; // not fully in view → skip (never draw outside the pane)
+        }
+        let rect = Rect::new(ox + 3.0, oy + y_top as f32 * ch + 2.0, cols as f32 * cw - 6.0, p.rows as f32 * ch - 4.0);
+        // Clear the reserved region (over any stray cells) then draw the diagram into it.
+        surface.fill_rect(Rect::new(ox, oy + y_top as f32 * ch, cols as f32 * cw, p.rows as f32 * ch), theme.term_bg);
+        draw_diagram(surface, cache, px, theme, rect, &p.source, cw, ch);
+    }
+}
+
+/// Draw a parsed+laid-out diagram, scaled to fit `rect`.
+fn draw_diagram(surface: &mut Surface, cache: &mut GlyphCache, px: f32, theme: &Theme, rect: Rect, source: &str, cw: f32, ch: f32) {
+    use corelib::mermaid::{layout, parse, Shape};
+    let Some(d) = parse(source) else { return };
+    let lay = layout(&d, &|s: &str| (corelib::unicode::str_width(s) as u32 * cw as u32, ch as u32));
+    if lay.width == 0 || lay.height == 0 {
+        return;
+    }
+    let scale = (rect.w / lay.width as f32).min(rect.h / lay.height as f32).clamp(0.05, 2.0);
+    let dw = lay.width as f32 * scale;
+    let dh = lay.height as f32 * scale;
+    let ox2 = rect.x + (rect.w - dw) / 2.0;
+    let oy2 = rect.y + (rect.h - dh) / 2.0;
+    let tp = |x: f32, y: f32| (ox2 + x * scale, oy2 + y * scale);
+
+    let edge_col = theme.muted;
+    let node_fill = mix(theme.term_bg, theme.accent, 0.14);
+    let node_edge = theme.accent;
+    let lbl_px = (px * scale).clamp(7.0, px);
+    let m = cache.metrics(lbl_px);
+
+    // Edges first (under the nodes).
+    for e in &lay.edges {
+        if e.points.len() < 2 {
+            continue;
+        }
+        let a = tp(e.points[0].0, e.points[0].1);
+        let b = tp(e.points[1].0, e.points[1].1);
+        draw_seg(surface, a, b, (1.5 * scale).clamp(1.0, 3.0), edge_col);
+        if e.arrow {
+            draw_arrowhead(surface, b, a, (9.0 * scale).clamp(5.0, 12.0), edge_col);
+        }
+        if !e.label.is_empty() {
+            let midx = (a.0 + b.0) / 2.0;
+            let midy = (a.1 + b.1) / 2.0;
+            let tw = measure_text(cache, &e.label, lbl_px);
+            // Small chip behind the label so the line doesn't cross it.
+            surface.fill_rect(Rect::new(midx - tw / 2.0 - 2.0, midy - m.cell_h / 2.0, tw + 4.0, m.cell_h), theme.term_bg);
+            draw_text(surface, cache, &e.label, lbl_px, midx - tw / 2.0, midy + m.ascent / 2.0, theme.muted, midx + tw / 2.0 + 2.0, false);
+        }
+    }
+
+    // Nodes.
+    for n in &lay.nodes {
+        let (nx, ny) = tp(n.x, n.y);
+        let nw = n.w * scale;
+        let nh = n.h * scale;
+        let r = Rect::new(nx, ny, nw, nh);
+        match n.shape {
+            Shape::Diamond => {
+                let cx = nx + nw / 2.0;
+                let cy = ny + nh / 2.0;
+                let pts = [(cx, ny), (nx + nw, cy), (cx, ny + nh), (nx, cy)];
+                surface.fill_polygon(&pts, node_fill);
+                for i in 0..4 {
+                    draw_seg(surface, pts[i], pts[(i + 1) % 4], (1.5 * scale).clamp(1.0, 2.5), node_edge);
+                }
+            }
+            Shape::Circle => {
+                let rad = nw.min(nh) / 2.0;
+                surface.fill_circle(nx + nw / 2.0, ny + nh / 2.0, rad, node_fill);
+            }
+            _ => {
+                let radius = match n.shape {
+                    Shape::Stadium | Shape::Round => nh / 2.0,
+                    _ => (6.0 * scale).clamp(3.0, 10.0),
+                };
+                surface.fill_rounded_rect(r, radius, node_fill);
+                surface.stroke_rounded_rect(r, radius, (1.5 * scale).clamp(1.0, 2.5), node_edge);
+            }
+        }
+        // Centered label (clipped to the node).
+        if !n.label.is_empty() {
+            let tw = measure_text(cache, &n.label, lbl_px).min(nw - 4.0);
+            let tx = nx + (nw - tw) / 2.0;
+            let baseline = ny + nh / 2.0 + m.ascent / 2.0 - m.descent / 2.0;
+            draw_text(surface, cache, &n.label, lbl_px, tx.max(nx + 2.0), baseline, theme.term_fg, nx + nw - 2.0, false);
+        }
     }
 }
 

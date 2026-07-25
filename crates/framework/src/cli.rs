@@ -161,21 +161,48 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
     let _sigint = wire_sigint(cancel.clone());
     let client = crate::ai::Client::new(settings, crate::ai::CurlTransport::default()).with_images(media).with_cancel(cancel);
 
-    // `@ai` uses a MODEL-AGNOSTIC JSON CONTRACT: the model returns `{"cmd":…}` (a shell
-    // command we guard and PRELOAD for the user to edit/run — or auto-run per `[ai] mode`) or
-    // `{"answer":…}` (shown, preloads nothing). We buffer the short reply behind the spinner
-    // (reasoning hidden unless `[ai] show_reasoning`), then extract the JSON object with ONE
-    // generic rule (`extract_json_object`) — any decoration is tolerated, and an unparseable
-    // reply falls back to being shown as an answer (never mis-run). No per-format special cases.
+    // `@ai` uses a tiny STREAMABLE contract: the reply is EITHER a one-line `RUN: <command>`
+    // (guarded + preloaded for the user to edit/run — or auto-run per `[ai] mode`) OR a
+    // teacher-style answer that renders LIVE as it streams (Markdown + native diagrams). We hold
+    // only the first few chars to detect `RUN:`; anything else starts rendering immediately, so
+    // the answer appears block-by-block. Default = answer (safe). Output rides stderr (stdout
+    // carries the marker line); rendering is on when stderr is a TTY.
     if as_command {
         let started = std::time::Instant::now();
         let mut spinner = Some(Spinner::start("thinking\u{2026}".into()));
         let (dim, r) = (muted(), reset());
-        let mut buf = String::new();
+        let mut md = err_is_tty().then(|| corelib::md::StreamRenderer::new(md_style(), md_width(), &[DIAGRAM_LANG]));
+        let mut head = String::new(); // undecided prefix while it could still be `RUN:`
+        let mut mode: Option<bool> = None; // None=undecided, Some(true)=command, Some(false)=answer
+        let mut command = String::new();
         let (mut tin, mut tout) = (0u64, 0u64);
+        let up = |s: &str| s.trim_start().to_ascii_uppercase();
         for ev in client.to_command(prompt, &ctx) {
             match ev {
-                crate::ai::StreamEvent::Delta(s) => buf.push_str(&s),
+                crate::ai::StreamEvent::Delta(s) => {
+                    if let Some(mut sp) = spinner.take() {
+                        sp.stop();
+                    }
+                    match mode {
+                        Some(true) => command.push_str(&s),
+                        Some(false) => stream_answer_to_stderr(&mut md, &s),
+                        None => {
+                            head.push_str(&s);
+                            let h = up(&head);
+                            if h.len() < crate::ai::RUN_PREFIX.len() && crate::ai::RUN_PREFIX.starts_with(&h) {
+                                continue; // still might be `RUN:`
+                            }
+                            if h.starts_with(crate::ai::RUN_PREFIX) {
+                                mode = Some(true);
+                                command = head.trim_start()[crate::ai::RUN_PREFIX.len()..].to_string();
+                            } else {
+                                mode = Some(false);
+                                stream_answer_to_stderr(&mut md, &head);
+                            }
+                            head.clear();
+                        }
+                    }
+                }
                 crate::ai::StreamEvent::Thinking(t) => {
                     if cfg.ai_show_reasoning {
                         if let Some(mut sp) = spinner.take() {
@@ -197,21 +224,28 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
             }
         }
         drop(spinner.take());
-        let obj = extract_json_object(&buf);
-        let cmd = obj.as_ref().and_then(|o| o.get("cmd")).and_then(|v| v.as_str()).map(str::trim).filter(|c| !c.is_empty());
-        if let Some(cmd) = cmd {
-            // A command to propose: show it, guard it, then emit the marker the shell acts on.
-            eprint!("{dim}{cmd}{r}\n");
+        // A stream that ended before deciding (a short reply) — classify the buffered head now.
+        if mode.is_none() {
+            if up(&head).starts_with(crate::ai::RUN_PREFIX) {
+                mode = Some(true);
+                command = head.trim_start()[crate::ai::RUN_PREFIX.len()..].to_string();
+            } else {
+                mode = Some(false);
+                stream_answer_to_stderr(&mut md, &head);
+            }
+        }
+        if mode == Some(true) {
+            let cmd = command.trim().lines().next().unwrap_or("").trim();
+            eprintln!("{dim}{cmd}{r}");
             eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget));
             let verdict = policy.check_command(cmd);
             println!("{}", command_marker(Some(cmd), Some(verdict), &cfg.ai_command_mode, cmd));
             record_session_run(session.as_ref(), "@ai", prompt, cmd);
             return 0;
         }
-        // Otherwise it's an answer: the `answer` field if present, else the raw reply (safe
-        // fallback for a model that ignored the contract). Shown; nothing preloaded.
-        let answer = obj.as_ref().and_then(|o| o.get("answer")).and_then(|v| v.as_str()).unwrap_or_else(|| buf.trim());
-        eprintln!("{}", answer.trim());
+        // Answer mode: flush the renderer's tail, then preload nothing.
+        finish_answer_to_stderr(&mut md);
+        eprintln!();
         eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget));
         println!("{ANSWER_MARK}");
         record_session_run(session.as_ref(), "@ai", prompt, "answered");
@@ -411,50 +445,6 @@ fn error_comment(msg: &str) -> String {
     format!("# \u{26A0} {msg}")
 }
 
-/// Find and parse the first embedded JSON object in `text` — the ONE generic rule behind the
-/// `@ai` contract. Scans for each `{`, brace-matches to its close (string- and escape-aware so
-/// braces inside strings don't miscount), and returns the first slice that parses as a JSON
-/// object. This tolerates any decoration the model adds — Markdown fences, leading reasoning,
-/// trailing prose — without a special case per format. `None` if no object parses.
-fn extract_json_object(text: &str) -> Option<corelib::wire::Json> {
-    let bytes = text.as_bytes();
-    for (start, _) in text.char_indices().filter(|&(_, c)| c == '{') {
-        let mut depth = 0i32;
-        let mut quote = false;
-        let mut esc = false;
-        let mut i = start;
-        while i < bytes.len() {
-            let b = bytes[i];
-            if quote {
-                if esc {
-                    esc = false;
-                } else if b == b'\\' {
-                    esc = true;
-                } else if b == b'"' {
-                    quote = false;
-                }
-            } else {
-                match b {
-                    b'"' => quote = true,
-                    b'{' => depth += 1,
-                    b'}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            if let Ok(v @ corelib::wire::Json::Obj(_)) = corelib::wire::Json::parse(&text[start..=i]) {
-                                return Some(v);
-                            }
-                            break; // this `{` didn't yield an object; try the next one
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            i += 1;
-        }
-    }
-    None
-}
-
 /// Turn a tool-call's raw args string into `(key, value)` pairs for `caps::run`.
 /// **Model-agnostic**: a JSON object maps by key; a BARE value (a weaker model calling
 /// `fs.list .` instead of `fs.list {"path":"."}`) becomes positional arg `0`, which the
@@ -516,6 +506,104 @@ fn muted() -> String {
 }
 fn reset() -> &'static str {
     "\x1b[0m"
+}
+
+/// Whether stdout is a terminal (agents/flows/loops stream the answer to stdout, so its
+/// Markdown rendering + TTY-gating is keyed on this stream, not stderr).
+fn out_is_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
+}
+
+/// The Markdown render palette, from the active theme's env colors (with sensible defaults).
+fn md_style() -> corelib::md::Style {
+    let rgb = |var: &str, default: corelib::types::Rgba8| -> corelib::types::Rgba8 {
+        std::env::var(var)
+            .ok()
+            .and_then(|s| {
+                let p: Vec<u8> = s.split(';').filter_map(|x| x.trim().parse().ok()).collect();
+                (p.len() == 3).then(|| corelib::types::Rgba8::rgb(p[0], p[1], p[2]))
+            })
+            .unwrap_or(default)
+    };
+    let d = corelib::md::Style::default();
+    let accent = rgb("TT_ACCENT_RGB", d.accent);
+    let muted = rgb("TT_MUTED_RGB", d.muted);
+    corelib::md::Style { enabled: true, heading: accent, accent, code: d.code, muted, link: accent }
+}
+
+/// Wrap width for rendered Markdown — the terminal width (`$COLUMNS`), capped for readability.
+fn md_width() -> usize {
+    std::env::var("COLUMNS").ok().and_then(|c| c.trim().parse::<usize>().ok()).unwrap_or(80).clamp(20, 100)
+}
+
+/// Markdown render options when writing to a TTY; `None` (raw text) when piped.
+fn markdown_opts(is_tty: bool) -> Option<(corelib::md::Style, usize)> {
+    is_tty.then(|| (md_style(), md_width()))
+}
+
+/// Stream `@ai` answer text to stderr through the live Markdown renderer (or raw when it's
+/// `None`, i.e. not a TTY). Text chunks print directly; diagram chunks render natively.
+fn stream_answer_to_stderr(md: &mut Option<corelib::md::StreamRenderer>, text: &str) {
+    match md {
+        Some(r) => {
+            for c in r.push(text) {
+                match c {
+                    corelib::md::Chunk::Text(t) => eprint!("{t}"),
+                    corelib::md::Chunk::Diagram(s) => eprint!("{}", diagram_output(&s)),
+                }
+            }
+        }
+        None => eprint!("{text}"),
+    }
+}
+
+/// Flush the live renderer's trailing block at end of an `@ai` answer.
+fn finish_answer_to_stderr(md: &mut Option<corelib::md::StreamRenderer>) {
+    if let Some(r) = md {
+        for c in r.finish() {
+            match c {
+                corelib::md::Chunk::Text(t) => eprint!("{t}"),
+                corelib::md::Chunk::Diagram(s) => eprint!("{}", diagram_output(&s)),
+            }
+        }
+    }
+}
+
+/// The fenced-block language the AI uses for diagrams (kept internal — never shown to users).
+const DIAGRAM_LANG: &str = "mermaid";
+
+/// Are we inside our OWN GUI terminal (which draws native diagrams via `OSC 1338`)? The PTY
+/// exports `TERM_PROGRAM = <brand>` to its children.
+fn is_native_terminal() -> bool {
+    std::env::var("TERM_PROGRAM").ok().as_deref() == Some(corelib::brand::NAME)
+}
+
+/// Turn a diagram's source into terminal output: a native `OSC 1338` placement (with a
+/// reserved row count from the pure layout) when our GUI can draw it, else a clean boxed
+/// fallback (other terminals / pipes). No jargon is ever shown to the user.
+fn diagram_output(source: &str) -> String {
+    if is_native_terminal() {
+        if let Some(d) = corelib::mermaid::parse(source) {
+            let l = corelib::mermaid::layout(&d, &|s: &str| (corelib::unicode::str_width(s) as u32 * 8, 16));
+            let rows = l.height.div_ceil(18).clamp(3, 40);
+            return format!("\x1b]1338;{rows};{}\x07", corelib::codec::base64_encode(source.as_bytes()));
+        }
+    }
+    diagram_fallback_box(source)
+}
+
+/// A plain boxed rendering of a diagram's source for terminals that can't draw it.
+fn diagram_fallback_box(source: &str) -> String {
+    let width = source.lines().map(corelib::unicode::str_width).max().unwrap_or(0).clamp(7, 78);
+    let (dim, r) = (muted(), reset());
+    let mut out = format!("{dim}╭─ diagram {}╮{r}\n", "─".repeat(width.saturating_sub(9)));
+    for line in source.lines() {
+        let pad = width.saturating_sub(corelib::unicode::str_width(line));
+        out.push_str(&format!("{dim}│{r} {line}{} {dim}│{r}\n", " ".repeat(pad)));
+    }
+    out.push_str(&format!("{dim}╰{}╯{r}\n", "─".repeat(width + 2)));
+    out
 }
 
 /// `12345` → `12.3k` (token counts stay glanceable).
@@ -666,17 +754,41 @@ struct CliObserver<W: std::io::Write> {
     /// Print the raw reasoning text (`[ai] show_reasoning`). Default `false`: reasoning is
     /// hidden behind the animated `∴ thinking…` spinner; tools + answer still stream.
     show_reasoning: bool,
+    /// When set, the answer streams through a LIVE Markdown renderer — each block renders the
+    /// moment it's complete (diagrams drawn natively). Off (piped output) → stream raw.
+    md_stream: Option<corelib::md::StreamRenderer>,
 }
 
 impl<W: std::io::Write> CliObserver<W> {
     fn new(out: W) -> Self {
-        CliObserver { out, pending: String::new(), suppress_line: false, suppress_turn: false, streamed: String::new(), printed: false, spinner: None, thinking_open: false, show_reasoning: false }
+        CliObserver { out, pending: String::new(), suppress_line: false, suppress_turn: false, streamed: String::new(), printed: false, spinner: None, thinking_open: false, show_reasoning: false, md_stream: None }
     }
 
     /// Opt into streaming the model's raw reasoning text (off by default).
     fn with_reasoning(mut self, show: bool) -> Self {
         self.show_reasoning = show;
         self
+    }
+
+    /// Render the answer live as styled Markdown (block-by-block) instead of raw. `None` on a
+    /// non-TTY (piped) target so pipes stay clean.
+    fn with_markdown(mut self, md: Option<(corelib::md::Style, usize)>) -> Self {
+        self.md_stream = md.map(|(style, width)| corelib::md::StreamRenderer::new(style, width, &[DIAGRAM_LANG]));
+        self
+    }
+
+    /// Write a batch of rendered Markdown chunks: styled text goes straight out; a diagram
+    /// chunk is emitted natively (or a fallback box when not on the GUI terminal).
+    fn write_chunks(&mut self, chunks: Vec<corelib::md::Chunk>) {
+        for c in chunks {
+            match c {
+                corelib::md::Chunk::Text(t) => self.emit(&t),
+                corelib::md::Chunk::Diagram(src) => {
+                    let d = diagram_output(&src);
+                    self.emit(&d);
+                }
+            }
+        }
     }
 
     /// First sign of life this turn — clear the waiting spinner.
@@ -787,6 +899,14 @@ impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
         self.spinner = Some(Spinner::start("thinking\u{2026}".into()));
     }
     fn on_delta(&mut self, text: &str) {
+        // Markdown mode: feed the LIVE renderer — complete blocks (and diagrams) render as
+        // they arrive. Stop the spinner on the first token so tool traces print cleanly.
+        if self.md_stream.is_some() {
+            self.wake();
+            let chunks = self.md_stream.as_mut().unwrap().push(text);
+            self.write_chunks(chunks);
+            return;
+        }
         self.wake();
         if self.thinking_open {
             self.thinking_open = false;
@@ -807,6 +927,10 @@ impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
     }
     fn on_commit(&mut self, _prose: &str) {
         self.wake();
+        // In Markdown mode the live renderer already emitted complete blocks; nothing to flush.
+        if self.md_stream.is_some() {
+            return;
+        }
         // Prose lines already streamed; just make sure the tool trace starts clean.
         let held = std::mem::take(&mut self.pending);
         if !held.is_empty() && !self.suppress_line && !self.suppress_turn {
@@ -835,6 +959,14 @@ fn finish_streamed<W: std::io::Write>(obs: &mut CliObserver<W>, answer: &str) {
         obs.thinking_open = false;
     }
     let a = answer.trim();
+    // Markdown mode: flush any trailing block still buffered in the live renderer.
+    if obs.md_stream.is_some() {
+        let chunks = obs.md_stream.as_mut().unwrap().finish();
+        obs.write_chunks(chunks);
+        let _ = obs.out.write_all(b"\n");
+        let _ = obs.out.flush();
+        return;
+    }
     if !a.is_empty() && !obs.streamed.contains(a) {
         let _ = obs.out.write_all(b"\n");
         let _ = obs.out.write_all(a.as_bytes());
@@ -1208,7 +1340,7 @@ fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::ai::AiSetti
     let _sigint = wire_sigint(cancel);
     eprintln!("{}\u{2726} @{name} \u{b7} {}{}", accent(), client.model().id, reset());
     let started = std::time::Instant::now();
-    let mut obs = CliObserver::new(Tee { log }).with_reasoning(cfg.ai_show_reasoning);
+    let mut obs = CliObserver::new(Tee { log }).with_reasoning(cfg.ai_show_reasoning).with_markdown(markdown_opts(out_is_tty()));
     let run = crate::ai::run_agent(&client, &agent, prompt, ctx, &mut runner, &mut obs);
     finish_streamed(&mut obs, &run.answer);
     let glyph = outcome_glyph(&run.outcome);
@@ -1307,7 +1439,7 @@ fn run_flow_cli(cfg: &crate::config::Config, settings: crate::ai::AiSettings, na
     let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default()).with_images(media).with_cancel(cancel);
     let mut runner = build_runner(cfg, &settings, workspace_root, policy, true);
     let started = std::time::Instant::now();
-    let mut obs = CliObserver::new(std::io::stdout());
+    let mut obs = CliObserver::new(std::io::stdout()).with_reasoning(cfg.ai_show_reasoning).with_markdown(markdown_opts(out_is_tty()));
     let result = crate::ai::run_orchestration(&client, &steps, ctx, flow.chain, &mut runner, &mut obs);
     finish_streamed(&mut obs, &result.final_answer);
     let (dim, r) = (muted(), reset());
@@ -3305,21 +3437,13 @@ mod tests {
     }
 
     #[test]
-    fn extract_json_object_is_generic_and_lenient() {
-        use super::extract_json_object;
-        let cmd = |t: &str| extract_json_object(t).and_then(|o| o.get("cmd").and_then(|v| v.as_str().map(str::to_string)));
-        let ans = |t: &str| extract_json_object(t).and_then(|o| o.get("answer").and_then(|v| v.as_str().map(str::to_string)));
-        // Plain object.
-        assert_eq!(cmd("{\"cmd\":\"ls -la\"}").as_deref(), Some("ls -la"));
-        // Wrapped in a Markdown fence (the reported failure) — extracted, no special case.
-        assert_eq!(cmd("```json\n{\"cmd\":\"du -sh .\"}\n```").as_deref(), Some("du -sh ."));
-        // Surrounded by prose / reasoning.
-        assert_eq!(ans("Sure: {\"answer\":\"hi there\"} — done.").as_deref(), Some("hi there"));
-        // Braces INSIDE a string don't break brace-matching.
-        assert_eq!(cmd("{\"cmd\":\"echo {} > f\"}").as_deref(), Some("echo {} > f"));
-        // No / malformed JSON → None (the caller falls back to showing the reply as an answer).
-        assert!(extract_json_object("just some prose, no json").is_none());
-        assert!(extract_json_object("{not valid").is_none());
+    fn diagram_output_falls_back_to_a_box_off_our_terminal() {
+        // Not our GUI terminal (TERM_PROGRAM unset) → a clean fallback box, no jargon, no OSC.
+        std::env::remove_var("TERM_PROGRAM");
+        let out = super::diagram_output("flowchart TD\n A --> B");
+        assert!(out.contains("diagram") && out.contains('╭'), "fallback box: {out:?}");
+        assert!(!out.contains("\x1b]1338"), "no native OSC off our terminal");
+        assert!(out.contains("A --> B"));
     }
 
     #[test]

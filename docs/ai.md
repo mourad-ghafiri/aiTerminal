@@ -267,9 +267,20 @@ each iteration and a footer with the iteration count:
 ✓ 58s · 11 tools · 32k in / 4.1k out · ~$0.21
 ```
 
-- **Answers** stream token-by-token to stdout; the `@tool …` machine protocol
-  never reaches the display (in any dialect — `@tool`, `<tool_call>`, `[TOOL_CALLS]`,
-  `<|python_tag|>`, fenced blocks — the parser is model-agnostic).
+- **Answers** render as styled **Markdown** **live** — headings, **bold**/*italic*, `inline
+  code`, links, bullet/numbered/task lists, block quotes, boxed fenced code, aligned GFM tables,
+  and diagrams — by a from-scratch engine in `corelib::md` (width-aware wrapping, theme colors).
+  Rendering streams **block by block**: each block appears the moment it's complete (stable — no
+  repaint), alongside the live tool traces. `@ai` uses a tiny streamable contract — a one-line
+  `RUN: <command>` proposes a command; anything else is a teacher-style answer that renders as it
+  arrives. Piped/redirected output stays **raw Markdown** (clean for `>` and `|`). The `@tool …`
+  machine protocol never reaches the display in any dialect (`@tool`, `<tool_call>`,
+  `[TOOL_CALLS]`, `<|python_tag|>`, fenced) — the parser is model-agnostic.
+- **Diagrams** — when a visual clarifies an idea, the AI includes one and it's **drawn natively
+  in the pane** (flowcharts + sequence diagrams): parsed and laid out by `corelib::mermaid`,
+  rasterized by the `gfx` engine, and composited over reserved grid rows (via a private
+  `OSC 1338` placement in the terminal engine). Piped/other terminals get a clean fallback box.
+  The AI is prompted as a concise teacher and never exposes any formatting/diagram syntax.
 - **Thinking** is hidden by default — you see only the animated `∴ thinking…`
   indicator, then tools and the answer. Set `[ai] show_reasoning = true` to stream the
   full dim chain-of-thought. Whether a model *reasons* at all is a per-pool-entry

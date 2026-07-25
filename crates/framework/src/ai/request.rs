@@ -66,37 +66,44 @@ impl ChatRequest {
     }
 }
 
+/// The teacher-persona guidance shared by the `@ai` answer and Q&A prompts: explain like a
+/// great, concise teacher and lean on visual diagrams — WITHOUT exposing any of the underlying
+/// formatting/diagram technology to the user.
+const TEACHER: &str = "Explain like a brilliant, concise teacher: lead with the answer, keep it \
+tight, and make it click. **Use a diagram whenever a picture makes the idea clearer** — draw it \
+in a fenced ```mermaid code block (flowchart or sequenceDiagram). This terminal renders your text \
+and diagrams natively and beautifully, so just include them. NEVER mention formatting or diagram \
+technology, never call anything \"markdown\" or \"mermaid\", never show diagram syntax as something \
+the user must handle, and never tell the user to paste, open, or render anything elsewhere — the \
+diagram simply appears. Present the explanation and its visuals as one seamless answer.";
+
 /// The Q&A system prompt — embeds the brand name, so it derives from the one constant.
 fn qa_system() -> String {
     format!(
-        "You are the AI assistant embedded in {}, a developer terminal. \
-Answer concisely and accurately in GitHub-flavored Markdown (use fenced code blocks for commands and code). \
+        "You are the AI assistant embedded in {}, a developer terminal. {TEACHER} \
 The user's recent terminal context (with secrets redacted) may be provided for grounding — use it when relevant but do not echo it back verbatim.",
         corelib::brand::NAME
     )
 }
 
-/// The `@ai` system prompt: a strict, model-agnostic JSON CONTRACT. The model returns ONE
-/// JSON object — `{"cmd": …}` to propose a shell command (the terminal preloads it for the
-/// user to edit/run) or `{"answer": …}` to answer a question. The harness extracts the object
-/// leniently (`cli::extract_json_object`), so any decoration the model adds (fences, stray
-/// prose) is tolerated by one generic rule instead of per-format special cases. Few-shot
-/// examples are what make weak models comply.
+/// The `@ai` system prompt: a tiny, STREAMABLE contract. Either propose a shell command with a
+/// one-line `RUN:` header (the terminal preloads it for the user to edit/run), or just answer —
+/// and the answer streams and renders live. Default (no `RUN:`) is an answer, so an off-contract
+/// reply is always shown safely rather than run.
 fn command_system() -> String {
-    "You are the AI at a developer's terminal. The user typed `@ai <request>`. Reply with ONLY a \
-     single JSON object and NOTHING else — no prose, no Markdown, no code fences. Use exactly one \
-     of these two shapes:\n\
-     {\"cmd\": \"<one shell command that does what the user asked>\"}\n\
-     {\"answer\": \"<a concise GitHub-flavored Markdown answer>\"}\n\
-     Choose \"cmd\" when a shell command accomplishes the request (the user will review, edit, and \
-     run it); choose \"answer\" for a question, explanation, or when no single command fits. Put a \
-     valid, safely-quoted command in \"cmd\" (quote URLs/globs so the shell won't expand them). \
-     Do NOT execute anything and do NOT call tools.\n\
-     Examples:\n\
-     Request: list files here → {\"cmd\": \"ls -la\"}\n\
-     Request: why is my docker build slow → {\"answer\": \"Common causes are cache invalidation and copying node_modules…\"}"
-        .to_string()
+    format!(
+        "You are the AI at {}'s terminal. The user typed `@ai <request>`. Choose ONE:\n\
+         - If a single shell command accomplishes it, reply with EXACTLY one line: `RUN: <command>` \
+         and nothing else (the user reviews, edits, and runs it). Quote URLs/globs so the shell \
+         won't expand them, e.g. `RUN: curl -s 'https://wttr.in/Paris?format=3'`.\n\
+         - Otherwise, answer the request. {TEACHER}\n\
+         Never write `RUN:` unless the whole reply is that one command line. Do not run anything yourself.",
+        corelib::brand::NAME
+    )
 }
+
+/// The one-line prefix that marks the `@ai` reply as a shell command to propose.
+pub const RUN_PREFIX: &str = "RUN:";
 
 fn user_message(context: &str, body: &str) -> Vec<Message> {
     let content = if context.trim().is_empty() {
@@ -156,16 +163,17 @@ mod tests {
     }
 
     #[test]
-    fn command_request_is_a_deterministic_json_contract() {
+    fn command_request_is_a_streamable_teacher_contract() {
         let s = AiSettings::default();
         let m = s.choose();
         let req = command_request(&m, "list files", "");
         assert_eq!(req.temperature, Some(0.0));
         assert!(req.messages[0].content.contains("Request: list files"));
-        // The contract offers exactly the two JSON shapes and forbids prose/fences.
         let sys = req.system.unwrap();
-        assert!(sys.contains("\"cmd\"") && sys.contains("\"answer\""));
-        assert!(sys.contains("no code fences"));
+        // The streamable command header + the teacher/no-jargon guidance are both present.
+        assert!(sys.contains("RUN:"), "command header: {sys}");
+        assert!(sys.contains("teacher"));
+        assert!(sys.contains("never call anything \"markdown\" or \"mermaid\""), "no-jargon rule present");
     }
 
     #[test]

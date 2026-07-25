@@ -42,6 +42,17 @@ impl Screen {
     }
 }
 
+/// A reserved region for a natively-drawn inline diagram (from `OSC 1338`). The renderer
+/// composites the diagram over `rows` grid rows starting at global line `g` (the same
+/// coordinate space `row_cells` uses: `scrollback_len() + screen_row`, decremented as history
+/// scrolls off the front). Dropped on resize / clear / alt-screen so it can never misalign.
+#[derive(Clone, Debug)]
+pub struct Placement {
+    pub source: String,
+    pub rows: usize,
+    pub g: usize,
+}
+
 pub struct Term {
     cols: usize,
     rows: usize,
@@ -73,6 +84,8 @@ pub struct Term {
     /// drains it with [`take_clipboard`] and performs the real OS write (the
     /// emulator itself never touches the clipboard; testable, no side effects).
     pending_clipboard: Option<String>,
+    /// Inline diagram placements (`OSC 1338`) the renderer draws over the grid.
+    placements: Vec<Placement>,
     parser: Parser,
 }
 
@@ -101,8 +114,14 @@ impl Term {
             cursor_visible: true,
             last_feed: None,
             pending_clipboard: None,
+            placements: Vec::new(),
             parser: Parser::new(),
         }
+    }
+
+    /// The inline diagram placements to composite over the grid (see [`Placement`]).
+    pub fn placements(&self) -> &[Placement] {
+        &self.placements
     }
 
     /// Drain text staged by `OSC 52` (a program writing the system clipboard).
@@ -293,6 +312,10 @@ impl Term {
         let cols = cols.max(1) as usize;
         let rows = rows.max(1) as usize;
         self.gen = self.gen.wrapping_add(1);
+        // Height/width reflow moves lines between screen and scrollback, so diagram
+        // placements can no longer be trusted to align — drop them (they re-render on the
+        // next answer). Keeps the fragile reflow path free of placement bookkeeping.
+        self.placements.clear();
         // The PRIMARY screen owns the scrollback; resize it with row overflow/refill. The
         // ALT screen (vim/less) is transient and keeps no history — clamp it, no scrollback.
         // Distinct fields → disjoint borrows.
@@ -371,6 +394,18 @@ impl Term {
         let mut recycled = None;
         while self.scrollback.len() > self.scrollback_max {
             recycled = self.scrollback.pop_front();
+            // A line dropped off the front shifts every global index down by one; keep
+            // diagram placements aligned, and drop any that scrolled fully out of history.
+            if !self.placements.is_empty() {
+                self.placements.retain_mut(|p| {
+                    if p.g == 0 {
+                        false
+                    } else {
+                        p.g -= 1;
+                        true
+                    }
+                });
+            }
         }
         // Stay-put: if the user has scrolled up to read history, keep the same lines
         // in view as new output is evicted to scrollback (capped at the retained len).
@@ -470,6 +505,7 @@ impl Term {
                 // restore). Snap the viewport back to the live bottom too.
                 self.scrollback.clear();
                 self.scroll_offset = 0;
+                self.placements.clear();
             }
             _ => {
                 // ED 2 (and any other value): blank the whole visible screen.
@@ -478,6 +514,9 @@ impl Term {
                         *cell = Cell::blank_with(&pen);
                     }
                 }
+                // Drop diagrams that live on the now-blanked visible screen.
+                let base = self.scrollback.len();
+                self.placements.retain(|p| p.g + p.rows <= base);
             }
         }
     }
@@ -914,6 +953,26 @@ impl Perform for Term {
                     }
                 }
             }
+            // `OSC 1338 ; <rows> ; <base64 source>` — reserve `rows` grid rows for an inline
+            // diagram the renderer draws natively (see `Placement`). Primary screen only.
+            "1338" if fields.len() >= 3 => {
+                let rows = String::from_utf8_lossy(fields[1]).trim().parse::<usize>().unwrap_or(0).clamp(1, 60);
+                let payload = String::from_utf8_lossy(fields[2]);
+                if let Ok(bytes) = corelib::codec::base64_decode(payload.trim()) {
+                    if let Ok(source) = String::from_utf8(bytes) {
+                        if !source.trim().is_empty() && !self.in_alt {
+                            let g = self.scrollback.len() + self.screen.cy;
+                            self.placements.push(Placement { source, rows, g });
+                            if self.placements.len() > 64 {
+                                self.placements.remove(0);
+                            }
+                            for _ in 0..rows {
+                                self.linefeed();
+                            }
+                        }
+                    }
+                }
+            }
             // `OSC 1337 ; CurrentDir=<path>` — iTerm2-style cwd report (path only,
             // no host → local). Display-only data.
             "1337" => {
@@ -1298,6 +1357,35 @@ mod tests {
         // A typed-but-unsubmitted command sits on the cursor row too — also transient.
         t.feed(b"cargo tes");
         assert_eq!(t.content_ansi(100, None).len(), 2);
+    }
+
+    #[test]
+    fn osc_1338_records_a_diagram_placement_and_reserves_rows() {
+        let mut t = Term::new(20, 10);
+        t.feed(b"hi\r\n"); // cursor to row 1
+        let start_cy = t.cursor().1;
+        let src = "flowchart TD\n A --> B";
+        let b64 = corelib::codec::base64_encode(src.as_bytes());
+        t.feed(format!("\x1b]1338;4;{b64}\x07").as_bytes());
+        let p = t.placements();
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].rows, 4);
+        assert_eq!(p[0].source, src);
+        assert_eq!(p[0].g, 1, "anchored at the cursor's global line");
+        assert!(t.cursor().1 >= start_cy + 4, "4 rows reserved below");
+        // ED 3 (clear scrollback / `clear`) drops all placements.
+        t.feed(b"\x1b[3J");
+        assert!(t.placements().is_empty());
+    }
+
+    #[test]
+    fn resize_drops_diagram_placements() {
+        let mut t = Term::new(30, 10);
+        let b64 = corelib::codec::base64_encode(b"flowchart TD\n A-->B");
+        t.feed(format!("\x1b]1338;3;{b64}\x07").as_bytes());
+        assert_eq!(t.placements().len(), 1);
+        t.resize(40, 12);
+        assert!(t.placements().is_empty(), "reflow drops placements to avoid misalignment");
     }
 
     #[test]
