@@ -53,7 +53,7 @@
     <a href="#models">Models &amp; providers</a>
     <a href="#agents">Agents, skills &amp; prompts</a>
     <a href="#attachments">Attachments</a>
-    <a href="#memory">Memory &amp; MCP</a>
+    <a href="#memory">Sessions, memory &amp; MCP</a>
     <a href="#tools">The tool catalog</a>
     <b>Trust</b>
     <a href="#security">Security</a>
@@ -107,8 +107,9 @@ api_key  = <span class="s">"sk-…"</span>             <span class="c"># or "$MY
 │   ├── aiTerminal.md  <span class="c"># the global AI instructions — edit the persona</span>
 │   ├── agents/  skills/  prompts/  flows/  mcp/
 │   ├── models/        <span class="c"># provider catalogs (12 ship)</span>
-│   ├── memory/        <span class="c"># BM25-ranked markdown memories</span>
-│   └── jobs/          <span class="c"># &lt;id&gt;/{job.toml, log.md}</span>
+│   ├── memory/        <span class="c"># global BM25-ranked markdown memories</span>
+│   ├── jobs/          <span class="c"># &lt;id&gt;/{job.toml, log.md}</span>
+│   └── sessions/      <span class="c"># &lt;id&gt;/ per-folder AI memory (digest + memory/)</span>
 ├── logs/  cache/  shell/  crash.log</code></pre>
 
     <h2 id="cmd-ai">@ai — natural language → one command</h2>
@@ -389,10 +390,21 @@ strategy = <span class="s">"weighted"</span>       <span class="c"># weighted (d
       vision blocks; PDFs as document blocks; text files inline fenced (≤48&nbsp;KB, truncated
       beyond); up to 16 per prompt; everything passes redaction first.</p>
 
-    <h2 id="memory">Memory &amp; MCP</h2>
-    <p><b>Memory</b>: plain Markdown notes in <code>ai/memory/</code>, ranked by a from-scratch BM25
-      retriever — no database, no embeddings service. With <code>[ai] memory = true</code>, relevant
-      memories auto-inject into runs, and agents curate their own via <code>memory.*</code> tools.</p>
+    <h2 id="memory">Sessions, memory &amp; MCP</h2>
+    <p><b>Folder sessions</b>: every AI feature (<code>@ai</code>, <code>@&lt;agent&gt;</code>,
+      <code>@flow</code>, <code>@loop</code>, <code>@job</code>) persists a session for the folder it
+      runs in, so returning to a project restores what the AI knows about it — no flags. A folder
+      maps to its <b>project root</b> (the git top-level if you're in a repo, so subdirectories
+      share one session; else the working dir). Each session lives under
+      <code>ai/sessions/&lt;id&gt;/</code>: <code>session.md</code> (a byte-capped rolling digest of
+      recent runs), a folder-scoped <code>memory/</code>, and <code>meta.toml</code>. It's lean —
+      a run appends one digest line with <b>no extra model call</b>.</p>
+    <p><b>Memory</b>: plain Markdown notes ranked by a from-scratch BM25 retriever — no database, no
+      embeddings service. There are two stores: <b>global</b> (<code>ai/memory/</code>, durable
+      across every project) and <b>per-folder</b> (inside the session). With
+      <code>[ai] memory = true</code>, relevant memories auto-inject each run — <b>folder-first,
+      then global</b> — and agents curate their own via <code>memory.*</code> tools, writing to the
+      folder store during a folder run.</p>
     <p><b>MCP</b>: declare Model-Context-Protocol servers under <code>ai/mcp/</code>; agent runs
       launch them and expose their tools as <code>mcp.&lt;server&gt;.&lt;tool&gt;</code> beside the
       native catalog.</p>

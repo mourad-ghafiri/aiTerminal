@@ -246,15 +246,38 @@ The fix: the parser dropped the …    ← the answer, streaming
   animation-free text automatically, and the chrome colors follow your theme
   (via the live `TT_*` shell colors).
 
+## Folder sessions — the AI remembers each project
+
+Every AI feature (`@ai`, `@<agent>`, `@flow`, `@loop`, `@job`) persists a **session
+for the folder it runs in**, so returning to a project restores what the AI knows
+about it — automatically, no flags.
+
+- A folder maps to its **project root**: the git top-level if you're inside a repo
+  (so every subdirectory of a project shares one session), else the working
+  directory itself.
+- Each session lives under `~/.aiTerminal/ai/sessions/<id>/`:
+  - `session.md` — a compact, rolling **digest of recent runs** (one line each:
+    time, mode, request, outcome), byte-capped so it stays small; the oldest drop.
+  - `memory/` — a **folder-scoped memory store** (same format as the global one).
+  - `meta.toml` — the real root path, timestamps, run count.
+
+On each run the folder's digest and its memory are folded into the AI context
+(ahead of the terminal snapshot), and everything is redacted before egress. It is
+**lean by design** — a run appends one digest line with *no extra model call*.
+
 ## Memory
 
 A structured, retrieval-based memory (a from-scratch BM25 ranker — no DB, no
-embeddings service). Plain Markdown files:
+embeddings service), stored as plain Markdown files with TOML frontmatter.
 
-- Plain Markdown files in `~/.aiTerminal/ai/memory/`
+- **Global** memory: `~/.aiTerminal/ai/memory/` — durable facts across every project.
+- **Folder** memory: `~/.aiTerminal/ai/sessions/<id>/memory/` — facts about one project.
 
-Each turn, the most relevant memories are recalled into the AI context
-(`[ai] memory = true`). Agents curate their own via the `memory.*` tools.
+Each turn the most relevant memories are recalled into the AI context
+(`[ai] memory = true`), **folder-first then global** (a folder fact shadows a global
+one with the same id). Agents curate their own memory mid-run via the `memory.*`
+tools — in a folder run those writes land in that folder's store, so the project
+remembers them next time.
 
 ## MCP
 
@@ -364,9 +387,16 @@ only what it supports.
 
 ## Context & privacy
 
+Each run's context is assembled in order: the global `aiTerminal.md` instructions,
+**this folder's session digest**, the recalled memory (folder-first then global),
+the redacted terminal snapshot, and any attached files.
+
 - `share_terminal_context = true` — the window keeps a redacted snapshot of the
   focused pane's recent output in a 0600 temp file; the CLI grounds on it. Off → the
   file is removed and only your request is sent.
+- Folder sessions and memory live entirely on your machine under
+  `~/.aiTerminal/ai/sessions/`; nothing is uploaded, and the session context is
+  redacted on the same egress path as everything else.
 - Every egress path applies the **AI-scope redaction rules** (config + the
   `redactor` plugin): keys, tokens, and secrets are masked before leaving.
 - `[ai] network = false` cuts agents off from `web.read` / `net.get` / `http.*`

@@ -16,9 +16,11 @@ ai/                    everything AI:
   aiTerminal.md          the global AI instructions (the system-prompt base)
   agents/*.md            agents (@<name>)     skills/*.md    skills
   prompts/*.md           prompt blocks        flows/*.toml   workflows (@flow)
-  mcp/                   MCP declarations     memory/*.md    durable memory
+  mcp/                   MCP declarations     memory/*.md    global durable memory
   models/*.toml          the provider/model catalog
   jobs/<id>/             background job records (@job)
+  sessions/<id>/         per-folder AI memory: session.md (recent-run digest),
+                         memory/ (folder-scoped), meta.toml — restored on return
 cache/                 regenerable caches (cloned repos for web.read)
 logs/                  daily diagnostic logs
 shell/                 the generated shell integration + live theme colors
