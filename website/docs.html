@@ -112,22 +112,30 @@ api_key  = <span class="s">"sk-…"</span>             <span class="c"># or "$MY
 │   └── sessions/      <span class="c"># &lt;id&gt;/ per-folder AI memory (digest + memory/)</span>
 ├── logs/  cache/  shell/  crash.log</code></pre>
 
-    <h2 id="cmd-ai">@ai — natural language → one command</h2>
-    <pre><code><span class="p">❯</span> @ai list every port something is listening on
-<span class="p">❯</span> <span class="c">press Enter to run (or edit)</span>
-<span class="p">❯</span> lsof -iTCP -sTCP:LISTEN -n -P</code></pre>
-    <p><code>@ai</code> reads your recent terminal session (shared as a <b>redacted</b> context file),
-      proposes exactly <b>one</b> command, and the guard checks it <em>before</em> your shell sees it:</p>
+    <h2 id="cmd-ai">@ai — a command to run, or an answer</h2>
+    <pre><code><span class="p">❯</span> @ai list files
+touch hamid                          <span class="c"># the command, formed live</span>
+<span class="p">❯</span> <span class="c">press Enter to run (or edit)</span>   <span class="c"># preloaded — edit or Enter</span>
+
+<span class="p">❯</span> @ai why is my docker build slow?
+The most common causes are cache invalidation and copying node_modules…</code></pre>
+    <p><code>@ai</code> is <b>dual-mode</b>: it turns your request into one shell command — proposed
+      at your prompt to review, edit, and run — or, for a question, a prose answer. It never runs
+      anything itself.</p>
     <ul>
-      <li><b>manual</b> (default) — every command preloads at your prompt for review.</li>
-      <li><b>auto</b> — guard-allowed <em>safe-listed</em> commands run immediately; confirm-tier always drops to review; denied prints as a <code>#</code> comment, never runs.</li>
-      <li><b>Dual-mode:</b> if your request is a question rather than a command, <code>@ai</code> streams a prose answer instead of preloading anything — e.g. <code>@ai why is my docker build slow?</code> The model decides: one command, or an explanation.</li>
+      <li><b>Command</b> — collected fully and checked by the guard <em>before</em> your shell
+        sees it: <b>manual</b> (default) preloads it for review (Enter runs it); <b>auto</b> runs
+        a guard-allowed command immediately (confirm-tier — <code>rm -rf</code>, <code>sudo</code> —
+        always drops to review; denied prints as a <code>#</code> comment).</li>
+      <li><b>Answer</b> — a question streams a prose answer and preloads nothing.</li>
+      <li>It grounds on your recent terminal session (shared as a <b>redacted</b> context file)
+        and recalled memory; reasoning stays hidden behind the spinner.</li>
     </ul>
 
     <h2 id="cmd-agent">@&lt;agent&gt; — full agentic runs</h2>
     <pre><code><span class="p">❯</span> @coder "fix the failing parser test"
 <span class="a">✦ @coder · claude-opus-4-8</span>
-<span class="c">∴ The test expects a trailing newline …</span>
+<span class="c">∴ thinking…</span>
 <span class="c">  ⚙ fs.search {"q":"parse_flow"} · 18ms · 2.1KB</span>
 <span class="c">  ⚙ fs.edit {"path":"src/…"} · 6ms · 412B</span>
 The fix: the parser dropped the final line …
@@ -140,7 +148,7 @@ The fix: the parser dropped the final line …
       <tr><td><code>@explorer</code></td><td>Fast read-only scout — maps relevant code, reports tightly.</td></tr>
       <tr><td><code>@reviewer</code></td><td>Read-only review — correctness, security, tests, design.</td></tr>
       <tr><td><code>@tester</code></td><td>Writes and runs tests; reproduces a failure, then fixes it.</td></tr>
-      <tr><td><code>@ai</code></td><td>General assistant — concise answers, commands to review.</td></tr>
+      <tr><td><code>@ai</code></td><td>General assistant — proposes a command to review/run, or answers a question.</td></tr>
     </table>
     <p>Live chrome rides stderr, content rides stdout — so piping stays clean:
       <code>@explorer "map the auth flow" &gt; auth-map.md</code> works.</p>
@@ -189,15 +197,23 @@ prompt = <span class="s">"Verify the change above."</span></code></pre>
     <pre><code><span class="p">❯</span> @job create a CHANGELOG from the last 10 commits          <span class="c"># foreground: live + logged</span>
 <span class="p">❯</span> @job audit the deps --agent reviewer --bg                 <span class="c"># detached background run</span>
 ▶ background job 1753112000-4242
+<span class="p">❯</span> @job back up the db in 2 minutes                          <span class="c"># scheduled — fires later</span>
+⧖ scheduled job 1753112100-4310 — fires in 2m
 <span class="p">❯</span> @job                                                      <span class="c"># list</span>
-background jobs (2):
+background jobs (3):
+  ⧖ 1753112100-4310 scheduled back up the db …  <span class="c">(fires in 2m)</span>
   ▶ 1753112000-4242 running   audit the deps …  <span class="c">(2m ago · 2m)</span>
-  <span class="g">✓</span> 1753111800-4101 done      create a CHANGELOG …  <span class="c">(9m ago · 45s)</span></code></pre>
-    <p>Each job is a folder — <code>job.toml</code> (status, timestamps, exit code) +
-      <code>log.md</code> (the full streamed output; <code>tail -f</code> it). Background jobs are
-      fully detached: closing the terminal never kills them. Statuses are always honest:
-      <code>running · done · failed · cancelled · died</code> — a crashed job's record heals to
-      <code>died</code> on the next list, and <code>@job clear</code> prunes everything finished.</p>
+  <span class="g">✓</span> 1753111800-4101 done      create a CHANGELOG …  <span class="c">(9m ago · 45s)</span>
+<span class="p">❯</span> @job cancel 1753112100-4310                               <span class="c"># cancel scheduled/running</span></code></pre>
+    <p>End a task with a natural time — <code>in 2 minutes</code>, <code>after 30s</code>,
+      <code>at 17:30</code> — and it's <strong>scheduled</strong>, running later in the folder
+      where you typed it; <code>@job cancel &lt;id&gt;</code> stops it. Each job is a folder —
+      <code>job.toml</code> (status, timestamps, exit code) + <code>log.md</code> (the full
+      streamed output; <code>tail -f</code> it). Background jobs are fully detached: closing the
+      terminal never kills them. Statuses are always honest:
+      <code>scheduled · running · done · failed · cancelled · died · missed</code> — a crashed
+      job's record heals on the next list, and <code>@job clear</code> prunes everything that is
+      neither running nor scheduled.</p>
 
     <h2 id="cmd-manage">@profile · @theme · @config · @plugin</h2>
     <table>
@@ -277,7 +293,7 @@ action = <span class="s">"zoom_pane"</span></code></pre>
       <tr><th>Section</th><th>Keys</th></tr>
       <tr><td><code>[appearance]</code></td><td><code>theme</code> · <code>locale</code> · <code>font_family</code> (default Menlo) · <code>font_size</code> (default 15) · <code>cursor_style</code> (block / bar / underline)</td></tr>
       <tr><td><code>[behavior]</code></td><td><code>zoom</code> · <code>tab_bar</code> = top|bottom|left|right · <code>shell</code> · <code>scrollback</code> (default 10000)</td></tr>
-      <tr><td><code>[ai]</code></td><td><code>share_terminal_context</code> · <code>memory</code> · <code>mode</code> = manual|auto · <code>network</code> · <code>budget</code> (USD cost soft-cap) — then <code>[ai.balance] strategy</code> + the <code>[[ai.model]]</code> blocks, last</td></tr>
+      <tr><td><code>[ai]</code></td><td><code>share_terminal_context</code> · <code>memory</code> · <code>show_reasoning</code> (show thinking text; default off) · <code>mode</code> = manual|auto · <code>network</code> · <code>budget</code> (USD cost soft-cap) — then <code>[ai.balance] strategy</code> + the <code>[[ai.model]]</code> blocks, last</td></tr>
       <tr><td><code>[[ai.model]]</code></td><td><code>provider</code> · <code>id</code> · <code>api_key</code> · <code>weight</code> · <code>temperature</code> · <code>top_p</code> · <code>top_k</code> · <code>max_tokens</code> · <code>thinking</code></td></tr>
       <tr><td><code>[plugins]</code></td><td><code>enabled</code> · <code>disabled = [...]</code></td></tr>
       <tr><td><code>[shell]</code></td><td><code>integration</code></td></tr>

@@ -12,6 +12,7 @@ extern "C" {
 }
 
 const SIGINT: c_int = 2;
+const SIGTERM: c_int = 15;
 
 static SIGINT_HIT: AtomicBool = AtomicBool::new(false);
 
@@ -39,6 +40,14 @@ pub fn pid_alive(pid: u32) -> bool {
         return false;
     }
     unsafe { kill(pid as c_int, 0) == 0 }
+}
+
+/// Send SIGTERM to `pid` (cancel a detached/scheduled job). Returns true on delivery.
+pub fn terminate(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    unsafe { kill(pid as c_int, SIGTERM) == 0 }
 }
 
 /// Spawn `program args…` in its OWN SESSION (`setsid` in the child before exec),

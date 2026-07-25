@@ -81,20 +81,23 @@ The user's recent terminal context (with secrets redacted) may be provided for g
 /// streamed-chunk boundaries.
 pub const ANSWER_SENTINEL: &str = "%%ANSWER%%";
 
+/// The `@ai` dual-mode system prompt: produce EITHER one bare shell command (preloaded for
+/// the user to edit/run) OR a `%%ANSWER%%` prose answer. Hardened so a weak model behaves:
+/// no tool-call syntax, and shell-safe quoting of URLs/globs.
 fn command_system() -> String {
     format!(
-        "You are the AI at a developer's terminal. The user typed `@ai <request>`. Decide:\n\
+        "You are the AI at a developer's terminal. The user typed `@ai <request>`. You produce a \
+         COMMAND for the user to review and run, or an ANSWER — you do NOT execute anything, and \
+         you CANNOT call tools: never emit `<tool_call>`, `@tool`, `<arg_key>`, XML, or JSON. Decide:\n\
          - If a single shell command satisfies the request, output ONLY that command as raw text on \
-         the first line — no Markdown fences, no backticks, no `$`/`>` prompt, no prose, no explanation.\n\
+         the first line — no Markdown fences, no backticks, no `$`/`>` prompt, no prose. Quote URLs \
+         and globs so the shell won't expand them (e.g. `curl -s 'https://wttr.in/Paris?format=3'`).\n\
          - If the request is a QUESTION, needs explanation, or no single command fits, begin your \
-         reply with the exact token `{ANSWER_SENTINEL}` followed by a concise GitHub-flavored \
-         Markdown answer.\n\
-         - If a command is unsafe, ambiguous, or impossible, output a single line beginning with \
-         '# ' that briefly explains why.\n\
+         reply with the exact token `{ANSWER_SENTINEL}` followed by a concise GitHub-flavored Markdown answer.\n\
+         - If a command is unsafe, ambiguous, or impossible, output a single line beginning with '# ' explaining why.\n\
          Never mix the two: either one bare command line, or `{ANSWER_SENTINEL}` + prose."
     )
 }
-
 
 fn user_message(context: &str, body: &str) -> Vec<Message> {
     let content = if context.trim().is_empty() {
@@ -122,17 +125,14 @@ pub fn qa_request(model: &ModelDef, prompt: &str, context: &str) -> ChatRequest 
     }
 }
 
-/// Build a natural-language → command request on the fast `model`. Commands are
-/// short + deterministic (temperature 0) and never use thinking.
+/// Build a natural-language → command request. Deterministic (temperature 0), no thinking;
+/// room for a short prose answer when the request is a question.
 pub fn command_request(model: &ModelDef, nl: &str, context: &str) -> ChatRequest {
     ChatRequest {
         model: model.id.clone(),
-        // Room for a prose answer when the request is a question (a bare command needs
-        // little; capped so a runaway can't balloon).
         max_tokens: 2048,
         system: Some(command_system()),
         messages: user_message(context, &format!("Request: {nl}")),
-        // Low temperature keeps a command deterministic; still fine for a short prose answer.
         temperature: Some(0.0),
         top_p: None,
         top_k: None,
@@ -141,12 +141,9 @@ pub fn command_request(model: &ModelDef, nl: &str, context: &str) -> ChatRequest
     }
 }
 
-
-/// Extract the first runnable command line from a command answer. Tolerant of how
-/// models decorate output: skips blank lines, `# `-prefixed refusals/explanations, and
-/// Markdown fence lines (```` ``` ````/```` ```sh ````) that some models wrap the command
-/// in; strips a leading shell prompt (`$ ` / `> `). So a fenced `du -sh .` yields the
-/// bare command, not the fence.
+/// Extract the first runnable command line from a command answer. Tolerant of decoration:
+/// skips blank lines, `# `-prefixed refusals, and Markdown fence lines; strips a leading
+/// `$ `/`> ` prompt. So a fenced `du -sh .` yields the bare command, not the fence.
 pub fn first_command_line(full: &str) -> Option<String> {
     full.lines()
         .map(str::trim)
@@ -170,16 +167,17 @@ mod tests {
     }
 
     #[test]
-    fn command_request_uses_the_pool_model_and_is_deterministic() {
+    fn command_request_is_deterministic_and_forbids_tools() {
         let s = AiSettings::default();
         let m = s.choose();
         let req = command_request(&m, "list files", "");
-        assert_eq!(req.model, m.id);
         assert_eq!(req.temperature, Some(0.0));
         assert!(req.messages[0].content.contains("Request: list files"));
+        // The system prompt must steer a weak model away from tool-call syntax.
+        let sys = req.system.unwrap();
+        assert!(sys.contains("CANNOT call tools"));
+        assert!(sys.contains(ANSWER_SENTINEL));
     }
-
-    
 
     #[test]
     fn context_is_prepended_to_prompt() {
@@ -190,9 +188,10 @@ mod tests {
     }
 
     #[test]
-    fn first_command_line_skips_refusals() {
+    fn first_command_line_unwraps_decoration() {
         assert_eq!(first_command_line("# unsafe\nrm -rf /"), Some("rm -rf /".into()));
         assert_eq!(first_command_line("$ ls -la\n"), Some("ls -la".into()));
+        assert_eq!(first_command_line("```\ndu -sh .\n```").as_deref(), Some("du -sh ."));
         assert_eq!(first_command_line("# nope"), None);
     }
 }

@@ -9,15 +9,16 @@ path.
 AI is **off by default** — no vendor is assumed. Enable it by declaring a model
 (see [Models](#models--pools)).
 
-## `@ai` — a command, or an answer
+## `@ai` — a command to run, or an answer
 
-`@ai` is **dual-mode**: the model decides whether your request maps to a single shell
-command or wants a prose answer.
+`@ai` is **dual-mode**: the model turns your request into a single shell **command** —
+proposed at your prompt to review, edit, and run — or, for a question, a prose **answer**.
+It never runs anything itself; you stay in control.
 
 ```text
-❯ @ai list every port something is listening on
-❯ press Enter to run (or edit)
-❯ lsof -iTCP -sTCP:LISTEN -n -P
+❯ @ai list files
+touch hamid                          ← the command, formed live (dim)
+❯ press Enter to run (or edit)       ← preloaded — edit it or hit Enter
 
 ❯ @ai why is my docker build slow?
 The most common causes are cache invalidation and copying node_modules…
@@ -27,19 +28,18 @@ The most common causes are cache invalidation and copying node_modules…
 **Command mode** — the suggestion is collected fully, run through the **command guard**
 *before* it can reach the shell, then:
 
-- `[ai] mode = "manual"` (default) — the command is preloaded into your prompt for
-  review; Enter runs it.
-- `[ai] mode = "auto"` — a guard-**allowed** command runs immediately. A
-  guard-**confirm** command (e.g. `rm -rf`, `sudo`) always drops to review.
-- A guard-**denied** command, a model refusal, or any error prints as a `#` comment —
-  never silence, never execution.
+- `[ai] mode = "manual"` (default) — the command is preloaded into your prompt for review;
+  Enter runs it (or edit it first).
+- `[ai] mode = "auto"` — a guard-**allowed** command runs immediately. A guard-**confirm**
+  command (e.g. `rm -rf`, `sudo`) always drops to review.
+- A guard-**denied** command, a model refusal, or an error prints as a `#` comment —
+  never silent, never executed.
 
 **Answer mode** — for a question or anything needing explanation, `@ai` streams a prose
-answer instead of preloading a command (nothing runs).
-
-`@ai` grounds on your cwd, shell, recent terminal output (redacted; see
-`share_terminal_context`), and recalled memory — so `mkdir x` then `@ai go into it`
-yields `cd x`.
+answer and preloads nothing. `@ai` grounds on your cwd, shell, recent terminal output
+(redacted; see `share_terminal_context`), and recalled memory — so `mkdir x` then
+`@ai go into it` yields `cd x`. (Reasoning stays hidden behind the spinner; a broken or
+tool-call-shaped reply is shown as an answer, never preloaded as a command.)
 
 ## `@<agent>` — agentic runs
 
@@ -166,12 +166,23 @@ anywhere in the line:
 ▶ background job 1753112000-4242
   monitor: aiTerminal ai job     ·  tail -f ~/.aiTerminal/ai/jobs/…/log.md
 
+❯ @job create a file report.md summarizing the repo in 2 minutes  # SCHEDULED
+⧖ scheduled job 1753112100-4310 — fires in 2m
+  list: aiTerminal ai job  ·  cancel: @job cancel 1753112100-4310
+
 ❯ @job                        # bare = list runs + their logs
-background jobs (2):
+background jobs (3):
+  ⧖ 1753112100-4310 scheduled create a file report.md …   (fires in 2m)
   ▶ 1753112000-4242 running   audit the deps … --agent reviewer
   ✓ 1753111800-4101 done      create a CHANGELOG …
+❯ @job cancel 1753112100-4310 # cancel a scheduled or running job
 ❯ @job clear                  # prune finished jobs
 ```
+
+**Scheduling.** End a `@job` with a natural time and it defers instead of running now:
+`in 2 minutes` / `after 30s` / `in 1 hour` / `at 17:30` / `at 5pm`. The phrase is stripped
+from the task, and the job runs later **in the folder where you typed it**. A detached
+sleeper fires it at the due time; `@job cancel <id>` stops a scheduled (or running) job.
 
 Foreground `@job` runs play with the full live chrome *and* tee their answer
 into the job log, so everything you ran this way stays reviewable. `--bg` also
@@ -181,10 +192,11 @@ Each job is a folder under `~/.aiTerminal/ai/jobs/<id>/`: `job.toml` (status,
 command, timestamps, exit code) + `log.md` (the full streamed output — `tail -f` it
 to watch live).
 
-A job's status is always honest: `running` · `done` · `failed` · `cancelled`
-(you pressed Ctrl+C) · `died` (the process vanished — crash, kill, reboot; the
-list detects a dead pid and heals the record on the spot). `@job clear` prunes
-everything that is no longer running, healed zombies included.
+A job's status is always honest: `scheduled` (waiting to fire) · `running` · `done` ·
+`failed` · `cancelled` (Ctrl+C or `@job cancel`) · `died` (the process vanished — crash,
+kill, reboot) · `missed` (a scheduled job whose sleeper died before it fired). The list
+detects a dead pid and heals the record on the spot. `@job clear` prunes everything that
+is neither running nor scheduled.
 
 ## Exit codes & scripting
 
@@ -235,8 +247,7 @@ stderr, content on stdout, so piping stays clean:
 ```text
 ❯ @coder "fix the failing parser test"
 ✦ @coder · claude-opus-4-8
-⠹ thinking…                          ← spinner until the first token
-∴ The test expects a trailing …      ← reasoning, dim, live
+⠹ thinking…                          ← animated while the model reasons
   ⚙ fs.search {"q":"parse_flow"} · 18ms · 2.1KB
   ⚙ fs.edit {"path":"src/…"} · 6ms · 412B
 The fix: the parser dropped the …    ← the answer, streaming
@@ -255,18 +266,21 @@ each iteration and a footer with the iteration count:
 ```
 
 - **Answers** stream token-by-token to stdout; the `@tool …` machine protocol
-  never reaches the display.
-- **Thinking** streams dim to stderr under a `∴` marker. Models declare the
-  capability in the catalog; force it per pool entry with `thinking =
-  true|false` on any `[[ai.model]]`.
+  never reaches the display (in any dialect — `@tool`, `<tool_call>`, `[TOOL_CALLS]`,
+  `<|python_tag|>`, fenced blocks — the parser is model-agnostic).
+- **Thinking** is hidden by default — you see only the animated `∴ thinking…`
+  indicator, then tools and the answer. Set `[ai] show_reasoning = true` to stream the
+  full dim chain-of-thought. Whether a model *reasons* at all is a per-pool-entry
+  `thinking = true|false` on any `[[ai.model]]` (a separate catalog capability).
 - **Tools** trace live with duration + result size; failures show inline.
 - **Footers** show elapsed · tools · tokens, plus an **estimated cost** (`~$0.014`)
   whenever the model has pricing (`price_in`/`price_out`). Set `[ai] budget` (a USD
   soft-cap) and the footer also shows your spend against it (`· 14% of $0.10`), with a
   ⚠ when a run goes over — advisory only, it never blocks (the `@loop --budget` flag is
   a separate token hard-stop).
-- **`@ai <request>`** gets the same treatment — spinner, thinking, the command forming
-  dim (or a prose answer) — ending with the footer, and the command preloaded for review.
+- **`@ai <request>`** gets the same treatment — spinner, the command forming dim (or a prose
+  answer) — ending with the footer, and the command preloaded for review (or run in `auto`
+  mode). It proposes a command or answers; it never runs a command itself.
 - All of it is TTY-aware: piped output and `--bg` job logs get plain,
   animation-free text automatically, and the chrome colors follow your theme
   (via the live `TT_*` shell colors).

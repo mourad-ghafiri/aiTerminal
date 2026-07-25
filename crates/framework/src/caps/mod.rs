@@ -98,10 +98,28 @@ pub fn describe(method: &str) -> &'static str {
 }
 
 pub(super) fn arg<'a>(args: &'a [(String, String)], i: usize, name: &str) -> Option<&'a str> {
+    // Exact name, then a known synonym, then the positional index. Synonyms make weak
+    // models robust: a call keyed `command`/`file`/`text` still lands on the right arg.
+    let syn = arg_synonyms(name);
     args.iter()
-        .find(|(k, _)| k == name)
+        .find(|(k, _)| k == name || syn.contains(&k.as_str()))
         .or_else(|| args.iter().find(|(k, _)| k == &i.to_string()))
         .map(|(_, v)| v.as_str())
+}
+
+/// Synonyms a model might reach for instead of a canonical arg name (see [`arg`]).
+fn arg_synonyms(name: &str) -> &'static [&'static str] {
+    match name {
+        "cmd" => &["command", "shell", "cmdline"],
+        "path" => &["file", "filename", "filepath", "target"],
+        "content" => &["text", "data", "body"],
+        "url" => &["uri", "link", "href"],
+        "src" => &["source", "from"],
+        "dst" => &["dest", "destination", "to"],
+        "query" => &["q", "search"],
+        "pattern" => &["glob"],
+        _ => &[],
+    }
 }
 
 // ===== the standard objects (each delegates to its family fn below) =========
@@ -122,22 +140,22 @@ impl NativeObject for Fs {
     fn family(&self) -> &'static str { "fs" }
     fn methods(&self) -> &'static [MethodSpec] {
         &[
-            MethodSpec { method: "fs.home", describe: "Read the home directory path" },
-            MethodSpec { method: "fs.roots", describe: "List mounted volumes / partitions" },
-            MethodSpec { method: "fs.list", describe: "List a directory's entries" },
-            MethodSpec { method: "fs.stat", describe: "Read a path's metadata" },
-            MethodSpec { method: "fs.measure", describe: "Measure a folder's recursive size + file/dir counts" },
-            MethodSpec { method: "fs.read", describe: "Read a text file's contents" },
-            MethodSpec { method: "fs.open", describe: "Open a file with its default app" },
-            MethodSpec { method: "fs.write", describe: "Write a text file (sandbox-confined: the invocation directory)" },
-            MethodSpec { method: "fs.mkdir", describe: "Create a directory (sandbox-confined: the invocation directory)" },
-            MethodSpec { method: "fs.edit", describe: "Replace text in a file (sandbox-confined: the invocation directory)" },
-            MethodSpec { method: "fs.delete", describe: "Delete a file (sandbox-confined: the invocation directory)" },
-            MethodSpec { method: "fs.append", describe: "Append to a file (sandbox-confined: the invocation directory)" },
-            MethodSpec { method: "fs.copy", describe: "Copy a file (sandbox-confined: the invocation directory)" },
-            MethodSpec { method: "fs.move", describe: "Move/rename a file (sandbox-confined: the invocation directory)" },
-            MethodSpec { method: "fs.glob", describe: "Find files by glob pattern" },
-            MethodSpec { method: "fs.search", describe: "Search the workspace for a literal or regex (grep); returns path:line matches" },
+            MethodSpec { method: "fs.home", describe: "Read the home directory path (no args)" },
+            MethodSpec { method: "fs.roots", describe: "List mounted volumes / partitions (no args)" },
+            MethodSpec { method: "fs.list", describe: "List a directory's entries (arg: path — optional, defaults to the workspace)" },
+            MethodSpec { method: "fs.stat", describe: "Read a path's metadata (arg: path)" },
+            MethodSpec { method: "fs.measure", describe: "Measure a folder's recursive size + file/dir counts (arg: path)" },
+            MethodSpec { method: "fs.read", describe: "Read a text file's contents (args: path, max)" },
+            MethodSpec { method: "fs.open", describe: "Open a file with its default app (arg: path)" },
+            MethodSpec { method: "fs.write", describe: "Create/overwrite a text file (args: path, content). Relative paths resolve to the workspace." },
+            MethodSpec { method: "fs.mkdir", describe: "Create a directory (arg: path). Relative paths resolve to the workspace." },
+            MethodSpec { method: "fs.edit", describe: "Replace text in a file (args: path, find, replace, all). Relative paths resolve to the workspace." },
+            MethodSpec { method: "fs.delete", describe: "Delete a file (arg: path). Workspace-confined." },
+            MethodSpec { method: "fs.append", describe: "Append text to a file (args: path, content). Relative paths resolve to the workspace." },
+            MethodSpec { method: "fs.copy", describe: "Copy a file (args: src, dst). Workspace-confined." },
+            MethodSpec { method: "fs.move", describe: "Move/rename a file (args: src, dst). Workspace-confined." },
+            MethodSpec { method: "fs.glob", describe: "Find files by glob pattern (args: pattern, root)" },
+            MethodSpec { method: "fs.search", describe: "Search the workspace for a literal or regex (args: query, regex, path, max); returns path:line matches" },
         ]
     }
     fn invoke(&self, method: &str, args: &[(String, String)], ctx: &CapCtx, _host: &mut dyn Host) -> Result<Json, String> {
@@ -190,7 +208,7 @@ struct Sys;
 impl NativeObject for Sys {
     fn family(&self) -> &'static str { "sys" }
     fn methods(&self) -> &'static [MethodSpec] {
-        &[MethodSpec { method: "sys.run", describe: "Run a shell command (re-checked by the command guard)" }]
+        &[MethodSpec { method: "sys.run", describe: "Run a shell command via /bin/sh in the workspace (arg: cmd). Pipes, redirection, globs, and env vars work; re-checked by the command guard." }]
     }
     fn invoke(&self, method: &str, args: &[(String, String)], ctx: &CapCtx, _host: &mut dyn Host) -> Result<Json, String> {
         sys(method, args, ctx)
@@ -216,12 +234,16 @@ struct WebObj;
 impl NativeObject for WebObj {
     fn family(&self) -> &'static str { "web" }
     fn methods(&self) -> &'static [MethodSpec] {
-        &[MethodSpec { method: "web.read", describe: "Fetch a web page as markdown" }]
+        &[
+            MethodSpec { method: "web.read", describe: "Fetch a web page as markdown (arg: url)" },
+            MethodSpec { method: "web.search", describe: "Search the internet and return top results (title, url, snippet) — for live/looked-up facts. arg: query" },
+        ]
     }
     fn invoke(&self, method: &str, args: &[(String, String)], ctx: &CapCtx, _host: &mut dyn Host) -> Result<Json, String> {
         web(method, args, ctx)
     }
 }
+
 
 // ----- helpers ---------------------------------------------------------------
 

@@ -58,6 +58,11 @@ share_terminal_context = true
 # Default true (auto-recall on); set false to disable injection — tools still work.
 memory = true
 
+# Show the model's raw reasoning/"thinking" text while it works. Default false — only an
+# animated "∴ thinking…" indicator is shown (tool calls and the final answer still stream).
+# Set true to see the full chain-of-thought.
+show_reasoning = false
+
 # How a shell `@ai <request>` suggestion is applied:
 #   "manual" (default) — preload the command for review; press Enter (or edit) to run.
 #   "auto"             — run a guard-ALLOWED suggestion immediately. A guard-*confirm*

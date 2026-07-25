@@ -88,6 +88,20 @@ pub fn pid_alive(_pid: u32) -> bool {
     true // never falsely mark a job dead where we can't check
 }
 
+/// Ask `pid` to terminate (SIGTERM) — cancel a detached/scheduled job. Best-effort.
+#[cfg(target_os = "macos")]
+pub fn terminate(pid: u32) -> bool {
+    macos::proc::terminate(pid)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn terminate(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    std::process::Command::new("kill").arg(pid.to_string()).status().map(|s| s.success()).unwrap_or(false)
+}
+
 /// Spawn a detached (own-session) background process with its output redirected —
 /// survives the launching terminal closing.
 #[cfg(target_os = "macos")]

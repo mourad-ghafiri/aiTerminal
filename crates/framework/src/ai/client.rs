@@ -91,8 +91,8 @@ impl<T: Transport> Client<T> {
         self.run(&self.primary, qa_request(&self.primary, prompt, context))
     }
 
-    /// Translate natural language to a shell command — on the same pool-chosen model
-    /// as every other request (one pool, one strategy; there is no separate fast tier).
+    /// Turn natural language into a shell command (dual-mode: a bare command or a
+    /// `%%ANSWER%%` prose answer) on the chosen primary model — the `@ai` suggester.
     pub fn to_command(&self, nl: &str, context: &str) -> Receiver<StreamEvent> {
         self.run(&self.primary, command_request(&self.primary, nl, context))
     }
@@ -285,8 +285,7 @@ mod tests {
 
     #[test]
     fn qa_and_command_both_ride_the_pool_model() {
-        // One pool, one strategy: `ask` and `to_command` hit the SAME chosen model —
-        // there is no separate fast tier that could reach another provider.
+        // One pool, one strategy: `ask` and `to_command` hit the SAME chosen model.
         let env = "TT_TEST_AI_KEY_MODEL";
         std::env::set_var(env, "test-key");
         let s = settings_with(env);

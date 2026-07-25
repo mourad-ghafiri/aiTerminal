@@ -80,6 +80,10 @@ pub struct Config {
     /// Auto-recall: inject the most relevant memories into the AI context each turn
     /// (`[ai] memory`). Default `true`; the `memory.*` tools/commands work regardless.
     pub ai_memory: bool,
+    /// Show the model's raw reasoning/thinking text in the terminal (`[ai] show_reasoning`).
+    /// Default `false` — only an animated `∴ thinking…` indicator is shown (tool traces and
+    /// the answer still stream). Set `true` to see the full chain-of-thought.
+    pub ai_show_reasoning: bool,
     /// Optional USD soft-cap (`[ai] budget`). When set, every run's footer shows its
     /// estimated cost against it (`· 12% of $0.10`) and a run that exceeds it prints a
     /// ⚠ advisory. ADVISORY only — it never blocks a run (unlike the loop's token
@@ -148,6 +152,7 @@ impl Default for Config {
             ai_strategy: String::new(),
             ai_share_terminal_context: true,
             ai_memory: true,
+            ai_show_reasoning: false,
             ai_budget: None,
             ai_command_mode: "manual".into(),
             plugins_enabled: true,
@@ -624,6 +629,9 @@ impl Config {
             if let Some(v) = ai.get("memory").and_then(|v| v.as_bool()) {
                 c.ai_memory = v;
             }
+            if let Some(v) = ai.get("show_reasoning").and_then(|v| v.as_bool()) {
+                c.ai_show_reasoning = v;
+            }
             // `[ai] budget` — a positive, finite USD soft-cap; anything else clears it.
             if let Some(v) = ai.get("budget").and_then(|v| v.as_num()) {
                 c.ai_budget = (v.is_finite() && v > 0.0).then_some(v);
@@ -808,7 +816,7 @@ impl Config {
 /// Keys that only ever belong to `[ai]` — a model table has no use for any of them.
 /// Finding one inside a `[[ai.model]]` means the user wrote their model table ABOVE
 /// their `[ai]` settings, and TOML handed those settings to the model instead.
-const AI_ONLY_KEYS: [&str; 4] = ["share_terminal_context", "memory", "mode", "network"];
+const AI_ONLY_KEYS: [&str; 5] = ["share_terminal_context", "memory", "mode", "network", "show_reasoning"];
 
 /// Warn when a `[[ai.model]]` table has swallowed `[ai]` settings. This is silent data
 /// loss otherwise: the settings never reach `[ai]`, and a stray `api_key = ""` written

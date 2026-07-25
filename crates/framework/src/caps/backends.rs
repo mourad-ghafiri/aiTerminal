@@ -234,6 +234,26 @@ pub(super) fn fs_path(raw: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(expanded))
 }
 
+/// Resolve a path arg for the sandboxed `fs.*` tools: `~`/absolute as usual, but a
+/// RELATIVE path (the natural thing a model writes — `fs.write {"path":"hamid"}`) is
+/// resolved against the workspace (`ctx.sandbox`, the invocation cwd) instead of being
+/// rejected. Writes still pass through `fs_write_guard` afterward, so containment (no
+/// escape, no `..`, symlink-safe) is unchanged — this only removes the absolute-only
+/// friction that made weak models flail.
+pub(super) fn fs_path_rel(ctx: &CapCtx, raw: &str) -> Result<PathBuf, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err("fs: empty path".into());
+    }
+    if raw == "~" || raw.starts_with("~/") || raw.starts_with('/') {
+        return fs_path(raw);
+    }
+    match ctx.sandbox.as_ref() {
+        Some(base) => Ok(base.join(raw)),
+        None => Err("fs: no workspace set — a relative path can't be resolved".into()),
+    }
+}
+
 /// Unix mtime (seconds) of a metadata, or 0.
 fn mtime_secs(meta: &std::fs::Metadata) -> u64 {
     meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0)
@@ -477,7 +497,7 @@ pub(super) fn fs(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resul
             // else the home dir — so an agent's `fs.list` with no path "just works" (mirrors
             // `fs.search`). A view always passes an explicit path, so it's unaffected.
             let dir = match arg(args, 0, "path") {
-                Some(p) if !p.trim().is_empty() => fs_path(p)?,
+                Some(p) if !p.trim().is_empty() => fs_path_rel(ctx, p)?,
                 _ => ctx.sandbox.clone().or_else(platform::os::home_dir).ok_or("fs.list: missing path")?,
             };
             fs_read_guard(&dir)?;
@@ -526,7 +546,7 @@ pub(super) fn fs(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resul
             ]))
         }
         "fs.stat" => {
-            let p = fs_path(arg(args, 0, "path").ok_or("fs.stat: missing path")?)?;
+            let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.stat: missing path")?)?;
             fs_read_guard(&p)?;
             let meta = std::fs::metadata(&p).map_err(|e| format!("fs.stat: {e}"))?;
             let is_dir = meta.is_dir();
@@ -542,7 +562,7 @@ pub(super) fn fs(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resul
             // Recursive size + file/dir counts for a folder, BOUNDED so a single selection
             // can never freeze the caller (caps run on the main thread). `partial` is set
             // when the visited-entry cap is hit; symlinked dirs are not followed (no cycles).
-            let p = fs_path(arg(args, 0, "path").ok_or("fs.measure: missing path")?)?;
+            let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.measure: missing path")?)?;
             fs_read_guard(&p)?;
             const CAP: usize = 20_000;
             let mut m = Measure::default();
@@ -556,7 +576,7 @@ pub(super) fn fs(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resul
             ]))
         }
         "fs.read" => {
-            let p = fs_path(arg(args, 0, "path").ok_or("fs.read: missing path")?)?;
+            let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.read: missing path")?)?;
             fs_read_guard(&p)?;
             // The model-supplied `max` is CLAMPED — `max: 999999999` must not
             // defeat the cap — and only `max` bytes are ever read (a 10 GB file
@@ -587,7 +607,7 @@ pub(super) fn fs(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resul
             }
         }
         "fs.open" => {
-            let p = fs_path(arg(args, 0, "path").ok_or("fs.open: missing path")?)?;
+            let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.open: missing path")?)?;
             std::process::Command::new("open").arg(&p).spawn().map_err(|e| e.to_string())?;
             Ok(Json::Str(format!("opened {}", p.display())))
         }
@@ -600,7 +620,7 @@ pub(super) fn fs(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resul
             let use_regex = matches!(arg(args, 1, "regex"), Some("true" | "1"));
             // Default to the workspace root; an explicit path stays inside the read surface.
             let root = match arg(args, 2, "path") {
-                Some(p) if !p.trim().is_empty() => fs_path(p)?,
+                Some(p) if !p.trim().is_empty() => fs_path_rel(ctx, p)?,
                 _ => ctx.sandbox.clone().ok_or("fs.search: no path and no workspace to search")?,
             };
             fs_read_guard(&root)?;
@@ -624,7 +644,7 @@ pub(super) fn fs(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resul
             Ok(Json::Str(out))
         }
         "fs.write" => {
-            let p = fs_path(arg(args, 0, "path").ok_or("fs.write: missing path")?)?;
+            let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.write: missing path")?)?;
             let content = arg(args, 1, "content").unwrap_or("");
             fs_write_guard(&p, ctx)?;
             // Diff against the prior contents (empty for a new file) so the change is visible.
@@ -637,13 +657,13 @@ pub(super) fn fs(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resul
             Ok(obj(&[("path", Json::Str(p.to_string_lossy().into_owned())), ("bytes", Json::Num(content.len() as f64)), ("diff", Json::Str(crate::ai::diff::unified_diff(&before, content, &rel)))]))
         }
         "fs.mkdir" => {
-            let p = fs_path(arg(args, 0, "path").ok_or("fs.mkdir: missing path")?)?;
+            let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.mkdir: missing path")?)?;
             fs_write_guard(&p, ctx)?;
             std::fs::create_dir_all(&p).map_err(|e| format!("fs.mkdir: {e}"))?;
             Ok(obj(&[("path", Json::Str(p.to_string_lossy().into_owned()))]))
         }
         "fs.edit" => {
-            let p = fs_path(arg(args, 0, "path").ok_or("fs.edit: missing path")?)?;
+            let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.edit: missing path")?)?;
             let find = arg(args, 1, "find").ok_or("fs.edit: missing find")?;
             let replace = arg(args, 2, "replace").unwrap_or("");
             let all = matches!(arg(args, 3, "all"), Some("true" | "1"));
@@ -662,14 +682,14 @@ pub(super) fn fs(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resul
             ]))
         }
         "fs.delete" => {
-            let p = fs_path(arg(args, 0, "path").ok_or("fs.delete: missing path")?)?;
+            let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.delete: missing path")?)?;
             fs_write_guard(&p, ctx)?;
             std::fs::remove_file(&p).map_err(|e| format!("fs.delete: {e}"))?;
             Ok(obj(&[("path", Json::Str(p.to_string_lossy().into_owned())), ("deleted", Json::Bool(true))]))
         }
         "fs.append" => {
             use std::io::Write;
-            let p = fs_path(arg(args, 0, "path").ok_or("fs.append: missing path")?)?;
+            let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.append: missing path")?)?;
             let content = arg(args, 1, "content").unwrap_or("");
             fs_write_guard(&p, ctx)?;
             if let Some(parent) = p.parent() {
@@ -680,8 +700,8 @@ pub(super) fn fs(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resul
             Ok(obj(&[("path", Json::Str(p.to_string_lossy().into_owned())), ("bytes", Json::Num(content.len() as f64))]))
         }
         "fs.copy" => {
-            let src = fs_path(arg(args, 0, "src").ok_or("fs.copy: missing src")?)?;
-            let dst = fs_path(arg(args, 1, "dst").ok_or("fs.copy: missing dst")?)?;
+            let src = fs_path_rel(ctx, arg(args, 0, "src").ok_or("fs.copy: missing src")?)?;
+            let dst = fs_path_rel(ctx, arg(args, 1, "dst").ok_or("fs.copy: missing dst")?)?;
             fs_read_guard(&src)?;
             fs_write_guard(&dst, ctx)?;
             if let Some(parent) = dst.parent() {
@@ -691,8 +711,8 @@ pub(super) fn fs(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resul
             Ok(obj(&[("path", Json::Str(dst.to_string_lossy().into_owned())), ("bytes", Json::Num(bytes as f64))]))
         }
         "fs.move" => {
-            let src = fs_path(arg(args, 0, "src").ok_or("fs.move: missing src")?)?;
-            let dst = fs_path(arg(args, 1, "dst").ok_or("fs.move: missing dst")?)?;
+            let src = fs_path_rel(ctx, arg(args, 0, "src").ok_or("fs.move: missing src")?)?;
+            let dst = fs_path_rel(ctx, arg(args, 1, "dst").ok_or("fs.move: missing dst")?)?;
             // Both endpoints mutate the tree → both must be inside the workspace.
             fs_write_guard(&src, ctx)?;
             fs_write_guard(&dst, ctx)?;
@@ -705,7 +725,7 @@ pub(super) fn fs(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resul
         "fs.glob" => {
             let pattern = arg(args, 0, "pattern").ok_or("fs.glob: missing pattern")?;
             let root = match arg(args, 1, "root") {
-                Some(r) => fs_path(r)?,
+                Some(r) => fs_path_rel(ctx, r)?,
                 None => ctx.sandbox.clone().ok_or("fs.glob: no root and no workspace")?,
             };
             fs_read_guard(&root)?;
@@ -846,30 +866,25 @@ pub(super) fn sys(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resu
     match method {
         "sys.run" => {
             let cmd = arg(args, 0, "cmd").ok_or("sys.run: missing cmd")?.trim();
-            // Resolve to argv FIRST (rejecting an unterminated quote), so the guard sees
-            // EXACTLY what will run — closing the parsing skew where a `^`-anchored deny
-            // rule was slipped past via quoting (e.g. `"rm" -rf x` ≠ `rm -rf x` textually,
-            // but argv[0] is `rm`). We guard the raw string, the canonical de-quoted command,
-            // and the program basename; ANY non-Allow blocks. This path is NON-INTERACTIVE
-            // (no prompt), so a `Confirm` is treated as a block — deny-wins.
-            let argv = shell_split(cmd)?;
-            let (prog, rest) = argv.split_first().ok_or("sys.run: empty command")?;
-            let canonical = argv.join(" ");
-            let basename = std::path::Path::new(prog).file_name().and_then(|n| n.to_str()).unwrap_or(prog.as_str());
-            for probe in [cmd, canonical.as_str(), basename] {
-                match ctx.policy.check_command(probe) {
-                    crate::security::Verdict::Deny { reason } => return Err(format!("blocked by guard: {reason}")),
-                    crate::security::Verdict::Confirm { reason } => return Err(format!("requires confirmation (guard): {reason}")),
-                    crate::security::Verdict::Allow => {}
-                }
+            if cmd.is_empty() {
+                return Err("sys.run: empty command".into());
             }
-            // Exec as an argv vector (no shell → no word-splitting / $() ), with a
-            // hard output cap + deadline: a model asking for `cat huge.log` (or a
-            // hung command) costs bounded memory and bounded time, never the
-            // whole file in RAM and the transcript.
-            let mut cmd = std::process::Command::new(prog);
-            cmd.args(rest);
-            let out = crate::procio::run_bounded(cmd, SYS_RUN_DEADLINE, SYS_RUN_CAP).map_err(|e| e.to_string())?;
+            // Reject an unterminated quote up front so we never hand a half-parsed line to
+            // the shell (this is also what stops a broken command from hanging a shell).
+            let _ = shell_split(cmd)?;
+            // Guard the WHOLE command AND each pipeline/list segment (see `guard_shell`).
+            guard_shell(cmd, ctx)?;
+            // Run through /bin/sh so pipes, redirection (`>`), globs, and $VARs behave as a
+            // user expects — in the workspace dir, with a PATH that includes the standard
+            // locations (the GUI can launch us with a minimal PATH, which is why bare
+            // `pwd`/`ls` used to fail). Bounded output + deadline are preserved.
+            let mut c = std::process::Command::new("/bin/sh");
+            c.arg("-c").arg(cmd);
+            if let Some(dir) = ctx.sandbox.as_ref() {
+                c.current_dir(dir);
+            }
+            c.env("PATH", ensured_path());
+            let out = crate::procio::run_bounded(c, SYS_RUN_DEADLINE, SYS_RUN_CAP).map_err(|e| e.to_string())?;
             if out.timed_out {
                 return Err(format!("sys.run: command timed out after {}s", SYS_RUN_DEADLINE.as_secs()));
             }
@@ -882,6 +897,91 @@ pub(super) fn sys(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resu
         }
         _ => Err(format!("unknown sys method '{method}'")),
     }
+}
+
+/// Vet a shell command before `/bin/sh -c` runs it. A real shell can chain and pipe, so
+/// we probe the WHOLE command string, then each segment (split on top-level `;`/`&&`/`||`/
+/// `|`/`&`/newline) plus that segment's program basename, against the command guard. ANY
+/// non-Allow blocks; a `Confirm` is a block on this non-interactive path (deny-wins). This
+/// keeps the guard's intent (you cannot slip a denied program past it via a pipeline).
+fn guard_shell(cmd: &str, ctx: &CapCtx) -> Result<(), String> {
+    let mut probes: Vec<String> = vec![cmd.to_string()];
+    for seg in split_shell_segments(cmd) {
+        let seg = seg.trim();
+        if seg.is_empty() {
+            continue;
+        }
+        probes.push(seg.to_string());
+        if let Ok(argv) = shell_split(seg) {
+            if let Some(prog) = argv.first() {
+                let base = std::path::Path::new(prog).file_name().and_then(|n| n.to_str()).unwrap_or(prog);
+                probes.push(base.to_string());
+            }
+        }
+    }
+    for probe in probes {
+        match ctx.policy.check_command(&probe) {
+            crate::security::Verdict::Deny { reason } => return Err(format!("blocked by guard: {reason}")),
+            crate::security::Verdict::Confirm { reason } => return Err(format!("requires confirmation (guard): {reason}")),
+            crate::security::Verdict::Allow => {}
+        }
+    }
+    Ok(())
+}
+
+/// Split a shell command into pipeline/list segments on top-level `;` `&&` `||` `|` `&`
+/// and newlines, ignoring separators inside single/double quotes. Used only for GUARDING
+/// (the shell itself does the real parsing) so each stage can be checked independently.
+fn split_shell_segments(cmd: &str) -> Vec<String> {
+    let chars: Vec<char> = cmd.chars().collect();
+    let mut segs = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+                cur.push(c);
+            }
+            None => match c {
+                '\'' | '"' => {
+                    quote = Some(c);
+                    cur.push(c);
+                }
+                '|' | '&' => {
+                    segs.push(std::mem::take(&mut cur));
+                    if i + 1 < chars.len() && chars[i + 1] == c {
+                        i += 1; // consume the doubled operator (`&&` / `||`)
+                    }
+                }
+                ';' | '\n' => segs.push(std::mem::take(&mut cur)),
+                _ => cur.push(c),
+            },
+        }
+        i += 1;
+    }
+    segs.push(cur);
+    segs
+}
+
+/// A PATH that always includes the standard locations, whatever the app was launched with
+/// (a GUI launch often has a minimal PATH). Existing entries keep priority; standard dirs
+/// are appended; duplicates removed.
+fn ensured_path() -> String {
+    const STD: [&str; 6] = ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+    let existing = std::env::var("PATH").unwrap_or_default();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut parts: Vec<String> = Vec::new();
+    for p in existing.split(':').chain(STD) {
+        if !p.is_empty() && seen.insert(p.to_string()) {
+            parts.push(p.to_string());
+        }
+    }
+    parts.join(":")
 }
 
 /// Split a command into argv, honoring single/double quotes (no other shell features — no
@@ -964,8 +1064,138 @@ pub(super) fn web(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resu
             let md = html_to_markdown(&body);
             Ok(obj(&[("url", Json::Str(url.to_string())), ("title", Json::Str(host.to_string())), ("markdown", Json::Str(md))]))
         }
+        "web.search" => {
+            let q = arg(args, 0, "query").ok_or("web.search: missing query")?.trim();
+            if q.is_empty() {
+                return Err("web.search: empty query".into());
+            }
+            if !ctx.remote_enabled {
+                return Err("network is disabled ([ai] network = false)".into());
+            }
+            // Keyless internet search via DuckDuckGo's HTML endpoint (same SSRF + https guards
+            // as net.get). Parse the top results; if the markup shifts, fall back to the page
+            // reduced to markdown so the model still gets something readable.
+            let url = format!("https://html.duckduckgo.com/html/?q={}", percent_encode(q));
+            let body = net::https_get(&url, &ssrf_pin(&url)?)?;
+            let hits = parse_ddg_results(&body, 8);
+            if hits.is_empty() {
+                let md: String = html_to_markdown(&body).chars().take(4000).collect();
+                return Ok(obj(&[("query", Json::Str(q.to_string())), ("results", Json::Str(md))]));
+            }
+            let items: Vec<Json> = hits
+                .into_iter()
+                .map(|(t, u, s)| obj(&[("title", Json::Str(t)), ("url", Json::Str(u)), ("snippet", Json::Str(s))]))
+                .collect();
+            Ok(obj(&[("query", Json::Str(q.to_string())), ("results", Json::Arr(items))]))
+        }
         _ => Err(format!("unknown web method '{method}'")),
     }
+}
+
+/// Percent-encode a query for a URL (RFC 3986 unreserved kept verbatim; the rest → `%XX`).
+pub(super) fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for &b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Percent-decode (for DuckDuckGo's `uddg=` redirect target). `+` → space; bad escapes pass.
+pub(super) fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    let hex = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    };
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(if b[i] == b'+' { b' ' } else { b[i] });
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Extract up to `max` DuckDuckGo results → `(title, url, snippet)`. Dependency-free HTML
+/// scraping of the `result__a` anchors (+ `result__snippet`), decoding DDG's `uddg=` redirect.
+pub(super) fn parse_ddg_results(html: &str, max: usize) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(rel) = html[cursor..].find("result__a") {
+        let pos = cursor + rel;
+        let tag_start = html[..pos].rfind("<a").unwrap_or(pos);
+        let Some(gt) = html[pos..].find('>').map(|i| pos + i + 1) else { break };
+        let href = attr_value(&html[tag_start..gt], "href").unwrap_or_default();
+        let url = clean_ddg_url(&href);
+        let title = html[gt..].find("</a>").map(|e| strip_tags(&html[gt..gt + e])).unwrap_or_default();
+        let snippet = html[gt..]
+            .find("result__snippet")
+            .and_then(|s| {
+                let seg = &html[gt + s..];
+                let g = seg.find('>')? + 1;
+                let e = seg[g..].find("</a>").or_else(|| seg[g..].find("</td>"))?;
+                Some(strip_tags(&seg[g..g + e]))
+            })
+            .unwrap_or_default();
+        if !title.trim().is_empty() && !url.is_empty() {
+            out.push((title.trim().to_string(), url, snippet.trim().to_string()));
+            if out.len() >= max {
+                break;
+            }
+        }
+        cursor = gt;
+    }
+    out
+}
+
+/// The value of an HTML attribute in a tag string (`href="…"`), or `None`.
+fn attr_value(tag: &str, name: &str) -> Option<String> {
+    let key = format!("{name}=\"");
+    let i = tag.find(&key)? + key.len();
+    let j = tag[i..].find('"')? + i;
+    Some(tag[i..j].to_string())
+}
+
+/// Turn a DuckDuckGo result href into a clean absolute URL (decode the `uddg=` redirect).
+fn clean_ddg_url(href: &str) -> String {
+    if let Some(i) = href.find("uddg=") {
+        let val = href[i + 5..].split('&').next().unwrap_or("");
+        return percent_decode(val);
+    }
+    if let Some(rest) = href.strip_prefix("//") {
+        format!("https://{rest}")
+    } else {
+        href.to_string()
+    }
+}
+
+/// Strip HTML tags from an inline fragment and decode the few common entities — enough for a
+/// search result's title/snippet.
+fn strip_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#x27;", "'").replace("&#39;", "'")
 }
 
 /// A tiny, dependency-free HTML→markdown reducer: lowercase tag NAMES (so matching is

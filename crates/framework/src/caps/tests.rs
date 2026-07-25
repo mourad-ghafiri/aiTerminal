@@ -516,3 +516,81 @@ fn sys_run_output_is_capped_not_buffered_whole() {
     assert!(s.len() <= 256 * 1024 + 64, "capped: {}", s.len());
     assert!(s.contains("[output truncated"), "the truncation is visible to the model");
 }
+
+#[test]
+fn fs_write_accepts_a_relative_path_resolved_to_the_workspace() {
+    // The reported failure: a model naturally writes a relative path — it now resolves to
+    // the workspace instead of erroring "must be absolute".
+    let ws = tmpdir("fsrel");
+    let c = ctx_ws(&ws);
+    run("fs.write", &[("path".into(), "hamid".into()), ("content".into(), "wowowo".into())], &c).unwrap();
+    assert_eq!(std::fs::read_to_string(ws.join("hamid")).unwrap(), "wowowo");
+    // `..` escape is still rejected by the write guard.
+    assert!(run("fs.write", &[("path".into(), "../escape".into()), ("content".into(), "x".into())], &c).is_err());
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn fs_and_sys_accept_arg_synonyms() {
+    let ws = tmpdir("syn");
+    let c = ctx_ws(&ws);
+    // `file`/`text` synonyms map to fs.write's path/content.
+    run("fs.write", &[("file".into(), "a.txt".into()), ("text".into(), "hi".into())], &c).unwrap();
+    assert_eq!(std::fs::read_to_string(ws.join("a.txt")).unwrap(), "hi");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn sys_run_uses_a_shell_in_the_workspace() {
+    let ws = tmpdir("sysrun");
+    let c = ctx_ws(&ws);
+    // `command` synonym + shell redirection into a RELATIVE path, run in the workspace dir.
+    run("sys.run", &[("command".into(), "echo wowowo > hamid".into())], &c).unwrap();
+    assert_eq!(std::fs::read_to_string(ws.join("hamid")).unwrap().trim(), "wowowo");
+    // Pipes work through the shell.
+    let out = run("sys.run", &[("cmd".into(), "printf 'a\\nb\\nc\\n' | wc -l".into())], &c).unwrap();
+    assert!(out.as_str().unwrap_or("").contains('3'), "pipe result: {:?}", out.as_str());
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn percent_encode_decode_roundtrip() {
+    use super::backends::{percent_decode, percent_encode};
+    let s = "weather in paris? & tomorrow";
+    let enc = percent_encode(s);
+    assert!(!enc.contains(' ') && !enc.contains('?') && !enc.contains('&'), "encoded: {enc}");
+    assert_eq!(percent_decode(&enc), s);
+    // DDG-style uddg value.
+    assert_eq!(percent_decode("https%3A%2F%2Fexample.com%2Fa%20b"), "https://example.com/a b");
+}
+
+#[test]
+fn ddg_results_parse_title_url_snippet() {
+    use super::backends::parse_ddg_results;
+    let html = "<a class=\"result__a\" href=\"//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage&rut=x\">Example &amp; Title</a>\
+                <a class=\"result__snippet\" href=\"#\">A snippet about the example.</a>";
+    let r = parse_ddg_results(html, 5);
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].0, "Example & Title");
+    assert_eq!(r[0].1, "https://example.com/page", "uddg redirect decoded");
+    assert!(r[0].2.contains("snippet about the example"), "snippet: {}", r[0].2);
+}
+
+#[test]
+fn sys_run_guard_blocks_a_denied_program_anywhere_in_a_pipeline() {
+    let ws = tmpdir("sysguard");
+    let mut policy = crate::security::Policy::new();
+    policy.add_deny(r"\brm\b").unwrap();
+    let c = CapCtx {
+        policy: Arc::new(policy),
+        app_data: None,
+        remote_enabled: true,
+        origin: String::new(),
+        sandbox: Some(ws.clone()),
+        memory_dir: None,
+    };
+    // `rm` denied even chained after an allowed command → the whole run is blocked.
+    let err = run("sys.run", &[("cmd".into(), "echo hi && rm -rf x".into())], &c).unwrap_err();
+    assert!(err.contains("blocked by guard"), "guard blocks pipelines: {err}");
+    let _ = std::fs::remove_dir_all(&ws);
+}

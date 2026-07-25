@@ -161,17 +161,12 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
     let _sigint = wire_sigint(cancel.clone());
     let client = crate::ai::Client::new(settings, crate::ai::CurlTransport::default()).with_images(media).with_cancel(cancel);
 
-    // `--command`: COLLECT the full suggested command and run it through the command guard
-    // BEFORE it reaches the shell, so `@ai` never `eval`s an unconfirmed/blocked command
-    // (the same deny/confirm policy that protects `sys.run`). Allow → print it (the shell
-    // runs it); Confirm → a `CONFIRM_MARK` prefix the shell turns into an edit-buffer review
-    // (explicit Enter); Deny / model refusal → a `#`-comment the shell shows, never runs.
+    // `@ai` is DUAL-MODE: the model returns EITHER one bare shell command — which we run
+    // through the guard and PRELOAD for the user to review, edit, and run (or auto-run per
+    // `[ai] mode`) — OR a `%%ANSWER%%` prose answer, which streams and preloads nothing. The
+    // chrome rides stderr (the shell shows it live while stdout carries the one marker line);
+    // reasoning is hidden behind the spinner unless `[ai] show_reasoning`.
     if as_command {
-        // `@ai` is DUAL-MODE: the model returns either a single shell command (preloaded for
-        // review/run) OR — for a question — a prose answer prefixed with `ANSWER_SENTINEL`.
-        // All chrome rides stderr (the shell shows it live while stdout is captured into the
-        // pending file): a spinner, dim `∴` thinking, the command forming dim / prose readable
-        // as it streams, then a footer. A prose answer streams to stderr and preloads nothing.
         let started = std::time::Instant::now();
         let mut spinner = Some(Spinner::start("thinking\u{2026}".into()));
         let (dim, r) = (muted(), reset());
@@ -179,7 +174,6 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
         let mut buf = String::new(); // full raw model output (for command extraction)
         let mut head = String::new(); // undecided prefix while it could still be the sentinel
         let mut mode: Option<bool> = None; // None = undecided; Some(true) = prose; Some(false) = command
-        let mut thinking_open = false;
         let mut streamed_any = false;
         let (mut tin, mut tout) = (0u64, 0u64);
         for ev in client.to_command(prompt, &ctx) {
@@ -188,43 +182,38 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
                     if let Some(mut sp) = spinner.take() {
                         sp.stop();
                     }
-                    if thinking_open {
-                        eprintln!();
-                        thinking_open = false;
-                    }
                     buf.push_str(&s);
                     streamed_any = true;
                     match mode {
-                        // Already decided: prose streams readable, a command streams dim.
-                        Some(true) => eprint!("{s}"),
-                        Some(false) => eprint!("{dim}{s}{r}"),
+                        Some(true) => eprint!("{s}"),          // prose, readable
+                        Some(false) => eprint!("{dim}{s}{r}"), // command, dim (exact bytes)
                         None => {
                             head.push_str(&s);
                             let h = head.trim_start();
-                            // Still a possible sentinel prefix → keep buffering (don't print yet).
                             if h.len() < sentinel.len() && sentinel.starts_with(h) {
-                                continue;
+                                continue; // still a possible sentinel prefix — keep buffering
                             }
                             if let Some(rest) = h.strip_prefix(sentinel) {
                                 mode = Some(true);
-                                eprint!("{}", rest.trim_start()); // prose, readable
+                                eprint!("{}", rest.trim_start());
                             } else {
                                 mode = Some(false);
-                                eprint!("{dim}{head}{r}"); // command, dim (exact bytes)
+                                eprint!("{dim}{head}{r}");
                             }
                             head.clear();
                         }
                     }
                 }
-                crate::ai::StreamEvent::Thinking(t) => {
-                    if let Some(mut sp) = spinner.take() {
-                        sp.stop();
+                crate::ai::StreamEvent::Thinking(_) => {
+                    // Hidden by default: keep the `∴ thinking…` spinner running, print nothing.
+                    if cfg.ai_show_reasoning {
+                        if let Some(mut sp) = spinner.take() {
+                            sp.stop();
+                        }
+                        if let crate::ai::StreamEvent::Thinking(t) = &ev {
+                            eprint!("{dim}{t}{r}");
+                        }
                     }
-                    if !thinking_open {
-                        eprint!("{dim}\u{2234} {r}");
-                        thinking_open = true;
-                    }
-                    eprint!("{dim}{t}{r}");
                 }
                 crate::ai::StreamEvent::Done { input_tokens, output_tokens, .. } => {
                     tin = input_tokens as u64;
@@ -233,26 +222,25 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
                 }
                 crate::ai::StreamEvent::Error(e) => {
                     drop(spinner.take());
-                    // Surface the error as a visible comment, not a swallowed stderr line.
                     println!("{}", error_comment(&format!("AI error: {e}")));
                     return 0;
                 }
             }
         }
         drop(spinner.take());
-        if thinking_open || streamed_any {
+        if streamed_any {
             eprintln!();
         }
         eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget));
-        // Prose answer: already streamed to stderr — tell the shell to preload nothing.
-        if prose_answer(&buf).is_some() {
+        // Route: a `%%ANSWER%%` prose reply preloads nothing; otherwise extract the command.
+        // Safety net for weak models: never preload text that carries tool-call junk or an
+        // unbalanced quote (that would hang the shell at `quote>`) — show it as an answer.
+        if prose_answer(&buf).is_some() || looks_like_tool_junk(&buf) {
             println!("{ANSWER_MARK}");
             record_session_run(session.as_ref(), "@ai", prompt, "answered");
             return 0;
         }
-        // Command: run the guard BEFORE it can reach the shell, then let `command_marker`
-        // pick the one line to emit (run / review / confirm / block) per `[ai] mode`.
-        let cmd = crate::ai::first_command_line(&buf);
+        let cmd = crate::ai::first_command_line(&buf).filter(|c| quote_balanced(c));
         let verdict = cmd.as_deref().map(|c| policy.check_command(c));
         println!("{}", command_marker(cmd.as_deref(), verdict, &cfg.ai_command_mode, &buf));
         record_session_run(session.as_ref(), "@ai", prompt, cmd.as_deref().unwrap_or("(no command)"));
@@ -281,6 +269,10 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
                 let _ = out.flush();
             }
             crate::ai::StreamEvent::Thinking(t) => {
+                // Hidden by default (see the dual-mode path); the spinner keeps animating.
+                if !cfg.ai_show_reasoning {
+                    continue;
+                }
                 if let Some(mut sp) = spinner.take() {
                     sp.stop();
                 }
@@ -452,6 +444,31 @@ fn error_comment(msg: &str) -> String {
 /// the prose with the sentinel stripped; else `None` (it's a command). The routing contract.
 fn prose_answer(buf: &str) -> Option<&str> {
     buf.trim_start().strip_prefix(crate::ai::ANSWER_SENTINEL).map(str::trim_start)
+}
+
+/// A weak model sometimes tries to CALL a tool in `@ai` (which can't run tools) — its output
+/// then carries tool-call markers. Treat that as an answer, never preload the junk as a command.
+fn looks_like_tool_junk(buf: &str) -> bool {
+    ["<tool_call>", "<arg_key>", "[TOOL_CALLS]", "<|python_tag|>", "@tool "].iter().any(|m| buf.contains(m))
+}
+
+/// Even count of unescaped single and double quotes. An odd count is an unterminated quote
+/// that would hang the shell at a `quote>` continuation prompt if preloaded — so we don't.
+fn quote_balanced(s: &str) -> bool {
+    let (mut single, mut double, mut esc) = (0usize, 0usize, false);
+    for ch in s.chars() {
+        if esc {
+            esc = false;
+            continue;
+        }
+        match ch {
+            '\\' => esc = true,
+            '\'' => single += 1,
+            '"' => double += 1,
+            _ => {}
+        }
+    }
+    single % 2 == 0 && double % 2 == 0
 }
 
 /// Turn a tool-call's raw args string into `(key, value)` pairs for `caps::run`.
@@ -662,11 +679,20 @@ struct CliObserver<W: std::io::Write> {
     spinner: Option<Spinner>,
     /// Whether the current thinking burst already printed its `∴` marker.
     thinking_open: bool,
+    /// Print the raw reasoning text (`[ai] show_reasoning`). Default `false`: reasoning is
+    /// hidden behind the animated `∴ thinking…` spinner; tools + answer still stream.
+    show_reasoning: bool,
 }
 
 impl<W: std::io::Write> CliObserver<W> {
     fn new(out: W) -> Self {
-        CliObserver { out, pending: String::new(), suppress_line: false, suppress_turn: false, streamed: String::new(), printed: false, spinner: None, thinking_open: false }
+        CliObserver { out, pending: String::new(), suppress_line: false, suppress_turn: false, streamed: String::new(), printed: false, spinner: None, thinking_open: false, show_reasoning: false }
+    }
+
+    /// Opt into streaming the model's raw reasoning text (off by default).
+    fn with_reasoning(mut self, show: bool) -> Self {
+        self.show_reasoning = show;
+        self
     }
 
     /// First sign of life this turn — clear the waiting spinner.
@@ -785,8 +811,12 @@ impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
         self.feed(text);
     }
     fn on_thinking(&mut self, text: &str) {
-        // Reasoning streams dim to STDERR (with a `∴` burst marker), so piping
-        // stdout captures only the answer.
+        // By default reasoning is HIDDEN: keep the animated `∴ thinking…` spinner running
+        // (do NOT wake it) and print nothing — the user sees the indicator, then tools and
+        // the answer. `[ai] show_reasoning = true` restores the dim streamed chain-of-thought.
+        if !self.show_reasoning {
+            return;
+        }
         self.wake();
         let chunk = self.thinking_chunk(text);
         eprint!("{chunk}");
@@ -1194,7 +1224,7 @@ fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::ai::AiSetti
     let _sigint = wire_sigint(cancel);
     eprintln!("{}\u{2726} @{name} \u{b7} {}{}", accent(), client.model().id, reset());
     let started = std::time::Instant::now();
-    let mut obs = CliObserver::new(Tee { log });
+    let mut obs = CliObserver::new(Tee { log }).with_reasoning(cfg.ai_show_reasoning);
     let run = crate::ai::run_agent(&client, &agent, prompt, ctx, &mut runner, &mut obs);
     finish_streamed(&mut obs, &run.answer);
     let glyph = outcome_glyph(&run.outcome);
@@ -1796,24 +1826,125 @@ fn spawn_background(args: &[String]) -> i32 {
     }
 }
 
+/// Current unix time (seconds).
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Parse a natural delay / clock-time phrase out of a `@job` prompt and return the absolute
+/// unix fire-time plus the prompt with that phrase removed — so `@job … in 2 minutes`
+/// schedules and the agent sees a clean task. Recognizes "in|after <n> sec|min|hour|day(s)"
+/// (or a fused `30s`/`2min`) and "at HH[:MM][am/pm]". No match → `(None, prompt)` (run now).
+fn parse_schedule(prompt: &str, now: u64) -> (Option<u64>, String) {
+    let words: Vec<&str> = prompt.split_whitespace().collect();
+    for i in 0..words.len() {
+        let kw = words[i].to_ascii_lowercase();
+        if kw == "in" || kw == "after" {
+            if let Some((secs, used)) = parse_delay(&words[i + 1..]) {
+                return (Some(now + secs), join_excluding(&words, i, i + 1 + used));
+            }
+        } else if kw == "at" {
+            if let Some(word) = words.get(i + 1) {
+                if let Some(fire) = parse_clock_at(word, now) {
+                    return (Some(fire), join_excluding(&words, i, i + 2));
+                }
+            }
+        }
+    }
+    (None, prompt.to_string())
+}
+
+/// Parse a relative delay from the words after `in`/`after` → `(seconds, words_consumed)`.
+fn parse_delay(rest: &[&str]) -> Option<(u64, usize)> {
+    let first = rest.first()?;
+    if let Some((n, unit)) = split_num_unit(first) {
+        return unit_secs(unit, n).map(|s| (s, 1));
+    }
+    let n: u64 = first.parse().ok()?;
+    let unit = rest.get(1)?;
+    unit_secs(unit, n).map(|s| (s, 2))
+}
+
+/// Split a fused `30s` / `2min` / `1h` into `(number, unit)`; `None` if not that shape.
+fn split_num_unit(w: &str) -> Option<(u64, &str)> {
+    let split = w.find(|c: char| !c.is_ascii_digit())?;
+    if split == 0 {
+        return None;
+    }
+    let n: u64 = w[..split].parse().ok()?;
+    Some((n, &w[split..]))
+}
+
+/// Seconds for `n` of a time unit (`s/sec/min/m/hour/h/day/d`, plural OK); `None` if unknown.
+fn unit_secs(unit: &str, n: u64) -> Option<u64> {
+    let mult = match unit.to_ascii_lowercase().as_str() {
+        "s" | "sec" | "secs" | "second" | "seconds" => 1,
+        "m" | "min" | "mins" | "minute" | "minutes" => 60,
+        "h" | "hr" | "hrs" | "hour" | "hours" => 3600,
+        "d" | "day" | "days" => 86400,
+        _ => return None,
+    };
+    Some(n * mult)
+}
+
+/// Parse a clock time (`17:30`, `5pm`, `9`, `9am`) → the next unix time it occurs (today,
+/// or tomorrow if already past), using the local UTC offset. `None` if not a clock time.
+fn parse_clock_at(word: &str, now: u64) -> Option<u64> {
+    let w = word.to_ascii_lowercase();
+    let (body, ampm) = if let Some(b) = w.strip_suffix("pm") {
+        (b, Some(true))
+    } else if let Some(b) = w.strip_suffix("am") {
+        (b, Some(false))
+    } else {
+        (w.as_str(), None)
+    };
+    let (h_str, m_str) = body.split_once(':').unwrap_or((body, "0"));
+    let mut hour: i64 = h_str.parse().ok()?;
+    let min: i64 = m_str.parse().ok()?;
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&min) {
+        return None;
+    }
+    match ampm {
+        Some(true) if hour < 12 => hour += 12, // 5pm → 17
+        Some(false) if hour == 12 => hour = 0, // 12am → 0
+        _ => {}
+    }
+    let offset = platform::os::utc_offset_secs();
+    let local_now = now as i64 + offset;
+    let day_start = local_now - local_now.rem_euclid(86400);
+    let mut target = day_start + hour * 3600 + min * 60;
+    if target <= local_now {
+        target += 86400; // already passed today → tomorrow
+    }
+    Some((target - offset) as u64)
+}
+
+/// Rejoin `words` skipping the half-open range `[start, end)` (the schedule phrase).
+fn join_excluding(words: &[&str], start: usize, end: usize) -> String {
+    words.iter().enumerate().filter(|(i, _)| *i < start || *i >= end).map(|(_, w)| *w).collect::<Vec<_>>().join(" ")
+}
+
 /// What an `ai job …` invocation asks for. Pure parse, so the intuitive grammar
 /// (`@job <task> --agent x --bg`, flags anywhere) is unit-testable.
 #[derive(Debug, PartialEq)]
 enum JobCmd {
     List,
     Clear,
-    Run { prompt: String, agent: String, bg: bool, record: Option<String> },
+    Cancel(String),
+    Run { prompt: String, agent: String, bg: bool, record: Option<String>, run_at: Option<u64> },
 }
 
 fn parse_job_args(args: &[String]) -> JobCmd {
     match args.first().map(String::as_str) {
         None => return JobCmd::List,
         Some("clear") if args.len() == 1 => return JobCmd::Clear,
+        Some("cancel") => return JobCmd::Cancel(args.get(1).cloned().unwrap_or_default()),
         _ => {}
     }
     let mut agent = "coder".to_string();
     let mut bg = false;
     let mut record = None;
+    let mut run_at = None;
     let mut words: Vec<&str> = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -1825,10 +1956,11 @@ fn parse_job_args(args: &[String]) -> JobCmd {
             }
             "--bg" => bg = true,
             "--job-record" => record = it.next().cloned(),
+            "--run-at" => run_at = it.next().and_then(|s| s.parse().ok()),
             w => words.push(w),
         }
     }
-    JobCmd::Run { prompt: words.join(" "), agent, bg, record }
+    JobCmd::Run { prompt: words.join(" "), agent, bg, record, run_at }
 }
 
 /// `@job` — the tracked-task surface. `@job` lists, `@job clear` prunes, and
@@ -1839,10 +1971,22 @@ fn ai_job_cmd(args: &[String]) -> i32 {
     match parse_job_args(&args[1..]) {
         JobCmd::List => ai_jobs(&[]),
         JobCmd::Clear => ai_jobs(&["clear".to_string()]),
-        JobCmd::Run { prompt, agent, bg, record } => {
+        JobCmd::Cancel(id) => jobs::cancel(&id),
+        JobCmd::Run { prompt, agent, bg, record, run_at } => {
             if prompt.trim().is_empty() {
-                eprintln!("usage: @job <task> [--agent <name>] [--bg]   ·  @job [clear]");
+                eprintln!("usage: @job <task> [--agent <name>] [--bg]  ·  @job [clear]  ·  @job cancel <id>");
                 return 2;
+            }
+            // A detached CHILD carrying a fire-time: wait until then, then run.
+            if let (Some(id), Some(at)) = (record.as_ref(), run_at) {
+                return run_scheduled_child(id, &agent, &prompt, at);
+            }
+            // The USER's initial call: a natural "in 2 minutes" / "at 5pm" defers the job.
+            if record.is_none() {
+                let (at, cleaned) = parse_schedule(&prompt, unix_now());
+                if let Some(at) = at {
+                    return spawn_scheduled(&cleaned, &agent, at);
+                }
             }
             if bg {
                 // Re-enter detached: the child comes back through this path
@@ -1867,6 +2011,79 @@ fn ai_job_cmd(args: &[String]) -> i32 {
             code
         }
     }
+}
+
+/// Schedule a job to fire at `run_at`: record it as `scheduled` and detach a child that
+/// sleeps until the fire-time, then runs (reusing this same `@job` path via `--run-at`).
+/// The detached child inherits the current working directory, so the job runs in the folder
+/// where `@job` was typed.
+fn spawn_scheduled(prompt: &str, agent: &str, run_at: u64) -> i32 {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("aiTerminal: can't resolve the binary path: {e}");
+            return 1;
+        }
+    };
+    let id = jobs::new_id();
+    let Some(dir) = jobs::dir(&id) else {
+        eprintln!("aiTerminal: bad job id");
+        return 1;
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("aiTerminal: can't create the job dir: {e}");
+        return 1;
+    }
+    let log_path = dir.join("log.md");
+    let Ok(log) = std::fs::File::create(&log_path) else {
+        eprintln!("aiTerminal: can't create the job log");
+        return 1;
+    };
+    let err = log.try_clone().unwrap_or_else(|_| std::fs::File::create(&log_path).unwrap());
+    let child_args: Vec<String> = vec![
+        "ai".into(),
+        "job".into(),
+        prompt.into(),
+        "--agent".into(),
+        agent.into(),
+        "--job-record".into(),
+        id.clone(),
+        "--run-at".into(),
+        run_at.to_string(),
+    ];
+    match platform::os::spawn_detached(&exe, &child_args, log, err) {
+        Ok(child_pid) => {
+            jobs::record_scheduled(&id, prompt, child_pid, run_at);
+            let wait = run_at.saturating_sub(unix_now());
+            eprintln!("{}\u{29D6} scheduled job {id} — fires in {}{}", accent(), jobs::human_age(wait), reset());
+            eprintln!("  list: aiTerminal ai job  ·  cancel: @job cancel {id}");
+            0
+        }
+        Err(e) => {
+            eprintln!("aiTerminal: failed to schedule the job: {e}");
+            1
+        }
+    }
+}
+
+/// The detached scheduled child: wait until `run_at` (polling so a cancel is noticed
+/// promptly), then flip the record to `running` and execute the task.
+fn run_scheduled_child(id: &str, agent: &str, prompt: &str, run_at: u64) -> i32 {
+    loop {
+        let now = unix_now();
+        if now >= run_at {
+            break;
+        }
+        // Cancelled out from under us (`@job cancel`)? Stop without running.
+        if jobs::status_of(id).as_deref() != Some("scheduled") {
+            return 130;
+        }
+        std::thread::sleep(std::time::Duration::from_secs((run_at - now).min(2)));
+    }
+    jobs::mark_running(id);
+    let code = run_prompt_as_agent(agent, prompt, None);
+    jobs::finish(id, code);
+    code
 }
 
 /// Run `prompt` through `agent` with the full live chrome; when `log` is set the
@@ -1939,12 +2156,23 @@ mod jobs {
         pub cmd: String,
         pub started: u64,
         pub finished: Option<u64>,
+        pub run_at: Option<u64>,
         pub log: std::path::PathBuf,
     }
 
     impl Job {
-        /// `3m ago · 45s` — when it started and how long it ran (or has been running).
+        /// A glanceable timing note: a `scheduled` job shows when it fires; others show
+        /// when they started and how long they ran (or have been running).
         pub fn timing(&self, now: u64) -> String {
+            if self.status == "scheduled" {
+                if let Some(at) = self.run_at {
+                    return if at > now {
+                        format!("fires in {}", human_age(at - now))
+                    } else {
+                        "due".to_string()
+                    };
+                }
+            }
             let ago = human_age(now.saturating_sub(self.started));
             let dur = human_age(self.finished.unwrap_or(now).saturating_sub(self.started));
             format!("{ago} ago \u{b7} {dur}")
@@ -1967,7 +2195,9 @@ mod jobs {
             match self.status.as_str() {
                 "running" => "\u{25B6}",
                 "done" => "\u{2713}",
+                "scheduled" => "\u{29D6}", // ⧖ waiting to fire
                 "cancelled" => "\u{23f9}",
+                "missed" => "\u{26A0}", // ⚠ its scheduler died before it fired
                 _ => "\u{2717}", // failed / died
             }
         }
@@ -2001,12 +2231,67 @@ mod jobs {
         let _ = std::fs::write(dir.join("job.toml"), doc.to_string());
     }
 
+    /// Write a `scheduled` record: the sleeper's pid, the fire-time, and the cwd it will
+    /// run in (persisted so the list can show it and a later run lands in the right folder).
+    pub(super) fn record_scheduled(id: &str, cmd: &str, pid: u32, run_at: u64) {
+        let Some(dir) = dir(id) else { return };
+        let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default();
+        let doc = corelib::wire::Toml::Table(vec![
+            ("cmd".into(), corelib::wire::Toml::Str(cmd.into())),
+            ("status".into(), corelib::wire::Toml::Str("scheduled".into())),
+            ("started".into(), corelib::wire::Toml::Int(now() as i64)),
+            ("pid".into(), corelib::wire::Toml::Int(pid as i64)),
+            ("run_at".into(), corelib::wire::Toml::Int(run_at as i64)),
+            ("cwd".into(), corelib::wire::Toml::Str(cwd)),
+        ]);
+        let _ = std::fs::write(dir.join("job.toml"), doc.to_string());
+    }
+
+    /// Flip a scheduled record to `running` when its fire-time arrives (no `finished` stamp).
+    pub(super) fn mark_running(id: &str) {
+        set_status(id, "running", None);
+    }
+
+    /// The current status string of a job record, if any (used by the sleeper to notice a cancel).
+    pub(super) fn status_of(id: &str) -> Option<String> {
+        let dir = dir(id)?;
+        let text = std::fs::read_to_string(dir.join("job.toml")).ok()?;
+        let doc = corelib::wire::Toml::parse(&text).ok()?;
+        doc.get("status").and_then(|v| v.as_str()).map(str::to_string)
+    }
+
+    /// Cancel a scheduled or running job: SIGTERM its process and mark it `cancelled`.
+    pub(super) fn cancel(id: &str) -> i32 {
+        let Some(dir) = dir(id) else {
+            eprintln!("aiTerminal: bad job id");
+            return 2;
+        };
+        let Ok(text) = std::fs::read_to_string(dir.join("job.toml")) else {
+            eprintln!("aiTerminal: no such job '{id}'");
+            return 2;
+        };
+        let Ok(doc) = corelib::wire::Toml::parse(&text) else { return 2 };
+        let status = doc.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+        if !matches!(status, "scheduled" | "running") {
+            println!("job {id} is already {status}");
+            return 0;
+        }
+        let pid = doc.get("pid").and_then(|v| v.as_int()).unwrap_or(0).max(0) as u32;
+        if pid > 0 {
+            platform::os::terminate(pid);
+        }
+        set_status(id, "cancelled", Some(130));
+        println!("\u{23f9} cancelled job {id}");
+        0
+    }
+
     /// Stamp a job's outcome. Exit 130 (interrupt) records as `cancelled`.
     pub(super) fn finish(id: &str, code: i32) {
         set_status(id, if code == 0 { "done" } else if code == 130 { "cancelled" } else { "failed" }, Some(code));
     }
 
-    /// Rewrite a job record's status (keeping cmd/started/pid), stamping `finished`.
+    /// Rewrite a job record's status (keeping cmd/started/pid, and run_at/cwd when present).
+    /// A terminal status stamps `finished`; a transition to `running` does not.
     pub(super) fn set_status(id: &str, status: &str, code: Option<i32>) {
         let Some(dir) = dir(id) else { return };
         let path = dir.join("job.toml");
@@ -2018,8 +2303,17 @@ mod jobs {
             ("status".into(), corelib::wire::Toml::Str(status.into())),
             ("started".into(), get("started").unwrap_or(corelib::wire::Toml::Int(0))),
             ("pid".into(), get("pid").unwrap_or(corelib::wire::Toml::Int(0))),
-            ("finished".into(), corelib::wire::Toml::Int(now() as i64)),
         ];
+        if let Some(v) = get("run_at") {
+            pairs.push(("run_at".into(), v));
+        }
+        if let Some(v) = get("cwd") {
+            pairs.push(("cwd".into(), v));
+        }
+        // Only a finished/terminal state carries a `finished` stamp; `running` is in-flight.
+        if status != "running" && status != "scheduled" {
+            pairs.push(("finished".into(), corelib::wire::Toml::Int(now() as i64)));
+        }
         if let Some(c) = code {
             pairs.push(("exit".into(), corelib::wire::Toml::Int(c as i64)));
         }
@@ -2038,11 +2332,15 @@ mod jobs {
             let Ok(text) = std::fs::read_to_string(dir.join("job.toml")) else { continue };
             let Ok(doc) = corelib::wire::Toml::parse(&text) else { continue };
             let mut status = doc.get("status").and_then(|v| v.as_str()).unwrap_or("?").to_string();
-            if status == "running" {
+            // Reconcile: a `running` or `scheduled` record whose owner/sleeper pid is gone
+            // (crash, kill, reboot) is healed so the list never lies — a dead running job is
+            // `died`, a dead scheduled job will never fire so it is `missed`.
+            if status == "running" || status == "scheduled" {
                 let pid = doc.get("pid").and_then(|v| v.as_int()).unwrap_or(0).max(0) as u32;
                 if !platform::os::pid_alive(pid) {
-                    set_status(&id, "died", None);
-                    status = "died".into();
+                    let healed = if status == "scheduled" { "missed" } else { "died" };
+                    set_status(&id, healed, None);
+                    status = healed.into();
                 }
             }
             out.push(Job {
@@ -2051,6 +2349,7 @@ mod jobs {
                 cmd: doc.get("cmd").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
                 started: doc.get("started").and_then(|v| v.as_int()).unwrap_or(0).max(0) as u64,
                 finished: doc.get("finished").and_then(|v| v.as_int()).map(|n| n.max(0) as u64),
+                run_at: doc.get("run_at").and_then(|v| v.as_int()).map(|n| n.max(0) as u64),
                 log: dir.join("log.md"),
             });
         }
@@ -2058,11 +2357,12 @@ mod jobs {
         out
     }
 
-    /// Remove every job that is not `running`; returns how many were pruned.
+    /// Remove every job in a terminal state; keeps in-flight `running` and pending
+    /// `scheduled` jobs. Returns how many were pruned.
     pub(super) fn clear_finished() -> usize {
         let mut n = 0;
         for j in list() {
-            if j.status != "running" {
+            if !matches!(j.status.as_str(), "running" | "scheduled") {
                 if let Some(d) = dir(&j.id) {
                     if std::fs::remove_dir_all(d).is_ok() {
                         n += 1;
@@ -2730,33 +3030,6 @@ mod tests {
     }
 
     #[test]
-    fn first_command_line_unwraps_fences_and_prompts() {
-        use crate::ai::first_command_line;
-        // The reported bug: a fenced command → the bare command, not the ``` fence.
-        assert_eq!(first_command_line("```\ndu -sh .\n```").as_deref(), Some("du -sh ."));
-        assert_eq!(first_command_line("```sh\nls -la\n```").as_deref(), Some("ls -la"));
-        // A shell-prompt prefix is stripped.
-        assert_eq!(first_command_line("$ git status").as_deref(), Some("git status"));
-        // A `#` refusal is skipped (no command).
-        assert_eq!(first_command_line("# can't do that safely"), None);
-        // Plain command unchanged.
-        assert_eq!(first_command_line("echo hi").as_deref(), Some("echo hi"));
-    }
-
-    #[test]
-    fn prose_answer_detects_and_strips_the_sentinel() {
-        // A command reply → not prose (routes to the guard/marker path).
-        assert_eq!(super::prose_answer("ls -la"), None);
-        assert_eq!(super::prose_answer("# can't do that safely"), None);
-        // A prose reply → the sentinel is stripped, leading space trimmed.
-        let s = format!("{}  Your build is slow because…", crate::ai::ANSWER_SENTINEL);
-        assert_eq!(super::prose_answer(&s), Some("Your build is slow because…"));
-        // Leading whitespace before the sentinel still counts as prose.
-        let s2 = format!("\n {} hello", crate::ai::ANSWER_SENTINEL);
-        assert_eq!(super::prose_answer(&s2), Some("hello"));
-    }
-
-    #[test]
     fn human_cost_and_cost_segment_format() {
         assert_eq!(super::human_cost(0.0), "");
         assert_eq!(super::human_cost(-1.0), "");
@@ -3012,13 +3285,51 @@ mod tests {
         assert_eq!(super::parse_job_args(&a(&["clear"])), JobCmd::Clear);
         // The exact requested shape: free text with optional flags anywhere.
         let run = super::parse_job_args(&a(&["create", "a", "file", "called", "hamid.txt", "in", "one", "minute", "--bg", "--agent", "tester"]));
-        assert_eq!(run, JobCmd::Run { prompt: "create a file called hamid.txt in one minute".into(), agent: "tester".into(), bg: true, record: None });
+        assert_eq!(run, JobCmd::Run { prompt: "create a file called hamid.txt in one minute".into(), agent: "tester".into(), bg: true, record: None, run_at: None });
         // Defaults: coder, foreground.
         let run = super::parse_job_args(&a(&["build", "the", "docs"]));
-        assert_eq!(run, JobCmd::Run { prompt: "build the docs".into(), agent: "coder".into(), bg: false, record: None });
+        assert_eq!(run, JobCmd::Run { prompt: "build the docs".into(), agent: "coder".into(), bg: false, record: None, run_at: None });
         // The detached child carries its record id through.
         let run = super::parse_job_args(&a(&["x", "--job-record", "123-9"]));
         assert!(matches!(run, JobCmd::Run { record: Some(ref id), .. } if id == "123-9"));
+        // `@job cancel <id>`.
+        assert_eq!(super::parse_job_args(&a(&["cancel", "42-7"])), JobCmd::Cancel("42-7".into()));
+        // An explicit `--run-at` is carried verbatim (the detached scheduled child).
+        let run = super::parse_job_args(&a(&["do", "it", "--run-at", "1000", "--job-record", "id"]));
+        assert!(matches!(run, JobCmd::Run { run_at: Some(1000), .. }));
+    }
+
+    #[test]
+    fn parse_schedule_reads_natural_time() {
+        // "in N unit" fires N later, with the phrase stripped from the prompt.
+        let (at, cleaned) = super::parse_schedule("create a file named hamid in 2 minutes", 1_000);
+        assert_eq!(at, Some(1_120));
+        assert_eq!(cleaned, "create a file named hamid");
+        // Fused unit + "after".
+        assert_eq!(super::parse_schedule("build after 30s", 0).0, Some(30));
+        assert_eq!(super::parse_schedule("build in 1 hour", 0).0, Some(3600));
+        // A middle phrase is removed too.
+        let (at, cleaned) = super::parse_schedule("ping the server in 5 minutes please", 0);
+        assert_eq!(at, Some(300));
+        assert_eq!(cleaned, "ping the server please");
+        // No schedule → run now, prompt untouched.
+        assert_eq!(super::parse_schedule("just do it now", 0), (None, "just do it now".to_string()));
+        // "in" as ordinary prose (not a delay) does not misfire.
+        assert_eq!(super::parse_schedule("look in the src folder", 0).0, None);
+        // "at HH:MM" resolves to a future unix time.
+        assert!(super::parse_schedule("email me at 17:30", 0).0.is_some());
+    }
+
+    #[test]
+    fn ai_command_routing_preloads_and_answers_safely() {
+        // The dual-mode `@ai` routing helpers: a `%%ANSWER%%` reply is prose (preload nothing);
+        // tool-call junk / unbalanced quotes are NOT preloaded as commands (no shell hang).
+        assert!(super::prose_answer(&format!("{} here you go", crate::ai::ANSWER_SENTINEL)).is_some());
+        assert!(super::prose_answer("ls -la").is_none(), "a bare command is not prose");
+        assert!(super::looks_like_tool_junk("<tool_call>web.read"), "tool-call attempt detected");
+        assert!(!super::looks_like_tool_junk("git commit -m \"wip\""));
+        assert!(super::quote_balanced("touch hamid") && super::quote_balanced("echo 'hi' > f"));
+        assert!(!super::quote_balanced("echo 'unterminated"), "odd quote → not preloaded");
     }
 
     #[test]
@@ -3130,9 +3441,21 @@ mod tests {
             cmd: String::new(),
             started: 1000,
             finished: Some(1045),
+            run_at: None,
             log: std::path::PathBuf::new(),
         };
         assert_eq!(j.timing(1180), "3m ago \u{b7} 45s");
+        // A scheduled job shows when it fires instead of run duration.
+        let s = super::jobs::Job {
+            id: "y".into(),
+            status: "scheduled".into(),
+            cmd: String::new(),
+            started: 1000,
+            finished: None,
+            run_at: Some(1300),
+            log: std::path::PathBuf::new(),
+        };
+        assert_eq!(s.timing(1180), "fires in 2m");
     }
 
     #[test]

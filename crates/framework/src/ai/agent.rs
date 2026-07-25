@@ -350,6 +350,7 @@ fn tool_instructions(tools: &[ToolSpec]) -> String {
          Use ONLY this `@tool` form — do NOT use XML like <tool_call>, function-call JSON, or \
          fenced ``` blocks. Emit the line raw, not inside backticks.\n\
          Call at most one tool per turn; you will receive its result, then continue.\n\
+         Paths are workspace-relative unless absolute; prefer fs.* for files and sys.run for shell commands.\n\
          When you have the final answer, reply in Markdown WITHOUT an @tool line.\n\nTools:\n",
     );
     for t in tools {
@@ -605,6 +606,13 @@ fn parse_call_body(body: &str) -> Option<(String, String)> {
     if body.is_empty() {
         return None;
     }
+    // Some models render args as `<arg_key>K</arg_key><arg_value>V</arg_value>` tag pairs
+    // (seen inside `<tool_call>`). Turn them into a JSON object so the runner reads them.
+    if body.contains("<arg_key>") {
+        if let Some(call) = parse_arg_tags(body) {
+            return Some(call);
+        }
+    }
     // A brace-started body is a function-call JSON object, or nothing — never a
     // "name rest" split (that would mangle a JSON answer into a bogus tool name).
     // {"name"|"tool": "...", "arguments"|"args"|"parameters": {...}}
@@ -627,6 +635,33 @@ fn parse_call_body(body: &str) -> Option<(String, String)> {
         None => (body.to_string(), "{}".to_string()),
     };
     (!name.is_empty()).then_some((name, if args.is_empty() { "{}".into() } else { args }))
+}
+
+/// Parse a tool call rendered with `<arg_key>K</arg_key><arg_value>V</arg_value>` tag
+/// pairs (an alternate dialect some models emit). The tool name is the leading token
+/// before the first `<arg_key>` (if any); each key/value pair becomes a JSON field. Returns
+/// `(name, json)`. `None` if there's no usable name.
+fn parse_arg_tags(body: &str) -> Option<(String, String)> {
+    let head = body.find("<arg_key>")?;
+    let name = body[..head].trim().trim_end_matches(|c: char| c == ':' || c == '\n').trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let mut fields: Vec<String> = Vec::new();
+    let mut rest = &body[head..];
+    while let Some(k) = slice_between(rest, "<arg_key>", "</arg_key>") {
+        // The value tag follows the key tag; if it's missing, treat the value as empty.
+        let after_key = rest.find("</arg_key>").map(|i| i + "</arg_key>".len()).unwrap_or(rest.len());
+        let v = slice_between(&rest[after_key..], "<arg_value>", "</arg_value>").unwrap_or("");
+        fields.push(format!("{}:{}", json_str(k.trim()), json_str(v.trim())));
+        // Advance past this pair.
+        let consumed = rest[after_key..]
+            .find("</arg_value>")
+            .map(|i| after_key + i + "</arg_value>".len())
+            .unwrap_or(rest.len());
+        rest = &rest[consumed..];
+    }
+    Some((name, format!("{{{}}}", fields.join(","))))
 }
 
 /// The text strictly between the first `open` and the next following `close`, if both
@@ -742,6 +777,21 @@ mod tests {
         // NEGATIVE: prose that mentions a dotted name with parens is not a pythonic call
         // unless the whole line is the call.
         assert_eq!(parse_tool_call("You can call fs.list(here) to see files, but let's not."), None);
+    }
+
+    #[test]
+    fn parse_tool_call_handles_arg_key_value_tags() {
+        // The `<arg_key>/<arg_value>` dialect inside <tool_call> (the reported sys.run blob).
+        let (n, a) = parse_tool_call(
+            "<tool_call>sys.run\n<arg_key>command</arg_key>\n<arg_value>echo hi > f</arg_value>\n</tool_call>",
+        )
+        .unwrap();
+        assert_eq!(n, "sys.run");
+        assert!(a.contains("\"command\"") && a.contains("echo hi > f"), "arg tags carried: {a}");
+        // Multiple pairs.
+        let (n, a) = parse_call_body("fs.write<arg_key>path</arg_key><arg_value>x</arg_value><arg_key>content</arg_key><arg_value>hi</arg_value>").unwrap();
+        assert_eq!(n, "fs.write");
+        assert!(a.contains("\"path\":\"x\"") && a.contains("\"content\":\"hi\""), "pairs: {a}");
     }
 
     #[test]
