@@ -28,9 +28,14 @@ pub(crate) fn is_transient(err: &str) -> bool {
     if e.contains("api key") || e.contains("unauthorized") || e.contains("401") || e.contains("403") || e.contains("invalid") {
         return false;
     }
-    ["429", "rate limit", "overloaded", "502", "503", "504", "timeout", "timed out", "temporarily", "try again", "unavailable"]
-        .iter()
-        .any(|m| e.contains(m))
+    [
+        "429", "rate limit", "rate_limit", "too many requests", "overloaded", "capacity",
+        "500", "502", "503", "504", "server_error", "internal server error", "gateway",
+        "timeout", "timed out", "temporarily", "try again", "unavailable",
+        "connection", "reset", "eof",
+    ]
+    .iter()
+    .any(|m| e.contains(m))
 }
 
 /// A streaming chat client over some [`Transport`]. The primary model is **chosen
@@ -102,7 +107,20 @@ impl<T: Transport> Client<T> {
     /// usage, and the model that produced it (telemetry records the model + pricing
     /// actually used). Blocking — the agent runs on a worker thread.
     pub fn ask_streaming(&self, prompt: &str, context: &str, on_part: &mut dyn FnMut(bool, &str)) -> Result<(String, u32, u32, ModelDef), String> {
-        let candidates = self.settings.order();
+        self.ask_streaming_on(&self.candidates(), prompt, context, on_part)
+    }
+
+    /// The candidate list for a whole run — the pool's [`order`](AiSettings::order):
+    /// one strategy pick, then the rest as a failover chain. Computed ONCE by
+    /// `run_agent` and reused every turn, so the model stays fixed across a run.
+    pub fn candidates(&self) -> Vec<ModelDef> {
+        self.settings.order()
+    }
+
+    /// Like [`ask_streaming`](Self::ask_streaming) but over a caller-fixed candidate
+    /// list, so a multi-turn agent run pins ONE model (the list head) across turns
+    /// and only fails over to a later candidate on a hard error before any token.
+    pub fn ask_streaming_on(&self, candidates: &[ModelDef], prompt: &str, context: &str, on_part: &mut dyn FnMut(bool, &str)) -> Result<(String, u32, u32, ModelDef), String> {
         let mut last_err = String::from("no model candidates");
         for (i, model) in candidates.iter().enumerate() {
             // Per-candidate retry: a TRANSIENT error before any output (a 429/503/overloaded
@@ -212,8 +230,12 @@ mod tests {
 
     #[test]
     fn transient_errors_retry_permanent_ones_dont() {
-        // Temporary provider blips are worth a same-model retry…
-        for t in ["HTTP 429 rate limit", "server overloaded", "503 Service Unavailable", "request timed out", "temporarily unavailable"] {
+        // Temporary provider blips are worth a same-model retry — across provider dialects.
+        for t in [
+            "HTTP 429 rate limit", "server overloaded", "503 Service Unavailable", "request timed out",
+            "temporarily unavailable", "too many requests", "HTTP 500 internal server error",
+            "502 bad gateway", "connection reset by peer", "at capacity", "unexpected EOF",
+        ] {
             assert!(is_transient(t), "{t:?} should be transient");
         }
         // …but permanent failures (auth / bad request) must never be retried.
@@ -309,6 +331,28 @@ mod tests {
         assert_eq!(text, "recovered");
         assert_eq!(streamed, "recovered", "deltas are forwarded live as they stream");
         assert_eq!(used.id, "good-model", "telemetry records the model that actually answered");
+        std::env::remove_var(env);
+    }
+
+    #[test]
+    fn failover_now_works_under_non_failover_strategies() {
+        // The universal failover chain: even a `cost` pool recovers when its pick dies
+        // before any token (previously only the `failover` strategy could fall back).
+        let env = "TT_TEST_AI_KEY_FAILOVER2";
+        std::env::set_var(env, "test-key");
+        let bad = anthropic_model("bad-model", "TT_TEST_AI_KEY_ABSENT2");
+        std::env::remove_var("TT_TEST_AI_KEY_ABSENT2");
+        let good = anthropic_model("good-model", env);
+        let s = AiSettings {
+            pool: ModelPool {
+                entries: vec![PoolEntry::new(bad, 1, Default::default()), PoolEntry::new(good, 1, Default::default())],
+                strategy: Strategy::Cost, // deliberately NOT failover
+            },
+        };
+        let client = Client::new(s, MockTransport::from_fixture(text_sse("recovered", 3, 2)));
+        let (text, _, _, used) = client.ask_streaming("hi", "", &mut |_, _| {}).unwrap();
+        assert_eq!(text, "recovered");
+        assert_eq!(used.id, "good-model", "cost pick died, chain fell over to the healthy model");
         std::env::remove_var(env);
     }
 }

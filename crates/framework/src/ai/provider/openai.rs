@@ -113,7 +113,19 @@ impl StreamDecoder for OpenAiDecoder {
         }
         let mut out = Vec::new();
         if let Some(choice) = json.get("choices").and_then(Json::as_array).and_then(|a| a.first()) {
-            if let Some(c) = choice.get("delta").and_then(|d| d.get("content")).and_then(Json::as_str) {
+            let delta = choice.get("delta");
+            // Reasoning tokens: OpenAI-compatible reasoning models (DeepSeek-R1 & others,
+            // e.g. via OpenRouter) stream them as `delta.reasoning_content` or `delta.reasoning`.
+            // Surface them as Thinking (mirrors the Anthropic decoder) so reasoning is visible.
+            if let Some(r) = delta
+                .and_then(|d| d.get("reasoning_content").or_else(|| d.get("reasoning")))
+                .and_then(Json::as_str)
+            {
+                if !r.is_empty() {
+                    out.push(StreamEvent::Thinking(r.to_string()));
+                }
+            }
+            if let Some(c) = delta.and_then(|d| d.get("content")).and_then(Json::as_str) {
                 if !c.is_empty() {
                     out.push(StreamEvent::Delta(c.to_string()));
                 }
@@ -200,6 +212,26 @@ mod tests {
             evs.last(),
             Some(StreamEvent::Done { input_tokens: 10, output_tokens: 5, stop_reason: Some(r) }) if r == "stop"
         ));
+    }
+
+    #[test]
+    fn decodes_reasoning_content_as_thinking() {
+        // OpenAI-compatible reasoning models (DeepSeek-R1 & others) stream reasoning in
+        // `delta.reasoning_content` — surface it as a Thinking event, not dropped.
+        let sse = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"let me think\"}}]}\n\n\
+                   data: {\"choices\":[{\"delta\":{\"content\":\"the answer\"},\"finish_reason\":\"stop\"}]}\n\n\
+                   data: [DONE]\n\n";
+        let evs = decode_all(sse);
+        let thinking: String = evs.iter().filter_map(|e| match e {
+            StreamEvent::Thinking(s) => Some(s.as_str()),
+            _ => None,
+        }).collect();
+        let answer: String = evs.iter().filter_map(|e| match e {
+            StreamEvent::Delta(s) => Some(s.as_str()),
+            _ => None,
+        }).collect();
+        assert_eq!(thinking, "let me think", "reasoning surfaces as Thinking");
+        assert_eq!(answer, "the answer", "content still surfaces as Delta");
     }
 
     #[test]

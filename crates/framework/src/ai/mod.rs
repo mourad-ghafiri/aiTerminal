@@ -8,7 +8,7 @@
 //! third-party crates, no `unsafe`.
 #![forbid(unsafe_code)]
 
-mod agent;
+pub(crate) mod agent;
 mod client;
 mod context;
 pub mod defs;

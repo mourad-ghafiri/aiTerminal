@@ -167,14 +167,25 @@ impl ModelPool {
         }
     }
 
-    /// The ordered candidate list for failover (every entry, first preferred). For
-    /// the other strategies this is just the single [`choose`](Self::choose) result,
-    /// so a caller can always iterate candidates uniformly.
+    /// The ordered candidate list for a run: the strategy's [`choose`](Self::choose)
+    /// result **first**, then every OTHER entry as a failover chain. This makes a run
+    /// resilient under EVERY strategy — a weighted/round-robin/cost pick that dies
+    /// (before it streams a token) falls over to a healthy pool member instead of
+    /// killing the run. The head is picked once, so a caller that iterates turns on
+    /// this list keeps ONE model for the whole run (no mid-run model hopping).
     pub fn order(&self) -> Vec<ModelDef> {
-        match self.strategy {
-            Strategy::Failover if self.entries.len() > 1 => self.entries.iter().map(PoolEntry::resolved).collect(),
-            _ => vec![self.choose()],
+        if self.entries.len() <= 1 {
+            return vec![self.choose()];
         }
+        let head = self.choose();
+        let mut out = vec![head.clone()];
+        for e in &self.entries {
+            let m = e.resolved();
+            if m.id != head.id || m.provider != head.provider {
+                out.push(m);
+            }
+        }
+        out
     }
 
     /// A representative member for status display (the highest-weight entry, ties
@@ -361,9 +372,24 @@ mod tests {
     }
 
     #[test]
-    fn order_for_non_failover_is_single() {
+    fn order_is_chosen_first_then_failover_chain() {
+        // Every strategy now yields a full failover chain: the strategy's pick first,
+        // then the rest — so a run survives the head model dying (before any token).
         let p = ModelPool { entries: vec![entry("a", 1), entry("b", 1)], strategy: Strategy::Cost };
-        assert_eq!(p.order().len(), 1);
+        let order: Vec<String> = p.order().into_iter().map(|m| m.id).collect();
+        assert_eq!(order.len(), p.entries.len(), "no model dropped from the chain");
+        assert_eq!(order[0], p.choose().id, "the strategy's pick leads the chain");
+        // No duplicates: the head is not repeated among the fallbacks.
+        let mut sorted = order.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), order.len(), "chain has no duplicate models");
+    }
+
+    #[test]
+    fn order_single_entry_is_just_that_model() {
+        let p = ModelPool { entries: vec![entry("solo", 1)], strategy: Strategy::Weighted };
+        assert_eq!(p.order().into_iter().map(|m| m.id).collect::<Vec<_>>(), vec!["solo".to_string()]);
     }
 
     #[test]

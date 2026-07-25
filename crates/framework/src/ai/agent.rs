@@ -72,6 +72,9 @@ pub struct AgentRun {
     pub output_tokens: u32,
     /// Why the run ended — see [`RunOutcome`].
     pub outcome: RunOutcome,
+    /// The model id that actually served the run (the pinned candidate-list head, or a
+    /// failover member if the head died before its first token). Empty if no turn ran.
+    pub model_used: String,
 }
 
 /// Shown when the model returns no usable text (an empty stream, or a turn with neither a
@@ -103,15 +106,31 @@ pub trait AgentObserver {
 pub struct NoopObserver;
 impl AgentObserver for NoopObserver {}
 
-/// True when a line begins the machine tool-call protocol in ANY tolerated form
-/// (`@tool …`, an XML `<tool_call>`, or a fenced ```` ```tool ```` block) — the point
-/// past which text is protocol, not prose.
+/// The line-anchored tool-call markers tolerated in model output, across provider
+/// dialects (Qwen/Hermes `<tool_call>`, fenced ```` ```tool ````, Mistral `[TOOL_CALLS]`,
+/// Llama `<|python_tag|>`). SINGLE SOURCE OF TRUTH: the transcript commit boundary
+/// ([`is_tool_marker_line`]) and the CLI live-display suppression
+/// (`cli::is_display_tool_marker*`) both derive from this, so the parsers never drift.
+/// (The official `@tool ` form is handled separately — it needs the trailing space.)
+pub(crate) const TOOL_LINE_MARKERS: &[&str] =
+    &["<tool_call>", "```tool", "```tool_call", "[TOOL_CALLS]", "<|python_tag|>"];
+
+/// True when a line begins the machine tool-call protocol in ANY tolerated form — the
+/// point past which text is protocol, not prose.
 fn is_tool_marker_line(t: &str) -> bool {
-    t == "@tool"
-        || t.starts_with("@tool ")
-        || t.starts_with("<tool_call>")
-        || t == "```tool"
-        || t == "```tool_call"
+    t == "@tool" || t.starts_with("@tool ") || TOOL_LINE_MARKERS.iter().any(|m| t.starts_with(m))
+}
+
+/// The turn produced no parseable tool call, but it *looks like a botched attempt*
+/// (a line-anchored marker, or a top-level JSON blob with a `name`/`tool` key that
+/// failed to parse) — so the loop nudges-and-retries instead of accepting garbage as
+/// the final answer. Line-anchored to avoid firing on prose that merely mentions a tool.
+fn looks_like_tool_attempt(text: &str) -> bool {
+    let t = text.trim();
+    if t.starts_with('{') && (t.contains("\"name\"") || t.contains("\"tool\"")) {
+        return true;
+    }
+    text.lines().any(|l| is_tool_marker_line(l.trim_start()))
 }
 
 /// The prose a model turn emitted BEFORE its tool call — what the user should see
@@ -201,20 +220,29 @@ pub fn run_agent<T: Transport>(
 
     let mut steps = Vec::new();
     let (mut tin, mut tout) = (0u32, 0u32);
+    let mut model_used = String::new();
+    // Bounded nudge-and-retry when a turn emits a botched tool call (or nothing) — see
+    // `looks_like_tool_attempt`. Corrections still consume the `max_steps` budget.
+    let mut corrections = 0u32;
+    const MAX_CORRECTIONS: u32 = 2;
     let max = agent.max_steps.max(1);
-    let finish = |answer: String, steps: Vec<ToolStep>, tin: u32, tout: u32, outcome: RunOutcome| AgentRun {
+    // Pin the candidate list ONCE: its head serves every turn (a coherent run on one
+    // model), and only a hard pre-token failure fails over to a later pool member.
+    let candidates = client.candidates();
+    let finish = |answer: String, steps: Vec<ToolStep>, tin: u32, tout: u32, outcome: RunOutcome, model_used: String| AgentRun {
         answer,
         steps,
         input_tokens: tin,
         output_tokens: tout,
         outcome,
+        model_used,
     };
     for _ in 0..max {
         // Honor a host cancellation between turns: stop cleanly rather than starting a
         // new (billable) model turn. A mid-stream cancel kills curl, so `ask_streaming`
         // below also returns promptly; this guard prevents the NEXT turn.
         if client.is_cancelled() {
-            return finish("_(stopped)_".into(), steps, tin, tout, RunOutcome::Cancelled);
+            return finish("_(stopped)_".into(), steps, tin, tout, RunOutcome::Cancelled, model_used);
         }
         observer.on_turn_start();
         // Stream the turn's tokens to the observer as they arrive (answer vs. reasoning);
@@ -226,7 +254,7 @@ pub fn run_agent<T: Transport>(
                 observer.on_delta(s)
             }
         };
-        let res = client.ask_streaming(&transcript, context, &mut on_part);
+        let res = client.ask_streaming_on(&candidates, &transcript, context, &mut on_part);
         drop(on_part);
         let (answer, ti, to, used) = match res {
             Ok(v) => v,
@@ -234,10 +262,12 @@ pub fn run_agent<T: Transport>(
                 // A genuinely empty stream is a model/prompt issue, not an internal error —
                 // turn the raw transport message into an actionable hint.
                 let msg = if e.contains("empty response") { NO_TEXT_HINT.to_string() } else { format!("\u{26d4} {e}") };
-                return finish(msg, steps, tin, tout, RunOutcome::Error(e));
+                return finish(msg, steps, tin, tout, RunOutcome::Error(e), model_used);
             }
         };
-        let _ = used;
+        if model_used.is_empty() {
+            model_used = used.id.clone();
+        }
         tin += ti;
         tout += to;
         match parse_tool_call(&answer) {
@@ -265,7 +295,7 @@ pub fn run_agent<T: Transport>(
                 if let [.., c, b, a] = steps.as_slice() {
                     if a.name == b.name && b.name == c.name && a.args == b.args && b.args == c.args {
                         let msg = format!("[stopped — the tool `{}` was called repeatedly with no progress]", a.name);
-                        return finish(msg, steps, tin, tout, RunOutcome::ToolStall);
+                        return finish(msg, steps, tin, tout, RunOutcome::ToolStall, model_used);
                     }
                 }
                 // Record the assistant's call + the (tainted) result, then continue.
@@ -277,16 +307,37 @@ pub fn run_agent<T: Transport>(
                 elide_old_tool_results(&mut transcript);
             }
             None => {
-                // No tool call and no prose → a friendly hint instead of a blank bubble.
                 let empty = answer.trim().is_empty();
+                // A botched tool attempt (or an empty turn) is NOT a final answer while we
+                // still have correction budget: nudge the model with the exact format and
+                // let it try again, rather than surfacing garbage or a blank bubble. This is
+                // what makes weak/varied models converge instead of stalling.
+                if (empty || looks_like_tool_attempt(&answer)) && corrections < MAX_CORRECTIONS {
+                    corrections += 1;
+                    observer.on_commit("");
+                    transcript.push_str(&answer);
+                    transcript.push_str("\n\n");
+                    transcript.push_str(if empty { CORRECTION_EMPTY } else { CORRECTION_TOOL });
+                    transcript.push_str("\n\nassistant:");
+                    continue;
+                }
+                // No tool call and no prose → a friendly hint instead of a blank bubble.
                 let answer = if empty { NO_TEXT_HINT.to_string() } else { answer };
                 let outcome = if empty { RunOutcome::Error("empty response".into()) } else { RunOutcome::Completed };
-                return finish(answer, steps, tin, tout, outcome);
+                return finish(answer, steps, tin, tout, outcome, model_used);
             }
         }
     }
-    finish("[reached the step limit before finishing]".into(), steps, tin, tout, RunOutcome::StepLimit)
+    finish("[reached the step limit before finishing]".into(), steps, tin, tout, RunOutcome::StepLimit, model_used)
 }
+
+/// The nudge appended after a botched tool call — restates the exact `@tool` form.
+const CORRECTION_TOOL: &str = "system: That last message looked like a tool call but could not be parsed. \
+To call a tool, output EXACTLY one line: @tool <name> {json-args}  — for example: @tool fs.list {\"path\":\".\"} . \
+If you are finished, reply in plain Markdown with NO tool line.";
+/// The nudge appended after an empty turn.
+const CORRECTION_EMPTY: &str = "system: You returned nothing. Either call a tool with a single line \
+@tool <name> {json-args}, or give your final answer in plain Markdown.";
 
 fn tool_instructions(tools: &[ToolSpec]) -> String {
     if tools.is_empty() {
@@ -307,32 +358,71 @@ fn tool_instructions(tools: &[ToolSpec]) -> String {
     s
 }
 
-/// Find a tool call in the model's text → `(name, args)`. **Model-agnostic**: weaker /
-/// non-Anthropic models render calls many ways, so we accept, in order of specificity:
-///   1. our `@tool <name> <args>` marker,
-///   2. an XML `<tool_call> … </tool_call>` block (Qwen and many OSS models),
-///   3. a fenced ```` ```tool … ``` ```` block,
-///   4. a function-call JSON object `{"name"|"tool": …, "arguments"|"args"|"parameters": …}`.
-/// The `args` string is returned verbatim (JSON or bare text); the runner coerces it.
+/// Find a tool call in the model's text → `(name, args)`. **Model-agnostic**: weak /
+/// non-Anthropic models render calls in many dialects, so we accept, most-specific
+/// (least-ambiguous) first, so a real call is never missed and prose never false-matches:
+///   1. XML `<tool_call> … </tool_call>` (Qwen / Hermes / many OSS models),
+///   2. Mistral `[TOOL_CALLS] [ {…} ]` / `[TOOL_CALLS] name{args}`,
+///   3. a fenced ```` ```tool ```` / ```` ```tool_call ```` block,
+///   4. a fenced ```` ```json ```` (or bare fence) whose body is a STRICT call-object,
+///   5. our `@tool <name> <args>` marker (the official form),
+///   6. Llama pythonic `family.method(arg=…, "positional")`,
+///   7. a bare top-level function-call JSON object.
+/// A leading Llama `<|python_tag|>` is stripped first. Call-objects use `name`|`tool` +
+/// `arguments`|`args`|`parameters`. `args` is returned verbatim; the runner coerces it.
 fn parse_tool_call(text: &str) -> Option<(String, String)> {
-    // 2. XML `<tool_call> … </tool_call>` (body may span lines).
-    if let Some(body) = slice_between(text, "<tool_call>", "</tool_call>") {
+    // Strip a leading Llama `<|python_tag|>` marker — what follows is the real call.
+    let scan = match text.find("<|python_tag|>") {
+        Some(i) => &text[i + "<|python_tag|>".len()..],
+        None => text,
+    };
+    // 1. XML `<tool_call> … </tool_call>` (body may span lines).
+    if let Some(body) = slice_between(scan, "<tool_call>", "</tool_call>") {
         if let Some(call) = parse_call_body(body) {
+            return Some(call);
+        }
+    }
+    // 2. Mistral `[TOOL_CALLS]` — a JSON array of calls (take the first), or `name{args}`.
+    if let Some(after) = scan.find("[TOOL_CALLS]").map(|i| i + "[TOOL_CALLS]".len()) {
+        let rest = scan[after..].trim();
+        let body = if rest.starts_with('[') {
+            corelib::wire::Json::parse(rest)
+                .ok()
+                .and_then(|a| a.as_array().and_then(|xs| xs.first()).map(|c| c.to_string()))
+        } else {
+            Some(rest.to_string())
+        };
+        if let Some(call) = body.as_deref().and_then(parse_call_body) {
             return Some(call);
         }
     }
     // 3. A fenced ```tool / ```tool_call block.
     for fence in ["```tool_call", "```tool"] {
-        if let Some(after) = text.find(fence).map(|i| i + fence.len()) {
-            if let Some(end) = text[after..].find("```") {
-                if let Some(call) = parse_call_body(&text[after..after + end]) {
+        if let Some(after) = scan.find(fence).map(|i| i + fence.len()) {
+            if let Some(end) = scan[after..].find("```") {
+                if let Some(call) = parse_call_body(&scan[after..after + end]) {
                     return Some(call);
                 }
             }
         }
     }
-    // 1. Our `@tool <name> <args>` marker (one per line).
-    for line in text.lines() {
+    // 4. A fenced ```json / bare ``` block whose body is a STRICT call-object (has a
+    //    name/tool key AND an arguments/args/parameters key) — the dual-key rule keeps a
+    //    plain JSON *answer* fenced by the model from being mistaken for a call.
+    for fence in ["```json", "```"] {
+        if let Some(after) = scan.find(fence).map(|i| i + fence.len()) {
+            if let Some(end) = scan[after..].find("```") {
+                let body = scan[after..after + end].trim();
+                if is_strict_call_object(body) {
+                    if let Some(call) = parse_call_body(body) {
+                        return Some(call);
+                    }
+                }
+            }
+        }
+    }
+    // 5. Our `@tool <name> <args>` marker (one per line).
+    for line in scan.lines() {
         let line = line.trim();
         if line == "@tool" {
             continue;
@@ -343,11 +433,166 @@ fn parse_tool_call(text: &str) -> Option<(String, String)> {
             }
         }
     }
-    // 4. The whole reply is a bare function-call JSON object (some models emit only that).
+    // 6. Llama pythonic `family.method(...)` on its own line.
+    if let Some(call) = parse_pythonic(scan) {
+        return Some(call);
+    }
+    // 7. The whole reply is a bare function-call JSON object (some models emit only that).
     // `parse_call_body` requires a name/tool key, so a plain JSON answer won't false-match.
-    let t = text.trim();
+    let t = scan.trim();
     if t.starts_with('{') {
         return parse_call_body(t);
+    }
+    None
+}
+
+/// A JSON object with BOTH a call name (`name`|`tool`) AND an argument bag
+/// (`arguments`|`args`|`parameters`) — the shape a real function call takes. Requiring
+/// both keys is what lets us safely accept a ```` ```json ```` block without hijacking a
+/// model's plain JSON *answer* (which rarely has both).
+fn is_strict_call_object(body: &str) -> bool {
+    let Ok(v) = corelib::wire::Json::parse(body) else { return false };
+    let has_name = v.get("name").or_else(|| v.get("tool")).and_then(|n| n.as_str()).is_some_and(|n| !n.is_empty());
+    let has_args = v.get("arguments").or(v.get("args")).or(v.get("parameters")).is_some();
+    has_name && has_args
+}
+
+/// Parse a Llama-style pythonic call `family.method(k="v", 1.5, "positional")` from the
+/// first line that has the `family.method(...)` shape. Kwargs map to named args; bare
+/// positional args map to `"0"`, `"1"`, … The result is a JSON object string, so the
+/// existing arg coercion (`cli::tool_args_to_pairs` + `caps::arg`) handles it unchanged.
+fn parse_pythonic(text: &str) -> Option<(String, String)> {
+    for line in text.lines() {
+        let l = line.trim();
+        let open = match l.find('(') {
+            Some(i) => i,
+            None => continue,
+        };
+        if !l.ends_with(')') {
+            continue;
+        }
+        let name = l[..open].trim();
+        // The `family.method` shape (a dotted identifier) keeps prose from false-matching.
+        if !name.contains('.')
+            || name.starts_with('.')
+            || name.ends_with('.')
+            || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        {
+            continue;
+        }
+        let inner = &l[open + 1..l.len() - 1];
+        return Some((name.to_string(), pythonic_args_to_json(inner)));
+    }
+    None
+}
+
+/// Convert a pythonic argument list body into a JSON object string.
+fn pythonic_args_to_json(inner: &str) -> String {
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return "{}".to_string();
+    }
+    let mut pairs: Vec<String> = Vec::new();
+    let mut pos = 0;
+    for part in split_top_level(inner, ',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        match top_level_eq(part) {
+            Some(eq) => {
+                let key = part[..eq].trim();
+                let val = pythonic_value(part[eq + 1..].trim());
+                pairs.push(format!("{}:{}", json_str(key), val));
+            }
+            None => {
+                pairs.push(format!("\"{pos}\":{}", pythonic_value(part)));
+                pos += 1;
+            }
+        }
+    }
+    format!("{{{}}}", pairs.join(","))
+}
+
+/// Coerce one pythonic value token to its JSON form (quoted string, number, bool, null;
+/// a bare word becomes a JSON string).
+fn pythonic_value(v: &str) -> String {
+    let v = v.trim();
+    let quoted = |q: char| v.len() >= 2 && v.starts_with(q) && v.ends_with(q);
+    if quoted('\'') || quoted('"') {
+        return json_str(&v[1..v.len() - 1]);
+    }
+    match v {
+        "True" | "true" => "true".to_string(),
+        "False" | "false" => "false".to_string(),
+        "None" | "null" => "null".to_string(),
+        _ if v.parse::<f64>().is_ok() => v.to_string(),
+        _ => json_str(v),
+    }
+}
+
+/// A properly-escaped JSON string literal for `s` (delegates to the wire encoder).
+fn json_str(s: &str) -> String {
+    corelib::wire::Json::Str(s.to_string()).to_string()
+}
+
+/// Split `s` on top-level `delim` only — commas inside quotes or `()[]{}` nesting are
+/// kept together (so `f(a=[1,2], b="x,y")` splits into two parts, not four).
+fn split_top_level(s: &str, delim: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '\'' | '"' => quote = Some(c),
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                _ if c == delim && depth == 0 => {
+                    out.push(s[start..i].to_string());
+                    start = i + c.len_utf8();
+                }
+                _ => {}
+            },
+        }
+    }
+    out.push(s[start..].to_string());
+    out
+}
+
+/// The byte index of a top-level `=` (a kwarg separator) in `part`, skipping `==`/`!=`/
+/// `<=`/`>=` and anything inside quotes or brackets. `None` for a positional arg.
+fn top_level_eq(part: &str) -> Option<usize> {
+    let b = part.as_bytes();
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    for (i, c) in part.char_indices() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '\'' | '"' => quote = Some(c),
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                '=' if depth == 0 => {
+                    let prev = if i > 0 { b[i - 1] } else { b' ' };
+                    let next = b.get(i + 1).copied().unwrap_or(b' ');
+                    if !matches!(prev, b'=' | b'!' | b'<' | b'>') && next != b'=' {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            },
+        }
     }
     None
 }
@@ -375,8 +620,10 @@ fn parse_call_body(body: &str) -> Option<(String, String)> {
         return Some((name.to_string(), args));
     }
     // "name <rest>" — rest is JSON or bare text (the runner coerces bare → positional).
-    let (name, args) = match body.find(char::is_whitespace) {
-        Some(i) => (body[..i].to_string(), body[i..].trim().to_string()),
+    // Split at the first whitespace OR `{` (so Mistral's `name{args}` and `@tool fs.x{…}`
+    // with no space still separate the name from its JSON args).
+    let (name, args) = match body.find(|c: char| c.is_whitespace() || c == '{') {
+        Some(i) => (body[..i].trim().to_string(), body[i..].trim().to_string()),
         None => (body.to_string(), "{}".to_string()),
     };
     (!name.is_empty()).then_some((name, if args.is_empty() { "{}".into() } else { args }))
@@ -455,6 +702,49 @@ mod tests {
     }
 
     #[test]
+    fn parse_tool_call_handles_more_model_dialects() {
+        // Mistral `[TOOL_CALLS]` with a JSON array (take the first call).
+        let (n, a) = parse_tool_call("[TOOL_CALLS] [{\"name\":\"fs.read\",\"arguments\":{\"path\":\"x\"}}]").unwrap();
+        assert_eq!(n, "fs.read");
+        assert!(a.contains("\"path\"") && a.contains("\"x\""), "mistral args: {a}");
+        // Mistral `[TOOL_CALLS] name{args}` (no space before the brace).
+        assert_eq!(
+            parse_tool_call("[TOOL_CALLS] fs.list{\"path\":\".\"}"),
+            Some(("fs.list".into(), "{\"path\":\".\"}".into()))
+        );
+        // Llama `<|python_tag|>` prefix wrapping a JSON call.
+        assert_eq!(
+            parse_tool_call("<|python_tag|>{\"name\":\"fs.home\",\"arguments\":{}}"),
+            Some(("fs.home".into(), "{}".into()))
+        );
+        // Llama pythonic — kwargs become named args.
+        assert_eq!(
+            parse_tool_call("fs.read(path=\"src/main.rs\")"),
+            Some(("fs.read".into(), "{\"path\":\"src/main.rs\"}".into()))
+        );
+        // Llama pythonic — a bare positional arg becomes index 0.
+        assert_eq!(parse_tool_call("fs.list(\".\")"), Some(("fs.list".into(), "{\"0\":\".\"}".into())));
+        // Llama pythonic — mixed value types.
+        let (n, a) = parse_tool_call("fs.read(path=\"x\", max=100)").unwrap();
+        assert_eq!(n, "fs.read");
+        assert!(a.contains("\"path\":\"x\"") && a.contains("\"max\":100"), "pythonic mix: {a}");
+        // JSON call-object using the `parameters` key (Llama JSON form).
+        let (n, a) = parse_tool_call("{\"name\":\"fs.read\",\"parameters\":{\"path\":\"x\"}}").unwrap();
+        assert_eq!(n, "fs.read");
+        assert!(a.contains("\"path\"") && a.contains("\"x\""), "parameters key: {a}");
+        // A fenced ```json block whose body is a STRICT call-object (name + arguments).
+        assert_eq!(
+            parse_tool_call("Sure:\n```json\n{\"name\":\"fs.list\",\"arguments\":{\"path\":\".\"}}\n```"),
+            Some(("fs.list".into(), "{\"path\":\".\"}".into()))
+        );
+        // NEGATIVE: a ```json block that is a plain ANSWER (name only, no arguments) must NOT match.
+        assert_eq!(parse_tool_call("Here is the data:\n```json\n{\"name\":\"Ada\",\"age\":36}\n```"), None);
+        // NEGATIVE: prose that mentions a dotted name with parens is not a pythonic call
+        // unless the whole line is the call.
+        assert_eq!(parse_tool_call("You can call fs.list(here) to see files, but let's not."), None);
+    }
+
+    #[test]
     fn loop_calls_tool_then_answers() {
         // First response asks for a tool; second response is the final answer.
         let transport = ScriptedTransport::new(vec![
@@ -476,6 +766,66 @@ mod tests {
         assert_eq!(run.outcome, RunOutcome::Completed);
         // tokens accumulate across both turns
         assert_eq!((run.input_tokens, run.output_tokens), (18, 11));
+    }
+
+    /// A two-model pool on the `failover` strategy — its `order()` head is deterministic
+    /// (`model-a`), so a run's pinned model is assertable.
+    fn two_model_failover_settings() -> AiSettings {
+        use crate::ai::pool::{ModelOverrides, ModelPool, PoolEntry, Strategy};
+        std::env::set_var("TT_TEST_AGENT_KEY", "k");
+        let cat = crate::ai::provider::builtin_default();
+        let mut a = cat.resolve("claude-opus-4-8");
+        a.api_key_env = "TT_TEST_AGENT_KEY".into();
+        a.id = "model-a".into();
+        let mut b = a.clone();
+        b.id = "model-b".into();
+        AiSettings {
+            pool: ModelPool {
+                entries: vec![PoolEntry::new(a, 100, ModelOverrides::default()), PoolEntry::new(b, 100, ModelOverrides::default())],
+                strategy: Strategy::Failover,
+            },
+        }
+    }
+
+    #[test]
+    fn run_pins_one_model_across_turns() {
+        // Two turns (tool then answer) on a 2-model pool: the pinned failover-chain head
+        // serves BOTH turns — the model never hops mid-run.
+        let transport = ScriptedTransport::new(vec![
+            text_sse("@tool sys.run {\"cmd\":\"date\"}", 5, 3),
+            text_sse("done.", 4, 2),
+        ]);
+        let client = Client::new(two_model_failover_settings(), transport);
+        let agent = AgentSpec {
+            system: String::new(),
+            tools: vec![ToolSpec { name: "sys.run".into(), describe: "run".into() }],
+            max_steps: 4,
+        };
+        let mut runner = MockRunner { calls: Vec::new() };
+        let run = run_agent(&client, &agent, "hi", "", &mut runner, &mut NoopObserver);
+        assert_eq!(run.outcome, RunOutcome::Completed);
+        assert_eq!(run.model_used, "model-a", "the pinned failover-chain head served the whole run");
+    }
+
+    #[test]
+    fn a_botched_tool_call_self_corrects_instead_of_answering_garbage() {
+        // Turn 1: a broken `<tool_call>` (no close tag, invalid JSON) — must NOT become the
+        // answer. Turn 2: a clean reply after the corrective nudge.
+        let transport = ScriptedTransport::new(vec![
+            text_sse("<tool_call>{bad json", 3, 2),
+            text_sse("Here is the real answer.", 4, 2),
+        ]);
+        let client = Client::new(keyed_settings(), transport);
+        let agent = AgentSpec {
+            system: String::new(),
+            tools: vec![ToolSpec { name: "fs.list".into(), describe: "list".into() }],
+            max_steps: 4,
+        };
+        let mut runner = MockRunner { calls: Vec::new() };
+        let run = run_agent(&client, &agent, "hi", "", &mut runner, &mut NoopObserver);
+        assert_eq!(run.outcome, RunOutcome::Completed);
+        assert_eq!(run.answer, "Here is the real answer.");
+        assert!(runner.calls.is_empty(), "a broken call never reaches the runner");
     }
 
     #[test]

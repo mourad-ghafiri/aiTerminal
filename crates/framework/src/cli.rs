@@ -743,8 +743,10 @@ impl<W: std::io::Write> CliObserver<W> {
     }
 }
 
-/// The complete tool-marker forms suppressed from the live display.
-const DISPLAY_TOOL_MARKERS: [&str; 3] = ["<tool_call>", "```tool", "```tool_call"];
+/// The line-anchored tool-marker forms suppressed from the live display — sourced from
+/// the parser's SINGLE SOURCE OF TRUTH (`ai::agent::TOOL_LINE_MARKERS`) so the display
+/// filter can never drift from what `parse_tool_call` actually accepts.
+use crate::ai::agent::TOOL_LINE_MARKERS as DISPLAY_TOOL_MARKERS;
 
 /// `t` is (or begins) a tool-call marker line — swallow it from the display.
 fn is_display_tool_marker(t: &str) -> bool {
@@ -2801,6 +2803,27 @@ mod tests {
         assert!(obs.streamed.contains("Let me look."), "prose kept: {:?}", obs.streamed);
         assert!(!obs.streamed.contains("tool_call"), "the raw tool call is suppressed: {:?}", obs.streamed);
         assert!(!obs.streamed.contains("fs.list"), "the call body is suppressed: {:?}", obs.streamed);
+    }
+
+    #[test]
+    fn display_marker_recognizes_all_dialects() {
+        // The display filter is sourced from the parser's TOOL_LINE_MARKERS, so every
+        // tolerated line-anchored dialect is suppressed from the live stream.
+        for m in ["@tool fs.x {}", "<tool_call>", "```tool", "[TOOL_CALLS] fs.x{}", "<|python_tag|>fs.x()"] {
+            assert!(super::is_display_tool_marker(m), "{m:?} must be suppressed");
+        }
+        // Plain prose is not a marker.
+        assert!(!super::is_display_tool_marker("Here is the answer."));
+    }
+
+    #[test]
+    fn observer_suppresses_mistral_and_llama_tool_calls() {
+        use crate::ai::AgentObserver;
+        let mut obs = super::CliObserver::new(Vec::new());
+        obs.on_delta("Checking.\n[TOOL_CALLS] fs.list {\"path\":\".\"}\n");
+        assert!(obs.streamed.contains("Checking."), "prose kept: {:?}", obs.streamed);
+        assert!(!obs.streamed.contains("TOOL_CALLS"), "mistral marker suppressed: {:?}", obs.streamed);
+        assert!(!obs.streamed.contains("fs.list"), "call body suppressed: {:?}", obs.streamed);
     }
 
     #[test]
