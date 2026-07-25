@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Use cases — aiTerminal</title>
-<meta name="description" content="40 real-world aiTerminal workflows: shipping features with @flow, fixing CI with @loop, incident response, code review, DevOps, data wrangling, automation and everyday shell superpowers.">
+<meta name="description" content="47 real-world aiTerminal workflows: shipping features with @flow, fixing CI with @loop, incident response, code review, DevOps, data wrangling, automation and everyday shell superpowers.">
 <link rel="icon" type="image/png" href="assets/icon.png">
 <link rel="stylesheet" href="css/main.css">
 </head>
@@ -29,7 +29,7 @@
 <!-- ================= HEAD ================= -->
 <section class="page-head">
   <div class="wrap">
-    <span class="tag accent">40 real workflows, real prompts</span>
+    <span class="tag accent">47 real workflows, real prompts</span>
     <h1>What people actually <em>do with it.</em></h1>
     <p class="sub">Every one of these runs at a normal shell prompt — no context switch, no
       copy-paste. The AI sees your (redacted) session, the guard reviews every command, and
@@ -118,8 +118,14 @@ Reproduced: rounding applied before the zero-check …</pre>
         <h3><span class="em">🧬</span>Write your own flow in ten lines</h3>
         <p>A flow is a TOML file in <code>ai/flows/</code> — your pipeline, your agents, chained.</p>
         <pre><span class="d"># ~/.aiTerminal/ai/flows/ship.toml</span>
-<span class="d">[[step]] label="implement"; agent="coder";  prompt="Implement: {{input}}"</span>
-<span class="d">[[step]] label="verify";    agent="tester"; prompt="Verify the change above."</span>
+<span class="d">[[step]]</span>
+<span class="d">label  = "implement"</span>
+<span class="d">agent  = "coder"</span>
+<span class="d">prompt = "Implement: {{input}}"</span>
+<span class="d">[[step]]</span>
+<span class="d">label  = "verify"</span>
+<span class="d">agent  = "tester"</span>
+<span class="d">prompt = "Verify the change above."</span>
 <span class="p">❯</span> <span class="ab">@flow</span><span class="c"> ship add rate limiting to the login route</span></pre>
       </div>
 
@@ -300,8 +306,9 @@ notAfter=Oct 12 08:21:44 2026 GMT</pre>
 
       <div class="uc">
         <h3><span class="em">🛟</span>AI that fails over</h3>
-        <p>Weighted pools: cloud first, local fallback — a provider outage doesn't stop your run.</p>
-        <pre><span class="d"># anthropic weight 3 · ollama weight 1</span>
+        <p>Set <code>strategy = "failover"</code> — cloud first, local fallback — and a provider outage doesn't stop your run (it tries the next candidate before any output, with transient errors retried + backoff first).</p>
+        <pre><span class="d"># [ai.balance] strategy = "failover"</span>
+<span class="d"># then anthropic, then ollama (order = fallback order)</span>
 <span class="p">❯</span> <span class="ab">@coder</span><span class="c"> "fix the flaky retry test"</span>
 <span class="d">provider timeout → failing over to llama3 (local)</span>
 <span class="g">✓</span> <span class="d">34s · 5 tools — the run finished anyway</span></pre>

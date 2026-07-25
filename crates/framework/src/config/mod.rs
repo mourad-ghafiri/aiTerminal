@@ -80,6 +80,11 @@ pub struct Config {
     /// Auto-recall: inject the most relevant memories into the AI context each turn
     /// (`[ai] memory`). Default `true`; the `memory.*` tools/commands work regardless.
     pub ai_memory: bool,
+    /// Optional USD soft-cap (`[ai] budget`). When set, every run's footer shows its
+    /// estimated cost against it (`· 12% of $0.10`) and a run that exceeds it prints a
+    /// ⚠ advisory. ADVISORY only — it never blocks a run (unlike the loop's token
+    /// `--budget`). `None` = no budget shown.
+    pub ai_budget: Option<f64>,
     /// How a shell `@ai <request>` suggestion is applied: `"manual"` (default —
     /// preload the command for review, then Enter) or `"auto"` (run a guard-allowed
     /// suggestion immediately; a guard-*confirm* command still drops to review).
@@ -143,6 +148,7 @@ impl Default for Config {
             ai_strategy: String::new(),
             ai_share_terminal_context: true,
             ai_memory: true,
+            ai_budget: None,
             ai_command_mode: "manual".into(),
             plugins_enabled: true,
             plugins_disabled: Vec::new(),
@@ -618,6 +624,10 @@ impl Config {
             if let Some(v) = ai.get("memory").and_then(|v| v.as_bool()) {
                 c.ai_memory = v;
             }
+            // `[ai] budget` — a positive, finite USD soft-cap; anything else clears it.
+            if let Some(v) = ai.get("budget").and_then(|v| v.as_num()) {
+                c.ai_budget = (v.is_finite() && v > 0.0).then_some(v);
+            }
             if let Some(v) = ai.get("network").and_then(|v| v.as_bool()) {
                 c.ai_network = v;
             }
@@ -903,6 +913,16 @@ mod tests {
         assert_eq!(c.zoom, Config::default().zoom, "inf zoom ignored");
         assert!(c.zoom.is_finite());
         assert_eq!(c.scrollback, 1_000_000, "scrollback clamped to the upper bound");
+    }
+
+    #[test]
+    fn ai_budget_parses_positive_usd_else_none() {
+        assert_eq!(Config::from_toml("[ai]\nbudget = 0.10\n").ai_budget, Some(0.10));
+        assert_eq!(Config::from_toml("[ai]\nbudget = 5\n").ai_budget, Some(5.0));
+        assert_eq!(Config::from_toml("[ai]\nbudget = 0\n").ai_budget, None, "zero clears it");
+        assert_eq!(Config::from_toml("[ai]\nbudget = -1\n").ai_budget, None, "negative rejected");
+        assert_eq!(Config::from_toml("[ai]\nbudget = nan\n").ai_budget, None, "non-finite rejected");
+        assert_eq!(Config::default().ai_budget, None, "no budget by default");
     }
 
     #[test]

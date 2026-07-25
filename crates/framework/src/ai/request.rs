@@ -76,9 +76,24 @@ The user's recent terminal context (with secrets redacted) may be provided for g
     )
 }
 
-const COMMAND_SYSTEM: &str = "You translate a natural-language request into a single shell command for the user's platform. \
-Output ONLY the command, on the first line, with no Markdown fences and no prose. \
-If the request is unsafe, ambiguous, or impossible, output a single line beginning with '# ' that briefly explains why.";
+/// The sentinel a prose answer begins with in the dual-mode `@ai` reply. Chosen to be
+/// something no real shell command starts with, so detection is unambiguous even across
+/// streamed-chunk boundaries.
+pub const ANSWER_SENTINEL: &str = "%%ANSWER%%";
+
+fn command_system() -> String {
+    format!(
+        "You are the AI at a developer's terminal. The user typed `@ai <request>`. Decide:\n\
+         - If a single shell command satisfies the request, output ONLY that command as raw text on \
+         the first line — no Markdown fences, no backticks, no `$`/`>` prompt, no prose, no explanation.\n\
+         - If the request is a QUESTION, needs explanation, or no single command fits, begin your \
+         reply with the exact token `{ANSWER_SENTINEL}` followed by a concise GitHub-flavored \
+         Markdown answer.\n\
+         - If a command is unsafe, ambiguous, or impossible, output a single line beginning with \
+         '# ' that briefly explains why.\n\
+         Never mix the two: either one bare command line, or `{ANSWER_SENTINEL}` + prose."
+    )
+}
 
 
 fn user_message(context: &str, body: &str) -> Vec<Message> {
@@ -112,11 +127,12 @@ pub fn qa_request(model: &ModelDef, prompt: &str, context: &str) -> ChatRequest 
 pub fn command_request(model: &ModelDef, nl: &str, context: &str) -> ChatRequest {
     ChatRequest {
         model: model.id.clone(),
-        max_tokens: 512,
-        system: Some(COMMAND_SYSTEM.to_string()),
+        // Room for a prose answer when the request is a question (a bare command needs
+        // little; capped so a runaway can't balloon).
+        max_tokens: 2048,
+        system: Some(command_system()),
         messages: user_message(context, &format!("Request: {nl}")),
-        // Commands are deterministic: the fast model's creative temperature is
-        // intentionally NOT used here.
+        // Low temperature keeps a command deterministic; still fine for a short prose answer.
         temperature: Some(0.0),
         top_p: None,
         top_k: None,
@@ -126,13 +142,16 @@ pub fn command_request(model: &ModelDef, nl: &str, context: &str) -> ChatRequest
 }
 
 
-/// Extract the first runnable command line from a streamed command answer
-/// (skips blank lines and `# `-prefixed refusals/explanations).
+/// Extract the first runnable command line from a command answer. Tolerant of how
+/// models decorate output: skips blank lines, `# `-prefixed refusals/explanations, and
+/// Markdown fence lines (```` ``` ````/```` ```sh ````) that some models wrap the command
+/// in; strips a leading shell prompt (`$ ` / `> `). So a fenced `du -sh .` yields the
+/// bare command, not the fence.
 pub fn first_command_line(full: &str) -> Option<String> {
     full.lines()
         .map(str::trim)
-        .find(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| l.trim_start_matches("$ ").to_string())
+        .find(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("```"))
+        .map(|l| l.trim_start_matches("$ ").trim_start_matches("> ").to_string())
 }
 
 #[cfg(test)]

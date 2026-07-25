@@ -121,7 +121,7 @@ api_key  = <span class="s">"sk-…"</span>             <span class="c"># or "$MY
     <ul>
       <li><b>manual</b> (default) — every command preloads at your prompt for review.</li>
       <li><b>auto</b> — guard-allowed <em>safe-listed</em> commands run immediately; confirm-tier always drops to review; denied prints as a <code>#</code> comment, never runs.</li>
-      <li>Ask a question instead and the answer streams as plain text: <code>@ai why is my docker build slow?</code></li>
+      <li><b>Dual-mode:</b> if your request is a question rather than a command, <code>@ai</code> streams a prose answer instead of preloading anything — e.g. <code>@ai why is my docker build slow?</code> The model decides: one command, or an explanation.</li>
     </ul>
 
     <h2 id="cmd-agent">@&lt;agent&gt; — full agentic runs</h2>
@@ -156,9 +156,13 @@ The fix: the parser dropped the final line …
 description = <span class="s">"implement, test, and write the changelog"</span>
 chain = true
 <span class="k">[[step]]</span>
-label = <span class="s">"implement"</span>; agent = <span class="s">"coder"</span>;  prompt = <span class="s">"Implement: {{input}}"</span>
+label  = <span class="s">"implement"</span>
+agent  = <span class="s">"coder"</span>
+prompt = <span class="s">"Implement: {{input}}"</span>
 <span class="k">[[step]]</span>
-label = <span class="s">"verify"</span>;    agent = <span class="s">"tester"</span>; prompt = <span class="s">"Verify the change above."</span></code></pre>
+label  = <span class="s">"verify"</span>
+agent  = <span class="s">"tester"</span>
+prompt = <span class="s">"Verify the change above."</span></code></pre>
 
     <h2 id="cmd-loop">@loop — iterate to a verified goal</h2>
     <pre><code><span class="p">❯</span> @loop "make the config tests pass" --check "cargo test -p framework config::"
@@ -273,7 +277,7 @@ action = <span class="s">"zoom_pane"</span></code></pre>
       <tr><th>Section</th><th>Keys</th></tr>
       <tr><td><code>[appearance]</code></td><td><code>theme</code> · <code>locale</code> · <code>font_family</code> (default Menlo) · <code>font_size</code> (default 15) · <code>cursor_style</code> (block / bar / underline)</td></tr>
       <tr><td><code>[behavior]</code></td><td><code>zoom</code> · <code>tab_bar</code> = top|bottom|left|right · <code>shell</code> · <code>scrollback</code> (default 10000)</td></tr>
-      <tr><td><code>[ai]</code></td><td><code>share_terminal_context</code> · <code>memory</code> · <code>mode</code> = manual|auto · <code>network</code> — then <code>[ai.balance] strategy</code> + the <code>[[ai.model]]</code> blocks, last</td></tr>
+      <tr><td><code>[ai]</code></td><td><code>share_terminal_context</code> · <code>memory</code> · <code>mode</code> = manual|auto · <code>network</code> · <code>budget</code> (USD cost soft-cap) — then <code>[ai.balance] strategy</code> + the <code>[[ai.model]]</code> blocks, last</td></tr>
       <tr><td><code>[[ai.model]]</code></td><td><code>provider</code> · <code>id</code> · <code>api_key</code> · <code>weight</code> · <code>temperature</code> · <code>top_p</code> · <code>top_k</code> · <code>max_tokens</code> · <code>thinking</code></td></tr>
       <tr><td><code>[plugins]</code></td><td><code>enabled</code> · <code>disabled = [...]</code></td></tr>
       <tr><td><code>[shell]</code></td><td><code>integration</code></td></tr>
@@ -410,12 +414,22 @@ strategy = <span class="s">"weighted"</span>       <span class="c"># weighted (d
       native catalog.</p>
 
     <h2 id="tools">The tool catalog</h2>
-    <p>Native tools agents may call (each agent declares its own allowlist; undeclared tools are
+    <p>The full native catalog (each agent declares its own <b>allowlist</b>; undeclared tools are
       refused): <code>fs.*</code> read/search/glob/write/edit (writes sandboxed to your invocation
-      directory) · <code>sys.run</code> (through the guard, output capped) · <code>web/net/http</code>
-      (SSRF-guarded, off with <code>[ai] network=false</code>) · <code>git.*</code> ·
-      <code>memory.*</code> · <code>todo.*</code> · <code>task.run</code> (parallel read-only
-      sub-agents) · <code>data/queue/store</code> · clipboard, clock, codecs and diagnostics.</p>
+      directory) · <code>sys.run</code> (through the guard, output capped) · <code>diag.check</code>
+      (native <code>cargo check</code>/<code>ruff</code> → structured <code>file:line</code>
+      diagnostics) · <code>web/net/http</code> (SSRF-guarded, off with <code>[ai] network=false</code>) ·
+      <code>git.*</code> · <code>memory.*</code> · <code>todo.*</code> · <code>task.run</code>
+      (parallel read-only sub-agents) · <code>data.*</code>/<code>queue.*</code>/<code>store.*</code>
+      (a sandboxed scratch database, queues and KV for agents) · <code>codec.*</code> (hash, uuid,
+      base64/hex/url, JSON, CSV) · <code>time.*</code> date math · clipboard.</p>
+    <p><b>What each bundled agent holds</b> (write your own <code>ai/agents/*.md</code> to grant more):
+      <code>@coder</code> — fs read+write, <code>diag.check</code>, <code>sys.run</code>,
+      <code>web.read</code>, <code>memory.*</code>, <code>todo.*</code>, <code>task.run</code>;
+      <code>@explorer</code>/<code>@reviewer</code> — read-only (fs read/search, web.read, memory);
+      <code>@tester</code> — read + write + <code>sys.run</code>. The catalog above is what a
+      <em>custom</em> agent can additionally opt into (e.g. <code>http.*</code> for an API-calling
+      agent, <code>data.*</code> for a scratch DB).</p>
 
     <h2 id="security">Security</h2>
     <p><b>The AI proposes, the guard disposes.</b></p>

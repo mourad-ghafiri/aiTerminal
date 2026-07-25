@@ -91,6 +91,11 @@ pub trait AgentObserver {
     /// A tool-calling turn's prose (the words before its `@tool` line) is final — commit
     /// it to the transcript before the tool runs.
     fn on_commit(&mut self, _prose: &str) {}
+    /// A flow/orchestration step is starting (`i` of `n`, 1-based) — lets the host show
+    /// live step progress. No-op outside orchestration.
+    fn on_step_start(&mut self, _i: usize, _n: usize, _label: &str) {}
+    /// A flow/orchestration step finished (`ok` = completed normally).
+    fn on_step_end(&mut self, _label: &str, _ok: bool) {}
 }
 
 /// An [`AgentObserver`] that ignores everything — for non-streaming callers
@@ -98,13 +103,24 @@ pub trait AgentObserver {
 pub struct NoopObserver;
 impl AgentObserver for NoopObserver {}
 
-/// The prose a model turn emitted BEFORE its `@tool` line — what the user should see
+/// True when a line begins the machine tool-call protocol in ANY tolerated form
+/// (`@tool …`, an XML `<tool_call>`, or a fenced ```` ```tool ```` block) — the point
+/// past which text is protocol, not prose.
+fn is_tool_marker_line(t: &str) -> bool {
+    t == "@tool"
+        || t.starts_with("@tool ")
+        || t.starts_with("<tool_call>")
+        || t == "```tool"
+        || t == "```tool_call"
+}
+
+/// The prose a model turn emitted BEFORE its tool call — what the user should see
 /// (the tool marker and anything after it is the machine protocol, not for display).
 fn prose_before_tool(text: &str) -> String {
     let mut out = String::new();
     for line in text.lines() {
         let t = line.trim_start();
-        if t == "@tool" || t.starts_with("@tool ") {
+        if is_tool_marker_line(t) {
             break;
         }
         out.push_str(line);
@@ -277,7 +293,11 @@ fn tool_instructions(tools: &[ToolSpec]) -> String {
         return "Answer directly in Markdown.".into();
     }
     let mut s = String::from(
-        "You can call tools. To call one, output EXACTLY one line:\n@tool <name> <json-args>\n\
+        "You can call tools. To call one, output EXACTLY one line in THIS form and nothing else:\n\
+         @tool <name> <json-args>\n\
+         Example: @tool fs.list {\"path\":\".\"}\n\
+         Use ONLY this `@tool` form — do NOT use XML like <tool_call>, function-call JSON, or \
+         fenced ``` blocks. Emit the line raw, not inside backticks.\n\
          Call at most one tool per turn; you will receive its result, then continue.\n\
          When you have the final answer, reply in Markdown WITHOUT an @tool line.\n\nTools:\n",
     );
@@ -287,22 +307,87 @@ fn tool_instructions(tools: &[ToolSpec]) -> String {
     s
 }
 
-/// Find a `@tool <name> <json>` call in the model's text → `(name, args)`.
+/// Find a tool call in the model's text → `(name, args)`. **Model-agnostic**: weaker /
+/// non-Anthropic models render calls many ways, so we accept, in order of specificity:
+///   1. our `@tool <name> <args>` marker,
+///   2. an XML `<tool_call> … </tool_call>` block (Qwen and many OSS models),
+///   3. a fenced ```` ```tool … ``` ```` block,
+///   4. a function-call JSON object `{"name"|"tool": …, "arguments"|"args"|"parameters": …}`.
+/// The `args` string is returned verbatim (JSON or bare text); the runner coerces it.
 fn parse_tool_call(text: &str) -> Option<(String, String)> {
-    for line in text.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("@tool ") {
-            let rest = rest.trim();
-            let (name, args) = match rest.find(|c: char| c.is_whitespace()) {
-                Some(i) => (rest[..i].to_string(), rest[i..].trim().to_string()),
-                None => (rest.to_string(), "{}".to_string()),
-            };
-            if !name.is_empty() {
-                return Some((name, if args.is_empty() { "{}".into() } else { args }));
+    // 2. XML `<tool_call> … </tool_call>` (body may span lines).
+    if let Some(body) = slice_between(text, "<tool_call>", "</tool_call>") {
+        if let Some(call) = parse_call_body(body) {
+            return Some(call);
+        }
+    }
+    // 3. A fenced ```tool / ```tool_call block.
+    for fence in ["```tool_call", "```tool"] {
+        if let Some(after) = text.find(fence).map(|i| i + fence.len()) {
+            if let Some(end) = text[after..].find("```") {
+                if let Some(call) = parse_call_body(&text[after..after + end]) {
+                    return Some(call);
+                }
             }
         }
     }
+    // 1. Our `@tool <name> <args>` marker (one per line).
+    for line in text.lines() {
+        let line = line.trim();
+        if line == "@tool" {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("@tool ") {
+            if let Some(call) = parse_call_body(rest) {
+                return Some(call);
+            }
+        }
+    }
+    // 4. The whole reply is a bare function-call JSON object (some models emit only that).
+    // `parse_call_body` requires a name/tool key, so a plain JSON answer won't false-match.
+    let t = text.trim();
+    if t.starts_with('{') {
+        return parse_call_body(t);
+    }
     None
+}
+
+/// Turn a tool-call BODY (the text after the marker, or an XML/fenced block's contents)
+/// into `(name, args)`. A JSON call-object yields its name + stringified arguments; else
+/// the first token is the name and the remainder is the (possibly bare) args.
+fn parse_call_body(body: &str) -> Option<(String, String)> {
+    let body = body.trim();
+    if body.is_empty() {
+        return None;
+    }
+    // A brace-started body is a function-call JSON object, or nothing — never a
+    // "name rest" split (that would mangle a JSON answer into a bogus tool name).
+    // {"name"|"tool": "...", "arguments"|"args"|"parameters": {...}}
+    if body.starts_with('{') {
+        let v = corelib::wire::Json::parse(body).ok()?;
+        let name = v.get("name").or_else(|| v.get("tool")).and_then(|n| n.as_str()).filter(|n| !n.is_empty())?;
+        let args = v
+            .get("arguments")
+            .or_else(|| v.get("args"))
+            .or_else(|| v.get("parameters"))
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| "{}".to_string());
+        return Some((name.to_string(), args));
+    }
+    // "name <rest>" — rest is JSON or bare text (the runner coerces bare → positional).
+    let (name, args) = match body.find(char::is_whitespace) {
+        Some(i) => (body[..i].to_string(), body[i..].trim().to_string()),
+        None => (body.to_string(), "{}".to_string()),
+    };
+    (!name.is_empty()).then_some((name, if args.is_empty() { "{}".into() } else { args }))
+}
+
+/// The text strictly between the first `open` and the next following `close`, if both
+/// are present in order. Trimmed of surrounding whitespace.
+fn slice_between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let start = text.find(open)? + open.len();
+    let end = text[start..].find(close)? + start;
+    Some(text[start..end].trim())
 }
 
 #[cfg(test)]
@@ -340,6 +425,33 @@ mod tests {
             Some(("sys.run".into(), "{\"cmd\":\"ls\"}".into()))
         );
         assert_eq!(parse_tool_call("no tools here"), None);
+        // A bare `@tool name` with no args → empty object.
+        assert_eq!(parse_tool_call("@tool fs.home"), Some(("fs.home".into(), "{}".into())));
+    }
+
+    #[test]
+    fn parse_tool_call_is_model_agnostic() {
+        // XML `<tool_call>` with BARE args (the reported ling-3.0 failure) — args kept verbatim.
+        assert_eq!(
+            parse_tool_call("Let me look.\n<tool_call>fs.list .</tool_call>"),
+            Some(("fs.list".into(), ".".into()))
+        );
+        // XML wrapping a function-call JSON object → name + stringified arguments.
+        let (n, a) = parse_tool_call("<tool_call>{\"name\":\"fs.read\",\"arguments\":{\"path\":\"x\"}}</tool_call>").unwrap();
+        assert_eq!(n, "fs.read");
+        assert!(a.contains("\"path\"") && a.contains("\"x\""), "args carried: {a}");
+        // Alternate JSON keys (`tool`/`args`).
+        assert_eq!(
+            parse_tool_call("{\"tool\":\"fs.home\",\"args\":{}}"),
+            Some(("fs.home".into(), "{}".into()))
+        );
+        // A fenced ```tool block.
+        assert_eq!(
+            parse_tool_call("```tool\nfs.list {\"path\":\".\"}\n```"),
+            Some(("fs.list".into(), "{\"path\":\".\"}".into()))
+        );
+        // Prose that merely mentions a tool name is NOT a call.
+        assert_eq!(parse_tool_call("I could use fs.list here but won't."), None);
     }
 
     #[test]

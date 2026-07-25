@@ -1,7 +1,7 @@
 # A first-class AI terminal. `command_not_found_handler` only runs when a typed
 # command doesn't exist — and `@`-commands never do — so this NEVER intercepts a
 # real command; normal typing is untouched. Everything is a terminal command:
-#   @ai <request>         → translate natural language to a shell command
+#   @ai <request>         → a shell command (preloaded), or a prose answer for a question
 #   @<agent> <task>       → run the named agent and print its answer (add --bg to track as a job)
 #   @flow [<name> input]  → run a multi-step AI workflow; with no args, list them
 #   @loop <goal> [--check "<cmd>"] [--max N] → iterate an agent until the goal verifies
@@ -84,6 +84,8 @@ _tt_ai_load_pending() {
     '#TT-CONFIRM# '*)    # guard wants confirmation: preload with a warning
       print -z -- "${out#\#TT-CONFIRM# }"
       print -P -u2 -- "%F{${TT_WARN:-214}}⚠%f review before running (or edit)"
+      ;;
+    '#TT-ANSWER#'*)      # a prose answer already streamed to stderr — nothing to preload
       ;;
     \#*)                 # a refusal / guard block / error — shown, never run
       print -u2 -- "${out#\# }"

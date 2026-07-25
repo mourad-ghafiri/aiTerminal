@@ -69,6 +69,12 @@ mode = "manual"
 # get a clear "network is disabled" error instead of egress.
 network = true
 
+# Optional USD spend soft-cap. When set, every run's footer shows its estimated cost
+# against it (e.g. "· 12% of $0.10") and a run that exceeds it gets a ⚠ note. ADVISORY
+# only — it never blocks a run (the @loop `--budget` flag is a separate hard token cap).
+# Needs the chosen model's price_in/price_out (the bundled cloud models ship them).
+# budget = 0.50
+
 
 # ══ MODELS ════════════════════════════════════════════════════════════════════
 # Every request — @ai, @<agent>, @flow, @loop — draws one model from this pool.

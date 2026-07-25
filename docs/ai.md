@@ -9,16 +9,23 @@ path.
 AI is **off by default** — no vendor is assumed. Enable it by declaring a model
 (see [Models](#models--pools)).
 
-## `@ai` — natural language → a command
+## `@ai` — a command, or an answer
+
+`@ai` is **dual-mode**: the model decides whether your request maps to a single shell
+command or wants a prose answer.
 
 ```text
 ❯ @ai list every port something is listening on
 ❯ press Enter to run (or edit)
 ❯ lsof -iTCP -sTCP:LISTEN -n -P
+
+❯ @ai why is my docker build slow?
+The most common causes are cache invalidation and copying node_modules…
+✓ 2.1s · 1.2k in / 340 out · ~$0.004
 ```
 
-The suggestion is collected fully, run through the **command guard** *before* it can
-reach the shell, then:
+**Command mode** — the suggestion is collected fully, run through the **command guard**
+*before* it can reach the shell, then:
 
 - `[ai] mode = "manual"` (default) — the command is preloaded into your prompt for
   review; Enter runs it.
@@ -26,6 +33,9 @@ reach the shell, then:
   guard-**confirm** command (e.g. `rm -rf`, `sudo`) always drops to review.
 - A guard-**denied** command, a model refusal, or any error prints as a `#` comment —
   never silence, never execution.
+
+**Answer mode** — for a question or anything needing explanation, `@ai` streams a prose
+answer instead of preloading a command (nothing runs).
 
 `@ai` grounds on your cwd, shell, recent terminal output (redacted; see
 `share_terminal_context`), and recalled memory — so `mkdir x` then `@ai go into it`
@@ -230,7 +240,18 @@ stderr, content on stdout, so piping stays clean:
   ⚙ fs.search {"q":"parse_flow"} · 18ms · 2.1KB
   ⚙ fs.edit {"path":"src/…"} · 6ms · 412B
 The fix: the parser dropped the …    ← the answer, streaming
-✓ 8.4s · 2 tools · 12.3k in / 1.8k out
+✓ 8.4s · 2 tools · 12.3k in / 1.8k out · ~$0.014
+```
+
+A **`@flow`** shows each step announce itself and a compact recap; a **`@loop`** shows
+each iteration and a footer with the iteration count:
+
+```text
+❯ @flow add a --json flag to the export command
+▶ flow 'implement' — 3 step(s)
+▶ 1/3 explore  …  ▶ 2/3 implement  …  ▶ 3/3 verify  …
+✓ explore · ✓ implement · ✓ verify
+✓ 58s · 11 tools · 32k in / 4.1k out · ~$0.21
 ```
 
 - **Answers** stream token-by-token to stdout; the `@tool …` machine protocol
@@ -239,9 +260,13 @@ The fix: the parser dropped the …    ← the answer, streaming
   capability in the catalog; force it per pool entry with `thinking =
   true|false` on any `[[ai.model]]`.
 - **Tools** trace live with duration + result size; failures show inline.
-- **`@ai <request>`** gets the same treatment — spinner, thinking, the command
-  forming dim — ending with the token footer and the command preloaded at your
-  prompt for review.
+- **Footers** show elapsed · tools · tokens, plus an **estimated cost** (`~$0.014`)
+  whenever the model has pricing (`price_in`/`price_out`). Set `[ai] budget` (a USD
+  soft-cap) and the footer also shows your spend against it (`· 14% of $0.10`), with a
+  ⚠ when a run goes over — advisory only, it never blocks (the `@loop --budget` flag is
+  a separate token hard-stop).
+- **`@ai <request>`** gets the same treatment — spinner, thinking, the command forming
+  dim (or a prose answer) — ending with the footer, and the command preloaded for review.
 - All of it is TTY-aware: piped output and `--bg` job logs get plain,
   animation-free text automatically, and the chrome colors follow your theme
   (via the live `TT_*` shell colors).
@@ -405,25 +430,33 @@ the redacted terminal snapshot, and any attached files.
 
 ## The tool catalog
 
-Native tools agents may hold (each agent lists its own; unlisted tools are refused):
+This is the **full native catalog**. Each agent declares its own **allowlist** in its
+Markdown frontmatter (`tools = [...]`); unlisted tools are refused. The bundled agents
+hold a curated subset (below) — write your own `ai/agents/<name>.md` to grant more (e.g.
+`http.*` for an API-calling agent, `data.*` for a scratch database).
 
 | Family | Tools | Danger |
 | --- | --- | --- |
 | `fs` | read, list, stat, home, roots, glob, search (grep), measure, write, edit, append, mkdir, delete, copy, move, open | read = safe; writes are sandbox-confined (the invocation directory) |
 | `sys` | run (through the command guard) | exec |
+| `diag` | check — native `cargo check`/`ruff` → structured `file:line` diagnostics (workspace-confined) | safe |
 | `web` / `net` / `http` | read (page → markdown, incl. git repos/READMEs), get, post | network (`[ai] network` + SSRF rules) |
-| `memory` | search, get, add, update, forget | safe/write |
-| `data` / `queue` / `store` | structured tables, queues, KV (sandboxed dir) | write |
+| `memory` | search, get, add, update, forget, recall, list, consolidate, stats | safe/write |
+| `data` / `queue` / `store` | structured tables, queues, KV — an agent's sandboxed scratch database | write |
 | `todo` | set, add, done, list, clear — the live plan | safe |
 | `task` | run — sub-agent delegation | safe (delegates are read-only) |
-| `git` | repo browsing behind `web.read` | network |
-| `diag` / `sec` / `clock` / `time` / `codec` / `files` / `clip` | diagnostics, guard checks, time, hashing/encoding, file management, clipboard | mostly safe |
+| `codec` / `time` | hash, uuid, base64/hex/url, JSON, CSV; date now/add/diff/format | safe |
+| `git` / `sec` / `clock` / `clip` | repo browsing (via `web.read`), guard checks, clock, clipboard | mostly safe |
+
+**Bundled agent allowlists:** `coder` — fs read+write, `diag.check`, `sys.run`, `web.read`,
+`memory.*`, `todo.*`, `task.run`; `explorer` & `reviewer` — read-only (fs read/search,
+`web.read`, `memory`); `tester` — fs read+write + `sys.run`; `ai` — the safe read-only set.
 
 ## CLI reference
 
 ```text
-aiTerminal ai "<prompt>"                     # Q&A (what plain @ai text falls back to)
-aiTerminal ai --command "<request>"          # NL → one guarded command   (@ai)
+aiTerminal ai "<prompt>"                     # prose Q&A
+aiTerminal ai --command "<request>"          # dual-mode: a guarded command OR prose  (@ai)
 aiTerminal ai --agent <name> "<task>"        # agent run                  (@<agent>)
 aiTerminal ai --flow <name> "<input>"        # workflow                   (@flow)
 aiTerminal ai --loop "<goal>" [--check …]    # engineered agent loop      (@loop)

@@ -23,6 +23,8 @@ pub struct StepResult {
     pub answer: String,
     pub input_tokens: u32,
     pub output_tokens: u32,
+    /// Tool calls this step's agent made (for the flow footer's tool count).
+    pub tools: usize,
     /// Whether the step's agent run completed normally — a failed step ends the
     /// sequence (later steps never run on top of an error).
     pub ok: bool,
@@ -36,6 +38,8 @@ pub struct Orchestration {
     pub final_answer: String,
     pub input_tokens: u32,
     pub output_tokens: u32,
+    /// Total tool calls across all steps (for the flow footer).
+    pub tools: usize,
 }
 
 /// Run `steps` in sequence. When `chain` is true, each completed step's answer is
@@ -54,17 +58,22 @@ pub fn run_orchestration<T: Transport>(
     // supplies one agent run as the work and its labeled answer as the chained
     // contribution that later steps see.
     let halted = std::cell::Cell::new(false);
+    let n = steps.len();
+    let idx = std::cell::Cell::new(0usize);
     let results = platform::orchestrator::run_sequence(steps, base_context, chain, |step, context| {
         if halted.get() {
             // A prior step failed — later steps are skipped (empty, not-ok results
             // are filtered out below), so the sequence never builds on an error.
             return (
-                StepResult { label: step.label.clone(), answer: String::new(), input_tokens: 0, output_tokens: 0, ok: false },
+                StepResult { label: step.label.clone(), answer: String::new(), input_tokens: 0, output_tokens: 0, tools: 0, ok: false },
                 String::new(),
             );
         }
+        idx.set(idx.get() + 1);
+        observer.on_step_start(idx.get(), n, &step.label);
         let run = run_agent(client, &step.agent, &step.prompt, context, runner, observer);
         let ok = run.outcome == crate::ai::RunOutcome::Completed;
+        observer.on_step_end(&step.label, ok);
         if !ok {
             halted.set(true);
         }
@@ -74,6 +83,7 @@ pub fn run_orchestration<T: Transport>(
             answer: run.answer,
             input_tokens: run.input_tokens,
             output_tokens: run.output_tokens,
+            tools: run.steps.len(),
             ok,
         };
         (step_result, contribution)
@@ -99,6 +109,7 @@ pub fn run_orchestration<T: Transport>(
     for step in results {
         out.input_tokens = out.input_tokens.saturating_add(step.input_tokens);
         out.output_tokens = out.output_tokens.saturating_add(step.output_tokens);
+        out.tools = out.tools.saturating_add(step.tools);
         out.steps.push(step);
     }
     out.final_answer = out.steps.last().map(|s| s.answer.clone()).unwrap_or_default();

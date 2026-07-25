@@ -167,14 +167,18 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
     // runs it); Confirm → a `CONFIRM_MARK` prefix the shell turns into an edit-buffer review
     // (explicit Enter); Deny / model refusal → a `#`-comment the shell shows, never runs.
     if as_command {
-        // The live experience rides stderr (the shell shows it while stdout is
-        // captured into the pending file): a spinner, dim thinking with its `∴`
-        // marker, the command forming dim as it streams, then a token footer —
-        // right before the shell preloads the final command for review.
+        // `@ai` is DUAL-MODE: the model returns either a single shell command (preloaded for
+        // review/run) OR — for a question — a prose answer prefixed with `ANSWER_SENTINEL`.
+        // All chrome rides stderr (the shell shows it live while stdout is captured into the
+        // pending file): a spinner, dim `∴` thinking, the command forming dim / prose readable
+        // as it streams, then a footer. A prose answer streams to stderr and preloads nothing.
         let started = std::time::Instant::now();
         let mut spinner = Some(Spinner::start("thinking\u{2026}".into()));
         let (dim, r) = (muted(), reset());
-        let mut buf = String::new();
+        let sentinel = crate::ai::ANSWER_SENTINEL;
+        let mut buf = String::new(); // full raw model output (for command extraction)
+        let mut head = String::new(); // undecided prefix while it could still be the sentinel
+        let mut mode: Option<bool> = None; // None = undecided; Some(true) = prose; Some(false) = command
         let mut thinking_open = false;
         let mut streamed_any = false;
         let (mut tin, mut tout) = (0u64, 0u64);
@@ -188,9 +192,29 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
                         eprintln!();
                         thinking_open = false;
                     }
-                    eprint!("{dim}{s}{r}");
-                    streamed_any = true;
                     buf.push_str(&s);
+                    streamed_any = true;
+                    match mode {
+                        // Already decided: prose streams readable, a command streams dim.
+                        Some(true) => eprint!("{s}"),
+                        Some(false) => eprint!("{dim}{s}{r}"),
+                        None => {
+                            head.push_str(&s);
+                            let h = head.trim_start();
+                            // Still a possible sentinel prefix → keep buffering (don't print yet).
+                            if h.len() < sentinel.len() && sentinel.starts_with(h) {
+                                continue;
+                            }
+                            if let Some(rest) = h.strip_prefix(sentinel) {
+                                mode = Some(true);
+                                eprint!("{}", rest.trim_start()); // prose, readable
+                            } else {
+                                mode = Some(false);
+                                eprint!("{dim}{head}{r}"); // command, dim (exact bytes)
+                            }
+                            head.clear();
+                        }
+                    }
                 }
                 crate::ai::StreamEvent::Thinking(t) => {
                     if let Some(mut sp) = spinner.take() {
@@ -219,14 +243,18 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
         if thinking_open || streamed_any {
             eprintln!();
         }
-        eprintln!("{dim}{}{r}", run_footer(started.elapsed(), 0, tin, tout));
-        // Run the guard BEFORE the command can reach the shell, then let
-        // `command_marker` pick the one line to emit (run / review / confirm / block),
-        // honouring the configured `[ai] mode`.
+        eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget));
+        // Prose answer: already streamed to stderr — tell the shell to preload nothing.
+        if prose_answer(&buf).is_some() {
+            println!("{ANSWER_MARK}");
+            record_session_run(session.as_ref(), "@ai", prompt, "answered");
+            return 0;
+        }
+        // Command: run the guard BEFORE it can reach the shell, then let `command_marker`
+        // pick the one line to emit (run / review / confirm / block) per `[ai] mode`.
         let cmd = crate::ai::first_command_line(&buf);
         let verdict = cmd.as_deref().map(|c| policy.check_command(c));
         println!("{}", command_marker(cmd.as_deref(), verdict, &cfg.ai_command_mode, &buf));
-        // Remember the NL→command mapping for this folder (the most useful digest entry).
         record_session_run(session.as_ref(), "@ai", prompt, cmd.as_deref().unwrap_or("(no command)"));
         return 0;
     }
@@ -279,7 +307,7 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
         eprintln!();
     }
     println!();
-    eprintln!("{dim}{}{r}", run_footer(started.elapsed(), 0, tin, tout));
+    eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget));
     record_session_run(session.as_ref(), "@ai (q&a)", prompt, "answered");
     0
 }
@@ -382,6 +410,8 @@ fn session_preamble(session: Option<&crate::ai::Session>) -> String {
 const RUN_MARK: &str = "#TT-RUN# ";
 const EDIT_MARK: &str = "#TT-EDIT# ";
 const CONFIRM_MARK: &str = "#TT-CONFIRM# ";
+/// A prose answer was already streamed to stderr — the shell preloads nothing.
+const ANSWER_MARK: &str = "#TT-ANSWER#";
 
 /// The single line `@ai --command` prints for a suggested command + guard verdict.
 /// Pure (no I/O) so the dispatch policy is unit-testable: auto vs manual, the
@@ -416,6 +446,30 @@ fn command_marker(cmd: Option<&str>, verdict: Option<crate::security::Verdict>, 
 /// model/transport error) are VISIBLE instead of swallowed by the `2>/dev/null` capture.
 fn error_comment(msg: &str) -> String {
     format!("# \u{26A0} {msg}")
+}
+
+/// If a dual-mode `@ai` reply is a PROSE answer (begins with the answer sentinel), return
+/// the prose with the sentinel stripped; else `None` (it's a command). The routing contract.
+fn prose_answer(buf: &str) -> Option<&str> {
+    buf.trim_start().strip_prefix(crate::ai::ANSWER_SENTINEL).map(str::trim_start)
+}
+
+/// Turn a tool-call's raw args string into `(key, value)` pairs for `caps::run`.
+/// **Model-agnostic**: a JSON object maps by key; a BARE value (a weaker model calling
+/// `fs.list .` instead of `fs.list {"path":"."}`) becomes positional arg `0`, which the
+/// caps read via `arg(args, 0, "name")`. Empty / `{}` → no args.
+fn tool_args_to_pairs(args: &str) -> Vec<(String, String)> {
+    match corelib::wire::Json::parse(args) {
+        Ok(corelib::wire::Json::Obj(p)) => p.iter().map(|(k, v)| (k.clone(), json_text(v))).collect(),
+        _ => {
+            let bare = args.trim();
+            if bare.is_empty() || bare == "{}" {
+                Vec::new()
+            } else {
+                vec![("0".to_string(), bare.to_string())]
+            }
+        }
+    }
 }
 
 /// JSON value as plain text (a string verbatim, else its JSON form).
@@ -481,6 +535,35 @@ fn human_bytes(n: usize) -> String {
     }
 }
 
+/// A USD amount as a glanceable string: `$1.20`, `$0.014`, `<$0.001`. Empty for ≤ 0
+/// (unknown/free pricing — the caller then shows no cost).
+fn human_cost(usd: f64) -> String {
+    if !usd.is_finite() || usd <= 0.0 {
+        String::new()
+    } else if usd < 0.001 {
+        "<$0.001".to_string()
+    } else if usd < 1.0 {
+        format!("${usd:.3}")
+    } else if usd < 100.0 {
+        format!("${usd:.2}")
+    } else {
+        format!("${usd:.0}")
+    }
+}
+
+/// The footer's cost tail: ` · ~$0.014` when priced, plus ` · 12% of $0.10` (⚠ when
+/// over) when a `[ai] budget` is set. Empty when the model has no pricing.
+fn cost_segment(cost: Option<f64>, budget: Option<f64>) -> String {
+    let Some(c) = cost.filter(|c| c.is_finite() && *c > 0.0) else { return String::new() };
+    let mut s = format!(" \u{b7} ~{}", human_cost(c));
+    if let Some(b) = budget.filter(|b| b.is_finite() && *b > 0.0) {
+        let pct = (c / b * 100.0).round() as u64;
+        let warn = if c > b { "\u{26a0} " } else { "" };
+        s.push_str(&format!(" \u{b7} {warn}{pct}% of {}", human_cost(b)));
+    }
+    s
+}
+
 /// Map a run's outcome to the process exit code — the scripting contract:
 /// 0 = completed · 1 = failed (error / step limit / stall) · 130 = interrupted.
 fn outcome_exit(outcome: &crate::ai::RunOutcome) -> i32 {
@@ -501,13 +584,9 @@ fn outcome_glyph(outcome: &crate::ai::RunOutcome) -> &'static str {
     }
 }
 
-/// The run footer: `✓ 4.2s · 3 tools · 12.3k in / 1.8k out`.
-fn run_footer(elapsed: std::time::Duration, tools: usize, tin: u64, tout: u64) -> String {
-    run_footer_with("\u{2713}", elapsed, tools, tin, tout)
-}
-
-/// [`run_footer`] with an explicit status glyph (an outcome's ✓/✗/⚠/⏹).
-fn run_footer_with(glyph: &str, elapsed: std::time::Duration, tools: usize, tin: u64, tout: u64) -> String {
+/// The run footer with an explicit status glyph and optional cost/budget telemetry:
+/// `✓ 8.4s · 2 tools · 12.3k in / 1.8k out · ~$0.014 · 14% of $0.10`.
+fn run_footer_with(glyph: &str, elapsed: std::time::Duration, tools: usize, tin: u64, tout: u64, cost: Option<f64>, budget: Option<f64>) -> String {
     let secs = elapsed.as_secs_f64();
     let t = if secs >= 10.0 { format!("{secs:.0}s") } else { format!("{secs:.1}s") };
     let mut s = format!("{glyph} {t}");
@@ -515,6 +594,7 @@ fn run_footer_with(glyph: &str, elapsed: std::time::Duration, tools: usize, tin:
         s.push_str(&format!(" \u{b7} {tools} tool{}", if tools == 1 { "" } else { "s" }));
     }
     s.push_str(&format!(" \u{b7} {} in / {} out", human_tokens(tin), human_tokens(tout)));
+    s.push_str(&cost_segment(cost, budget));
     s
 }
 
@@ -618,7 +698,9 @@ impl<W: std::io::Write> CliObserver<W> {
         }
     }
 
-    /// Feed one streamed chunk through the `@tool`-suppression line machine.
+    /// Feed one streamed chunk through the tool-marker suppression line machine, so the
+    /// machine protocol never reaches the display — in ANY tolerated form (`@tool`,
+    /// `<tool_call>`, a fenced ```` ```tool ```` block; see `parse_tool_call`).
     fn feed(&mut self, text: &str) {
         for c in text.chars() {
             if self.suppress_turn {
@@ -632,8 +714,7 @@ impl<W: std::io::Write> CliObserver<W> {
                     self.suppress_turn = true;
                 } else {
                     let line = std::mem::take(&mut self.pending);
-                    let t = line.trim_start();
-                    if t == "@tool" || t.starts_with("@tool ") {
+                    if is_display_tool_marker(line.trim_start()) {
                         self.suppress_turn = true; // a (malformed) bare marker still never prints
                     } else {
                         self.emit(&line);
@@ -646,12 +727,12 @@ impl<W: std::io::Write> CliObserver<W> {
                 continue;
             }
             self.pending.push(c);
-            // Still a possible `@tool` marker head? Keep holding. Otherwise flush.
+            // Still a possible marker head? Keep holding. Decided marker → suppress. Else flush.
             let t = self.pending.trim_start();
-            if "@tool ".starts_with(t) || t == "@tool" {
+            if is_display_tool_marker_prefix(t) {
                 continue; // still a possible marker head — keep holding
             }
-            if t.starts_with("@tool ") || t == "@tool" {
+            if is_display_tool_marker(t) {
                 self.pending.clear();
                 self.suppress_line = true;
             } else {
@@ -660,6 +741,19 @@ impl<W: std::io::Write> CliObserver<W> {
             }
         }
     }
+}
+
+/// The complete tool-marker forms suppressed from the live display.
+const DISPLAY_TOOL_MARKERS: [&str; 3] = ["<tool_call>", "```tool", "```tool_call"];
+
+/// `t` is (or begins) a tool-call marker line — swallow it from the display.
+fn is_display_tool_marker(t: &str) -> bool {
+    t == "@tool" || t.starts_with("@tool ") || DISPLAY_TOOL_MARKERS.iter().any(|m| t.starts_with(m))
+}
+
+/// `t` could still GROW into a tool marker (a streamed prefix) — keep holding it.
+fn is_display_tool_marker_prefix(t: &str) -> bool {
+    t == "@tool" || "@tool ".starts_with(t) || DISPLAY_TOOL_MARKERS.iter().any(|m| m.starts_with(t))
 }
 
 impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
@@ -705,6 +799,14 @@ impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
         if self.printed && !self.streamed.ends_with('\n') {
             self.emit("\n");
         }
+    }
+    fn on_step_start(&mut self, i: usize, n: usize, label: &str) {
+        // A live flow step header on stderr (chrome), so the user watches steps advance.
+        self.wake();
+        if self.printed && !self.streamed.ends_with('\n') {
+            self.emit("\n");
+        }
+        eprintln!("{}\u{25B6} {i}/{n} {label}{}", accent(), reset());
     }
 }
 
@@ -843,10 +945,7 @@ impl crate::ai::ToolRunner for CliToolRunner {
             let out = self.mcp.as_mut().ok_or("mcp: no servers are running")?.call(name, parsed)?;
             return Ok(redact(self, out));
         }
-        let pairs: Vec<(String, String)> = match corelib::wire::Json::parse(args) {
-            Ok(corelib::wire::Json::Obj(p)) => p.iter().map(|(k, v)| (k.clone(), json_text(v))).collect(),
-            _ => Vec::new(),
-        };
+        let pairs = tool_args_to_pairs(args);
         // A concise, TIMED tool trace on stderr, so a streaming run shows its work.
         let preview: String = args.chars().take(72).collect();
         let started = std::time::Instant::now();
@@ -1097,7 +1196,8 @@ fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::ai::AiSetti
     let run = crate::ai::run_agent(&client, &agent, prompt, ctx, &mut runner, &mut obs);
     finish_streamed(&mut obs, &run.answer);
     let glyph = outcome_glyph(&run.outcome);
-    eprintln!("{}{}{}", muted(), run_footer_with(glyph, started.elapsed(), run.steps.len(), run.input_tokens as u64, run.output_tokens as u64), reset());
+    let cost = Some(client.model().cost(run.input_tokens as u64, run.output_tokens as u64));
+    eprintln!("{}{}{}", muted(), run_footer_with(glyph, started.elapsed(), run.steps.len(), run.input_tokens as u64, run.output_tokens as u64, cost, cfg.ai_budget), reset());
     outcome_exit(&run.outcome)
 }
 
@@ -1184,10 +1284,8 @@ fn run_flow_cli(cfg: &crate::config::Config, settings: crate::ai::AiSettings, na
             prompt: s.prompt.replace("{{input}}", input),
         });
     }
-    eprintln!("\u{25B6} flow '{}' — {} step(s){}", flow.name, steps.len(), if flow.description.is_empty() { String::new() } else { format!(" · {}", flow.description) });
-    for (i, s) in flow.steps.iter().enumerate() {
-        eprintln!("  {}. {} (@{})", i + 1, s.label, s.agent);
-    }
+    // A compact header; each step announces itself live via the observer (▶ i/n label).
+    eprintln!("{}\u{25B6} flow '{}' — {} step(s){}", accent(), flow.name, steps.len(), reset());
     let cancel = crate::ai::CancelToken::new();
     let _sigint = wire_sigint(cancel.clone());
     let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default()).with_images(media).with_cancel(cancel);
@@ -1197,13 +1295,20 @@ fn run_flow_cli(cfg: &crate::config::Config, settings: crate::ai::AiSettings, na
     let result = crate::ai::run_orchestration(&client, &steps, ctx, flow.chain, &mut runner, &mut obs);
     finish_streamed(&mut obs, &result.final_answer);
     let (dim, r) = (muted(), reset());
-    for step in &result.steps {
-        let mark = if step.ok { "\u{2713}" } else { "\u{2717}" };
-        eprintln!("{dim}{mark} {} \u{b7} {} in / {} out{r}", step.label, human_tokens(step.input_tokens as u64), human_tokens(step.output_tokens as u64));
+    // A compact one-line step recap: `✓ explore · ✓ implement · ✓ verify`.
+    if !result.steps.is_empty() {
+        let recap = result
+            .steps
+            .iter()
+            .map(|s| format!("{} {}", if s.ok { "\u{2713}" } else { "\u{2717}" }, s.label))
+            .collect::<Vec<_>>()
+            .join(" \u{b7} ");
+        eprintln!("{dim}{recap}{r}");
     }
     let complete = result.steps.len() == steps.len() && result.steps.iter().all(|s| s.ok);
     let glyph = if complete { "\u{2713}" } else { "\u{2717}" };
-    eprintln!("{dim}{}{r}", run_footer_with(glyph, started.elapsed(), 0, result.input_tokens as u64, result.output_tokens as u64));
+    let cost = Some(client.model().cost(result.input_tokens as u64, result.output_tokens as u64));
+    eprintln!("{dim}{}{r}", run_footer_with(glyph, started.elapsed(), result.tools, result.input_tokens as u64, result.output_tokens as u64, cost, cfg.ai_budget));
     if complete { 0 } else { 1 }
 }
 
@@ -1474,11 +1579,22 @@ enum LoopOutcome {
     Cancelled,
 }
 
+/// A loop run's outcome plus the telemetry the footer shows: iterations, summed
+/// tokens, and total tool calls across every iteration.
+#[derive(Debug)]
+struct LoopRun {
+    outcome: LoopOutcome,
+    iters: u32,
+    tin: u64,
+    tout: u64,
+    tools: usize,
+}
+
 /// The transport-generic loop engine — the pure heart of `@loop`, separated from
 /// the CLI plumbing so tests drive it with a [`ScriptedTransport`](crate::ai::ScriptedTransport)
 /// mock and a scripted verifier (no model, no subprocess). `verify` receives the
 /// maker's iteration answer and returns the verdict; `check_label` only shapes
-/// the maker prompt.
+/// the maker prompt. Returns the outcome plus accumulated telemetry.
 fn drive_loop<T: crate::ai::Transport>(
     client: &crate::ai::Client<T>,
     maker: &crate::ai::AgentSpec,
@@ -1489,43 +1605,48 @@ fn drive_loop<T: crate::ai::Transport>(
     budget: Option<u64>,
     check_label: Option<&str>,
     mut verify: impl FnMut(&str) -> Result<Verdict, String>,
-) -> LoopOutcome {
+) -> LoopRun {
     let mut feedback = String::new();
     let mut last_sig: Option<u64> = None;
     let mut spent: u64 = 0;
+    let mut st = LoopRun { outcome: LoopOutcome::Exhausted, iters: 0, tin: 0, tout: 0, tools: 0 };
     for k in 1..=max {
+        st.iters = k;
         eprintln!("\u{25B6} {}", crate::i18n::translate("loop.iteration", &[k.to_string(), max.to_string()]));
         let prompt = loop_prompt(goal, k, max, check_label, &feedback);
         let run = crate::ai::run_agent(client, maker, &prompt, "", runner, observer);
+        st.tin += run.input_tokens as u64;
+        st.tout += run.output_tokens as u64;
+        st.tools += run.steps.len();
         spent += (run.input_tokens + run.output_tokens) as u64;
         // An errored/cancelled iteration is NOT work — never hand it to the
         // verifier as if it were; stop the loop with the real cause.
         match &run.outcome {
-            crate::ai::RunOutcome::Cancelled => return LoopOutcome::Cancelled,
-            crate::ai::RunOutcome::Error(e) => return LoopOutcome::Error(e.clone()),
+            crate::ai::RunOutcome::Cancelled => return LoopRun { outcome: LoopOutcome::Cancelled, ..st },
+            crate::ai::RunOutcome::Error(e) => return LoopRun { outcome: LoopOutcome::Error(e.clone()), ..st },
             _ => {}
         }
 
         let verdict = match verify(&run.answer) {
             Ok(v) => v,
-            Err(e) => return LoopOutcome::Error(e),
+            Err(e) => return LoopRun { outcome: LoopOutcome::Error(e), ..st },
         };
         if verdict.passed {
-            return LoopOutcome::Done(k);
+            return LoopRun { outcome: LoopOutcome::Done(k), ..st };
         }
         // Stop rules: no progress (same observation twice), then budget, then cap.
         if last_sig == Some(verdict.signature) {
-            return LoopOutcome::Stalled;
+            return LoopRun { outcome: LoopOutcome::Stalled, ..st };
         }
         last_sig = Some(verdict.signature);
         feedback = verdict.feedback;
         if let Some(b) = budget {
             if spent >= b {
-                return LoopOutcome::Budget;
+                return LoopRun { outcome: LoopOutcome::Budget, ..st };
             }
         }
     }
-    LoopOutcome::Exhausted
+    st
 }
 
 /// `aiTerminal ai --loop "<goal>" [--check …] [--max N] [--budget N] [--agent …]`
@@ -1575,6 +1696,7 @@ fn run_loop_cli(goal: &str, opts: LoopOpts) -> i32 {
     }
 
     eprintln!("\u{1F501} {}", crate::i18n::translate("loop.start", &[opts.agent.clone(), max.to_string()]));
+    let started = std::time::Instant::now();
     // The verifier: the deterministic check wins; else the independent reviewer.
     let check = opts.check.clone();
     let sub = runner.sub.clone();
@@ -1584,34 +1706,39 @@ fn run_loop_cli(goal: &str, opts: LoopOpts) -> i32 {
         None => Ok(run_reviewer(&sub, cap_ctx.clone(), goal, answer)),
     };
     let mut obs = CliObserver::new(std::io::stdout());
-    let outcome = drive_loop(&client, &maker, &mut runner, &mut obs, goal, max, opts.budget, opts.check.as_deref(), verify);
+    let run = drive_loop(&client, &maker, &mut runner, &mut obs, goal, max, opts.budget, opts.check.as_deref(), verify);
     let _ = { use std::io::Write; std::io::stdout().write_all(b"\n") };
-    let (code, digest) = match outcome {
+    let (dim, r) = (muted(), reset());
+    let (code, glyph, digest) = match run.outcome {
         LoopOutcome::Done(k) => {
             eprintln!("\u{2713} {}", crate::i18n::translate("loop.done", &[k.to_string()]));
-            (0, format!("goal reached in {k} iteration(s)"))
+            (0, "\u{2713}", format!("goal reached in {k} iteration(s)"))
         }
         LoopOutcome::Stalled => {
             eprintln!("\u{26D4} {}", crate::i18n::translate("loop.stalled", &[]));
-            (1, "stalled (no progress)".into())
+            (1, "\u{26a0}", "stalled (no progress)".into())
         }
         LoopOutcome::Budget => {
             eprintln!("\u{26D4} {}", crate::i18n::translate("loop.budget", &[]));
-            (1, "hit the token budget".into())
+            (1, "\u{26a0}", "hit the token budget".into())
         }
         LoopOutcome::Exhausted => {
             eprintln!("\u{26D4} {}", crate::i18n::translate("loop.exhausted", &[]));
-            (1, "exhausted the iteration cap".into())
+            (1, "\u{26a0}", "exhausted the iteration cap".into())
         }
         LoopOutcome::Error(e) => {
             eprintln!("aiTerminal: {e}");
-            (2, "error".into())
+            (2, "\u{2717}", "error".into())
         }
         LoopOutcome::Cancelled => {
             eprintln!("\u{23f9} interrupted");
-            (130, "interrupted".into())
+            (130, "\u{23f9}", "interrupted".into())
         }
     };
+    // The same footer as agent/flow, with iterations in place of a lone elapsed count.
+    let cost = Some(client.model().cost(run.tin, run.tout));
+    let footer = run_footer_with(glyph, started.elapsed(), run.tools, run.tin, run.tout, cost, cfg.ai_budget);
+    eprintln!("{dim}{footer} \u{b7} {} iteration{}{r}", run.iters, if run.iters == 1 { "" } else { "s" });
     record_session_run(session.as_ref(), "@loop", goal, &digest);
     code
 }
@@ -1787,9 +1914,17 @@ fn ai_jobs(args: &[String]) -> i32 {
     }
     println!("{}", crate::i18n::translate("job.header", &[list.len().to_string()]));
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let (dim, r) = (muted(), reset());
     for j in &list {
-        println!("  {} {:<10} {:<9} {}  ({})", j.status_glyph(), j.id, j.status, j.cmd, j.timing(now));
-        println!("      log: {}", j.log.display());
+        // One glanceable line per job: glyph · id · status · command (truncated) · timing;
+        // the log path rides a dim second line so the row stays scannable.
+        let cmd: String = if j.cmd.chars().count() > 44 {
+            format!("{}\u{2026}", j.cmd.chars().take(43).collect::<String>())
+        } else {
+            j.cmd.clone()
+        };
+        println!("  {} {:<10} {:<9} {}  {dim}({}){r}", j.status_glyph(), j.id, j.status, cmd, j.timing(now));
+        println!("      {dim}log: {}{r}", j.log.display());
     }
     0
 }
@@ -2492,7 +2627,7 @@ mod tests {
                     Ok(verdict(true, ""))
                 }
             }
-        });
+        }).outcome;
         assert_eq!(outcome, super::LoopOutcome::Done(2));
         assert_eq!(iterations, 2, "stopped exactly when the verifier passed");
     }
@@ -2505,7 +2640,7 @@ mod tests {
         let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", 10, None, None, |_| {
             n += 1;
             Ok(verdict(false, "exit=1 same failure"))
-        });
+        }).outcome;
         assert_eq!(outcome, super::LoopOutcome::Stalled);
         assert_eq!(n, 2, "detected on the second identical observation");
     }
@@ -2517,7 +2652,7 @@ mod tests {
         let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", 3, None, None, |_| {
             n += 1;
             Ok(verdict(false, &format!("different failure {n}"))) // always progressing
-        });
+        }).outcome;
         assert_eq!(outcome, super::LoopOutcome::Exhausted);
         assert_eq!(n, 3, "ran exactly --max iterations");
     }
@@ -2529,7 +2664,7 @@ mod tests {
         let client = scripted(&["a", "b"]);
         let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", 10, Some(1), None, |_| {
             Ok(verdict(false, "still failing"))
-        });
+        }).outcome;
         assert_eq!(outcome, super::LoopOutcome::Budget);
     }
 
@@ -2539,7 +2674,7 @@ mod tests {
         let client = scripted(&["a"]);
         let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", 5, None, None, |_| {
             Err("check command blocked by guard: rm".into())
-        });
+        }).outcome;
         assert_eq!(outcome, super::LoopOutcome::Error("check command blocked by guard: rm".into()));
     }
 
@@ -2572,12 +2707,72 @@ mod tests {
         assert_eq!(super::human_tokens(12_345), "12.3k");
         assert_eq!(super::human_bytes(80), "80B");
         assert_eq!(super::human_bytes(2048), "2.0KB");
-        let f = super::run_footer(std::time::Duration::from_millis(4200), 3, 12_345, 1_800);
+        let f = super::run_footer_with("\u{2713}", std::time::Duration::from_millis(4200), 3, 12_345, 1_800, None, None);
         assert_eq!(f, "\u{2713} 4.2s \u{b7} 3 tools \u{b7} 12.3k in / 1800 out");
-        let f1 = super::run_footer(std::time::Duration::from_secs(61), 1, 100, 5);
+        let f1 = super::run_footer_with("\u{2713}", std::time::Duration::from_secs(61), 1, 100, 5, None, None);
         assert!(f1.contains("61s") && f1.contains("1 tool \u{b7}"), "{f1}");
-        let f0 = super::run_footer(std::time::Duration::from_millis(900), 0, 10, 2);
+        let f0 = super::run_footer_with("\u{2713}", std::time::Duration::from_millis(900), 0, 10, 2, None, None);
         assert!(!f0.contains("tool"), "no tool segment when none ran: {f0}");
+    }
+
+    #[test]
+    fn tool_args_to_pairs_handles_json_and_bare() {
+        // JSON object → keyed pairs.
+        assert_eq!(super::tool_args_to_pairs("{\"path\":\"x\"}"), vec![("path".to_string(), "x".to_string())]);
+        // Bare value (a weak model calling `fs.list .`) → positional arg 0.
+        assert_eq!(super::tool_args_to_pairs("."), vec![("0".to_string(), ".".to_string())]);
+        assert_eq!(super::tool_args_to_pairs("src/main.rs"), vec![("0".to_string(), "src/main.rs".to_string())]);
+        // Empty / no-args → nothing.
+        assert!(super::tool_args_to_pairs("").is_empty());
+        assert!(super::tool_args_to_pairs("{}").is_empty());
+    }
+
+    #[test]
+    fn first_command_line_unwraps_fences_and_prompts() {
+        use crate::ai::first_command_line;
+        // The reported bug: a fenced command → the bare command, not the ``` fence.
+        assert_eq!(first_command_line("```\ndu -sh .\n```").as_deref(), Some("du -sh ."));
+        assert_eq!(first_command_line("```sh\nls -la\n```").as_deref(), Some("ls -la"));
+        // A shell-prompt prefix is stripped.
+        assert_eq!(first_command_line("$ git status").as_deref(), Some("git status"));
+        // A `#` refusal is skipped (no command).
+        assert_eq!(first_command_line("# can't do that safely"), None);
+        // Plain command unchanged.
+        assert_eq!(first_command_line("echo hi").as_deref(), Some("echo hi"));
+    }
+
+    #[test]
+    fn prose_answer_detects_and_strips_the_sentinel() {
+        // A command reply → not prose (routes to the guard/marker path).
+        assert_eq!(super::prose_answer("ls -la"), None);
+        assert_eq!(super::prose_answer("# can't do that safely"), None);
+        // A prose reply → the sentinel is stripped, leading space trimmed.
+        let s = format!("{}  Your build is slow because…", crate::ai::ANSWER_SENTINEL);
+        assert_eq!(super::prose_answer(&s), Some("Your build is slow because…"));
+        // Leading whitespace before the sentinel still counts as prose.
+        let s2 = format!("\n {} hello", crate::ai::ANSWER_SENTINEL);
+        assert_eq!(super::prose_answer(&s2), Some("hello"));
+    }
+
+    #[test]
+    fn human_cost_and_cost_segment_format() {
+        assert_eq!(super::human_cost(0.0), "");
+        assert_eq!(super::human_cost(-1.0), "");
+        assert_eq!(super::human_cost(0.0002), "<$0.001");
+        assert_eq!(super::human_cost(0.014), "$0.014");
+        assert_eq!(super::human_cost(1.2), "$1.20");
+        assert_eq!(super::human_cost(250.0), "$250");
+        // No pricing → no segment.
+        assert_eq!(super::cost_segment(None, None), "");
+        assert_eq!(super::cost_segment(Some(0.0), Some(0.10)), "");
+        // Priced, no budget → just the cost.
+        assert_eq!(super::cost_segment(Some(0.014), None), " \u{b7} ~$0.014");
+        // Priced + budget → cost + percent.
+        let seg = super::cost_segment(Some(0.014), Some(0.10));
+        assert!(seg.contains("~$0.014") && seg.contains("14% of $0.100"), "{seg}");
+        // Over budget → ⚠ marker.
+        let over = super::cost_segment(Some(0.20), Some(0.10));
+        assert!(over.contains("\u{26a0}") && over.contains("200% of"), "{over}");
     }
 
     #[test]
@@ -2594,6 +2789,18 @@ mod tests {
         obs.wake(); // don't leave the spinner thread running in tests
         let c = obs.thinking_chunk("next turn");
         assert!(c.contains("\u{2234}"), "{c:?}");
+    }
+
+    #[test]
+    fn observer_suppresses_xml_tool_call_from_display() {
+        use crate::ai::AgentObserver;
+        // A `<tool_call>` (an alternate model format) must never leak into the streamed
+        // display — prose before it still shows, the machine protocol does not.
+        let mut obs = super::CliObserver::new(Vec::new());
+        obs.on_delta("Let me look.\n<tool_call>fs.list .</tool_call>\n");
+        assert!(obs.streamed.contains("Let me look."), "prose kept: {:?}", obs.streamed);
+        assert!(!obs.streamed.contains("tool_call"), "the raw tool call is suppressed: {:?}", obs.streamed);
+        assert!(!obs.streamed.contains("fs.list"), "the call body is suppressed: {:?}", obs.streamed);
     }
 
     #[test]
@@ -2828,7 +3035,7 @@ mod tests {
         let client = crate::ai::Client::new(keyed_settings(), crate::ai::ScriptedTransport::new(vec![]));
         let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", 5, None, None, |_| {
             panic!("the verifier must not run on an errored iteration")
-        });
+        }).outcome;
         assert!(matches!(outcome, super::LoopOutcome::Error(_)), "{outcome:?}");
     }
 
@@ -2841,7 +3048,7 @@ mod tests {
         let client = crate::ai::Client::new(keyed_settings(), crate::ai::ScriptedTransport::new(vec![])).with_cancel(cancel);
         let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", 5, None, None, |_| {
             panic!("the verifier must not run on a cancelled iteration")
-        });
+        }).outcome;
         assert_eq!(outcome, super::LoopOutcome::Cancelled);
     }
 
