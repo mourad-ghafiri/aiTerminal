@@ -55,6 +55,20 @@ impl StreamRenderer {
         self.buf.trim_start_matches('\n')
     }
 
+    /// Change the wrap width for blocks rendered from here on (a live renderer calls this on a
+    /// terminal resize so subsequent content wraps to the new width). Already-emitted output is
+    /// untouched.
+    pub fn set_width(&mut self, width: usize) {
+        self.width = width.max(4);
+    }
+
+    /// Drop the in-progress (not-yet-complete) block without emitting it. A live renderer uses
+    /// this on a resize to abandon the pending block it has already painted at the old width
+    /// (which it commits as-is), so the block isn't re-rendered and duplicated at the new width.
+    pub fn clear_pending(&mut self) {
+        self.buf.clear();
+    }
+
     fn drain(&mut self, fin: bool) -> Vec<Chunk> {
         let mut chunks = Vec::new();
         while let Some(seg) = self.take_block(fin) {
@@ -271,6 +285,21 @@ mod tests {
         let out = texts(s.push("\n\n"));
         assert!(out.contains("Hello world"));
         assert_eq!(s.pending(), "", "pending empty once the block is emitted");
+    }
+
+    #[test]
+    fn set_width_reflows_subsequent_blocks_and_clear_pending_drops_the_tail() {
+        let mut s = StreamRenderer::new(plain(), 80, &["mermaid"]);
+        s.push("in progress tail");
+        assert_eq!(s.pending(), "in progress tail");
+        // Abandon the pending block (as a live renderer does on resize) — it's gone, no emit.
+        s.clear_pending();
+        assert_eq!(s.pending(), "");
+        assert!(texts(s.push("\n\n")).is_empty(), "nothing left to complete");
+        // Narrow the width; a long paragraph now wraps to the new width.
+        s.set_width(10);
+        let out = texts(s.push("aaaa bbbb cccc dddd\n\n"));
+        assert!(out.lines().any(|l| l.chars().count() <= 10), "wrapped to width 10: {out:?}");
     }
 
     #[test]

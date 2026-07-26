@@ -637,7 +637,7 @@ impl Editor {
         let right = if self.status.is_empty() { String::new() } else { format!("{} ", self.status) };
         out.push_str(&bar(&left, &right, cols));
 
-        // Body: editor | divider | preview.
+        // Body left half: the editor (gutter + text) + divider column.
         for r in 0..l.body_h {
             out.push_str(&format!("\x1b[{};1H", r + 2));
             let ly = self.editor_top + r;
@@ -650,12 +650,9 @@ impl Editor {
                 out.push_str(&format!("{}{}{}", mut_, "~".to_string() + &" ".repeat(l.editor_w.saturating_sub(1)), rst));
             }
             out.push_str(&format!("{}│{}", mut_, rst));
-            let py = self.preview_top + r;
-            match preview.get(py) {
-                Some(PRow::Text(line)) => out.push_str(&hslice_ansi(line, self.preview_left, l.preview_w)),
-                _ => out.push_str(&" ".repeat(l.preview_w)), // diagram rows draw natively on top
-            }
         }
+        // Body right half: the live preview (text + native diagrams), shared with the pager.
+        draw_preview_region(&mut out, preview, self.preview_top, self.preview_left, l.preview_x, l.preview_w, 2, l.body_h);
 
         // Help line (reverse video).
         let help = match self.mode {
@@ -668,23 +665,6 @@ impl Editor {
         out.push_str(&format!("\x1b[{};1H", rows));
         out.push_str(&bar(&help, "", cols));
 
-        // Native diagram placements: emit an OSC for each fully-visible diagram, positioned at its
-        // top-left cell in the preview pane and confined to the preview columns.
-        let mut i = 0;
-        while i < preview.len() {
-            if let PRow::Diagram { source, rows: dn, offset: 0 } = &preview[i] {
-                let (top, bot) = (i, i + dn);
-                if top >= self.preview_top && bot <= self.preview_top + l.body_h {
-                    let screen_row = 2 + (top - self.preview_top);
-                    out.push_str(&format!("\x1b[{};{}H", screen_row, l.preview_x + 1));
-                    out.push_str(&format!("\x1b]1338;{};{};{}\x07", dn, corelib::codec::base64_encode(source.as_bytes()), l.preview_w));
-                }
-                i = bot;
-            } else {
-                i += 1;
-            }
-        }
-
         // Hardware cursor: at the caret in the editor, else hidden.
         if self.focus == Focus::Editor && self.mode == Mode::Edit {
             let cur_row = 2 + self.buf.cy.saturating_sub(self.editor_top);
@@ -695,6 +675,37 @@ impl Editor {
             out.push_str("\x1b[?25l");
         }
         out
+    }
+}
+
+/// Draw a preview region (a column band) into `out`: `body_h` rows of styled text starting at
+/// screen row `row0` (1-based) and screen column `col0` (0-based), scrolled by `top`/`left`, plus a
+/// native `OSC 1338` diagram for each fully-visible diagram block, confined to `width` columns.
+/// Shared by the editor's preview pane and the full-width `@md render` pager so both render
+/// identically. Uses absolute cursor positioning per row, so the caller can draw other columns
+/// independently.
+#[allow(clippy::too_many_arguments)]
+fn draw_preview_region(out: &mut String, preview: &[PRow], top: usize, left: usize, col0: usize, width: usize, row0: usize, body_h: usize) {
+    for r in 0..body_h {
+        out.push_str(&format!("\x1b[{};{}H", row0 + r, col0 + 1));
+        match preview.get(top + r) {
+            Some(PRow::Text(line)) => out.push_str(&hslice_ansi(line, left, width)),
+            _ => out.push_str(&" ".repeat(width)), // diagram rows draw natively on top
+        }
+    }
+    let mut i = 0;
+    while i < preview.len() {
+        if let PRow::Diagram { source, rows: dn, offset: 0 } = &preview[i] {
+            let (dtop, dbot) = (i, i + dn);
+            if dtop >= top && dbot <= top + body_h {
+                let screen_row = row0 + (dtop - top);
+                out.push_str(&format!("\x1b[{};{}H", screen_row, col0 + 1));
+                out.push_str(&format!("\x1b]1338;{};{};{}\x07", dn, corelib::codec::base64_encode(source.as_bytes()), width));
+            }
+            i = dbot;
+        } else {
+            i += 1;
+        }
     }
 }
 
@@ -829,6 +840,138 @@ pub fn run(path: &str) -> i32 {
     0
 }
 
+/// The number of screen rows the document renders to at `width` (text rows + diagram rows). Lets
+/// `@md render` decide inline-vs-pager without duplicating the layout — it's exactly what the pager
+/// would show.
+pub(crate) fn preview_height(text: &str, width: usize, style: corelib::md::Style) -> usize {
+    build_preview(text, width, style).len()
+}
+
+// ─────────────────────────────── the pager (@md render, long files) ───────────────────────────────
+
+/// A read-only full-screen pager for `@md render` on long files: the rendered Markdown fills the
+/// width, scrolls / paginates by keyboard + mouse, and — because it re-renders at the current
+/// `terminal_size()` every frame — a resize reflows the whole document (diagrams included).
+struct Pager {
+    path: String,
+    top: usize,
+    left: usize,
+    quit: bool,
+}
+
+impl Pager {
+    fn new(path: &str) -> Self {
+        Pager { path: path.to_string(), top: 0, left: 0, quit: false }
+    }
+
+    fn on_key(&mut self, key: Key, body_h: usize, len: usize) {
+        let page = body_h.saturating_sub(1).max(1);
+        let max_top = len.saturating_sub(body_h);
+        match key {
+            Key::Up | Key::Char('k') => self.top = self.top.saturating_sub(1),
+            Key::Down | Key::Char('j') => self.top += 1,
+            Key::PageUp | Key::Char('b') => self.top = self.top.saturating_sub(page),
+            Key::PageDown | Key::Char(' ') => self.top += page,
+            Key::Home | Key::Char('g') => self.top = 0,
+            Key::End | Key::Char('G') => self.top = max_top,
+            Key::Left | Key::Char('h') => self.left = self.left.saturating_sub(4),
+            Key::Right | Key::Char('l') => self.left = (self.left + 4).min(2000),
+            Key::Char('q') | Key::Esc | Key::Ctrl('c') | Key::Ctrl('q') => self.quit = true,
+            Key::Mouse { btn, pressed: true, .. } => match btn {
+                64 => self.top = self.top.saturating_sub(3),
+                65 => self.top += 3,
+                66 => self.left = self.left.saturating_sub(6),
+                67 => self.left = (self.left + 6).min(2000),
+                _ => {}
+            },
+            _ => {}
+        }
+        self.top = self.top.min(max_top);
+    }
+
+    fn frame(&mut self, preview: &[PRow], size: (usize, usize)) -> String {
+        let (cols, rows) = size;
+        let body_h = rows.saturating_sub(2);
+        let max_top = preview.len().saturating_sub(body_h);
+        self.top = self.top.min(max_top);
+
+        let mut out = String::with_capacity(cols * rows * 2);
+        out.push_str("\x1b[2J\x1b[H\x1b[?25l");
+        // Status bar: file + position.
+        let last = (self.top + body_h).min(preview.len());
+        let pct = if max_top == 0 { 100 } else { (self.top * 100) / max_top };
+        let left = format!(" {} ", self.path);
+        let right = format!("line {}\u{2013}{} of {} · {}% ", self.top + 1, last, preview.len(), pct);
+        out.push_str(&bar(&left, &right, cols));
+        // Body: full-width preview (shared with the editor).
+        draw_preview_region(&mut out, preview, self.top, self.left, 0, cols, 2, body_h);
+        // Help bar.
+        let help = "  \u{2191}\u{2193}/j k scroll · Space/b page · g/G top/bottom · \u{2190}\u{2192} pan · wheel · q quit";
+        out.push_str(&format!("\x1b[{};1H", rows));
+        out.push_str(&bar(help, "", cols));
+        out
+    }
+}
+
+/// Open the read-only pager on `path` (the `@md render` long-file path). Returns an exit code.
+pub fn page(path: &str) -> i32 {
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return 1;
+    }
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("@md: cannot read {path}: {e}");
+            return 1;
+        }
+    };
+    let Some(_raw) = platform::os::raw_mode() else {
+        eprintln!("@md render: could not enter raw mode.");
+        return 1;
+    };
+    let _screen = ScreenGuard::enter();
+    let sigwinch = platform::os::sigwinch_flag();
+
+    let mut pg = Pager::new(path);
+    let mut stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+    let mut pending: Vec<u8> = Vec::new();
+    let mut rd = [0u8; 1024];
+    let mut redraw = true;
+
+    while !pg.quit {
+        let size = platform::os::terminal_size().map(|(c, r)| (c as usize, r as usize)).unwrap_or((80, 24));
+        let preview = build_preview(&text, size.0, crate::cli::md_style());
+        if redraw {
+            let frame = pg.frame(&preview, size);
+            let _ = stdout.write_all(frame.as_bytes());
+            let _ = stdout.flush();
+            redraw = false;
+        }
+        match stdin.read(&mut rd) {
+            Ok(0) => break,
+            Ok(n) => pending.extend_from_slice(&rd[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                if sigwinch.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                    redraw = true;
+                }
+                continue;
+            }
+            Err(_) => break,
+        }
+        let body_h = size.1.saturating_sub(2);
+        while let Some((key, used)) = parse_key(&pending) {
+            pending.drain(..used);
+            pg.on_key(key, body_h, preview.len());
+            redraw = true;
+            if pg.quit {
+                break;
+            }
+        }
+    }
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -946,6 +1089,49 @@ mod tests {
         assert!(!ed.quit && ed.mode == Mode::Confirm);
         ed.on_key(Key::Esc, &l);
         assert!(ed.mode == Mode::Edit);
+    }
+
+    #[test]
+    fn pager_scroll_clamps_to_content() {
+        let len = 100;
+        let body_h = 20;
+        let mut pg = Pager::new("x.md");
+        // Down past the end clamps to the last page.
+        pg.on_key(Key::End, body_h, len);
+        assert_eq!(pg.top, len - body_h);
+        pg.on_key(Key::Down, body_h, len);
+        assert_eq!(pg.top, len - body_h, "cannot scroll past the bottom");
+        // Home returns to the top; Up clamps at 0.
+        pg.on_key(Key::Home, body_h, len);
+        assert_eq!(pg.top, 0);
+        pg.on_key(Key::Up, body_h, len);
+        assert_eq!(pg.top, 0);
+        // Page down advances by a page; Space is an alias.
+        pg.on_key(Key::PageDown, body_h, len);
+        assert_eq!(pg.top, body_h - 1);
+        pg.on_key(Key::Char(' '), body_h, len);
+        assert_eq!(pg.top, 2 * (body_h - 1));
+        // 'q' quits; wheel scrolls.
+        pg.on_key(Key::Char('q'), body_h, len);
+        assert!(pg.quit);
+    }
+
+    #[test]
+    fn pager_frame_positions_a_diagram_at_its_row() {
+        let doc = "para one\n\n```mermaid\nflowchart TD\n A-->B\n```\n";
+        let preview = build_preview(doc, 40, plain_style());
+        let mut pg = Pager::new("x.md");
+        let frame = pg.frame(&preview, (40, 24));
+        // The diagram is emitted as an OSC 1338 confined to the full width.
+        assert!(frame.contains("\x1b]1338;"), "native diagram placement emitted");
+        assert!(frame.contains(";40\x07"), "confined to the pager width");
+    }
+
+    #[test]
+    fn preview_height_counts_text_and_diagram_rows() {
+        let doc = "# Title\n\n```mermaid\nflowchart TD\n A-->B\n```\n";
+        let h = preview_height(doc, 60, plain_style());
+        assert!(h >= 5, "title + blank + several diagram rows: {h}");
     }
 
     fn plain_style() -> corelib::md::Style {

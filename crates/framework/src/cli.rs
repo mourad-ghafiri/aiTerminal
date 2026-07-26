@@ -641,6 +641,7 @@ impl LiveMarkdown {
     /// Feed a streamed delta: erase the old tail, commit any newly-completed blocks, repaint the
     /// in-progress tail.
     fn push(&mut self, w: &mut dyn std::io::Write, delta: &str) {
+        self.adapt_size(w);
         let _ = w.write_all(erase_seq(self.painted).as_bytes());
         self.painted = 0;
         for c in self.sr.push(delta) {
@@ -652,12 +653,37 @@ impl LiveMarkdown {
 
     /// Finalize: erase the tail and commit whatever remains as final output.
     fn flush(&mut self, w: &mut dyn std::io::Write) {
+        self.adapt_size(w);
         let _ = w.write_all(erase_seq(self.painted).as_bytes());
         self.painted = 0;
         for c in self.sr.finish() {
             Self::write_chunk(w, c);
         }
         let _ = w.flush();
+    }
+
+    /// Re-check the terminal size and adapt to a resize. On a **width** change we must NOT do the
+    /// usual cursor-up repaint — the terminal has already reflowed the painted tail, so the
+    /// up-count would be wrong and could erase committed content. Instead we *seal*: commit the
+    /// already-painted tail as-is (a trailing newline moves below it), drop the renderer's pending
+    /// block so it isn't re-emitted, and switch to the new width — all subsequent content wraps to
+    /// it. A rows-only change just updates the overflow clamp. Committed scrollback can't reflow
+    /// (a terminal fundamental); this keeps rendering stable across a resize and adapts new output.
+    fn adapt_size(&mut self, w: &mut dyn std::io::Write) {
+        let width = md_width();
+        let rows = term_rows();
+        if rows != 0 {
+            self.max_rows = rows.saturating_sub(2).max(1);
+        }
+        if width != self.width {
+            if self.painted > 0 {
+                let _ = w.write_all(b"\n");
+            }
+            self.painted = 0;
+            self.width = width;
+            self.sr.set_width(width);
+            self.sr.clear_pending();
+        }
     }
 }
 
@@ -761,8 +787,10 @@ fn md_usage() -> &'static str {
     "usage:\n  @md render <file.md>   pretty-print a Markdown file (diagrams drawn natively)\n  @md edit <file.md>     live split editor — Markdown left, rendered preview right"
 }
 
-/// Render a Markdown file to the terminal: styled + full-width on a TTY (native diagrams via
-/// `OSC 1338`), plain text + boxed diagrams when piped. Reuses the exact engine `@ai` answers use.
+/// Render a Markdown file to the terminal. On a TTY it's styled + full-width with native diagrams;
+/// content taller than the screen opens a scrollable **pager** (so a long file doesn't just scroll
+/// past), while content that fits prints inline (no alt-screen flash). Piped output is plain text +
+/// boxed diagrams. Reuses the exact engine `@ai` answers use.
 fn md_render(path: Option<&String>) -> i32 {
     use std::io::Write;
     let Some(path) = path else {
@@ -777,6 +805,14 @@ fn md_render(path: Option<&String>) -> i32 {
         }
     };
     let tty = out_is_tty();
+    // On a TTY, hand long documents to the scrollable pager (reflows on resize, opens at the top).
+    if tty {
+        let rows = term_rows();
+        let height = crate::mdedit::preview_height(&text, md_width(), md_style());
+        if rows > 0 && height > rows.saturating_sub(1) {
+            return crate::mdedit::page(path);
+        }
+    }
     let style = if tty { md_style() } else { corelib::md::Style { enabled: false, ..corelib::md::Style::default() } };
     let mut sr = corelib::md::StreamRenderer::new(style, md_width(), &[DIAGRAM_LANG]);
     let mut out = std::io::stdout().lock();

@@ -15,6 +15,18 @@ piped output is plain Markdown so `@md render notes.md | less` stays clean.
 ❯ @md render README.md
 ```
 
+**Long files open a pager.** If the rendered document is taller than the screen, `@md render` opens
+a scrollable full-screen view (starting at the **top**, not dumped past you). It **reflows when you
+resize** the terminal. Files that fit print inline as usual, and piping stays plain.
+
+| Key | Action |
+| --- | --- |
+| `↑↓` / `j` `k` | scroll a line |
+| `Space` / `PageDown` · `b` / `PageUp` | page down / up |
+| `g` / `Home` · `G` / `End` | jump to top / bottom |
+| `←→` · **mouse wheel** (Shift = horizontal) | pan / scroll |
+| `q` / `Esc` | quit |
+
 ## `@md edit <file>`
 
 A full-screen **split editor**: the raw Markdown on the left, a **live rendered preview** on the
@@ -59,3 +71,8 @@ long code lines are always reachable.
 Inside aiTerminal the preview's diagrams render as real pixels and the mouse works throughout
 (aiTerminal reports mouse events to full-screen programs, so `vim`/`less` get the mouse too). In a
 third-party terminal the mouse is handled by that terminal and diagrams show as boxes.
+
+**Resizing** the terminal reflows the pager and the editor's live preview immediately (both
+re-render at the new width). Note that plain `@ai` answers and short inline `@md render` output live
+in the scrollback and — like any terminal output — keep the width they were printed at; new content
+after a resize adapts, and rendering never corrupts across a resize.

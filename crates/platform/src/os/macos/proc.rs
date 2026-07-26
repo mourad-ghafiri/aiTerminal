@@ -8,11 +8,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 extern "C" {
     fn kill(pid: c_int, sig: c_int) -> c_int;
     fn signal(sig: c_int, handler: usize) -> usize;
+    fn sigaction(sig: c_int, act: *const SigAction, old: *mut SigAction) -> c_int;
     fn setsid() -> c_int;
     fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
     fn tcgetattr(fd: c_int, termios: *mut Termios) -> c_int;
     fn tcsetattr(fd: c_int, actions: c_int, termios: *const Termios) -> c_int;
     fn cfmakeraw(termios: *mut Termios);
+}
+
+/// macOS `struct sigaction` (`<sys/signal.h>`): the handler union (a pointer), a `sigset_t` mask
+/// (`__uint32_t` on macOS), and the flags word. Used to install `SIGWINCH` **without** `SA_RESTART`
+/// so a resize interrupts a blocking `read` (whereas `signal()` sets `SA_RESTART` and it wouldn't).
+#[repr(C)]
+struct SigAction {
+    sa_handler: usize,
+    sa_mask: u32,
+    sa_flags: c_int,
 }
 
 const SIGINT: c_int = 2;
@@ -155,11 +166,19 @@ extern "C" fn on_sigwinch(_sig: c_int) {
 /// Install (once) a `SIGWINCH` handler that sets a flag, and return the flag. A full-screen
 /// app's blocking `read` returns `EINTR` when the signal fires; the app then re-queries
 /// [`terminal_size`] and repaints. The caller clears the flag after handling it.
+///
+/// Installed via `sigaction` with `sa_flags = 0` — crucially **not** `SA_RESTART`. `signal()` on
+/// macOS/BSD sets `SA_RESTART`, which auto-restarts the interrupted `read` so the app would never
+/// learn about the resize until the next keypress; clearing it makes `read` return `EINTR`.
 pub fn sigwinch_flag() -> &'static AtomicBool {
     use std::sync::Once;
     static INSTALL: Once = Once::new();
-    INSTALL.call_once(|| unsafe {
-        signal(SIGWINCH, on_sigwinch as *const () as usize);
+    INSTALL.call_once(|| {
+        let act = SigAction { sa_handler: on_sigwinch as *const () as usize, sa_mask: 0, sa_flags: 0 };
+        // SAFETY: `act` is a valid sigaction for the process-lifetime handler `on_sigwinch`.
+        unsafe {
+            sigaction(SIGWINCH, &act, std::ptr::null_mut());
+        }
     });
     &SIGWINCH_HIT
 }
@@ -219,5 +238,13 @@ mod tests {
         let f = super::sigwinch_flag();
         assert!(!f.load(std::sync::atomic::Ordering::Relaxed));
         let _ = super::sigwinch_flag(); // idempotent
+    }
+
+    #[test]
+    fn sigaction_matches_the_macos_abi_layout() {
+        // handler pointer (8) + sigset_t mask (4) + flags (4), 8-aligned → 16 bytes. Wrong here
+        // and `sigaction` would scribble past the flags word or misread SA_RESTART.
+        assert_eq!(std::mem::size_of::<super::SigAction>(), 16);
+        assert_eq!(std::mem::align_of::<super::SigAction>(), 8);
     }
 }

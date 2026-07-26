@@ -234,7 +234,10 @@ background jobs (3):
 └─────────────────────────────────┴─────────────────────────────┘</code></pre>
     <p><code>@md render &lt;file&gt;</code> prints styled Markdown to the pane at the split's full
       width, with diagrams drawn as real pixels inline (a clean boxed fallback in other terminals /
-      when piped). <code>@md edit &lt;file&gt;</code> is a full-screen split editor — raw Markdown on
+      when piped). A <b>long file opens a scrollable pager</b> (<code>↑↓</code>/<code>Space</code>/
+      <code>g</code>/<code>G</code>, mouse wheel, <code>q</code> to quit) that starts at the top and
+      <b>reflows on resize</b> — no more scrolling past the end.
+      <code>@md edit &lt;file&gt;</code> is a full-screen split editor — raw Markdown on
       the left, a <b>live preview</b> on the right that re-renders as you type, diagrams included.
       Both panes scroll <b>vertically and horizontally</b>, by keyboard (<code>↑↓ ←→</code>,
       <code>PageUp/Down</code>, <code>Ctrl+W</code> toggles focus) and by <b>mouse</b> (wheel;
