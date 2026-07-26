@@ -53,6 +53,67 @@ document.addEventListener("DOMContentLoaded", () => {
       `<h3>${title}</h3><p>${text}</p>${extra ? `<div class="cap-extra">${extra}</div>` : ""}`;
   };
 
+  /* Build the `@md edit` split view directly as DOM (a real two-column layout, so it stays
+     pixel-aligned at any window width — no box-drawing to drift). Left = Markdown source with a
+     line-number gutter; right = the live rendered preview, native diagram included. */
+  function buildMdEditor(w) {
+    const pane = w.pane();
+    pane.innerHTML = "";
+    const root = el("div", "rw-md");
+
+    const bar = el("div", "rw-md-bar");
+    bar.append(spanEl(S("t-fg", "release.md")), spanEl(S("t-error", " ●")),
+      spanEl(S("t-muted", "  (10L)")));
+    const barR = el("span", "rw-md-bar-r", "saved ✓");
+    bar.appendChild(barR);
+
+    const bodyRow = el("div", "rw-md-body");
+
+    // Left: raw Markdown source with a gutter.
+    const ed = el("div", "rw-md-ed");
+    const src = [
+      ["# Release plan", "h1"], ["", ""],
+      ["- cut the branch", "li"], ["- run the suite", "li"], ["", ""],
+      ["```mermaid", "fence"], ["flowchart LR", "code"], ["  A --> B --> C", "code"], ["```", "fence"],
+    ];
+    src.forEach(([t, k], i) => {
+      const row = el("div", "rw-md-row");
+      row.append(el("span", "rw-md-gutter", String(i + 1)),
+        el("span", "rw-md-" + (k || "code"), t || " "));
+      ed.appendChild(row);
+    });
+
+    // Right: the rendered preview.
+    const pv = el("div", "rw-md-pv");
+    pv.appendChild(el("div", "rw-md-title", "Release plan"));
+    pv.appendChild(el("div", "rw-md-rule", "────────────"));
+    pv.appendChild(el("div", "rw-md-gap", ""));
+    ["cut the branch", "run the suite"].forEach((s) => {
+      const li = el("div", "rw-md-bullet");
+      li.append(el("span", "mk", "•"), el("span", null, " " + s));
+      pv.appendChild(li);
+    });
+    const dg = el("div", "rw-md-diagram");
+    ["branch", "test", "ship"].forEach((n, i) => {
+      if (i) dg.appendChild(el("span", "rw-md-arrow", "→"));
+      dg.appendChild(el("span", "rw-md-node", n));
+    });
+    pv.appendChild(dg);
+
+    bodyRow.append(ed, pv);
+
+    const help = el("div", "rw-md-help");
+    [["^S", "save"], ["^W", "focus"], ["^Q", "quit"]].forEach(([k, v]) => {
+      const g = el("span", "rw-md-key");
+      g.append(el("b", null, k), el("span", null, " " + v));
+      help.appendChild(g);
+    });
+    help.appendChild(el("span", "rw-md-hint", "· scroll ↑↓ ←→ · mouse wheel"));
+
+    root.append(bar, bodyRow, help);
+    pane.appendChild(root);
+  }
+
   /* ---------------- features ---------------- */
   const FEATURES = {
 
@@ -281,24 +342,15 @@ document.addEventListener("DOMContentLoaded", () => {
     },
 
     md: {
+      opts: { title: "release.md — @md edit", tabs: [{ title: "release.md [@md edit]", active: true }] },
       caption: () => caption("<code>@md</code> — read &amp; live-edit Markdown",
-        "<code>@md render</code> pretty-prints a file (diagrams drawn natively); <code>@md edit</code> is a split editor — source left, live preview right, scroll by keyboard + mouse."),
+        "<code>@md render</code> pretty-prints a file (long files open a scrollable pager); <code>@md edit</code> is a split editor — Markdown source on the left, a live rendered preview on the right, with native diagrams and keyboard + mouse scroll."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
-          { do: "pause", ms: 300 },
+          { do: "pause", ms: 250 },
           { do: "cmd", text: "@md edit release.md" },
-          { do: "out", spans: [MUT("┌ release.md "), ERR("●"), MUT(" (10L) ───────────────────┬─────────────────────────────┐")] },
-          { do: "out", spans: [MUT("│ "), MUT("1 "), ACC2("# Release plan"), MUT("            │ "), S("t-accent-b", "Release plan")] },
-          { do: "out", spans: [MUT("│ "), MUT("2 "), MUT("               │ "), MUT("────────────")] },
-          { do: "out", spans: [MUT("│ "), MUT("3 "), FG("- cut the branch"), MUT("        │ "), ACC("• "), FG("cut the branch")] },
-          { do: "out", spans: [MUT("│ "), MUT("4 "), FG("- run the suite"), MUT("         │ "), ACC("• "), FG("run the suite")] },
-          { do: "out", spans: [MUT("│ "), MUT("5 "), ACC2("```mermaid"), MUT("             │ "), MUT("╭──── diagram ─────────────╮")] },
-          { do: "out", spans: [MUT("│ "), MUT("6 "), FG("flowchart LR"), MUT("            │ "), MUT("│ "), ACC("[branch]→[test]→[ship]"), MUT("  │")] },
-          { do: "out", spans: [MUT("│ "), MUT("7 "), FG("  A-->B-->C"), MUT("             │ "), MUT("╰──────────────────────────╯")] },
-          { do: "out", spans: [MUT("│ "), S("t-accent-b", "^S"), DIM(" save  "), S("t-accent-b", "^W"), DIM(" focus  "), S("t-accent-b", "^Q"), DIM(" quit   · scroll ↑↓ ←→ · wheel │")] },
-          { do: "out", spans: [MUT("└──────────────────────────────┴─────────────────────────────┘")] },
-          { do: "pause", ms: 900 },
-          { do: "stream", spans: [DIM("live preview updates as you type — diagrams drawn as real pixels, mouse scrolls both panes.")], speed: 10 },
+          { do: "pause", ms: 350 },
+          { do: "call", fn: async (t) => buildMdEditor(t) },
         ]);
       },
     },

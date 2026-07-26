@@ -369,6 +369,42 @@ kbd {
 .t-accent { color: var(--t-accent); } .t-accent-b { color: var(--t-accent); font-weight: 700; }
 .t-accent2 { color: var(--t-accent2); }
 .t-success { color: var(--t-success); } .t-warn { color: var(--t-warn); } .t-error { color: var(--t-error); }
+
+/* ── @md edit — split-editor showcase (feature: md) ───────────────────────────
+   A real two-column DOM (not box-drawing) so it stays pixel-aligned at any width. */
+.rw-md { display: flex; flex-direction: column; height: 100%; gap: 5px; line-height: 1.5; }
+.rw-md-bar, .rw-md-help {
+  flex: none; display: flex; align-items: center;
+  padding: 3px 9px; border-radius: 5px;
+  background: var(--t-hover); color: var(--t-muted);
+}
+.rw-md-bar { gap: 0; }
+.rw-md-help { gap: 14px; }
+.rw-md-key { display: inline-flex; gap: 0; }
+.rw-md-bar-r { margin-left: auto; color: var(--t-success); }
+.rw-md-body { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+.rw-md-ed { flex: 1; min-width: 0; padding: 2px 14px 2px 4px; border-right: 1px solid var(--t-border); overflow: hidden; }
+.rw-md-pv { flex: 1; min-width: 0; padding: 2px 4px 2px 16px; overflow: hidden; }
+.rw-md-row { display: flex; white-space: pre; }
+.rw-md-gutter { flex: none; width: 1.6em; margin-right: 12px; text-align: right; color: var(--t-muted); opacity: .5; }
+.rw-md-h1, .rw-md-fence { color: var(--t-accent2); }
+.rw-md-li { color: var(--t-fg); }
+.rw-md-code { color: var(--t-muted); }
+.rw-md-title { color: var(--t-fg); font-weight: 700; }
+.rw-md-rule { color: var(--t-muted); opacity: .55; }
+.rw-md-gap { height: .5em; }
+.rw-md-bullet { color: var(--t-fg); }
+.rw-md-bullet .mk { color: var(--t-accent); font-weight: 700; }
+.rw-md-diagram {
+  display: inline-flex; align-items: center; gap: 10px; margin-top: 12px;
+  padding: 8px 12px; border: 1px solid var(--t-border); border-radius: 8px;
+  background: color-mix(in srgb, var(--t-accent) 9%, transparent);
+}
+.rw-md-node { padding: 2px 9px; border: 1px solid var(--t-accent); border-radius: 6px; color: var(--t-accent); font-weight: 600; }
+.rw-md-arrow { color: var(--t-muted); }
+.rw-md-help b { color: var(--t-accent); font-weight: 700; }
+.rw-md-hint { margin-left: auto; opacity: .8; }
+
 /* the selection band — the real app's neutral 50% fg-over-bg blend */
 .t-sel { background: color-mix(in srgb, var(--t-fg) 50%, var(--t-bg)); border-radius: 2px; }
 /* the real cursor: a steady BLOCK — one filled cell, no blink (the app's
