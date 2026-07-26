@@ -2,17 +2,42 @@
 //! session-detached spawning. The one place (besides the PTY) that talks to the
 //! process-control syscalls; everything is exposed through `platform::os`.
 
-use std::os::raw::c_int;
+use std::os::raw::{c_int, c_ulong};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 extern "C" {
     fn kill(pid: c_int, sig: c_int) -> c_int;
     fn signal(sig: c_int, handler: usize) -> usize;
     fn setsid() -> c_int;
+    fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
 }
 
 const SIGINT: c_int = 2;
 const SIGTERM: c_int = 15;
+/// `TIOCGWINSZ` on macOS/BSD — `_IOR('t', 104, struct winsize)`.
+const TIOCGWINSZ: c_ulong = 0x4008_7468;
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct Winsize {
+    ws_row: u16,
+    ws_col: u16,
+    ws_xpixel: u16,
+    ws_ypixel: u16,
+}
+
+/// The controlling terminal's `(cols, rows)` via `TIOCGWINSZ` on stderr — the CLI's true
+/// pane size (independent of whether the shell exported `$COLUMNS`). `None` off a tty.
+pub fn terminal_size() -> Option<(u16, u16)> {
+    let mut ws = Winsize::default();
+    // SAFETY: `ws` is a valid, correctly-sized winsize buffer; fd 2 is stderr.
+    let rc = unsafe { ioctl(2, TIOCGWINSZ, &mut ws as *mut Winsize) };
+    if rc == 0 && ws.ws_col > 0 {
+        Some((ws.ws_col, ws.ws_row))
+    } else {
+        None
+    }
+}
 
 static SIGINT_HIT: AtomicBool = AtomicBool::new(false);
 

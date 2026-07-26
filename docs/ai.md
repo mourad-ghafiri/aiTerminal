@@ -267,11 +267,14 @@ each iteration and a footer with the iteration count:
 ✓ 58s · 11 tools · 32k in / 4.1k out · ~$0.21
 ```
 
-- **Answers** render as styled **Markdown** **live** — headings, **bold**/*italic*, `inline
+- **Answers** render as styled **Markdown** in **realtime** — headings, **bold**/*italic*, `inline
   code`, links, bullet/numbered/task lists, block quotes, boxed fenced code, aligned GFM tables,
   and diagrams — by a from-scratch engine in `corelib::md` (width-aware wrapping, theme colors).
-  Rendering streams **block by block**: each block appears the moment it's complete (stable — no
-  repaint), alongside the live tool traces. `@ai` uses a tiny streamable contract — a one-line
+  Rendering is **continuous**: completed blocks commit once (they scroll away untouched) while the
+  single in-progress block repaints in place as it streams, so the current line/paragraph styles in
+  token-by-token — never a paragraph-at-a-time "pop". It fills the **split's full width** (the true
+  pane size via `TIOCGWINSZ`, not a fixed 80 columns), so tables, code boxes, and diagrams span the
+  whole pane and reflow on resize. `@ai` uses a tiny streamable contract — a one-line
   `RUN: <command>` proposes a command; anything else is a teacher-style answer that renders as it
   arrives. Piped/redirected output stays **raw Markdown** (clean for `>` and `|`). The `@tool …`
   machine protocol never reaches the display in any dialect (`@tool`, `<tool_call>`,

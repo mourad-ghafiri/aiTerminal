@@ -171,12 +171,17 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
         let started = std::time::Instant::now();
         let mut spinner = Some(Spinner::start("thinking\u{2026}".into()));
         let (dim, r) = (muted(), reset());
-        let mut md = err_is_tty().then(|| corelib::md::StreamRenderer::new(md_style(), md_width(), &[DIAGRAM_LANG]));
+        let mut live = err_is_tty().then(|| LiveMarkdown::new(md_style(), md_width(), term_rows().saturating_sub(2)));
         let mut head = String::new(); // undecided prefix while it could still be `RUN:`
         let mut mode: Option<bool> = None; // None=undecided, Some(true)=command, Some(false)=answer
         let mut command = String::new();
+        let mut raw = String::new(); // fallback when stderr isn't a TTY (no live renderer)
         let (mut tin, mut tout) = (0u64, 0u64);
         let up = |s: &str| s.trim_start().to_ascii_uppercase();
+        let answer = |text: &str, live: &mut Option<LiveMarkdown>, raw: &mut String| match live {
+            Some(l) => l.push(&mut std::io::stderr(), text),
+            None => raw.push_str(text),
+        };
         for ev in client.to_command(prompt, &ctx) {
             match ev {
                 crate::ai::StreamEvent::Delta(s) => {
@@ -185,7 +190,7 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
                     }
                     match mode {
                         Some(true) => command.push_str(&s),
-                        Some(false) => stream_answer_to_stderr(&mut md, &s),
+                        Some(false) => answer(&s, &mut live, &mut raw),
                         None => {
                             head.push_str(&s);
                             let h = up(&head);
@@ -197,7 +202,7 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
                                 command = head.trim_start()[crate::ai::RUN_PREFIX.len()..].to_string();
                             } else {
                                 mode = Some(false);
-                                stream_answer_to_stderr(&mut md, &head);
+                                answer(&head, &mut live, &mut raw);
                             }
                             head.clear();
                         }
@@ -231,7 +236,7 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
                 command = head.trim_start()[crate::ai::RUN_PREFIX.len()..].to_string();
             } else {
                 mode = Some(false);
-                stream_answer_to_stderr(&mut md, &head);
+                answer(&head, &mut live, &mut raw);
             }
         }
         if mode == Some(true) {
@@ -243,8 +248,11 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
             record_session_run(session.as_ref(), "@ai", prompt, cmd);
             return 0;
         }
-        // Answer mode: flush the renderer's tail, then preload nothing.
-        finish_answer_to_stderr(&mut md);
+        // Answer mode: finalize the live tail (or emit the raw buffer on a non-TTY).
+        match &mut live {
+            Some(l) => l.flush(&mut std::io::stderr()),
+            None => eprint!("{raw}"),
+        }
         eprintln!();
         eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget));
         println!("{ANSWER_MARK}");
@@ -532,9 +540,20 @@ fn md_style() -> corelib::md::Style {
     corelib::md::Style { enabled: true, heading: accent, accent, code: d.code, muted, link: accent }
 }
 
-/// Wrap width for rendered Markdown — the terminal width (`$COLUMNS`), capped for readability.
+/// Wrap width for rendered Markdown — the split's REAL width (via `TIOCGWINSZ`, since the shell
+/// doesn't export `$COLUMNS` to us), minus a small right margin. Falls back to `$COLUMNS`, then
+/// 80. No low cap: wide splits are used fully (a generous 400 ceiling just guards absurd sizes).
 fn md_width() -> usize {
-    std::env::var("COLUMNS").ok().and_then(|c| c.trim().parse::<usize>().ok()).unwrap_or(80).clamp(20, 100)
+    let cols = platform::os::terminal_size()
+        .map(|(c, _)| c as usize)
+        .or_else(|| std::env::var("COLUMNS").ok().and_then(|c| c.trim().parse::<usize>().ok()))
+        .unwrap_or(80);
+    cols.saturating_sub(2).clamp(24, 400)
+}
+
+/// The split's height in rows (for the live renderer's overflow guard); 0 if unknown.
+fn term_rows() -> usize {
+    platform::os::terminal_size().map(|(_, r)| r as usize).unwrap_or(0)
 }
 
 /// Markdown render options when writing to a TTY; `None` (raw text) when piped.
@@ -542,36 +561,123 @@ fn markdown_opts(is_tty: bool) -> Option<(corelib::md::Style, usize)> {
     is_tty.then(|| (md_style(), md_width()))
 }
 
-/// Stream `@ai` answer text to stderr through the live Markdown renderer (or raw when it's
-/// `None`, i.e. not a TTY). Text chunks print directly; diagram chunks render natively.
-fn stream_answer_to_stderr(md: &mut Option<corelib::md::StreamRenderer>, text: &str) {
-    match md {
-        Some(r) => {
-            for c in r.push(text) {
-                match c {
-                    corelib::md::Chunk::Text(t) => eprint!("{t}"),
-                    corelib::md::Chunk::Diagram(s) => eprint!("{}", diagram_output(&s)),
-                }
-            }
-        }
-        None => eprint!("{text}"),
-    }
+/// A REALTIME Markdown renderer: completed blocks are committed once (they scroll away
+/// untouched), while the single in-progress block is continuously re-rendered and repainted in
+/// place — so the current line/paragraph styles in as it streams. Only the small trailing region
+/// is ever repainted (via cursor-up + clear), so it stays stable and never disturbs committed
+/// content. On a non-TTY it isn't used (the caller streams raw).
+struct LiveMarkdown {
+    sr: corelib::md::StreamRenderer,
+    style: corelib::md::Style,
+    width: usize,
+    /// Max rows the live tail may occupy before it's clamped (viewport-bounded so the
+    /// cursor-repaint can never climb above committed content).
+    max_rows: usize,
+    /// Screen lines the current tail occupies (what the next erase must undo).
+    painted: usize,
 }
 
-/// Flush the live renderer's trailing block at end of an `@ai` answer.
-fn finish_answer_to_stderr(md: &mut Option<corelib::md::StreamRenderer>) {
-    if let Some(r) = md {
-        for c in r.finish() {
-            match c {
-                corelib::md::Chunk::Text(t) => eprint!("{t}"),
-                corelib::md::Chunk::Diagram(s) => eprint!("{}", diagram_output(&s)),
+/// The escape sequence to erase a `painted`-line tail: return to its first line, clear below.
+fn erase_seq(painted: usize) -> String {
+    if painted == 0 {
+        return String::new();
+    }
+    let mut s = String::from("\r");
+    if painted > 1 {
+        s.push_str(&format!("\x1b[{}A", painted - 1));
+    }
+    s.push_str("\x1b[0J");
+    s
+}
+
+/// Clamp a rendered tail to at most `max_rows` screen lines (keeping the newest), returning the
+/// text to print and its line count — so the repaint region never exceeds the viewport.
+fn clamp_tail(rendered: &str, max_rows: usize) -> (String, usize) {
+    let all: Vec<&str> = rendered.split('\n').collect();
+    let (start, n) = if max_rows > 0 && all.len() > max_rows { (all.len() - max_rows, max_rows) } else { (0, all.len()) };
+    (all[start..].join("\n"), n)
+}
+
+impl LiveMarkdown {
+    fn new(style: corelib::md::Style, width: usize, max_rows: usize) -> Self {
+        LiveMarkdown { sr: corelib::md::StreamRenderer::new(style, width, &[DIAGRAM_LANG]), style, width, max_rows: if max_rows == 0 { 40 } else { max_rows }, painted: 0 }
+    }
+
+    fn write_chunk(w: &mut dyn std::io::Write, c: corelib::md::Chunk) {
+        match c {
+            corelib::md::Chunk::Text(t) => {
+                let _ = w.write_all(t.as_bytes());
+            }
+            corelib::md::Chunk::Diagram(s) => {
+                let _ = w.write_all(diagram_output(&s).as_bytes());
             }
         }
+    }
+
+    /// Render the in-progress block for the live tail (a placeholder for an open diagram fence
+    /// so raw diagram source is never shown).
+    fn render_pending(&self) -> String {
+        let pend = self.sr.pending();
+        if pend.trim().is_empty() {
+            return String::new();
+        }
+        if is_open_diagram_fence(pend) {
+            return format!("{}\u{25c8} drawing diagram\u{2026}{}", muted(), reset());
+        }
+        corelib::md::render(&corelib::md::parse(pend), &self.style, self.width).trim_end_matches('\n').to_string()
+    }
+
+    fn paint(&mut self, w: &mut dyn std::io::Write) {
+        let rendered = self.render_pending();
+        if rendered.is_empty() {
+            self.painted = 0;
+            return;
+        }
+        let (text, n) = clamp_tail(&rendered, self.max_rows);
+        let _ = w.write_all(text.as_bytes());
+        self.painted = n;
+    }
+
+    /// Feed a streamed delta: erase the old tail, commit any newly-completed blocks, repaint the
+    /// in-progress tail.
+    fn push(&mut self, w: &mut dyn std::io::Write, delta: &str) {
+        let _ = w.write_all(erase_seq(self.painted).as_bytes());
+        self.painted = 0;
+        for c in self.sr.push(delta) {
+            Self::write_chunk(w, c);
+        }
+        self.paint(w);
+        let _ = w.flush();
+    }
+
+    /// Finalize: erase the tail and commit whatever remains as final output.
+    fn flush(&mut self, w: &mut dyn std::io::Write) {
+        let _ = w.write_all(erase_seq(self.painted).as_bytes());
+        self.painted = 0;
+        for c in self.sr.finish() {
+            Self::write_chunk(w, c);
+        }
+        let _ = w.flush();
     }
 }
 
 /// The fenced-block language the AI uses for diagrams (kept internal — never shown to users).
 const DIAGRAM_LANG: &str = "mermaid";
+
+/// True when `pend` begins a diagram fence that hasn't been closed yet.
+fn is_open_diagram_fence(pend: &str) -> bool {
+    let mut lines = pend.lines();
+    let Some(first) = lines.next().map(str::trim) else { return false };
+    let is_fence = first.starts_with("```") || first.starts_with("~~~");
+    let lang = first.trim_start_matches(['`', '~']).trim().to_ascii_lowercase();
+    if !is_fence || lang != DIAGRAM_LANG {
+        return false;
+    }
+    !lines.any(|l| {
+        let t = l.trim_start();
+        t.starts_with("```") || t.starts_with("~~~")
+    })
+}
 
 /// Are we inside our OWN GUI terminal (which draws native diagrams via `OSC 1338`)? The PTY
 /// exports `TERM_PROGRAM = <brand>` to its children.
@@ -754,14 +860,14 @@ struct CliObserver<W: std::io::Write> {
     /// Print the raw reasoning text (`[ai] show_reasoning`). Default `false`: reasoning is
     /// hidden behind the animated `∴ thinking…` spinner; tools + answer still stream.
     show_reasoning: bool,
-    /// When set, the answer streams through a LIVE Markdown renderer — each block renders the
-    /// moment it's complete (diagrams drawn natively). Off (piped output) → stream raw.
-    md_stream: Option<corelib::md::StreamRenderer>,
+    /// When set, the answer renders through a LIVE (realtime) Markdown renderer — the in-progress
+    /// block repaints as it streams, completed blocks commit once. Off (piped) → stream raw.
+    live: Option<LiveMarkdown>,
 }
 
 impl<W: std::io::Write> CliObserver<W> {
     fn new(out: W) -> Self {
-        CliObserver { out, pending: String::new(), suppress_line: false, suppress_turn: false, streamed: String::new(), printed: false, spinner: None, thinking_open: false, show_reasoning: false, md_stream: None }
+        CliObserver { out, pending: String::new(), suppress_line: false, suppress_turn: false, streamed: String::new(), printed: false, spinner: None, thinking_open: false, show_reasoning: false, live: None }
     }
 
     /// Opt into streaming the model's raw reasoning text (off by default).
@@ -770,25 +876,11 @@ impl<W: std::io::Write> CliObserver<W> {
         self
     }
 
-    /// Render the answer live as styled Markdown (block-by-block) instead of raw. `None` on a
-    /// non-TTY (piped) target so pipes stay clean.
+    /// Render the answer as realtime styled Markdown instead of raw. `None` on a non-TTY (piped)
+    /// target so pipes stay clean.
     fn with_markdown(mut self, md: Option<(corelib::md::Style, usize)>) -> Self {
-        self.md_stream = md.map(|(style, width)| corelib::md::StreamRenderer::new(style, width, &[DIAGRAM_LANG]));
+        self.live = md.map(|(style, width)| LiveMarkdown::new(style, width, term_rows().saturating_sub(2)));
         self
-    }
-
-    /// Write a batch of rendered Markdown chunks: styled text goes straight out; a diagram
-    /// chunk is emitted natively (or a fallback box when not on the GUI terminal).
-    fn write_chunks(&mut self, chunks: Vec<corelib::md::Chunk>) {
-        for c in chunks {
-            match c {
-                corelib::md::Chunk::Text(t) => self.emit(&t),
-                corelib::md::Chunk::Diagram(src) => {
-                    let d = diagram_output(&src);
-                    self.emit(&d);
-                }
-            }
-        }
     }
 
     /// First sign of life this turn — clear the waiting spinner.
@@ -899,12 +991,12 @@ impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
         self.spinner = Some(Spinner::start("thinking\u{2026}".into()));
     }
     fn on_delta(&mut self, text: &str) {
-        // Markdown mode: feed the LIVE renderer — complete blocks (and diagrams) render as
-        // they arrive. Stop the spinner on the first token so tool traces print cleanly.
-        if self.md_stream.is_some() {
+        // Realtime Markdown: the in-progress block repaints as tokens arrive; completed blocks
+        // (and diagrams) commit once. Stop the spinner on the first token.
+        if self.live.is_some() {
             self.wake();
-            let chunks = self.md_stream.as_mut().unwrap().push(text);
-            self.write_chunks(chunks);
+            let out = &mut self.out;
+            self.live.as_mut().unwrap().push(out, text);
             return;
         }
         self.wake();
@@ -927,8 +1019,10 @@ impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
     }
     fn on_commit(&mut self, _prose: &str) {
         self.wake();
-        // In Markdown mode the live renderer already emitted complete blocks; nothing to flush.
-        if self.md_stream.is_some() {
+        // Realtime mode: finalize the live tail so a following tool trace prints cleanly below it.
+        if self.live.is_some() {
+            let out = &mut self.out;
+            self.live.as_mut().unwrap().flush(out);
             return;
         }
         // Prose lines already streamed; just make sure the tool trace starts clean.
@@ -943,6 +1037,11 @@ impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
     fn on_step_start(&mut self, i: usize, n: usize, label: &str) {
         // A live flow step header on stderr (chrome), so the user watches steps advance.
         self.wake();
+        // Realtime mode: finalize the live tail so the step header prints cleanly beneath it.
+        if self.live.is_some() {
+            let out = &mut self.out;
+            self.live.as_mut().unwrap().flush(out);
+        }
         if self.printed && !self.streamed.ends_with('\n') {
             self.emit("\n");
         }
@@ -959,10 +1058,10 @@ fn finish_streamed<W: std::io::Write>(obs: &mut CliObserver<W>, answer: &str) {
         obs.thinking_open = false;
     }
     let a = answer.trim();
-    // Markdown mode: flush any trailing block still buffered in the live renderer.
-    if obs.md_stream.is_some() {
-        let chunks = obs.md_stream.as_mut().unwrap().finish();
-        obs.write_chunks(chunks);
+    // Realtime mode: finalize any trailing tail still buffered in the live renderer.
+    if obs.live.is_some() {
+        let out = &mut obs.out;
+        obs.live.as_mut().unwrap().flush(out);
         let _ = obs.out.write_all(b"\n");
         let _ = obs.out.flush();
         return;
@@ -2839,8 +2938,39 @@ fn theme_set(name: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_marker, error_comment, fnv1a, loop_prompt, parse_flow, reviewer_passed, session_lines, tail, CONFIRM_MARK, EDIT_MARK, RUN_MARK};
+    use super::{clamp_tail, command_marker, erase_seq, error_comment, fnv1a, is_open_diagram_fence, loop_prompt, parse_flow, reviewer_passed, session_lines, tail, CONFIRM_MARK, EDIT_MARK, RUN_MARK};
     use crate::security::Verdict;
+
+    #[test]
+    fn erase_seq_returns_to_the_top_of_the_painted_tail() {
+        // Nothing painted → no cursor movement.
+        assert_eq!(erase_seq(0), "");
+        // One line: return to column 0, clear below (no cursor-up).
+        assert_eq!(erase_seq(1), "\r\x1b[0J");
+        // N lines: return to column 0, climb N-1 rows, clear below.
+        assert_eq!(erase_seq(3), "\r\x1b[2A\x1b[0J");
+    }
+
+    #[test]
+    fn clamp_tail_keeps_only_the_newest_rows_within_the_viewport() {
+        // Fits within the viewport → unchanged, exact line count.
+        let (t, n) = clamp_tail("a\nb\nc", 5);
+        assert_eq!((t.as_str(), n), ("a\nb\nc", 3));
+        // Taller than the viewport → keep the NEWEST `max_rows` lines only.
+        let (t, n) = clamp_tail("a\nb\nc\nd\ne", 2);
+        assert_eq!((t.as_str(), n), ("d\ne", 2));
+        // A zero cap means "no clamp" (paint it all).
+        let (_, n) = clamp_tail("a\nb\nc", 0);
+        assert_eq!(n, 3);
+    }
+
+    #[test]
+    fn open_diagram_fence_detected_only_while_unclosed() {
+        assert!(is_open_diagram_fence("```mermaid\nflowchart TD"));
+        assert!(!is_open_diagram_fence("```mermaid\nflowchart TD\n```"), "closed fence is complete");
+        assert!(!is_open_diagram_fence("```rust\nlet x = 1;"), "not a diagram language");
+        assert!(!is_open_diagram_fence("plain paragraph"));
+    }
 
     #[test]
     fn command_marker_honours_mode_and_guard() {

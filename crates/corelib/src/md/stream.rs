@@ -48,6 +48,13 @@ impl StreamRenderer {
         self.drain(true)
     }
 
+    /// The trailing, not-yet-complete block still buffered (empty when on a boundary). A live
+    /// renderer renders THIS repeatedly so the in-progress block styles in as it streams, while
+    /// completed blocks come out of `push`/`finish` and are committed once.
+    pub fn pending(&self) -> &str {
+        self.buf.trim_start_matches('\n')
+    }
+
     fn drain(&mut self, fin: bool) -> Vec<Chunk> {
         let mut chunks = Vec::new();
         while let Some(seg) = self.take_block(fin) {
@@ -251,6 +258,19 @@ mod tests {
         let mut s = StreamRenderer::new(plain(), 80, &["mermaid"]);
         let out = texts(s.push("```rust\nlet x = 1;\n```\n"));
         assert!(out.contains("let x = 1;") && !out.contains("<diagram"), "{out:?}");
+    }
+
+    #[test]
+    fn pending_holds_the_in_progress_block_and_empties_on_completion() {
+        let mut s = StreamRenderer::new(plain(), 80, &["mermaid"]);
+        s.push("Hello wor");
+        assert_eq!(s.pending(), "Hello wor", "in-progress paragraph is pending");
+        s.push("ld");
+        assert_eq!(s.pending(), "Hello world");
+        // Completing the block (blank line) emits it and clears pending.
+        let out = texts(s.push("\n\n"));
+        assert!(out.contains("Hello world"));
+        assert_eq!(s.pending(), "", "pending empty once the block is emitted");
     }
 
     #[test]

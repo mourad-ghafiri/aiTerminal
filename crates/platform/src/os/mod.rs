@@ -88,6 +88,18 @@ pub fn pid_alive(_pid: u32) -> bool {
     true // never falsely mark a job dead where we can't check
 }
 
+/// The controlling terminal's `(cols, rows)`, or `None` off a tty. Lets the CLI render at the
+/// split's true width without relying on the shell exporting `$COLUMNS`.
+#[cfg(target_os = "macos")]
+pub fn terminal_size() -> Option<(u16, u16)> {
+    macos::proc::terminal_size()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn terminal_size() -> Option<(u16, u16)> {
+    None
+}
+
 /// Ask `pid` to terminate (SIGTERM) — cancel a detached/scheduled job. Best-effort.
 #[cfg(target_os = "macos")]
 pub fn terminate(pid: u32) -> bool {
