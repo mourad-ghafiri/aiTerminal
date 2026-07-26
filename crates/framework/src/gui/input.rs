@@ -145,26 +145,16 @@ impl EventHandler for GuiApp {
                     }
                 }
             }
-            Event::MouseUp { button: MouseButton::Left, .. } => {
-                // Commit a tab-reorder drag: convert the visual gap to a final index (a drop
-                // after the grabbed tab shifts left by one once it's removed) and move it.
-                if let Some(d) = self.tab_drag.take() {
-                    if d.moved {
-                        let to = if d.gap > d.from { d.gap - 1 } else { d.gap };
-                        self.tabs.move_tab(d.from, to);
-                        self.notify_focus_changed();
-                        self.relayout();
+            Event::MouseUp { button, pos, mods } => self.on_mouse_up(button, pos, mods),
+            Event::Scroll { delta, pos, mods, .. } => {
+                if let Some((id, rect)) = self.pane_at(pos) {
+                    // A mouse-tracking program (@md edit, vim, less) gets wheel notches as SGR:
+                    // vertical = buttons 64/65, Shift+wheel = horizontal 66/67. It never touches
+                    // the emulator's own scrollback.
+                    if self.pane_wants_mouse(id) {
+                        self.forward_wheel(id, rect, delta, pos, mods);
+                        return;
                     }
-                    self.dirty.set();
-                    return;
-                }
-                // A text drag ended — copy the selection on release.
-                if self.dragging.take().is_some() {
-                    self.copy_selection();
-                }
-            }
-            Event::Scroll { delta, pos, .. } => {
-                if let Some((id, _rect)) = self.pane_at(pos) {
                     let base_px = self.base_px();
                     let dy = match delta {
                         ScrollDelta::Lines { y, .. } => -y * base_px * 1.3,

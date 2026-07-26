@@ -280,6 +280,29 @@ document.addEventListener("DOMContentLoaded", () => {
       },
     },
 
+    md: {
+      caption: () => caption("<code>@md</code> — read &amp; live-edit Markdown",
+        "<code>@md render</code> pretty-prints a file (diagrams drawn natively); <code>@md edit</code> is a split editor — source left, live preview right, scroll by keyboard + mouse."),
+      demo(w, myEpoch) {
+        run(w, myEpoch, [
+          { do: "pause", ms: 300 },
+          { do: "cmd", text: "@md edit release.md" },
+          { do: "out", spans: [MUT("┌ release.md "), ERR("●"), MUT(" (10L) ───────────────────┬─────────────────────────────┐")] },
+          { do: "out", spans: [MUT("│ "), MUT("1 "), ACC2("# Release plan"), MUT("            │ "), S("t-accent-b", "Release plan")] },
+          { do: "out", spans: [MUT("│ "), MUT("2 "), MUT("               │ "), MUT("────────────")] },
+          { do: "out", spans: [MUT("│ "), MUT("3 "), FG("- cut the branch"), MUT("        │ "), ACC("• "), FG("cut the branch")] },
+          { do: "out", spans: [MUT("│ "), MUT("4 "), FG("- run the suite"), MUT("         │ "), ACC("• "), FG("run the suite")] },
+          { do: "out", spans: [MUT("│ "), MUT("5 "), ACC2("```mermaid"), MUT("             │ "), MUT("╭──── diagram ─────────────╮")] },
+          { do: "out", spans: [MUT("│ "), MUT("6 "), FG("flowchart LR"), MUT("            │ "), MUT("│ "), ACC("[branch]→[test]→[ship]"), MUT("  │")] },
+          { do: "out", spans: [MUT("│ "), MUT("7 "), FG("  A-->B-->C"), MUT("             │ "), MUT("╰──────────────────────────╯")] },
+          { do: "out", spans: [MUT("│ "), S("t-accent-b", "^S"), DIM(" save  "), S("t-accent-b", "^W"), DIM(" focus  "), S("t-accent-b", "^Q"), DIM(" quit   · scroll ↑↓ ←→ · wheel │")] },
+          { do: "out", spans: [MUT("└──────────────────────────────┴─────────────────────────────┘")] },
+          { do: "pause", ms: 900 },
+          { do: "stream", spans: [DIM("live preview updates as you type — diagrams drawn as real pixels, mouse scrolls both panes.")], speed: 10 },
+        ]);
+      },
+    },
+
     guard: {
       caption: () => caption("The AI proposes. <em>The guard disposes.</em>",
         "allow · ⚠ confirm · ✗ deny — deny always wins, and secrets are redacted before anything leaves your machine."),

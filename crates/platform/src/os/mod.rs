@@ -100,6 +100,36 @@ pub fn terminal_size() -> Option<(u16, u16)> {
     None
 }
 
+/// Put the controlling terminal (stdin) into raw mode until the returned guard drops — a
+/// full-screen CLI app (the Markdown editor) reads keystrokes one at a time and owns the
+/// screen; dropping the guard restores the terminal. `None` off a tty. macOS only for now.
+#[cfg(target_os = "macos")]
+pub fn raw_mode() -> Option<macos::proc::RawGuard> {
+    macos::proc::raw_mode()
+}
+
+/// A no-op raw-mode guard for hosts without a termios backend yet — restores nothing.
+#[cfg(not(target_os = "macos"))]
+pub struct RawGuard;
+
+#[cfg(not(target_os = "macos"))]
+pub fn raw_mode() -> Option<RawGuard> {
+    None
+}
+
+/// The process-wide `SIGWINCH` (terminal-resize) flag — a full-screen app polls it after a
+/// `read` returns `EINTR`, then re-queries [`terminal_size`] and repaints.
+#[cfg(target_os = "macos")]
+pub fn sigwinch_flag() -> &'static std::sync::atomic::AtomicBool {
+    macos::proc::sigwinch_flag()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn sigwinch_flag() -> &'static std::sync::atomic::AtomicBool {
+    static NEVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    &NEVER
+}
+
 /// Ask `pid` to terminate (SIGTERM) — cancel a detached/scheduled job. Best-effort.
 #[cfg(target_os = "macos")]
 pub fn terminate(pid: u32) -> bool {

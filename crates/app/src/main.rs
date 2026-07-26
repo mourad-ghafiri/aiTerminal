@@ -88,6 +88,7 @@ fn main() {
         Some("theme") => std::process::exit(framework::cli::theme(&raw[2..])),
         Some("profile") => std::process::exit(framework::cli::profile(&raw[2..])),
         Some("ai") => std::process::exit(framework::cli::ai(&raw[2..])),
+        Some("md") => std::process::exit(framework::cli::md(&raw[2..])),
         _ => {}
     }
 

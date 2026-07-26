@@ -6,6 +6,8 @@
 #   @flow [<name> input]  → run a multi-step AI workflow; with no args, list them
 #   @loop <goal> [--check "<cmd>"] [--max N] → iterate an agent until the goal verifies
 #   @job [clear]          → list / prune background AI jobs
+#   @md render <file>     → pretty-print a Markdown file (diagrams drawn natively)
+#   @md edit <file>       → a live split editor: Markdown left, rendered preview right
 #   @profile [<id>]       → list / switch directly · create/rename/delete/edit ($EDITOR)
 #   @theme [<name>]       → list themes / switch the current profile\x27s theme live
 #   @config | @plugin …   → the matching aiTerminal subcommand
@@ -48,6 +50,7 @@ command_not_found_handler() {
       return
       ;;
     @job)     "${TT_BIN:-aiTerminal}" ai job "$@"; return ;;
+    @md)      "${TT_BIN:-aiTerminal}" md "$@"; return ;;
     @profile) "${TT_BIN:-aiTerminal}" profile "$@"; return ;;
     @config)  "${TT_BIN:-aiTerminal}" config "$@"; return ;;
     @theme)   "${TT_BIN:-aiTerminal}" theme "$@"; return ;;

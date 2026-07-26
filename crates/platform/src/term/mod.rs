@@ -53,6 +53,20 @@ pub struct Placement {
     pub g: usize,
 }
 
+/// A diagram placement on the **alternate screen** (a full-screen app like `@md edit`). Unlike
+/// [`Placement`], it's positioned by absolute cursor cell (`row`, `col`) and confined to `cols`
+/// columns — so a diagram in one split pane never bleeds into another. The app owns layout: it
+/// clears the alt screen (`ED 2`) each repaint and re-emits placements, so this list rebuilds
+/// per frame and never drifts. Extended `OSC 1338 ; rows ; base64 ; cols`.
+#[derive(Clone, Debug)]
+pub struct AltPlacement {
+    pub source: String,
+    pub rows: usize,
+    pub cols: usize,
+    pub row: usize,
+    pub col: usize,
+}
+
 pub struct Term {
     cols: usize,
     rows: usize,
@@ -86,6 +100,13 @@ pub struct Term {
     pending_clipboard: Option<String>,
     /// Inline diagram placements (`OSC 1338`) the renderer draws over the grid.
     placements: Vec<Placement>,
+    /// Alternate-screen diagram placements (positioned by cell; rebuilt per app repaint).
+    alt_placements: Vec<AltPlacement>,
+    /// Active mouse-reporting mode: 0 = off, else the enabling DEC mode (1000/1002/1003).
+    /// Set by a program via `set_mode`; the host forwards mouse events to the PTY when non-zero.
+    mouse_track: u16,
+    /// SGR extended mouse encoding (DEC 1006) — reports are `ESC[<b;x;y(M|m)` with 1-based cells.
+    mouse_sgr: bool,
     parser: Parser,
 }
 
@@ -115,6 +136,9 @@ impl Term {
             last_feed: None,
             pending_clipboard: None,
             placements: Vec::new(),
+            alt_placements: Vec::new(),
+            mouse_track: 0,
+            mouse_sgr: false,
             parser: Parser::new(),
         }
     }
@@ -122,6 +146,22 @@ impl Term {
     /// The inline diagram placements to composite over the grid (see [`Placement`]).
     pub fn placements(&self) -> &[Placement] {
         &self.placements
+    }
+
+    /// Alternate-screen diagram placements to composite over the grid (see [`AltPlacement`]).
+    pub fn alt_placements(&self) -> &[AltPlacement] {
+        &self.alt_placements
+    }
+
+    /// Whether a program has enabled mouse reporting (DEC 1000/1002/1003) — the host forwards
+    /// mouse wheel/click/drag to the PTY instead of handling them locally.
+    pub fn wants_mouse(&self) -> bool {
+        self.mouse_track != 0
+    }
+
+    /// Whether the program requested SGR (1006) mouse encoding (`ESC[<b;x;y(M|m)`).
+    pub fn mouse_sgr(&self) -> bool {
+        self.mouse_sgr
     }
 
     /// Drain text staged by `OSC 52` (a program writing the system clipboard).
@@ -316,6 +356,9 @@ impl Term {
         // placements can no longer be trusted to align — drop them (they re-render on the
         // next answer). Keeps the fragile reflow path free of placement bookkeeping.
         self.placements.clear();
+        // Alt-screen diagrams are laid out for the old size; drop them so the app re-emits at
+        // the new geometry on its next repaint (it repaints on the SIGWINCH it receives).
+        self.alt_placements.clear();
         // The PRIMARY screen owns the scrollback; resize it with row overflow/refill. The
         // ALT screen (vim/less) is transient and keeps no history — clamp it, no scrollback.
         // Distinct fields → disjoint borrows.
@@ -514,9 +557,15 @@ impl Term {
                         *cell = Cell::blank_with(&pen);
                     }
                 }
-                // Drop diagrams that live on the now-blanked visible screen.
-                let base = self.scrollback.len();
-                self.placements.retain(|p| p.g + p.rows <= base);
+                if self.in_alt {
+                    // A full-screen app clears then repaints each frame; drop its diagrams so
+                    // the frame's re-emitted placements are the only ones drawn (no ghosts).
+                    self.alt_placements.clear();
+                } else {
+                    // Drop diagrams that live on the now-blanked visible screen.
+                    let base = self.scrollback.len();
+                    self.placements.retain(|p| p.g + p.rows <= base);
+                }
             }
         }
     }
@@ -599,6 +648,10 @@ impl Term {
         match mode {
             25 => self.cursor_visible = on,
             1049 | 47 | 1047 => self.set_alt_screen(on),
+            // Mouse reporting: 1000 = click, 1002 = click+drag, 1003 = any-motion. We track the
+            // level so the host knows to forward events; disabling any resets to off.
+            1000 | 1002 | 1003 => self.mouse_track = if on { mode } else { 0 },
+            1006 => self.mouse_sgr = on, // SGR extended encoding
             _ => {}
         }
     }
@@ -610,6 +663,8 @@ impl Term {
         // Switching screens always returns the viewport to the live bottom (the alt
         // screen has no scrollback; the primary resumes at its live edge).
         self.scroll_offset = 0;
+        // Alt-screen diagrams belong to the alt-screen app; never carry them across a switch.
+        self.alt_placements.clear();
         if on {
             let mut fresh = Screen::new(self.cols, self.rows);
             fresh.pen = self.screen.pen;
@@ -953,21 +1008,33 @@ impl Perform for Term {
                     }
                 }
             }
-            // `OSC 1338 ; <rows> ; <base64 source>` — reserve `rows` grid rows for an inline
-            // diagram the renderer draws natively (see `Placement`). Primary screen only.
+            // `OSC 1338 ; <rows> ; <base64 source> [ ; <cols> ]` — draw an inline diagram
+            // natively. On the primary screen it reserves `rows` grid rows at the cursor (see
+            // [`Placement`]); on the alternate screen it's positioned at the cursor cell and
+            // confined to `cols` columns (default full width) for a full-screen app (see
+            // [`AltPlacement`]) — no rows are reserved (the app owns its own layout).
             "1338" if fields.len() >= 3 => {
                 let rows = String::from_utf8_lossy(fields[1]).trim().parse::<usize>().unwrap_or(0).clamp(1, 60);
                 let payload = String::from_utf8_lossy(fields[2]);
                 if let Ok(bytes) = corelib::codec::base64_decode(payload.trim()) {
                     if let Ok(source) = String::from_utf8(bytes) {
-                        if !source.trim().is_empty() && !self.in_alt {
-                            let g = self.scrollback.len() + self.screen.cy;
-                            self.placements.push(Placement { source, rows, g });
-                            if self.placements.len() > 64 {
-                                self.placements.remove(0);
-                            }
-                            for _ in 0..rows {
-                                self.linefeed();
+                        if !source.trim().is_empty() {
+                            if self.in_alt {
+                                let col = self.screen.cx.min(self.cols.saturating_sub(1));
+                                let span = fields.get(3).map(|f| String::from_utf8_lossy(f).trim().parse::<usize>().unwrap_or(0)).filter(|&c| c > 0).unwrap_or(self.cols).min(self.cols - col);
+                                self.alt_placements.push(AltPlacement { source, rows, cols: span, row: self.screen.cy, col });
+                                if self.alt_placements.len() > 64 {
+                                    self.alt_placements.remove(0);
+                                }
+                            } else {
+                                let g = self.scrollback.len() + self.screen.cy;
+                                self.placements.push(Placement { source, rows, g });
+                                if self.placements.len() > 64 {
+                                    self.placements.remove(0);
+                                }
+                                for _ in 0..rows {
+                                    self.linefeed();
+                                }
                             }
                         }
                     }
@@ -1386,6 +1453,52 @@ mod tests {
         assert_eq!(t.placements().len(), 1);
         t.resize(40, 12);
         assert!(t.placements().is_empty(), "reflow drops placements to avoid misalignment");
+    }
+
+    #[test]
+    fn osc_1338_in_alt_screen_positions_by_cell_and_confines_to_cols() {
+        let mut t = Term::new(80, 24);
+        t.feed(b"\x1b[?1049h"); // enter alt screen (the full-screen editor)
+        t.feed(b"\x1b[3;41H"); // move cursor to row 3, col 41 (1-based) = preview column
+        let src = "flowchart LR\n A-->B";
+        let b64 = corelib::codec::base64_encode(src.as_bytes());
+        t.feed(format!("\x1b]1338;5;{b64};38\x07").as_bytes()); // rows=5, cols=38
+        assert!(t.placements().is_empty(), "alt screen never uses the primary placement list");
+        let a = t.alt_placements();
+        assert_eq!(a.len(), 1);
+        assert_eq!((a[0].row, a[0].col), (2, 40), "0-based cursor cell");
+        assert_eq!((a[0].rows, a[0].cols), (5, 38));
+        assert_eq!(a[0].source, src);
+        assert_eq!(t.cursor(), (40, 2), "no rows reserved — the app owns layout");
+    }
+
+    #[test]
+    fn ed2_in_alt_screen_clears_alt_placements_so_frames_dont_ghost() {
+        let mut t = Term::new(40, 12);
+        t.feed(b"\x1b[?1049h");
+        let b64 = corelib::codec::base64_encode(b"flowchart TD\n A-->B");
+        t.feed(format!("\x1b]1338;3;{b64}\x07").as_bytes());
+        assert_eq!(t.alt_placements().len(), 1);
+        t.feed(b"\x1b[2J"); // the editor clears before repainting each frame
+        assert!(t.alt_placements().is_empty(), "a fresh frame starts with no diagrams");
+        // Leaving the alt screen also drops them.
+        t.feed(format!("\x1b]1338;3;{b64}\x07").as_bytes());
+        t.feed(b"\x1b[?1049l");
+        assert!(t.alt_placements().is_empty());
+    }
+
+    #[test]
+    fn mouse_modes_are_tracked_for_the_host_to_forward() {
+        let mut t = Term::new(40, 12);
+        assert!(!t.wants_mouse() && !t.mouse_sgr());
+        t.feed(b"\x1b[?1000h\x1b[?1006h"); // click reporting + SGR encoding
+        assert!(t.wants_mouse() && t.mouse_sgr());
+        t.feed(b"\x1b[?1002h"); // upgrade to click+drag
+        assert!(t.wants_mouse());
+        t.feed(b"\x1b[?1002l"); // disable → off
+        assert!(!t.wants_mouse());
+        t.feed(b"\x1b[?1006l");
+        assert!(!t.mouse_sgr());
     }
 
     #[test]

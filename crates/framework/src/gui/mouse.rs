@@ -22,6 +22,19 @@ impl GuiApp {
             }
         }
         let Some((id, rect)) = self.pane_at(pos) else { return };
+        // A mouse-tracking program (@md edit, vim, less) receives the raw click — unless Shift
+        // (bypass to local selection) or ⌘ (open-link) is held, matching xterm convention.
+        if !mods.contains(Modifiers::SHIFT) && !mods.contains(Modifiers::SUPER) && self.pane_wants_mouse(id) {
+            self.tabs.active_mut().focus(id);
+            self.notify_focus_changed();
+            if let Some(btn) = sgr_button(button) {
+                let cell = self.cell_at(id, rect, pos);
+                let seq = sgr_mouse(btn, cell, true, mods);
+                self.write_to_pane(id, &seq);
+                self.dirty.set();
+            }
+            return;
+        }
         match button {
             MouseButton::Left => {
                 self.tabs.active_mut().focus(id);
@@ -41,6 +54,90 @@ impl GuiApp {
             }
             MouseButton::Right => self.copy_selection(),
             _ => {}
+        }
+    }
+
+    /// Mouse release: forward it to a mouse-tracking program (mirror of `on_mouse_down`), else
+    /// finish a tab-reorder drag or a text selection.
+    pub(in crate::gui) fn on_mouse_up(&mut self, button: MouseButton, pos: Point, mods: Modifiers) {
+        if !mods.contains(Modifiers::SHIFT) && !mods.contains(Modifiers::SUPER) {
+            if let Some((id, rect)) = self.pane_at(pos) {
+                if self.pane_wants_mouse(id) {
+                    if let Some(btn) = sgr_button(button) {
+                        let cell = self.cell_at(id, rect, pos);
+                        let seq = sgr_mouse(btn, cell, false, mods);
+                        self.write_to_pane(id, &seq);
+                        self.dirty.set();
+                    }
+                    return;
+                }
+            }
+        }
+        if button != MouseButton::Left {
+            return;
+        }
+        // Commit a tab-reorder drag: convert the visual gap to a final index (a drop after the
+        // grabbed tab shifts left by one once it's removed) and move it.
+        if let Some(d) = self.tab_drag.take() {
+            if d.moved {
+                let to = if d.gap > d.from { d.gap - 1 } else { d.gap };
+                self.tabs.move_tab(d.from, to);
+                self.notify_focus_changed();
+                self.relayout();
+            }
+            self.dirty.set();
+            return;
+        }
+        // A text drag ended — copy the selection on release.
+        if self.dragging.take().is_some() {
+            self.copy_selection();
+        }
+    }
+
+    /// Forward wheel notches to a mouse-tracking program as SGR reports: vertical uses buttons
+    /// 64 (up) / 65 (down); Shift+wheel scrolls horizontally with 66 (left) / 67 (right).
+    pub(in crate::gui) fn forward_wheel(&mut self, id: PaneId, rect: Rect, delta: ScrollDelta, pos: Point, mods: Modifiers) {
+        let base_px = self.base_px();
+        let (dx, dy) = match delta {
+            ScrollDelta::Lines { x, y } => (x, y),
+            ScrollDelta::Pixels { x, y } => (x / base_px, y / base_px),
+        };
+        let horizontal = mods.contains(Modifiers::SHIFT);
+        let amount = if horizontal { dx } else { dy };
+        if amount == 0.0 {
+            return;
+        }
+        // Positive = up/left (into content start), matching the scrollback wheel convention.
+        let btn = match (horizontal, amount > 0.0) {
+            (false, true) => 64,
+            (false, false) => 65,
+            (true, true) => 66,
+            (true, false) => 67,
+        };
+        let cell = self.cell_at(id, rect, pos);
+        let notches = (amount.abs().round() as i32).clamp(1, 8);
+        let mut seq = Vec::new();
+        for _ in 0..notches {
+            seq.extend_from_slice(&sgr_mouse(btn, cell, true, Modifiers::empty()));
+        }
+        self.write_to_pane(id, &seq);
+        self.dirty.set();
+    }
+
+    /// Whether the pane's program has enabled mouse reporting (so events forward to the PTY).
+    pub(in crate::gui) fn pane_wants_mouse(&self, id: PaneId) -> bool {
+        self.tabs
+            .active()
+            .get(id)
+            .map(|Pane { session: s, .. }| s.term.lock().unwrap_or_else(|e| e.into_inner()).wants_mouse())
+            .unwrap_or(false)
+    }
+
+    /// Write bytes to a specific pane's PTY (mouse reports go to the pane under the pointer, which
+    /// may differ from the keyboard-focused pane).
+    pub(in crate::gui) fn write_to_pane(&self, id: PaneId, bytes: &[u8]) {
+        if let Some(Pane { session: s, .. }) = self.tabs.active().get(id) {
+            s.write(bytes);
         }
     }
 
@@ -104,5 +201,57 @@ impl GuiApp {
             _ => (80, 24),
         };
         Pos::new(cx.min(mc.saturating_sub(1)), cy.min(mr.saturating_sub(1)))
+    }
+}
+
+/// The SGR base button code for a mouse button (0 left, 1 middle, 2 right), or `None` for a
+/// button a terminal program doesn't report.
+fn sgr_button(button: MouseButton) -> Option<u32> {
+    match button {
+        MouseButton::Left => Some(0),
+        MouseButton::Middle => Some(1),
+        MouseButton::Right => Some(2),
+        _ => None,
+    }
+}
+
+/// Encode a mouse event as an SGR (DEC 1006) report: `ESC [ < b ; x ; y (M|m)`. `cell` is
+/// 0-based (SGR is 1-based); `pressed` selects the terminator (`M` press/motion/wheel, `m`
+/// release). Keyboard modifiers add the standard bits (Shift 4, Alt 8, Ctrl 16).
+fn sgr_mouse(btn: u32, cell: Pos, pressed: bool, mods: Modifiers) -> Vec<u8> {
+    let mut b = btn;
+    if mods.contains(Modifiers::SHIFT) {
+        b += 4;
+    }
+    if mods.contains(Modifiers::ALT) {
+        b += 8;
+    }
+    if mods.contains(Modifiers::CONTROL) {
+        b += 16;
+    }
+    let x = cell.col as u32 + 1;
+    let y = cell.row as u32 + 1;
+    format!("\x1b[<{b};{x};{y}{}", if pressed { 'M' } else { 'm' }).into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sgr_mouse_encodes_1_based_cells_and_modifier_bits() {
+        // Left press at cell (col 0, row 0) → 1-based (1,1), button 0, terminator M.
+        assert_eq!(sgr_mouse(0, Pos::new(0, 0), true, Modifiers::empty()), b"\x1b[<0;1;1M");
+        // Right release at (col 9, row 4) → (10,5), button 2, terminator m.
+        assert_eq!(sgr_mouse(2, Pos::new(9, 4), false, Modifiers::empty()), b"\x1b[<2;10;5m");
+        // Ctrl adds 16 to the button code.
+        assert_eq!(sgr_mouse(0, Pos::new(0, 0), true, Modifiers::CONTROL), b"\x1b[<16;1;1M");
+    }
+
+    #[test]
+    fn sgr_button_maps_only_reportable_buttons() {
+        assert_eq!(sgr_button(MouseButton::Left), Some(0));
+        assert_eq!(sgr_button(MouseButton::Middle), Some(1));
+        assert_eq!(sgr_button(MouseButton::Right), Some(2));
     }
 }

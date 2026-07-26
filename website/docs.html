@@ -37,6 +37,7 @@
     <a href="#cmd-flow">@flow</a>
     <a href="#cmd-loop">@loop</a>
     <a href="#cmd-job">@job</a>
+    <a href="#cmd-md">@md</a>
     <a href="#cmd-manage">@profile · @theme · @config · @plugin</a>
     <a href="#exit-codes">Exit codes</a>
     <b>The terminal</b>
@@ -217,6 +218,31 @@ background jobs (3):
       <code>scheduled · running · done · failed · cancelled · died · missed</code> — a crashed
       job's record heals on the next list, and <code>@job clear</code> prunes everything that is
       neither running nor scheduled.</p>
+
+    <h2 id="cmd-md">@md — read &amp; live-edit Markdown</h2>
+    <pre><code><span class="p">❯</span> @md render README.md                                      <span class="c"># pretty-print (native diagrams)</span>
+<span class="p">❯</span> @md edit notes.md                                         <span class="c"># live split editor</span>
+┌ notes.md ● (42L) ───────────────┬─────────────────────────────┐
+│ 1 # Release plan                │ Release plan                 │
+│ 2                               │ ────────────                 │
+│ 3 - cut the branch              │  • cut the branch            │
+│ 4                               │                              │
+│ 5 ```mermaid                    │  ╭──── diagram ───────────╮  │
+│ 6 flowchart LR                  │  │ [branch]→[test]→[ship]  │  │
+│ 7   A--&gt;B--&gt;C                    │  ╰─────────────────────────╯ │
+│ ^S save  ^W focus  ^Q quit  · scroll ↑↓ ←→ · wheel            │
+└─────────────────────────────────┴─────────────────────────────┘</code></pre>
+    <p><code>@md render &lt;file&gt;</code> prints styled Markdown to the pane at the split's full
+      width, with diagrams drawn as real pixels inline (a clean boxed fallback in other terminals /
+      when piped). <code>@md edit &lt;file&gt;</code> is a full-screen split editor — raw Markdown on
+      the left, a <b>live preview</b> on the right that re-renders as you type, diagrams included.
+      Both panes scroll <b>vertically and horizontally</b>, by keyboard (<code>↑↓ ←→</code>,
+      <code>PageUp/Down</code>, <code>Ctrl+W</code> toggles focus) and by <b>mouse</b> (wheel;
+      <kbd>Shift</kbd>+wheel for horizontal; click to focus / place the caret).
+      <code>Ctrl+S</code> saves; <code>Ctrl+Q</code>/<code>Esc</code> quits with a
+      <b>save / discard / cancel</b> prompt when there are unsaved edits. To make the mouse work for
+      full-screen programs, aiTerminal reports SGR mouse events to the running program — so
+      <code>vim</code> and <code>less</code> get the mouse inside aiTerminal too.</p>
 
     <h2 id="cmd-manage">@profile · @theme · @config · @plugin</h2>
     <table>

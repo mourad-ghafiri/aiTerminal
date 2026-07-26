@@ -524,7 +524,7 @@ fn out_is_tty() -> bool {
 }
 
 /// The Markdown render palette, from the active theme's env colors (with sensible defaults).
-fn md_style() -> corelib::md::Style {
+pub(crate) fn md_style() -> corelib::md::Style {
     let rgb = |var: &str, default: corelib::types::Rgba8| -> corelib::types::Rgba8 {
         std::env::var(var)
             .ok()
@@ -685,16 +685,25 @@ fn is_native_terminal() -> bool {
     std::env::var("TERM_PROGRAM").ok().as_deref() == Some(corelib::brand::NAME)
 }
 
+/// Grid rows a diagram needs, from its pure layout height (nominal 8×16 cell). Clamped to a
+/// sane band. Shared by the inline `OSC 1338` emitter and the `@md edit` preview layout so a
+/// diagram reserves the same height everywhere.
+pub(crate) fn diagram_rows(source: &str) -> usize {
+    corelib::mermaid::parse(source)
+        .map(|d| {
+            let l = corelib::mermaid::layout(&d, &|s: &str| (corelib::unicode::str_width(s) as u32 * 8, 16));
+            l.height.div_ceil(18).clamp(3, 40) as usize
+        })
+        .unwrap_or(3)
+}
+
 /// Turn a diagram's source into terminal output: a native `OSC 1338` placement (with a
 /// reserved row count from the pure layout) when our GUI can draw it, else a clean boxed
 /// fallback (other terminals / pipes). No jargon is ever shown to the user.
 fn diagram_output(source: &str) -> String {
-    if is_native_terminal() {
-        if let Some(d) = corelib::mermaid::parse(source) {
-            let l = corelib::mermaid::layout(&d, &|s: &str| (corelib::unicode::str_width(s) as u32 * 8, 16));
-            let rows = l.height.div_ceil(18).clamp(3, 40);
-            return format!("\x1b]1338;{rows};{}\x07", corelib::codec::base64_encode(source.as_bytes()));
-        }
+    if is_native_terminal() && corelib::mermaid::parse(source).is_some() {
+        let rows = diagram_rows(source);
+        return format!("\x1b]1338;{rows};{}\x07", corelib::codec::base64_encode(source.as_bytes()));
     }
     diagram_fallback_box(source)
 }
@@ -719,6 +728,75 @@ fn human_tokens(n: u64) -> String {
     } else {
         n.to_string()
     }
+}
+
+/// `@md` — view and edit Markdown files at the prompt. `render <file>` pretty-prints it (styled,
+/// full-width, native diagrams); `edit <file>` opens the live split editor. Returns an exit code.
+pub fn md(args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some("render") => md_render(args.get(1)),
+        Some("edit") => match args.get(1) {
+            Some(path) => crate::mdedit::run(path),
+            None => {
+                eprintln!("usage: @md edit <file.md>");
+                2
+            }
+        },
+        Some("--help") | Some("-h") => {
+            eprintln!("{}", md_usage());
+            0
+        }
+        None => {
+            eprintln!("{}", md_usage());
+            2
+        }
+        Some(other) => {
+            eprintln!("@md: unknown subcommand '{other}'\n{}", md_usage());
+            2
+        }
+    }
+}
+
+fn md_usage() -> &'static str {
+    "usage:\n  @md render <file.md>   pretty-print a Markdown file (diagrams drawn natively)\n  @md edit <file.md>     live split editor — Markdown left, rendered preview right"
+}
+
+/// Render a Markdown file to the terminal: styled + full-width on a TTY (native diagrams via
+/// `OSC 1338`), plain text + boxed diagrams when piped. Reuses the exact engine `@ai` answers use.
+fn md_render(path: Option<&String>) -> i32 {
+    use std::io::Write;
+    let Some(path) = path else {
+        eprintln!("usage: @md render <file.md>");
+        return 2;
+    };
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("@md: cannot read {path}: {e}");
+            return 1;
+        }
+    };
+    let tty = out_is_tty();
+    let style = if tty { md_style() } else { corelib::md::Style { enabled: false, ..corelib::md::Style::default() } };
+    let mut sr = corelib::md::StreamRenderer::new(style, md_width(), &[DIAGRAM_LANG]);
+    let mut out = std::io::stdout().lock();
+    let mut emit = |chunks: Vec<corelib::md::Chunk>| {
+        for c in chunks {
+            match c {
+                corelib::md::Chunk::Text(t) => {
+                    let _ = out.write_all(t.as_bytes());
+                }
+                corelib::md::Chunk::Diagram(src) => {
+                    let d = if tty { diagram_output(&src) } else { diagram_fallback_box(&src) };
+                    let _ = out.write_all(d.as_bytes());
+                }
+            }
+        }
+    };
+    emit(sr.push(&text));
+    emit(sr.finish());
+    let _ = out.flush();
+    0
 }
 
 /// `2048` → `2.0KB` (tool result sizes at a glance).

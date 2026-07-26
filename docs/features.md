@@ -69,6 +69,14 @@ you left, colors included, with a fresh prompt right below. Processes
 themselves are not resumed (the tmux-resurrect model); shells relaunch in
 their saved directories and the window reopens at its saved size.
 
+## Markdown at the prompt (`@md`)
+
+`@md render <file>` pretty-prints a Markdown file to the pane at full width, with diagrams drawn
+natively; `@md edit <file>` is a full-screen split editor — raw Markdown on the left, a live
+rendered preview (diagrams included) on the right, with vertical + horizontal scroll by keyboard
+and mouse and a save / discard / cancel exit. To make the mouse work for it (and for `vim`/`less`)
+the terminal reports SGR mouse events to full-screen programs. See [md.md](md.md).
+
 ## i18n
 
 The terminal's own strings (chrome + CLI) are localizable TOML

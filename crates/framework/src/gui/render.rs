@@ -179,6 +179,8 @@ pub fn render_grid(
     // so drawing never bleeds outside this pane's grid rectangle).
     if !term.in_alt_screen() {
         draw_placements(surface, term, theme, cache, px, ox, oy, m.cell_w, m.cell_h, cols, rows);
+    } else {
+        draw_alt_placements(surface, term, theme, cache, px, ox, oy, m.cell_w, m.cell_h, cols, rows);
     }
 
     // A scrollback indicator on the right edge when scrolled up into history.
@@ -236,6 +238,27 @@ fn draw_placements(surface: &mut Surface, term: &Term, theme: &Theme, cache: &mu
         // Clear the reserved region (over any stray cells) then draw the diagram into it.
         surface.fill_rect(Rect::new(ox, oy + y_top as f32 * ch, cols as f32 * cw, p.rows as f32 * ch), theme.term_bg);
         draw_diagram(surface, cache, px, theme, rect, &p.source, cw, ch);
+    }
+}
+
+/// Composite alternate-screen diagram placements (a full-screen app like `@md edit`). Positioned
+/// by absolute cell (`row`,`col`) and confined to `cols` columns, so a diagram in one split pane
+/// never bleeds into another. Clipped to the pane's grid; off-screen placements are skipped.
+#[allow(clippy::too_many_arguments)]
+fn draw_alt_placements(surface: &mut Surface, term: &Term, theme: &Theme, cache: &mut GlyphCache, px: f32, ox: f32, oy: f32, cw: f32, ch: f32, cols: u16, rows: u16) {
+    for p in term.alt_placements() {
+        let span = p.cols.min(cols as usize - p.col.min(cols as usize));
+        if p.col >= cols as usize || p.row >= rows as usize || span == 0 {
+            continue;
+        }
+        let vis_rows = p.rows.min(rows as usize - p.row); // clamp height to the pane
+        let x0 = ox + p.col as f32 * cw;
+        let y0 = oy + p.row as f32 * ch;
+        let w = span as f32 * cw;
+        let h = vis_rows as f32 * ch;
+        // Clear the reserved region (over any stray cells) then draw the diagram into it.
+        surface.fill_rect(Rect::new(x0, y0, w, h), theme.term_bg);
+        draw_diagram(surface, cache, px, theme, Rect::new(x0 + 3.0, y0 + 2.0, w - 6.0, h - 4.0), &p.source, cw, ch);
     }
 }
 
