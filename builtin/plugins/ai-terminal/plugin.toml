@@ -2,7 +2,8 @@
 # shell command (reviewed, or auto-run per `[ai] mode`), `@<agent> <task>` to run a
 # named agent (add `--bg` to track it as a job), `@flow <name>` to run a multi-step
 # workflow, `@loop <goal>` to iterate an agent until a verifiable goal is met,
-# `@job` to monitor background runs, `@md` to read/live-edit Markdown files, and
+# `@job` to monitor background runs, `@md` to read/live-edit Markdown files,
+# `@gate` to drive this terminal from a chat app, and
 # `@profile`/`@config`/`@theme`/`@plugin` to manage the terminal — no settings UI.
 # A guard-confirm command always drops to review; if the AI isn't configured/working
 # the error is shown as a comment (never silence). A shell-snippet plugin: it hooks
@@ -10,5 +11,5 @@
 # a real command) — normal typing, git, vim, less, etc. are completely unaffected.
 name        = "ai-terminal"
 version     = "1.0.0"
-description = "@ai · @<agent> · @flow · @loop · @job · @md · @profile · @config · @theme · @plugin — the terminal command family"
+description = "@ai · @<agent> · @flow · @loop · @job · @md · @gate · @profile · @config · @theme · @plugin — the terminal command family"
 author      = "aiTerminal"

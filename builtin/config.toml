@@ -136,6 +136,41 @@ network = true
 # strategy = "weighted"       # weighted (default) | round_robin | cost | failover
 
 
+[gates]
+# `@gate` — hand a split to a chat app and drive this terminal from your phone.
+# `@gate telegram start` spawns a shell in the pane and relays it: you keep typing
+# locally while a PAIRED chat drives the SAME shell (same cwd, same history, same
+# running program). Every remote action is echoed in the pane, so nothing is hidden.
+#
+# This is remote code execution over a chat app. It is OFF until you turn it on, and
+# a chat must send the one-time pairing code printed at `start` before it can do
+# anything at all. See docs/gate.md before enabling.
+enabled          = false
+require_pairing  = true    # a chat must send the 6-digit code first. Turning this off
+                           # trusts `allow` alone — only do that on a machine you own.
+plain_text       = "run"   # what a plain (non-slash) message means:
+                           #   "run"    — execute it, subject to the [security] guard
+                           #   "ignore" — do nothing; require an explicit /run
+screenshot       = "document"  # how /shot arrives: "document" (the PNG byte-for-byte)
+                               # or "photo" (the chat app recompresses — small text blurs)
+max_reply_messages   = 3   # messages one command's output may span before it is
+                           # truncated with a pointer to /full (1–20)
+idle_timeout_minutes = 0   # stop a gate after this long with no remote traffic; 0 = never
+
+# ── The gateways ──────────────────────────────────────────────────────────────
+# One table per channel. Keep these BELOW the keys above: a bare key always joins
+# the table declared above it. Telegram ships today; more channels slot in here.
+#
+# Create a bot by messaging @BotFather on Telegram (`/newbot`), then either paste
+# the token here or — better — keep it out of the file:
+#   token = "123456:AA…"          the token itself
+#   token = "$TELEGRAM_BOT_TOKEN" read it from that environment variable
+#
+# [gates.telegram]
+# token = "$TELEGRAM_BOT_TOKEN"
+# allow = []                # chat ids that skip pairing, e.g. [51234903]. Empty (the
+#                           # default) means EVERY chat must pair — the safe posture.
+
 [plugins]
 enabled  = true            # master switch for the whole declarative plugin system
 # Every plugin in ~/.aiTerminal/plugins/<name>/plugin.toml loads automatically

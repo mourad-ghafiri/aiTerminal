@@ -48,6 +48,27 @@ only config/env supply them.
   curl as the only egress.
 - Every tool result is redacted (AI scope) before it re-enters the loop.
 
+## Remote gateways (`@gate`)
+
+`@gate` hands a shell to a chat app, so it gets the strictest defaults in the product:
+off unless `[gates] enabled = true`, and **nothing is accepted from any chat** until it
+sends the six-digit code printed in your terminal. An unpaired chat gets no reply at
+all — a stranger who finds the bot cannot even confirm it is live. Five wrong codes
+close pairing for the session; while nobody is paired the code rotates every ten
+minutes. Only one chat may be paired at a time.
+
+Once paired, every command goes through the same command guard above (`denied_commands`
+blocks, `confirm_commands` waits for an explicit `/yes` from the chat), and every
+`[[redact]]` rule is applied to output before it leaves the machine — in **both** the
+`terminal` and `ai` scopes, since a chat app is off-machine either way. Live gate
+records under `~/.aiTerminal/gates/` are written `0600` and are on the agent's blocked
+path list.
+
+Stated plainly: **the guard is a speed bump, not a sandbox** (`l=rm; $l -rf /` defeats
+any regex), and a paired chat has your shell — your files, your keys, your money.
+Pairing is the real control. The full threat discussion, including what this does *not*
+protect against, is in [gate.md](gate.md#security-model).
+
 ## Terminal hardening
 
 - The PTY reader isolates the parser (a malformed byte stream can't kill the app)

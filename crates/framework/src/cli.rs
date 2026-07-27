@@ -756,6 +756,13 @@ fn human_tokens(n: u64) -> String {
     }
 }
 
+/// `aiTerminal gate <channel> start|stop` / `status` — the `@gate` remote-control
+/// gateway. The whole implementation lives in [`crate::gate`]; this is only the
+/// argv seam, matching how every other subcommand is wired.
+pub fn gate(args: &[String]) -> i32 {
+    crate::gate::run(args)
+}
+
 /// `@md` — view and edit Markdown files at the prompt. `render <file>` pretty-prints it (styled,
 /// full-width, native diagrams); `edit <file>` opens the live split editor. Returns an exit code.
 pub fn md(args: &[String]) -> i32 {

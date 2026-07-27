@@ -38,6 +38,7 @@
     <a href="#cmd-loop">@loop</a>
     <a href="#cmd-job">@job</a>
     <a href="#cmd-md">@md</a>
+    <a href="#cmd-gate">@gate</a>
     <a href="#cmd-manage">@profile · @theme · @config · @plugin</a>
     <a href="#exit-codes">Exit codes</a>
     <b>The terminal</b>
@@ -247,6 +248,50 @@ background jobs (3):
       full-screen programs, aiTerminal reports SGR mouse events to the running program — so
       <code>vim</code> and <code>less</code> get the mouse inside aiTerminal too.</p>
 
+    <h2 id="cmd-gate">@gate — drive your terminal from a chat app</h2>
+    <pre><code><span class="p">❯</span> @gate telegram start                                      <span class="c"># hand this pane to Telegram</span>
+
+  ⬤ telegram gate live · @mourad_term_bot
+  pair from the chat: /pair 418-207   (nothing runs until you do)
+
+<span class="p">❯</span> ls                                                        <span class="c"># you, still typing normally</span>
+README.md  crates  docs
+
+  ▸ Mourad: cargo build                                     <span class="c"># arrived from the chat</span>
+<span class="p">❯</span> cargo build
+   Compiling aiTerminal…
+  ◂ sent 12 lines
+</code></pre>
+    <p><code>@gate telegram start</code> turns a tab or split into a shell you <b>share</b>. You keep
+      typing locally while a <b>paired</b> chat drives the same shell — same working directory, same
+      history, same running program. Every remote action prints a dim line in the pane first, so
+      nothing anyone does from the chat is invisible.</p>
+    <p>In a paired chat a plain message is a command; the reply comes back as a code block with its
+      exit status and duration. <code>/shot</code> sends a <b>PNG of the live terminal</b> — and when a
+      full-screen program like <code>vim</code> or <code>htop</code> is open, replies become
+      screenshots automatically and plain text becomes keystrokes. If a command goes quiet waiting for
+      a password, your next message is routed to its <b>stdin</b>. A long build sends progress notes
+      and still reports its real exit status. And if you have a half-typed line at the prompt, a
+      command from the chat <b>waits its turn</b> rather than being spliced into it.</p>
+    <table>
+      <tr><th>From the chat</th><th>Does</th></tr>
+      <tr><td><code>&lt;anything&gt;</code> · <code>/run &lt;cmd&gt;</code></td><td>run it in the shared shell (through the command guard)</td></tr>
+      <tr><td><code>/sh &lt;cmd&gt;</code></td><td>run out-of-band — works even while a full-screen app owns the shell</td></tr>
+      <tr><td><code>/shot</code></td><td>a screenshot of the terminal as it looks right now</td></tr>
+      <tr><td><code>/key</code> · <code>/keys</code> · <code>/cancel</code></td><td>press a key, type text without Enter, or Ctrl-C the running command</td></tr>
+      <tr><td><code>/ai &lt;prompt&gt;</code></td><td>ask this terminal's own AI, from the chat</td></tr>
+      <tr><td><code>/full</code> · <code>/status</code> · <code>/help</code> · <code>/stop</code></td><td>untruncated output as a file · what's running · the menu · end the gate</td></tr>
+    </table>
+    <div class="callout"><b>This is remote code execution over a chat app.</b> It ships off
+      (<code>[gates] enabled = false</code>), and a bot accepts messages from anyone who learns its
+      @name — so a chat id is an address, not a credential. The real control is <b>pairing</b>: a
+      six-digit code printed <i>in your terminal</i>, which only someone looking at your screen can
+      read. Until a chat pairs it gets no reply at all. Five wrong codes close pairing for the
+      session, only one chat may be paired at a time, and every command still passes your
+      <code>[security]</code> guard with your redaction rules applied on the way out.
+      Read <a href="https://github.com/mouradghafiri/aiTerminal/blob/main/docs/gate.md">docs/gate.md</a>
+      — including what it does <i>not</i> protect against — before enabling it.</div>
+
     <h2 id="cmd-manage">@profile · @theme · @config · @plugin</h2>
     <table>
       <tr><th>Command</th><th>Does</th></tr>
@@ -327,6 +372,7 @@ action = <span class="s">"zoom_pane"</span></code></pre>
       <tr><td><code>[behavior]</code></td><td><code>zoom</code> · <code>tab_bar</code> = top|bottom|left|right · <code>shell</code> · <code>scrollback</code> (default 10000)</td></tr>
       <tr><td><code>[ai]</code></td><td><code>share_terminal_context</code> · <code>memory</code> · <code>show_reasoning</code> (show thinking text; default off) · <code>mode</code> = manual|auto · <code>network</code> · <code>budget</code> (USD cost soft-cap) — then <code>[ai.balance] strategy</code> + the <code>[[ai.model]]</code> blocks, last</td></tr>
       <tr><td><code>[[ai.model]]</code></td><td><code>provider</code> · <code>id</code> · <code>api_key</code> · <code>weight</code> · <code>temperature</code> · <code>top_p</code> · <code>top_k</code> · <code>max_tokens</code> · <code>thinking</code></td></tr>
+      <tr><td><code>[gates]</code></td><td><code>enabled</code> · <code>require_pairing</code> · <code>plain_text</code> = run|ignore · <code>screenshot</code> = document|photo · <code>max_reply_messages</code> · <code>idle_timeout_minutes</code> — then a <code>[gates.&lt;channel&gt;]</code> table (<code>token</code> · <code>allow</code>), last</td></tr>
       <tr><td><code>[plugins]</code></td><td><code>enabled</code> · <code>disabled = [...]</code></td></tr>
       <tr><td><code>[shell]</code></td><td><code>integration</code></td></tr>
       <tr><td><code>[logging]</code></td><td><code>level</code> = off|error|warn|info|debug|trace · <code>retention_days</code> (default 7)</td></tr>

@@ -405,6 +405,57 @@ kbd {
 .rw-md-help b { color: var(--t-accent); font-weight: 700; }
 .rw-md-hint { margin-left: auto; opacity: .8; }
 
+
+/* ── @gate: the shared shell (left) beside the chat driving it (right) ──────
+   Laid out with flexbox rather than drawn with box characters, so the two
+   columns stay aligned at any window width. */
+.rw-gate { display: flex; height: 100%; min-height: 0; gap: 0; }
+.rw-gate-term {
+  flex: 1 1 58%; min-width: 0; overflow: auto;
+  padding-right: 12px; border-right: 1px solid var(--t-border);
+}
+.rw-gate-line { white-space: pre-wrap; word-break: break-word; line-height: 1.5; color: var(--t-fg); }
+.rw-gate-line.out { color: var(--t-muted); }
+.rw-gate-line.banner { color: var(--t-accent); font-weight: 600; margin-top: 2px; }
+.rw-gate-line.dim { color: var(--t-muted); margin-bottom: 8px; }
+.rw-gate-line.in { color: var(--t-accent); margin-top: 6px; }
+.rw-gate-line.back { color: var(--t-muted); opacity: .85; margin-bottom: 6px; }
+.rw-gate-p { color: var(--t-accent2); }
+.rw-gate-caret { background: var(--t-fg); color: var(--t-bg); }
+
+.rw-gate-chat { flex: 0 1 42%; min-width: 0; display: flex; flex-direction: column; padding-left: 12px; }
+.rw-gate-head {
+  display: flex; align-items: center; gap: 7px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--t-border); color: var(--t-fg); font-weight: 600;
+}
+.rw-gate-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--t-accent); flex: none; }
+.rw-gate-sub { margin-left: auto; color: var(--t-muted); font-weight: 400; opacity: .8; }
+.rw-gate-feed { flex: 1 1 auto; min-height: 0; overflow: auto; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+
+.rw-gate-msg {
+  max-width: 88%; padding: 6px 10px; border-radius: 12px; line-height: 1.45;
+  white-space: pre-wrap; word-break: break-word;
+}
+.rw-gate-msg.me {
+  align-self: flex-end; border-bottom-right-radius: 4px; color: var(--t-bg);
+  background: var(--t-accent);
+}
+.rw-gate-msg.bot {
+  align-self: flex-start; border-bottom-left-radius: 4px; color: var(--t-fg);
+  background: color-mix(in srgb, var(--t-fg) 10%, transparent);
+  border: 1px solid var(--t-border);
+}
+.rw-gate-pre {
+  margin-top: 5px; padding: 6px 8px; border-radius: 6px; color: var(--t-muted);
+  background: color-mix(in srgb, var(--t-bg) 70%, transparent);
+  overflow-x: auto;
+}
+.rw-gate-shot {
+  margin-top: 6px; padding: 8px; border-radius: 8px;
+  border: 1px solid var(--t-border); background: var(--t-bg);
+}
+.rw-gate-shotline { color: var(--t-muted); line-height: 1.4; white-space: pre; }
+
 /* the selection band — the real app's neutral 50% fg-over-bg blend */
 .t-sel { background: color-mix(in srgb, var(--t-fg) 50%, var(--t-bg)); border-radius: 2px; }
 /* the real cursor: a steady BLOCK — one filled cell, no blink (the app's

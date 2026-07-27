@@ -114,6 +114,60 @@ document.addEventListener("DOMContentLoaded", () => {
     pane.appendChild(root);
   }
 
+
+  /* The @gate demo: the pane becomes a shared shell on the left and the chat that
+     is driving it on the right — the whole point of the feature is that both are
+     live at once, so both are shown side by side. */
+  function buildGateSplit(w) {
+    const pane = w.pane();
+    pane.innerHTML = "";
+    const root = el("div", "rw-gate");
+
+    const term = el("div", "rw-gate-term");
+    const chat = el("div", "rw-gate-chat");
+    const head = el("div", "rw-gate-head");
+    head.append(el("span", "rw-gate-dot"), el("span", null, "@mourad_term_bot"),
+      el("span", "rw-gate-sub", "telegram"));
+    const feed = el("div", "rw-gate-feed");
+    chat.append(head, feed);
+    root.append(term, chat);
+    pane.appendChild(root);
+
+    const scroll = (n) => { n.scrollTop = n.scrollHeight; };
+    return {
+      /* one line in the shared shell; kind: prompt | out | in | back */
+      line(kind, text) {
+        const row = el("div", "rw-gate-line " + kind);
+        if (kind === "prompt") {
+          row.append(el("span", "rw-gate-p", "❯ "), el("span", null, text));
+        } else {
+          row.textContent = text;
+        }
+        term.appendChild(row); scroll(term); return row;
+      },
+      caret() {
+        const row = el("div", "rw-gate-line prompt");
+        row.append(el("span", "rw-gate-p", "❯ "), el("span", "rw-gate-caret", "▊"));
+        term.appendChild(row); scroll(term);
+      },
+      /* a chat bubble; side: me | bot */
+      bubble(side, text, pre) {
+        const b = el("div", "rw-gate-msg " + side);
+        if (text) b.appendChild(el("div", null, text));
+        if (pre) b.appendChild(el("div", "rw-gate-pre", pre));
+        feed.appendChild(b); scroll(feed); return b;
+      },
+      shot() {
+        const b = el("div", "rw-gate-msg bot");
+        const card = el("div", "rw-gate-shot");
+        ["❯ cargo build", "   Compiling aiTerminal", "    Finished dev", "❯ ▊"].forEach((t) =>
+          card.appendChild(el("div", "rw-gate-shotline", t)));
+        b.append(el("div", null, "📷 terminal.png · 120×34"), card);
+        feed.appendChild(b); scroll(feed);
+      },
+    };
+  }
+
   /* ---------------- features ---------------- */
   const FEATURES = {
 
@@ -351,6 +405,52 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "cmd", text: "@md edit release.md" },
           { do: "pause", ms: 350 },
           { do: "call", fn: async (t) => buildMdEditor(t) },
+        ]);
+      },
+    },
+
+    gate: {
+      opts: { title: "aiTerminal — @gate telegram", tabs: [{ title: "Terminal [project][@gate]", active: true }] },
+      caption: () => caption("<code>@gate</code> — your terminal, from your phone",
+        "<code>@gate telegram start</code> hands a split to a chat. You keep typing locally while a <b>paired</b> chat drives the <b>same shell</b> — same cwd, same history — with <code>/shot</code> for a live screenshot. Nothing runs until a chat sends the code printed in your pane."),
+      demo(w, myEpoch) {
+        run(w, myEpoch, [
+          { do: "pause", ms: 250 },
+          { do: "cmd", text: "@gate telegram start" },
+          { do: "pause", ms: 300 },
+          { do: "call", fn: async (t) => {
+            const g = buildGateSplit(t);
+            g.line("banner", "⬤ telegram gate live · @mourad_term_bot");
+            g.line("dim", "pair from the chat: /pair 418-207");
+            await sleep(700);
+            g.bubble("me", "/pair 418-207");
+            await sleep(600);
+            g.bubble("bot", "paired — you are driving mourad-mbp");
+            await sleep(500);
+
+            g.line("prompt", "ls");
+            g.line("out", "README.md  crates  docs");
+            await sleep(700);
+
+            g.bubble("me", "cargo build");
+            await sleep(500);
+            g.line("in", "  ▸ Mourad: cargo build");
+            g.line("prompt", "cargo build");
+            await sleep(450);
+            g.line("out", "   Compiling aiTerminal…");
+            await sleep(700);
+            g.line("out", "    Finished dev [optimized] in 8.4s");
+            g.line("back", "  ◂ sent 3 lines");
+            g.bubble("bot", "❯ cargo build · ✓ 0 · 8.4s",
+              "   Compiling aiTerminal…\n    Finished dev [optimized] in 8.4s");
+            await sleep(800);
+
+            g.bubble("me", "/shot");
+            await sleep(500);
+            g.line("back", "  ◂ sent a screenshot (68 KB)");
+            g.shot();
+            g.caret();
+          } },
         ]);
       },
     },

@@ -7,7 +7,7 @@
 //! It names no lower-layer (core/platform) path at all.
 //!
 //! Everything is a terminal command: the shell integration maps `@ai` /
-//! `@<agent>` / `@flow` / `@profile` / `@config` / `@theme` / `@plugin` onto the
+//! `@<agent>` / `@flow` / `@md` / `@gate` / `@profile` / `@config` / `@theme` / `@plugin` onto the
 //! subcommands below — there is no settings UI.
 
 const DEFAULT_SCRIPT: &str = concat!(
@@ -89,6 +89,7 @@ fn main() {
         Some("profile") => std::process::exit(framework::cli::profile(&raw[2..])),
         Some("ai") => std::process::exit(framework::cli::ai(&raw[2..])),
         Some("md") => std::process::exit(framework::cli::md(&raw[2..])),
+        Some("gate") => std::process::exit(framework::cli::gate(&raw[2..])),
         _ => {}
     }
 

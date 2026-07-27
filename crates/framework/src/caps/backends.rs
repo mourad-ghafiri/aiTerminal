@@ -457,6 +457,11 @@ pub(super) fn is_secret_path(p: &std::path::Path) -> bool {
     if !home.is_empty() && s == format!("{home}/.aiTerminal/config.toml") {
         return true;
     }
+    // Live `@gate` records: a paired chat id and the gateway's own state. An agent
+    // reading these learns who can drive the terminal remotely.
+    if under(".aiTerminal/gates") {
+        return true;
+    }
     let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
     matches!(name, "id_rsa" | "id_dsa" | "id_ecdsa" | "id_ed25519" | ".netrc")

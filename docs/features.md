@@ -77,6 +77,16 @@ rendered preview (diagrams included) on the right, with vertical + horizontal sc
 and mouse and a save / discard / cancel exit. To make the mouse work for it (and for `vim`/`less`)
 the terminal reports SGR mouse events to full-screen programs. See [md.md](md.md).
 
+## Remote control (`@gate`)
+
+`@gate telegram start` hands a tab or split to a chat app. The pane becomes a shell you
+**share**: you keep typing locally while a paired chat drives the same shell — same
+cwd, same history, same running program — with `/shot` for a screenshot when text isn't
+enough. Every remote action is echoed in the pane, so nothing happens invisibly.
+
+Off by default, and nothing is accepted until a chat sends the pairing code printed in
+your terminal. Full walkthrough and the security model: [gate.md](gate.md).
+
 ## i18n
 
 The terminal's own strings (chrome + CLI) are localizable TOML

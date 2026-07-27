@@ -47,6 +47,7 @@ command_not_found_handle() {
       ;;
     @job)     "${TT_BIN:-aiTerminal}" ai job "$@"; return ;;
     @md)      "${TT_BIN:-aiTerminal}" md "$@"; return ;;
+    @gate)    "${TT_BIN:-aiTerminal}" gate "$@"; return ;;
     @profile) "${TT_BIN:-aiTerminal}" profile "$@"; return ;;
     @config)  "${TT_BIN:-aiTerminal}" config "$@"; return ;;
     @theme)   "${TT_BIN:-aiTerminal}" theme "$@"; return ;;
@@ -85,3 +86,27 @@ case ";${PROMPT_COMMAND};" in
   *";_tt_ai_load_pending;"*) ;;
   *) PROMPT_COMMAND="_tt_ai_load_pending${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;;
 esac
+
+# ── @gate command marks ───────────────────────────────────────────────────────
+# See the zsh notes. macOS ships bash 3.2, which has no PS0, so the "command is
+# starting" mark rides on a DEBUG trap with a re-entrancy guard (the trap fires once
+# per simple command, and again for each command inside a pipeline).
+if [ -n "${TT_GATE:-}" ]; then
+  _tt_gate_start() {
+    [ -n "$_TT_GATE_IN" ] && return
+    _TT_GATE_IN=1
+    printf '\033]1339;S\007'
+  }
+  _tt_gate_end() {
+    local s=$?
+    [ -n "$_TT_GATE_IN" ] || return $s
+    _TT_GATE_IN=
+    printf '\033]1339;E;%d\007' "$s"
+    return $s
+  }
+  trap '_tt_gate_start' DEBUG
+  case ";${PROMPT_COMMAND};" in
+    *";_tt_gate_end;"*) ;;
+    *) PROMPT_COMMAND="_tt_gate_end${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;;
+  esac
+fi

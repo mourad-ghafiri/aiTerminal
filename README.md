@@ -49,6 +49,7 @@ profiles. The AI is woven into the shell itself through one idea:
 ❯ @loop "make the tests pass" --check "cargo test"        # iterate until verified
 ❯ @flow implement --bg "migrate configs to TOML"          # …in the background
 ❯ @job                                                    # monitor runs + logs
+❯ @gate telegram start                                    # drive this pane from your phone
 ❯ @profile switch work                                    # live profile switch
 ```
 
@@ -88,6 +89,7 @@ profiles. The AI is woven into the shell itself through one idea:
 | 🔁 `@loop "<goal>" [--check "<cmd>"]` | An engineered agent loop: iterate until a **verifiable goal** passes (a check command, or an independent reviewer agent), with feedback between iterations and hard stop rules (max, no-progress, budget). |
 | 📊 `@job [<task>]` | Run a **tracked** task: `@job build the docs --agent tester --bg` (agent + background optional). Bare `@job` lists runs + logs; `--bg` works on any agent/flow/loop too. |
 | 📄 `@md <file>` | `@md render` pretty-prints a Markdown file (diagrams drawn natively); `@md edit` is a live split editor — Markdown left, rendered preview right, scroll by keyboard + mouse. |
+| 📱 `@gate telegram start` | Hand a tab or split to a chat app and drive your terminal from your phone. The pane becomes a shell you **share** — you keep typing while a paired chat runs commands in the same session — plus `/shot` for a screenshot of the live terminal. Off by default; nothing is accepted until a chat sends the pairing code printed in your pane. |
 | 👤 `@profile [<id>]` | List profiles, switch directly (`@profile work`), `create`/`rename`/`delete`, and `edit` (opens the overlay in `$EDITOR`). A running window follows switches and edits live. |
 | ⚙️ `@config` / `@theme` / `@plugin` | Inspect config, list/**switch** themes live (`@theme nord`), manage plugins. |
 

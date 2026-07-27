@@ -8,6 +8,7 @@
 #   @job [clear]          → list / prune background AI jobs
 #   @md render <file>     → pretty-print a Markdown file (diagrams drawn natively)
 #   @md edit <file>       → a live split editor: Markdown left, rendered preview right
+#   @gate telegram start  → hand this pane to a chat app and drive it from your phone
 #   @profile [<id>]       → list / switch directly · create/rename/delete/edit ($EDITOR)
 #   @theme [<name>]       → list themes / switch the current profile\x27s theme live
 #   @config | @plugin …   → the matching aiTerminal subcommand
@@ -51,6 +52,7 @@ command_not_found_handler() {
       ;;
     @job)     "${TT_BIN:-aiTerminal}" ai job "$@"; return ;;
     @md)      "${TT_BIN:-aiTerminal}" md "$@"; return ;;
+    @gate)    "${TT_BIN:-aiTerminal}" gate "$@"; return ;;
     @profile) "${TT_BIN:-aiTerminal}" profile "$@"; return ;;
     @config)  "${TT_BIN:-aiTerminal}" config "$@"; return ;;
     @theme)   "${TT_BIN:-aiTerminal}" theme "$@"; return ;;
@@ -97,3 +99,18 @@ _tt_ai_load_pending() {
 }
 typeset -ga precmd_functions
 (( ${precmd_functions[(I)_tt_ai_load_pending]} )) || precmd_functions+=(_tt_ai_load_pending)
+
+# ── @gate command marks ───────────────────────────────────────────────────────
+# Only inside a shell spawned by `@gate` ($TT_GATE), report where each command
+# starts and ends, so the gate knows exactly which output belongs to a command it
+# was asked to run. Guessing from prompt text or output pauses is unreliable; this
+# is two escape sequences the terminal swallows and nothing else ever sees.
+if [[ -n ${TT_GATE:-} ]]; then
+  _tt_gate_preexec() { printf '\033]1339;S\007' }
+  # MUST be the first precmd: $? in a precmd is the previous FUNCTION's status once
+  # another hook has run, so capture it before anything else can clobber it.
+  _tt_gate_precmd()  { local s=$?; printf '\033]1339;E;%d\007' $s; return $s }
+  typeset -ga preexec_functions precmd_functions
+  (( ${preexec_functions[(I)_tt_gate_preexec]} )) || preexec_functions+=(_tt_gate_preexec)
+  (( ${precmd_functions[(I)_tt_gate_precmd]} ))   || precmd_functions=(_tt_gate_precmd $precmd_functions)
+fi

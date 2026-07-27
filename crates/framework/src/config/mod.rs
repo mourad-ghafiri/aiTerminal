@@ -53,6 +53,21 @@ pub struct AiModelSpec {
     pub thinking: Option<bool>,
 }
 
+/// One `[gates.<channel>]` table — a remote-control gateway (`@gate`). The channel
+/// name is the table key (`telegram`), so a new adapter needs no parser change.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GateSpec {
+    /// The channel this configures, lowercased (`"telegram"`).
+    pub channel: String,
+    /// The bot token: the literal secret, or `"$VAR"` / `"${VAR}"` to read it from the
+    /// environment — the same three forms as `[[ai.model]] api_key`, resolved late so a
+    /// token never has to sit in a file.
+    pub token: String,
+    /// Chat ids pre-authorized without the pairing handshake. Empty (the default) means
+    /// **every** chat must pair, which is the safe posture.
+    pub allow: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub theme: String,
@@ -112,6 +127,27 @@ pub struct Config {
     /// `builtin/` next to the binary, or the repo `builtin/` in dev).
     pub registry_dir: String,
 
+    // ---- gates (`[gates]`) — remote control over a chat app ----
+    /// Master switch for `@gate`. Default `false`: handing a shell to a chat app is
+    /// opt-in, never something a fresh install has switched on.
+    pub gates_enabled: bool,
+    /// Require the one-time pairing code before a chat may do anything. Default `true` —
+    /// this, not the chat id, is what actually authenticates a remote user.
+    pub gates_require_pairing: bool,
+    /// What a plain (non-slash) chat message means: `"run"` (default — execute it,
+    /// subject to the `[security]` command guard) or `"ignore"` (require `/run`).
+    pub gates_plain_text: String,
+    /// How `/shot` is delivered: `"document"` (default — the PNG byte-for-byte) or
+    /// `"photo"` (the chat app recompresses it, which smudges small glyphs).
+    pub gates_screenshot: String,
+    /// How many messages one command's output may span before it is truncated with a
+    /// pointer to `/full`. Clamped 1..=20.
+    pub gates_max_reply_messages: usize,
+    /// Stop a gate after this many minutes with no remote traffic. `0` = never.
+    pub gates_idle_minutes: u64,
+    /// The configured gateways, one per `[gates.<channel>]` table.
+    pub gates: Vec<GateSpec>,
+
     // ---- logging (`[logging]`) ----
     /// Diagnostic log threshold (`off|error|warn|info|debug|trace`). Default `"error"`.
     pub log_level: String,
@@ -160,6 +196,13 @@ impl Default for Config {
             ai_network: true,
             shell_integration: true,
             registry_dir: String::new(),
+            gates_enabled: false,
+            gates_require_pairing: true,
+            gates_plain_text: "run".into(),
+            gates_screenshot: "document".into(),
+            gates_max_reply_messages: 3,
+            gates_idle_minutes: 0,
+            gates: Vec::new(),
             log_level: "error".into(),
             log_retention_days: 7,
             allowed_commands: Vec::new(),
@@ -170,6 +213,16 @@ impl Default for Config {
             keybindings: Vec::new(),
         }
     }
+}
+
+/// Normalize one `[gates.<channel>] allow` entry to a chat-id string. TOML gives us an
+/// `Int` for `allow = [12345]` and a `Str` for `allow = ["12345"]`; both are natural to
+/// write, and ids are compared as text so a 64-bit id never rides through an `f64`.
+fn chat_id(v: &Toml) -> Option<String> {
+    v.as_int()
+        .map(|n| n.to_string())
+        .or_else(|| v.as_str().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
 }
 
 /// Copy each top-level entry of `src` into `dst` that isn't already there (first-time
@@ -362,6 +415,13 @@ impl Config {
         Self::ai_dir().join("sessions")
     }
 
+    /// Live `@gate` session records (`gates/<id>.toml`) — one per running gateway.
+    /// A gate polls its OWN record so `@gate stop` from another pane can end it
+    /// without a signal (a signal would skip the guards that restore the terminal).
+    pub fn gates_dir() -> PathBuf {
+        Self::dir().join("gates")
+    }
+
     /// The panic/crash log appended by the top-level resilience guard
     /// (`~/.<brand>/crash.log`).
     pub fn crash_log() -> PathBuf {
@@ -404,6 +464,7 @@ impl Config {
             Self::models_dir(),
             Self::jobs_dir(),
             Self::sessions_dir(),
+            Self::gates_dir(),
         ] {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -673,6 +734,54 @@ impl Config {
                         max_tokens: m.get("max_tokens").and_then(|v| v.as_int()).map(|n| n.clamp(1, 200_000) as u32),
                         thinking: m.get("thinking").and_then(|v| v.as_bool()),
                     });
+                }
+            }
+        }
+        if let Some(g) = doc.get("gates") {
+            if let Some(v) = g.get("enabled").and_then(|v| v.as_bool()) {
+                c.gates_enabled = v;
+            }
+            if let Some(v) = g.get("require_pairing").and_then(|v| v.as_bool()) {
+                c.gates_require_pairing = v;
+            }
+            // Unknown values fall back to the SAFE side of each switch, never the
+            // permissive one: a typo must not silently start running chat messages.
+            if let Some(v) = g.get("plain_text").and_then(|v| v.as_str()) {
+                c.gates_plain_text = if v.eq_ignore_ascii_case("ignore") { "ignore".into() } else { "run".into() };
+            }
+            if let Some(v) = g.get("screenshot").and_then(|v| v.as_str()) {
+                c.gates_screenshot = if v.eq_ignore_ascii_case("photo") { "photo".into() } else { "document".into() };
+            }
+            if let Some(v) = g.get("max_reply_messages").and_then(|v| v.as_int()) {
+                c.gates_max_reply_messages = v.clamp(1, 20) as usize;
+            }
+            if let Some(v) = g.get("idle_timeout_minutes").and_then(|v| v.as_int()) {
+                c.gates_idle_minutes = v.clamp(0, 43_200) as u64;
+            }
+            // Every OTHER sub-table is a channel: `[gates.telegram]` → a GateSpec named
+            // "telegram". Keeping this generic is what lets a new adapter ship without
+            // touching the config parser at all. A document declaring any gate REPLACES
+            // the list, matching `[[ai.model]]` overlay semantics.
+            if let Some(entries) = g.as_table() {
+                let mut found = Vec::new();
+                for (name, val) in entries {
+                    let Some(fields) = val.as_table() else { continue };
+                    let get = |k: &str| {
+                        fields.iter().find(|(n, _)| n == k).and_then(|(_, v)| v.as_str()).map(|s| s.trim().to_string())
+                    };
+                    found.push(GateSpec {
+                        channel: name.trim().to_ascii_lowercase(),
+                        token: get("token").unwrap_or_default(),
+                        allow: fields
+                            .iter()
+                            .find(|(n, _)| n == "allow")
+                            .and_then(|(_, v)| v.as_array())
+                            .map(|a| a.iter().filter_map(chat_id).collect())
+                            .unwrap_or_default(),
+                    });
+                }
+                if !found.is_empty() {
+                    c.gates = found;
                 }
             }
         }
@@ -994,7 +1103,9 @@ mod tests {
         // install matches a no-config run.
         assert_eq!(Config::from_toml(DEFAULT_CONFIG), Config::default());
         // …and it documents every parseable key (a spot-check the active set is full).
-        for key in ["locale", "scrollback", "share_terminal_context", "auto_safe_commands", "top_p", "max_tokens"] {
+        for key in
+            ["locale", "scrollback", "share_terminal_context", "auto_safe_commands", "top_p", "max_tokens", "require_pairing", "plain_text"]
+        {
             assert!(DEFAULT_CONFIG.contains(key), "the default config should document `{key}`");
         }
     }
@@ -1061,6 +1172,82 @@ mod tests {
         let c = Config::from_toml("[appearance]\nfont_size = 1000\n[behavior]\nzoom = 99\n");
         assert!(c.font_size <= 96.0);
         assert!(c.zoom <= 3.0);
+    }
+
+    #[test]
+    fn gates_section_parses_scalars_and_channel_tables() {
+        let c = Config::from_toml(
+            "[gates]\nenabled = true\nrequire_pairing = false\nplain_text = \"ignore\"\n\
+             screenshot = \"photo\"\nmax_reply_messages = 7\nidle_timeout_minutes = 45\n\
+             [gates.telegram]\ntoken = \"$TG\"\nallow = [51234903, \"77\"]\n",
+        );
+        assert!(c.gates_enabled);
+        assert!(!c.gates_require_pairing);
+        assert_eq!(c.gates_plain_text, "ignore");
+        assert_eq!(c.gates_screenshot, "photo");
+        assert_eq!(c.gates_max_reply_messages, 7);
+        assert_eq!(c.gates_idle_minutes, 45);
+        assert_eq!(c.gates.len(), 1);
+        assert_eq!(c.gates[0].channel, "telegram");
+        assert_eq!(c.gates[0].token, "$TG");
+        // Ids compare as text, so a 64-bit chat id never rides through an f64 — and
+        // both the natural spellings (`[123]` and `["123"]`) land the same way.
+        assert_eq!(c.gates[0].allow, vec!["51234903".to_string(), "77".to_string()]);
+    }
+
+    #[test]
+    fn an_unknown_gate_enum_value_falls_back_to_the_safe_side() {
+        // A typo must never be the permissive reading: `plain_text` stays on "run"
+        // only because that IS the default, while `screenshot` refuses to become the
+        // lossy "photo" and pairing stays required.
+        let c = Config::from_toml("[gates]\nplain_text = \"yolo\"\nscreenshot = \"jpeg\"\n");
+        assert_eq!(c.gates_plain_text, "run");
+        assert_eq!(c.gates_screenshot, "document");
+        assert!(c.gates_require_pairing);
+        assert!(!c.gates_enabled, "a gate is never on unless explicitly enabled");
+    }
+
+    #[test]
+    fn a_gate_table_without_a_token_still_parses() {
+        // Half-configured is a normal state (the user is mid-setup); it must parse and
+        // be reported later by `@gate`, not vanish or panic here.
+        let c = Config::from_toml("[gates]\nenabled = true\n[gates.telegram]\n");
+        assert_eq!(c.gates.len(), 1);
+        assert!(c.gates[0].token.is_empty());
+        assert!(c.gates[0].allow.is_empty());
+    }
+
+    #[test]
+    fn seeded_config_writes_no_bare_gate_key_after_a_channel_table() {
+        // The `[[ai.model]]` footgun applies verbatim to `[gates]`: a bare scalar
+        // written after a `[gates.<channel>]` example joins that channel's table the
+        // moment a user uncomments it. Keep every `[gates]` scalar above them.
+        let mut in_gates = false;
+        let mut channel_at = None;
+        for (n, line) in DEFAULT_CONFIG.lines().enumerate() {
+            let raw = line.trim_start();
+            let commented = raw.starts_with('#');
+            let t = raw.trim_start_matches('#').trim_start();
+            if t.starts_with('[') {
+                if t.starts_with("[gates.") {
+                    channel_at.get_or_insert(n + 1);
+                    continue;
+                }
+                in_gates = t.starts_with("[gates]");
+                continue;
+            }
+            if in_gates && !commented && t.contains('=') {
+                if let Some(at) = channel_at {
+                    panic!(
+                        "config.toml:{}: `{}` is a live [gates] key written after the \
+                         [gates.<channel>] example on line {at} — uncommenting that \
+                         channel swallows this key. Move every [gates] scalar ABOVE them.",
+                        n + 1,
+                        t.split('=').next().unwrap_or(t).trim(),
+                    );
+                }
+            }
+        }
     }
 
     #[test]

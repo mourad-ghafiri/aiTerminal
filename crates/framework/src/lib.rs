@@ -23,6 +23,7 @@ pub mod ai;
 pub mod caps;
 pub mod cli;
 pub mod config;
+pub mod gate;
 pub mod gui;
 pub mod i18n;
 pub mod keymap;
