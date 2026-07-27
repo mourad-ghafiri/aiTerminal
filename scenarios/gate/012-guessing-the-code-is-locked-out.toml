@@ -1,0 +1,28 @@
+name = "guessing the pairing code is locked out after five tries"
+tags = ["pairing", "security"]
+
+# Five tries out of a million. After that even the CORRECT code is refused, or the
+# limit would only slow an attacker down rather than stop them.
+
+[[step]]
+chat = "/pair 000001"
+[[step]]
+chat = "/pair 000002"
+[[step]]
+chat = "/pair 000003"
+[[step]]
+chat = "/pair 000004"
+[[step]]
+chat = "/pair 000005"
+
+[[step]]
+expect_says = ["too many wrong codes"]
+
+[[step]]
+chat = "/pair 418207"
+
+[[step]]
+chat = "ls"
+
+[[step]]
+expect_no_pty = true

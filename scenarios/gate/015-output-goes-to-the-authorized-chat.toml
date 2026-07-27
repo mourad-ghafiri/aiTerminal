@@ -1,0 +1,28 @@
+name = "output goes to the authorized chat, not to whoever messaged first"
+tags = ["pairing", "security", "routing"]
+
+# A stranger who messages the bot before the owner must not become the destination
+# for the owner's command output. Replies are addressed by AUTHORIZATION.
+
+[setup]
+allow = ["7"]
+
+[[step]]
+chat = "hello?"
+from = 99
+
+[[step]]
+expect_no_pty = true
+
+[[step]]
+chat = "git status"
+
+[[step]]
+shell_start = true
+[[step]]
+pty = "On branch main<CR><LF>"
+[[step]]
+shell_end = 0
+
+[[step]]
+expect_chat_id = 7

@@ -140,22 +140,44 @@ the live screen stays at the bottom where you can see it.
 
 That matters, because the same thing works for Codex, opencode, aider, `vim`, `htop`,
 `lazygit`, `python3`, `psql`, `git add -p` — and for whatever ships next month. Two
-completely generic signals do all the work:
+completely generic signals do all the work.
 
 **The terminal protocol.** A program that manages the screen says so, in DEC private
-modes: the alternate screen (`1049`), bracketed paste (`2004`), application cursor keys
-(`1`), or mouse reporting (`1000`/`1002`/`1003`). Any one of them means "a program owns
-this terminal". Deliberately *not* just the alternate screen — plenty of modern CLIs
-render inline and would otherwise look like a slow command.
+modes. But the detail that decides whether any of this works: **a shell's line editor
+arms two of those modes at every prompt.** zsh reports
+
+```
+zle_bracketed_paste = ESC[?2004h        smkx = ESC[?1h ESC=
+```
+
+and bash ≥ 5.1 does the same through readline. So bracketed paste and application cursor
+keys mean nothing on their own — treat them as evidence and the gate attaches to your own
+shell the moment it starts, and never lets go. Two signals *are* shell-proof, because no
+shell sets them: the **alternate screen** and **mouse reporting**.
+
+For the ambiguous pair, the shell integration already tells us the truth — a command runs
+between the `preexec` and `precmd` marks:
+
+```
+owns_terminal = alt || mouse || ((bracketed_paste || app_cursor_keys) && command_running)
+```
+
+At a prompt nothing is running, so the shell's own modes are correctly ignored. Once
+`claude` starts, the very same modes become decisive. Without shell integration (fish, or
+`[shell] integration = false`) only alternate-screen and mouse programs are detectable —
+`/status` says so rather than pretending otherwise.
 
 **The shape of a prompt.** A REPL sets no modes at all, so the fallback is the universal
 picture of one: a command is running, output has gone quiet, and the cursor is parked
-*after* text on its own line (`>>> `, `psql=#`). A merely slow command leaves the cursor
-at column 0, so `sleep 60` does not trip it.
+after a **prompt character** (`>>> `, `psql=#`, `In [1]:`). Requiring the terminator is
+what tells a prompt apart from a download that stalled mid-line — `45.2 MiB / 120 MiB
+38%` also sits there with no newline, and mistaking it for a prompt would feed your next
+message to that command's stdin instead of running it.
 
 The buttons come from the same place — the *shape* of a question, not knowledge of who is
-asking. A numbered list (`❯ 1. Yes`, `2) No`) or a yes/no bracket (`[y/N]`, `(y/n)`)
-becomes buttons; ordinary output does not.
+asking. A numbered list becomes buttons only when something on screen actually **asks**
+(a line ending in `?` or `:`, or a selection marker on the options), so an agent listing
+its plan and a test runner listing failures are left alone.
 
 ### Because the terminal told us, we can talk back correctly
 

@@ -1,0 +1,19 @@
+name = "a second chat cannot take over a paired terminal"
+tags = ["pairing", "security"]
+
+[setup]
+paired = true
+
+[[step]]
+chat = "/pair 418207"
+from = 99
+
+[[step]]
+expect_says = ["already paired"]
+
+[[step]]
+chat = "rm -rf /"
+from = 99
+
+[[step]]
+expect_no_pty = true

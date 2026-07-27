@@ -1,0 +1,29 @@
+name = "a command from the chat never splices into a half-typed local line"
+tags = ["shell", "safety"]
+
+# Writing `ls\r` while the keyboard has `git comm` half-typed would run
+# `git commls` — a command neither party asked for.
+
+[setup]
+paired = true
+
+[[step]]
+local = "git comm"
+
+[[step]]
+chat = "ls"
+
+[[step]]
+expect_no_pty = true
+
+[[step]]
+expect_says = ["queued"]
+
+[[step]]
+local = "it -m x<CR>"
+
+[[step]]
+wait_ms = 100
+
+[[step]]
+expect_pty = "ls<CR>"

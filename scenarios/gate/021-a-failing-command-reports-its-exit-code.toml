@@ -1,0 +1,17 @@
+name = "a failing command reports its exit code"
+tags = ["shell"]
+
+[setup]
+paired = true
+
+[[step]]
+chat = "cargo test"
+[[step]]
+shell_start = true
+[[step]]
+pty = "test result: FAILED<CR><LF>"
+[[step]]
+shell_end = 101
+
+[[step]]
+expect_says = ["101", "FAILED"]

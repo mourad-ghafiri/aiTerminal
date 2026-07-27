@@ -187,20 +187,6 @@ impl Term {
         self.app_cursor_keys
     }
 
-    /// **A full-terminal program is driving this screen.**
-    ///
-    /// Any of these four is a program announcing, in the protocol itself, that it is
-    /// managing the whole terminal rather than printing a line of output: the alternate
-    /// screen, bracketed paste, application cursor keys, or mouse reporting. That makes
-    /// this a completely generic detector — `vim`, `htop`, a ratatui or bubbletea app, an
-    /// Ink/React CLI, a `prompt_toolkit` REPL — with no knowledge of any of them.
-    ///
-    /// Notably it does NOT require the alternate screen: plenty of modern CLIs render
-    /// inline and would otherwise look like an ordinary slow command.
-    pub fn app_control(&self) -> bool {
-        self.in_alt || self.bracketed_paste || self.app_cursor_keys || self.mouse_track != 0
-    }
-
     /// The **visible** screen as plain text — the alternate screen when one is up, the
     /// primary otherwise.
     ///
@@ -1603,30 +1589,14 @@ mod tests {
     }
 
     #[test]
-    fn app_control_is_true_for_any_full_terminal_program() {
-        // The generic "a program owns this screen" detector. Each mode alone is enough,
-        // because real programs pick different subsets — and an inline CLI that never
-        // touches the alternate screen must still be recognized.
-        for seq in [
-            &b"\x1b[?1049h"[..], // vim, htop, a ratatui app
-            &b"\x1b[?2004h"[..], // an Ink/React CLI or prompt_toolkit REPL
-            &b"\x1b[?1h"[..],    // application cursor keys
-            &b"\x1b[?1000h"[..], // mouse reporting
-        ] {
-            let mut t = Term::new(40, 12);
-            assert!(!t.app_control(), "a bare shell is not an app");
-            t.feed(seq);
-            assert!(t.app_control(), "{:?} should count as app control", String::from_utf8_lossy(seq));
-        }
-    }
-
-    #[test]
-    fn app_control_clears_when_the_program_hands_the_terminal_back() {
+    fn every_mode_a_program_can_declare_is_reported_independently() {
+        // The emulator reports facts and takes no view on what they mean — it has to be
+        // that way, because a shell's line editor sets two of these at every prompt.
         let mut t = Term::new(40, 12);
         t.feed(b"\x1b[?1049h\x1b[?2004h\x1b[?1h\x1b[?1000;1006h");
-        assert!(t.app_control());
+        assert!(t.in_alt_screen() && t.bracketed_paste() && t.app_cursor_keys() && t.wants_mouse());
         t.feed(b"\x1b[?1000l\x1b[?1l\x1b[?2004l\x1b[?1049l");
-        assert!(!t.app_control(), "everything released → back to a plain shell");
+        assert!(!t.in_alt_screen() && !t.bracketed_paste() && !t.app_cursor_keys() && !t.wants_mouse());
     }
 
     #[test]

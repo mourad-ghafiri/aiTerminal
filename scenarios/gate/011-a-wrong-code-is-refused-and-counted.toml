@@ -1,0 +1,11 @@
+name = "a wrong pairing code is refused and counted"
+tags = ["pairing", "security"]
+
+[[step]]
+chat = "/pair 000000"
+
+[[step]]
+expect_says = ["wrong code", "1 of 5"]
+
+[[step]]
+expect_no_pty = true

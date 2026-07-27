@@ -1,0 +1,27 @@
+name = "an agent listing its plan does not become answer buttons"
+tags = ["attach", "buttons"]
+
+# Turning a plan or a test-failure list into buttons would send stray digits into the
+# program the moment someone taps one.
+
+[setup]
+paired = true
+
+[[step]]
+run_local = "claude"
+[[step]]
+app_modes = "bracketed"
+[[step]]
+expect_attached = true
+
+[[step]]
+screen = ["Here is what I will do:", "  1. Read src/export.rs", "  2. Add the flag", "  3. Run the tests", "", "Working..."]
+
+[[step]]
+wait_ms = 2500
+
+[[step]]
+expect_buttons = ["k:enter"]
+
+[[step]]
+expect_not_says = ["1 · Read"]

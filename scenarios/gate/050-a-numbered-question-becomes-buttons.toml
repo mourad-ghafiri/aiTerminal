@@ -1,0 +1,27 @@
+name = "a numbered question becomes buttons and a tap answers it"
+tags = ["attach", "buttons"]
+
+[setup]
+paired = true
+
+[[step]]
+run_local = "claude"
+[[step]]
+app_modes = "bracketed"
+[[step]]
+expect_attached = true
+
+[[step]]
+screen = ["  Edit src/export.rs", "  + #[arg(long)] json: bool", "", "Do you want to make this edit?", "❯ 1. Yes", "  2. Yes, and don't ask again", "  3. No, tell Claude what to do differently"]
+
+[[step]]
+wait_ms = 2500
+
+[[step]]
+expect_buttons = ["k:1", "k:2", "k:3", "k:enter", "k:ctrl-c", "shot"]
+
+[[step]]
+tap = "k:1"
+
+[[step]]
+expect_pty = "1"

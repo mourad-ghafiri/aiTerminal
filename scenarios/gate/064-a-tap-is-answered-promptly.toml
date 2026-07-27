@@ -1,0 +1,28 @@
+name = "a tap shows its result promptly"
+tags = ["attach", "responsiveness"]
+
+# The streaming rate limit exists to stop a chatty program flooding the chat. It must
+# not also throttle a deliberate user action — "I tapped Yes and nothing happened" is
+# the same as broken.
+
+[setup]
+paired = true
+
+[[step]]
+run_local = "claude"
+[[step]]
+app_modes = "bracketed"
+
+[[step]]
+screen = ["Do you want to proceed?", "❯ 1. Yes", "  2. No"]
+[[step]]
+wait_ms = 2500
+
+[[step]]
+tap = "k:1"
+
+[[step]]
+screen = ["✓ Done", "", "Working..."]
+
+[[step]]
+expect_frame_within_ms = 1200

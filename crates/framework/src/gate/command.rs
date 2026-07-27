@@ -78,7 +78,15 @@ pub fn parse(text: &str, plain_runs: bool) -> Command {
         "/pair" => nonempty(Command::Pair, arg),
         "/run" | "/r" => nonempty(Command::Run, arg),
         "/sh" => nonempty(Command::Sh, arg),
-        "/keys" | "/type" => nonempty(Command::Keys, rest.to_string()),
+        // The argument is kept untrimmed (indentation matters when typing), but a
+        // request that is ONLY whitespace is a slip, not an instruction.
+        "/keys" | "/type" => {
+            if arg.is_empty() {
+                Command::Help
+            } else {
+                Command::Keys(rest.to_string())
+            }
+        }
         "/key" => nonempty(Command::Key, arg),
         "/cancel" | "/ctrlc" | "/c" => Command::Cancel,
         "/shot" | "/screen" | "/s" => Command::Shot,
@@ -135,7 +143,7 @@ mod tests {
 
     #[test]
     fn a_command_missing_its_argument_asks_for_help_instead_of_running_nothing() {
-        for text in ["/run", "/run   ", "/sh", "/key", "/ai", "/pair"] {
+        for text in ["/run", "/run   ", "/sh", "/key", "/ai", "/pair", "/keys", "/keys    "] {
             assert_eq!(parse(text, true), Command::Help, "{text}");
         }
     }

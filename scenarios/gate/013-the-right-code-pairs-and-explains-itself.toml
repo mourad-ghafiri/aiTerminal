@@ -1,0 +1,17 @@
+name = "the right code pairs and explains what you can do"
+tags = ["pairing"]
+
+[[step]]
+chat = "/pair 418-207"
+
+[[step]]
+expect_says = ["paired", "/shot"]
+
+[[step]]
+expect_local = ["paired"]
+
+[[step]]
+chat = "git status"
+
+[[step]]
+expect_pty = "git status<CR>"

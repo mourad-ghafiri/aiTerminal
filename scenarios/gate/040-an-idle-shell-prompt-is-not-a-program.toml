@@ -1,0 +1,31 @@
+name = "an idle shell prompt does not look like a program"
+tags = ["attach", "critical"]
+
+# zsh and bash arm bracketed paste AND application cursor keys at every prompt:
+#   zle_bracketed_paste = ESC[?2004h    smkx = ESC[?1h ESC=
+# Treating either as "a program owns the terminal" attaches the gate to your own
+# shell the instant it starts — which disables /run and every output message.
+
+[setup]
+paired = true
+
+[[step]]
+shell_prompt = true
+
+[[step]]
+wait_ms = 2000
+
+[[step]]
+expect_attached = false
+
+[[step]]
+expect_not_says = ["attached"]
+
+[[step]]
+chat = "ls"
+
+[[step]]
+expect_pty = "ls<CR>"
+
+[[step]]
+expect_not_says = ["busy"]

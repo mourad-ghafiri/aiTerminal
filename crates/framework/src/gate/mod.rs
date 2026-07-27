@@ -82,6 +82,9 @@ enum Ev {
 /// relay.
 enum Out {
     Text(String),
+    /// Addressed to one chat — a refusal, which goes to its sender rather than to the
+    /// authorized peer.
+    TextTo(i64, String),
     /// The live screen: edited into the existing message when there is one, otherwise
     /// posted fresh.
     Live { html: String, keys: Keyboard },
@@ -337,6 +340,9 @@ fn relay(
     let queued = Arc::new(AtomicUsize::new(0));
     let stopping = Arc::new(AtomicBool::new(false));
     let peer_id = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    // Outbound work not yet delivered. `/stop` must not race the client shutdown, or
+    // the goodbye it just queued is cancelled and the user gets silence.
+    let inflight = Arc::new(AtomicUsize::new(0));
     // The live screen's message id. Zero means "post a fresh one": set when a frame is
     // sent, cleared whenever the user types, because their message pushes the live
     // screen up the conversation and editing it there would be invisible. Button taps
@@ -346,7 +352,7 @@ fn relay(
     spawn_stdin_reader(tx.clone());
     spawn_pty_reader(session.pty(), tx.clone(), queued.clone());
     spawn_poller(api.clone(), poller, tx.clone(), stopping.clone());
-    let out_tx = spawn_sender(api.clone(), stopping.clone(), peer_id.clone(), live_id.clone());
+    let out_tx = spawn_sender(api.clone(), stopping.clone(), peer_id.clone(), live_id.clone(), inflight.clone());
 
     let mut scanner = MarkScanner::new();
     let mut glyphs = corelib::gfx::text::GlyphCache::new(platform::os::text_shaper_with(&cfg.font_family));
@@ -363,6 +369,8 @@ fn relay(
         shot_kind,
         style: &style,
         peer_id: &peer_id,
+        live_id: &live_id,
+        inflight: &inflight,
         reason: String::from("the shell exited"),
         stop: false,
     };
@@ -403,15 +411,21 @@ fn relay(
             }
         }
 
-        let alt = sink.term.in_alt_screen();
-        chrome.set_alt(alt);
-        let acts = gate.tick(alt, now);
-        ctx.perform(acts, &mut sink);
+        chrome.set_alt(sink.term.in_alt_screen());
+        // Where replies go is decided by AUTHORIZATION, re-read every iteration —
+        // never by which chat happened to message the bot first.
+        if let Some(id) = gate.peer_chat_id() {
+            peer_id.store(id, Ordering::Relaxed);
+        }
+        // Name the program before anything announces it, then observe, then tick — so
+        // both see a mirror from this instant rather than the previous one.
+        gate.set_title(sink.term.title());
         let acts = gate.observe(mirror_of(&sink.term, &gate, now), now);
+        ctx.perform(acts, &mut sink);
+        let acts = gate.tick(now);
         ctx.perform(acts, &mut sink);
         if gate.take_frame() {
             let screen = sink.term.screen_text();
-            gate.set_title(sink.term.title());
             let acts = gate.frame(&screen);
             ctx.perform(acts, &mut sink);
         }
@@ -440,12 +454,17 @@ fn relay(
                             scanner.feed(&bytes, &mut clean, &mut found);
                             // Mirror first, so `in_alt_screen` is current for this chunk.
                             sink.emit(&clean);
-                            gate.on_output(&clean, &found, sink.term.in_alt_screen(), now)
+                            gate.on_output(&clean, &found, now)
                         }
-                        Ev::PtyEof => break 'main,
+                        // The shell is gone, but whatever earlier events in this batch
+                        // produced still has to be delivered — otherwise a command's
+                        // final reply is lost exactly when the session ends.
+                        Ev::PtyEof => {
+                            ctx.reason = "the shell exited".into();
+                            ctx.stop = true;
+                            Vec::new()
+                        }
                         Ev::Chat { chat_id, name, text } => {
-                            // The sender needs a destination even for a refusal.
-                            let _ = peer_id.compare_exchange(0, chat_id, Ordering::Relaxed, Ordering::Relaxed);
                             // A typed message lands below the live screen, so the next
                             // frame must be a fresh message rather than an edit nobody
                             // would see. Taps create no message, so they keep editing.
@@ -453,7 +472,6 @@ fn relay(
                             gate.on_chat(chat_id, &name, &text, now)
                         }
                         Ev::Tap { chat_id, name, id, data } => {
-                            let _ = peer_id.compare_exchange(0, chat_id, Ordering::Relaxed, Ordering::Relaxed);
                             gate.on_callback(chat_id, &name, &id, &data, now)
                         }
                         Ev::Note(msg) => {
@@ -477,6 +495,11 @@ fn relay(
         }
     }
 
+    // Give whatever is queued — most importantly the goodbye — a moment to land.
+    let deadline = clock.now_ms() + 3_000;
+    while inflight.load(Ordering::Relaxed) > 0 && clock.now_ms() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     stopping.store(true, Ordering::Relaxed);
     api.shutdown();
     sink.emit(style.farewell(&ctx.reason).as_bytes());
@@ -487,11 +510,17 @@ fn relay(
 ///
 /// The screen itself is deliberately NOT rendered here — this runs ~33×/s, and the
 /// grid is only turned into text when a frame is actually due.
-fn mirror_of(term: &platform::term::Term, gate: &Gate, now: u64) -> Mirror {
+pub(crate) fn mirror_of(term: &platform::term::Term, gate: &Gate, now: u64) -> Mirror {
     Mirror {
-        app_control: term.app_control(),
-        bracketed: term.bracketed_paste(),
-        app_cursor: term.app_cursor_keys(),
+        signals: attach::Signals {
+            alt: term.in_alt_screen(),
+            mouse: term.wants_mouse(),
+            bracketed: term.bracketed_paste(),
+            app_cursor: term.app_cursor_keys(),
+            // The shell's own line-editor modes only mean something while a command is
+            // actually executing (see `Signals::owns_terminal`).
+            command_running: gate.capture().busy(),
+        },
         at_prompt: at_prompt(term, gate, now),
         generation: term.generation(),
     }
@@ -503,13 +532,25 @@ fn mirror_of(term: &platform::term::Term, gate: &Gate, now: u64) -> Mirror {
 /// detect but the shape: a command is running, output has gone quiet, and the cursor
 /// sits *after* text on its own line (`>>> `, `psql=#`). A merely slow command leaves
 /// the cursor at column 0 after its last newline, so `sleep 60` does not qualify.
-fn at_prompt(term: &platform::term::Term, gate: &Gate, now: u64) -> bool {
+pub(crate) fn at_prompt(term: &platform::term::Term, gate: &Gate, now: u64) -> bool {
     let Some(quiet) = gate.capture().quiet_for(now) else { return false };
     if quiet < super::gate::attach::PROMPT_QUIET_MS {
         return false;
     }
     let (cx, cy) = term.cursor();
-    cx > 0 && term.row(cy).iter().take(cx as usize).any(|c| !c.ch.is_whitespace())
+    if cx == 0 {
+        return false; // a slow command sits at column 0, after its last newline
+    }
+    let before: String = term.row(cy).iter().take(cx as usize).map(|c| c.ch).collect();
+    if before.trim().is_empty() {
+        return false;
+    }
+    // A prompt ends in a prompt character. A stalled progress bar
+    // (`45.2 MiB / 120 MiB  38%`) also sits mid-line with no newline, and treating it
+    // as a prompt would route the next chat message into a command's stdin instead of
+    // running it. Requiring the terminator tells `>>> `, `psql=#`, `In [1]:` and
+    // `Password:` apart from a download that stalled.
+    matches!(before.trim_end().chars().last(), Some('>' | '$' | '#' | ':' | '?' | ')'))
 }
 
 /// The side-effect executor: everything an [`Action`] needs to touch.
@@ -522,22 +563,32 @@ struct Perform<'a> {
     shot_kind: FileKind,
     style: &'a Style,
     peer_id: &'a Arc<std::sync::atomic::AtomicI64>,
+    live_id: &'a Arc<std::sync::atomic::AtomicI64>,
+    inflight: &'a Arc<AtomicUsize>,
     reason: String,
     stop: bool,
 }
 
 impl Perform<'_> {
+    /// Queue outbound work, counted so shutdown can wait for it.
+    fn queue(&self, msg: Out) {
+        self.inflight.fetch_add(1, Ordering::Relaxed);
+        if self.out.send(msg).is_err() {
+            self.inflight.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+
     fn perform(&mut self, acts: Vec<Action>, sink: &mut PaneSink) {
         for act in acts {
             match act {
                 Action::Pty(bytes) => self.session.write(&bytes),
                 Action::Local(text) => sink.emit(text.as_bytes()),
                 Action::Say(html) => {
-                    let _ = self.out.send(Out::Text(html));
+                    self.live_id.store(0, Ordering::Relaxed);
+                    self.queue(Out::Text(html));
                 }
-                Action::Live { html, keys } => {
-                    let _ = self.out.send(Out::Live { html, keys });
-                }
+                Action::SayTo(chat_id, html) => self.queue(Out::TextTo(chat_id, html)),
+                Action::Live { html, keys } => self.queue(Out::Live { html, keys }),
                 // Answering a tap happens on the poller thread the moment it arrives;
                 // by the time an action reaches here it is already done.
                 Action::Answer(_) => {}
@@ -559,7 +610,8 @@ impl Perform<'_> {
                     sink.emit(
                         self.style.outbound(&format!("sent a screenshot ({} KB)", shot.png.len() / 1024)).as_bytes(),
                     );
-                    let _ = self.out.send(Out::File {
+                    self.live_id.store(0, Ordering::Relaxed);
+                    self.queue(Out::File {
                         kind: self.shot_kind,
                         name: "terminal.png".into(),
                         mime: "image/png".into(),
@@ -568,7 +620,7 @@ impl Perform<'_> {
                     });
                 }
                 Action::File { name, text, caption } => {
-                    let _ = self.out.send(Out::File {
+                    self.queue(Out::File {
                         kind: FileKind::Document,
                         name,
                         mime: "text/plain".into(),
@@ -577,13 +629,21 @@ impl Perform<'_> {
                     });
                 }
                 Action::Sh(cmd) => {
-                    // Out-of-band: its own shell, so it works even while a full-screen
-                    // program owns the shared one.
-                    let text = run_detached(&cmd);
-                    let lines: Vec<String> = text.lines().map(str::to_string).collect();
-                    for m in reply::format(&format!("$ {cmd}"), &lines, 3).messages {
-                        let _ = self.out.send(Out::Text(m));
-                    }
+                    // Out-of-band in every sense: its own shell AND its own thread.
+                    // Running it here would freeze the relay for as long as the command
+                    // takes — no mirrored output, no local keystrokes, no frames — and
+                    // the pane would simply appear hung.
+                    let out = self.out.clone();
+                    self.inflight.fetch_add(1, Ordering::Relaxed);
+                    let inflight = self.inflight.clone();
+                    std::thread::spawn(move || {
+                        let text = run_detached(&cmd);
+                        let lines: Vec<String> = text.lines().map(str::to_string).collect();
+                        for m in reply::format(&format!("$ {cmd}"), &lines, 3).messages {
+                            let _ = out.send(Out::Text(m));
+                        }
+                        inflight.fetch_sub(1, Ordering::Relaxed);
+                    });
                 }
                 Action::Stop(why) => {
                     self.reason = why;
@@ -722,12 +782,14 @@ fn spawn_sender(
     stopping: Arc<AtomicBool>,
     peer_id: Arc<std::sync::atomic::AtomicI64>,
     live_id: Arc<std::sync::atomic::AtomicI64>,
+    inflight: Arc<AtomicUsize>,
 ) -> mpsc::Sender<Out> {
     let (tx, rx) = mpsc::channel::<Out>();
     std::thread::spawn(move || {
         let clock = SystemClock::default();
         let mut last: Option<u64> = None;
         while let Ok(msg) = rx.recv() {
+            let done = Countdown(&inflight);
             if stopping.load(Ordering::Relaxed) {
                 continue;
             }
@@ -735,17 +797,26 @@ fn spawn_sender(
             if chat_id == 0 {
                 continue; // nobody to answer yet
             }
+            let _ = &done;
             let wait = telegram::pace_ms(last, clock.now_ms());
             if wait > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(wait));
             }
             let sent = match &msg {
                 Out::Text(html) => api.send_message(chat_id, html, None).map(|_| ()),
+                Out::TextTo(to, html) => api.send_message(*to, html, None).map(|_| ()),
                 Out::Live { html, keys } => {
                     let existing = live_id.load(Ordering::Relaxed);
-                    let edited = (existing != 0)
+                    let mut edited = (existing != 0)
                         .then(|| api.edit_message(chat_id, existing, html, Some(keys)))
                         .transpose();
+                    // A rate limit is not "this message is gone" — waiting it out keeps
+                    // the live screen where the user is looking, rather than posting a
+                    // duplicate below it.
+                    if let Err(ApiError::RateLimited { retry_after }) = &edited {
+                        std::thread::sleep(std::time::Duration::from_secs(*retry_after as u64 + 1));
+                        edited = api.edit_message(chat_id, existing, html, Some(keys)).map(Some);
+                    }
                     match edited {
                         // Edited in place: the live screen stays where it is.
                         Ok(Some(())) => Ok(()),
@@ -769,6 +840,16 @@ fn spawn_sender(
         }
     });
     tx
+}
+
+/// Decrements the in-flight count however the send turns out — including the early
+/// `continue`s, which a bare `fetch_sub` at the end would miss.
+struct Countdown<'a>(&'a AtomicUsize);
+
+impl Drop for Countdown<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// Drop HTML tags — the fallback when a formatted message is rejected.

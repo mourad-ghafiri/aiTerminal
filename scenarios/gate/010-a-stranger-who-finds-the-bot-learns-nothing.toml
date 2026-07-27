@@ -1,0 +1,16 @@
+name = "a stranger who finds the bot learns nothing"
+tags = ["pairing", "security"]
+
+# A Telegram bot accepts messages from anyone who learns its @name, so an unpaired
+# chat must get NO reply at all — not even a refusal, which would confirm the bot is
+# live and attached to a real machine.
+
+[[step]]
+chat = "ls"
+from = 99
+
+[[step]]
+expect_no_pty = true
+
+[[step]]
+expect_not_says = ["ls", "paired", "gate", "not authorized"]

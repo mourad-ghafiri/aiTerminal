@@ -1,0 +1,37 @@
+name = "/run is refused while a program owns the terminal, never queued"
+tags = ["attach", "safety"]
+
+# Queuing it would fire the command unattended minutes later, when the program exits
+# and nobody is watching.
+
+[setup]
+paired = true
+
+[[step]]
+run_local = "claude"
+[[step]]
+app_modes = "bracketed"
+[[step]]
+expect_attached = true
+
+[[step]]
+chat = "/run rm -rf build"
+
+[[step]]
+expect_no_pty = true
+
+[[step]]
+expect_says = ["busy", "/sh"]
+
+[[step]]
+expect_nothing_queued = true
+
+[[step]]
+app_release = true
+[[step]]
+shell_end = 0
+[[step]]
+wait_ms = 3000
+
+[[step]]
+expect_no_pty = true

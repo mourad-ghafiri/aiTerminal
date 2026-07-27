@@ -1,0 +1,21 @@
+name = "a multi-line prompt arrives as one paste, not several submissions"
+tags = ["attach", "input"]
+
+# Without the bracket, an input box that submits on Enter runs the first line and
+# treats the rest as follow-up messages.
+
+[setup]
+paired = true
+
+[[step]]
+run_local = "claude"
+[[step]]
+app_modes = "bracketed"
+[[step]]
+expect_attached = true
+
+[[step]]
+chat = "refactor the parser<LF>keep the tests green"
+
+[[step]]
+expect_pty = "<ESC>[200~refactor the parser<CR>keep the tests green<ESC>[201~<CR>"

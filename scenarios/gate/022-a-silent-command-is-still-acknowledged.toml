@@ -1,0 +1,17 @@
+name = "a command with no output is still acknowledged"
+tags = ["shell"]
+
+# Silence reads as a dropped message. Something must always come back.
+
+[setup]
+paired = true
+
+[[step]]
+chat = "touch notes.md"
+[[step]]
+shell_start = true
+[[step]]
+shell_end = 0
+
+[[step]]
+expect_says = ["touch notes.md"]

@@ -1,0 +1,29 @@
+name = "a REPL that sets no terminal modes at all still attaches"
+tags = ["attach"]
+
+# python, psql and friends announce nothing. The only thing to go on is the universal
+# shape of a prompt: quiet output, cursor parked after a prompt character.
+
+[setup]
+paired = true
+
+[[step]]
+chat = "python3"
+[[step]]
+expect_pty = "python3<CR>"
+[[step]]
+shell_start = true
+[[step]]
+pty = "Python 3.13.0<CR><LF>>>> "
+
+[[step]]
+wait_ms = 2500
+
+[[step]]
+expect_attached = true
+
+[[step]]
+chat = "print(6*7)"
+
+[[step]]
+expect_pty = "print(6*7)<CR>"

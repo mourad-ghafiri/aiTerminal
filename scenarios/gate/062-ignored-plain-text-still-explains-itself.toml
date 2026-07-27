@@ -1,0 +1,28 @@
+name = "with plain text off, an attached program can still be driven"
+tags = ["attach", "usability"]
+
+# `hello` -> "use /run hello", and `/run hello` -> "the terminal is busy" is a closed
+# loop with no way in. The advice has to name something that actually works.
+
+[setup]
+paired = true
+plain_text_runs = false
+
+[[step]]
+run_local = "claude"
+[[step]]
+app_modes = "bracketed"
+[[step]]
+expect_attached = true
+
+[[step]]
+chat = "hello"
+
+[[step]]
+expect_says = ["/keys"]
+
+[[step]]
+chat = "/keys hello"
+
+[[step]]
+expect_pty = "hello"

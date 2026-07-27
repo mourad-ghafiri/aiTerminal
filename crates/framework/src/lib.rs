@@ -32,6 +32,8 @@ pub mod plugin;
 pub mod procio;
 pub mod profile;
 pub mod render;
+#[cfg(test)]
+mod scenario;
 pub mod security;
 pub mod shell;
 pub mod theme;

@@ -1,0 +1,25 @@
+name = "arrows use the encoding the program asked for"
+tags = ["attach", "input"]
+
+# With application cursor keys set, many programs accept ONLY the SS3 form; sending
+# CSI means the selection simply never moves.
+
+[setup]
+paired = true
+
+[[step]]
+chat = "/key up"
+[[step]]
+expect_pty = "<ESC>[A"
+
+[[step]]
+run_local = "codex"
+[[step]]
+app_modes = "alt,app_cursor"
+[[step]]
+expect_attached = true
+
+[[step]]
+chat = "/key up"
+[[step]]
+expect_pty = "<ESC>OA"

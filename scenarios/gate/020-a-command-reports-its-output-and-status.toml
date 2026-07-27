@@ -1,0 +1,21 @@
+name = "a command reports its output, its status and how long it took"
+tags = ["shell"]
+
+[setup]
+paired = true
+
+[[step]]
+chat = "git status"
+
+[[step]]
+expect_pty = "git status<CR>"
+
+[[step]]
+shell_start = true
+[[step]]
+pty = "On branch main<CR><LF>nothing to commit<CR><LF>"
+[[step]]
+shell_end = 0
+
+[[step]]
+expect_says = ["git status", "nothing to commit", "✓"]

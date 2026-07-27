@@ -1,0 +1,11 @@
+name = "/stop says goodbye and ends the gate"
+tags = ["lifecycle"]
+
+[setup]
+paired = true
+
+[[step]]
+chat = "/stop"
+
+[[step]]
+expect_says = ["stopping"]

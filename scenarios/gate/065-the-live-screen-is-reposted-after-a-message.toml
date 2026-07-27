@@ -1,0 +1,39 @@
+name = "the live screen is re-posted after you type, edited after a tap"
+tags = ["attach", "live"]
+
+# A typed message pushes the live screen up the conversation, so editing it there
+# would be invisible. A tap adds nothing to the chat, so the same message can keep
+# updating in place.
+
+[setup]
+paired = true
+
+[[step]]
+run_local = "claude"
+[[step]]
+app_modes = "bracketed"
+
+[[step]]
+screen = ["ready"]
+[[step]]
+wait_ms = 2500
+
+[[step]]
+tap = "k:down"
+[[step]]
+screen = ["ready", "moved"]
+[[step]]
+wait_ms = 2500
+
+[[step]]
+expect_live_reposted = false
+
+[[step]]
+chat = "do the thing"
+[[step]]
+screen = ["ready", "moved", "working"]
+[[step]]
+wait_ms = 2500
+
+[[step]]
+expect_live_reposted = true

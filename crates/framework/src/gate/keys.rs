@@ -115,14 +115,17 @@ pub fn key_bytes(name: &str, app_cursor: bool) -> Option<Vec<u8>> {
     Some(seq.to_vec())
 }
 
-/// Text to type into a program, bracketed when it asked for that.
+/// Text to type into a program, bracketed when it asked for that **and** the text
+/// actually needs it.
 ///
-/// The wrapper is what turns a pasted block into a single paste event instead of a
-/// sequence of Enters. `\n` is normalized to `\r`: a terminal delivers Return as CR, and
-/// a program reading raw mode will not see LF as "submit".
+/// The wrapper exists for exactly one reason: a block containing newlines must arrive as
+/// one paste, or an input box that submits on Enter runs the first line and treats the
+/// rest as follow-ups. Applying it to a single keystroke is not harmless — `vim` inserts
+/// a Normal-mode bracketed paste as literal text, and a program doing a raw single-byte
+/// read sees the leading escape as a cancel. So a keystroke stays a keystroke.
 pub fn typed_text(text: &str, bracketed: bool) -> Vec<u8> {
     let body = text.replace("\r\n", "\r").replace('\n', "\r");
-    if !bracketed {
+    if !bracketed || !body.contains('\r') {
         return body.into_bytes();
     }
     let mut out = Vec::with_capacity(body.len() + 12);
@@ -236,6 +239,15 @@ mod tests {
     }
 
     #[test]
+    fn a_single_keystroke_is_never_wrapped_in_a_paste() {
+        // `/keys y` answering a prompt must arrive as one byte. vim inserts a
+        // Normal-mode paste as literal text; a raw single-byte reader sees the escape.
+        assert_eq!(typed_text("y", true), b"y");
+        assert_eq!(typed_text(":wq", true), b":wq");
+        assert_eq!(typed_text("a long single line with spaces", true), b"a long single line with spaces");
+    }
+
+    #[test]
     fn newlines_are_normalized_to_carriage_returns() {
         assert_eq!(typed_text("a\r\nb\nc", false), b"a\rb\rc");
     }
@@ -244,8 +256,10 @@ mod tests {
     fn the_submitting_return_sits_outside_the_bracket() {
         // Inside, it is pasted content; a program that tells paste from typing would
         // insert a newline instead of accepting the prompt.
-        let out = String::from_utf8(typed_line("hello", true)).unwrap();
-        assert_eq!(out, "\x1b[200~hello\x1b[201~\r");
+        let out = String::from_utf8(typed_line("first\nsecond", true)).unwrap();
+        assert_eq!(out, "\x1b[200~first\rsecond\x1b[201~\r");
+        // A single line needs no bracket at all, so it is just the text and a Return.
+        assert_eq!(typed_line("hello", true), b"hello\r");
         assert_eq!(typed_line("hello", false), b"hello\r");
     }
 }

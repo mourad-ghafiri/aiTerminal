@@ -1,0 +1,26 @@
+name = "/full returns the last capture as a file"
+tags = ["shell"]
+
+[setup]
+paired = true
+
+[[step]]
+chat = "/full"
+[[step]]
+expect_says = ["nothing captured"]
+
+[[step]]
+chat = "ls"
+[[step]]
+shell_start = true
+[[step]]
+pty = "README.md<CR><LF>crates<CR><LF>"
+[[step]]
+shell_end = 0
+[[step]]
+expect_says = ["README.md"]
+
+[[step]]
+chat = "/full"
+[[step]]
+expect_not_says = ["nothing captured"]

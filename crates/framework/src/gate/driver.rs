@@ -31,8 +31,12 @@ const FRAME_ROWS: usize = 40;
 pub enum Action {
     /// Raw bytes to the shell.
     Pty(Vec<u8>),
-    /// A message for the chat (already HTML).
+    /// A message for the **authorized** chat (already HTML).
     Say(String),
+    /// A message for one specific chat — a refusal, which by definition goes to
+    /// someone who is not the authorized peer. Addressing these to the peer would
+    /// deliver "wrong code" to the owner and silence to the person who typed it.
+    SayTo(i64, String),
     /// Capture and send a screenshot, with this note in the caption.
     Shot(String),
     /// Send the last capture as a text file.
@@ -56,16 +60,19 @@ pub enum Action {
 /// the gate on every iteration; the screen itself is rendered only when a frame is due.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Mirror {
-    /// A program has taken the terminal (see `Term::app_control`).
-    pub app_control: bool,
-    /// It wants pasted text bracketed.
-    pub bracketed: bool,
-    /// It put the cursor keys in application mode.
-    pub app_cursor: bool,
+    /// What the terminal reports about who is driving it.
+    pub signals: attach::Signals,
     /// The cursor looks parked at a REPL prompt.
     pub at_prompt: bool,
     /// `Term::generation()` — the change counter frames are debounced on.
     pub generation: u64,
+}
+
+impl Mirror {
+    /// A program, not the shell, is driving the terminal.
+    pub fn owns(&self) -> bool {
+        self.signals.owns_terminal()
+    }
 }
 
 /// Everything the gate needs to know about its configuration.
@@ -128,6 +135,15 @@ impl Gate {
         self.attach.attached()
     }
 
+    /// The chat authorized to drive this terminal, if one is.
+    ///
+    /// This is the **only** thing that decides where output goes. Deriving the
+    /// destination from "whoever messaged the bot first" would let a stranger who
+    /// found the bot receive the owner's command output.
+    pub fn peer_chat_id(&self) -> Option<i64> {
+        self.auth.paired().map(|p| p.chat_id)
+    }
+
     pub fn auth_mut(&mut self) -> &mut Auth {
         &mut self.auth
     }
@@ -152,7 +168,7 @@ impl Gate {
         match self.auth.check(chat_id, name, pair_code) {
             // A stranger who found the bot learns nothing — not even that it is live.
             Access::Silent => Vec::new(),
-            Access::Refused(msg) => vec![Action::Say(reply::escape_html(&msg))],
+            Access::Refused(msg) => vec![Action::SayTo(chat_id, reply::escape_html(&msg))],
             Access::JustPaired => {
                 self.last_activity_ms = now;
                 vec![
@@ -176,6 +192,13 @@ impl Gate {
         match cmd {
             Command::Pair(_) => vec![Action::Say("already paired".into())],
             Command::Help => vec![Action::Say(self.help_html())],
+            // While a program owns the terminal there is no shell command to run, so
+            // pointing at `/run` would be a closed loop: `/run` is itself refused.
+            Command::Ignored(t) if self.attach.attached() => vec![Action::Say(format!(
+                "not sent — <code>[gates] plain_text</code> is off. Use <code>/keys {}</code> to type it into {}.",
+                reply::escape_html(&t),
+                reply::escape_html(&self.app_name())
+            ))],
             Command::Ignored(t) => vec![Action::Say(format!(
                 "not run — send <code>/run {}</code> (or set <code>[gates] plain_text = \"run\"</code>)",
                 reply::escape_html(&t)
@@ -194,7 +217,7 @@ impl Gate {
                 }
                 acts
             }
-            Command::Key(name) => match keys::key_bytes(&name, self.mirror.app_cursor) {
+            Command::Key(name) => match keys::key_bytes(&name, self.mirror.signals.app_cursor) {
                 Some(bytes) => {
                     self.attach.invalidate();
                     vec![Action::Local(self.style.inbound(who, &format!("key {name}"))), Action::Pty(bytes)]
@@ -208,7 +231,11 @@ impl Gate {
                 Verdict::Deny { reason } => self.blocked(who, &c, &reason),
                 _ => vec![Action::Local(self.style.inbound(who, &format!("sh {c}"))), Action::Sh(c)],
             },
+            // `/ai` builds a shell line, so it carries exactly the same hazard as
+            // `/run`: queued now, it fires unattended when the program exits.
+            Command::Ai(_) if self.attach.attached() => vec![self.busy_with_the_program("/ai")],
             Command::Ai(prompt) => self.run_line(format!("@ai {prompt}"), who, now),
+            Command::Yes if self.attach.attached() => vec![self.busy_with_the_program("/yes")],
             Command::Yes => match self.pending.take() {
                 Some((c, at)) if now.saturating_sub(at) <= CONFIRM_TTL_MS => {
                     let mut acts = vec![Action::Say(format!("running <code>{}</code>", reply::escape_html(&c)))];
@@ -278,9 +305,9 @@ impl Gate {
     fn type_into_app(&mut self, text: &str, who: &str, submit: bool, note: &str) -> Vec<Action> {
         self.attach.invalidate();
         let bytes = if submit {
-            keys::typed_line(text, self.mirror.bracketed)
+            keys::typed_line(text, self.mirror.signals.bracketed)
         } else {
-            keys::typed_text(text, self.mirror.bracketed)
+            keys::typed_text(text, self.mirror.signals.bracketed)
         };
         let mut acts = vec![Action::Local(self.style.inbound(who, text)), Action::Pty(bytes)];
         // Attached, the live screen shows the result — an extra "sent" line would just
@@ -331,7 +358,7 @@ impl Gate {
         if !self.settings.attach {
             return Vec::new();
         }
-        match self.attach.observe(m.app_control, m.at_prompt, m.generation, now) {
+        match self.attach.observe(m.owns(), m.at_prompt, m.generation, now) {
             Some(attach::Event::Attached(why)) => {
                 self.was_attached = true;
                 self.frame_due = true;
@@ -352,6 +379,11 @@ impl Gate {
                 Vec::new()
             }
             Some(attach::Event::Detached) => {
+                // Everything scoped to that attachment goes with it. Leaving
+                // `was_attached` latched would make the NEXT command's `Finished` look
+                // like the program's exit, and its output would be silently dropped.
+                self.was_attached = false;
+                self.title.clear();
                 vec![
                     Action::Local(self.style.notice("detached — back at the shell")),
                     Action::Say("◀ <b>detached</b> — back at the shell.".into()),
@@ -429,6 +461,17 @@ impl Gate {
         self.title = title.to_string();
     }
 
+    /// The refusal every shell-bound verb shares while a program holds the terminal.
+    /// Refusing beats queuing: a queued command fires unattended minutes later, when
+    /// the program exits and nobody is watching for it.
+    fn busy_with_the_program(&self, verb: &str) -> Action {
+        Action::Say(format!(
+            "<code>{verb}</code> needs the shell, and <b>{}</b> has it — \
+             <code>/sh &lt;cmd&gt;</code> runs out-of-band, or <code>/key ctrl-c</code> interrupts.",
+            reply::escape_html(&self.app_name())
+        ))
+    }
+
     fn blocked(&self, who: &str, line: &str, reason: &str) -> Vec<Action> {
         vec![
             // Recorded locally too: a blocked attempt is exactly what the person at
@@ -440,7 +483,7 @@ impl Gate {
 
     fn submit(&mut self, line: String, who: &str, now: u64) -> Vec<Action> {
         let echo = Action::Local(self.style.inbound(who, &line));
-        match self.capture.submit(line, self.mirror.app_control, now) {
+        match self.capture.submit(line, self.mirror.owns(), now) {
             Submit::Running => {
                 let mut acts = vec![echo];
                 acts.extend(self.drain(now));
@@ -455,8 +498,11 @@ impl Gate {
 
     // ── inbound: the shell ───────────────────────────────────────────────────
 
-    pub fn on_output(&mut self, chunk: &[u8], marks: &[Mark], alt: bool, now: u64) -> Vec<Action> {
-        self.capture.on_output(chunk, marks, alt, now);
+    pub fn on_output(&mut self, chunk: &[u8], marks: &[Mark], now: u64) -> Vec<Action> {
+        // The SAME condition the submit was gated on. Releasing a queue on a weaker one
+        // (the alternate screen alone) would dispatch into an inline program.
+        let owns = self.mirror.owns();
+        self.capture.on_output(chunk, marks, owns, now);
         self.drain(now)
     }
 
@@ -464,8 +510,9 @@ impl Gate {
         self.capture.on_local(bytes);
     }
 
-    pub fn tick(&mut self, alt: bool, now: u64) -> Vec<Action> {
-        self.capture.tick(alt, now);
+    pub fn tick(&mut self, now: u64) -> Vec<Action> {
+        let owns = self.mirror.owns();
+        self.capture.tick(owns, now);
         self.drain(now)
     }
 
@@ -500,21 +547,21 @@ impl Gate {
                     // repaint escapes. Rendering that would dump thousands of lines of
                     // nonsense at the moment it exits; the exit line is the useful part.
                     if std::mem::take(&mut self.was_attached) {
-                        if let Some(ev) = self.attach.release() {
-                            let _ = ev;
-                        }
-                        acts.push(Action::Say(format!("◀ <code>{}</code> exited · {mark} · {}",
-                            reply::escape_html(&cmd), human_ms(elapsed_ms))));
+                        self.attach.release();
+                        self.title.clear();
+                        // `/full` must still work: keep the capture even though the
+                        // rendered form is repaint escapes rather than output.
+                        self.last = Some((header.clone(), self.lines(&bytes)));
+                        acts.push(Action::Say(format!(
+                            "◀ <code>{}</code> exited · {mark} · {}",
+                            reply::escape_html(&cmd),
+                            human_ms(elapsed_ms)
+                        )));
                         continue;
                     }
+                    let _ = saw_alt;
                     let lines = self.lines(&bytes);
                     self.last = Some((header.clone(), lines.clone()));
-                    // A program that took over the screen leaves no meaningful text —
-                    // a picture is the only honest answer.
-                    if saw_alt && lines.iter().all(|l| l.trim().is_empty()) {
-                        acts.push(Action::Shot(header));
-                        continue;
-                    }
                     let r = reply::format(&header, &lines, self.settings.max_reply_messages);
                     let truncated = r.truncated || elided;
                     acts.extend(r.messages.into_iter().map(Action::Say));
@@ -752,9 +799,9 @@ mod tests {
     fn text_becomes_stdin_while_a_command_is_waiting_for_input() {
         let mut g = paired();
         g.on_chat(7, "M", "sudo ls", 0);
-        g.on_output(b"", &[Mark::Start], false, 1);
-        g.on_output(b"Password:", &[], false, 2);
-        g.tick(false, 2 + 8_000); // the quiet note fires: it is waiting
+        g.on_output(b"", &[Mark::Start], 1);
+        g.on_output(b"Password:", &[], 2);
+        g.tick(2 + 8_000); // the quiet note fires: it is waiting
 
         let acts = g.on_chat(7, "M", "hunter2", 20_000);
         assert_eq!(pty_bytes(&acts), b"hunter2\r");
@@ -765,9 +812,9 @@ mod tests {
     fn a_finished_command_is_reported_with_its_output_and_status() {
         let mut g = paired();
         g.on_chat(7, "M", "ls", 0);
-        g.on_output(b"", &[Mark::Start], false, 1);
-        g.on_output(b"a.txt\r\nb.txt\r\n", &[], false, 2);
-        let acts = g.on_output(b"", &[Mark::End(0)], false, 1_400);
+        g.on_output(b"", &[Mark::Start], 1);
+        g.on_output(b"a.txt\r\nb.txt\r\n", &[], 2);
+        let acts = g.on_output(b"", &[Mark::End(0)], 1_400);
         let text = said(&acts);
         assert!(text.contains("a.txt") && text.contains("b.txt"), "{text}");
         assert!(text.contains('✓'), "{text}");
@@ -777,8 +824,8 @@ mod tests {
     fn a_failing_command_reports_its_exit_code() {
         let mut g = paired();
         g.on_chat(7, "M", "false", 0);
-        g.on_output(b"", &[Mark::Start], false, 1);
-        assert!(said(&g.on_output(b"", &[Mark::End(1)], false, 2)).contains("✗ 1"));
+        g.on_output(b"", &[Mark::Start], 1);
+        assert!(said(&g.on_output(b"", &[Mark::End(1)], 2)).contains("✗ 1"));
     }
 
     #[test]
@@ -788,31 +835,22 @@ mod tests {
         let mut g = gate_with(Arc::new(p), true);
         g.on_chat(7, "M", "/pair 418207", 0);
         g.on_chat(7, "M", "env", 1);
-        g.on_output(b"", &[Mark::Start], false, 2);
-        g.on_output(b"AWS_KEY=AKIA1234567890\r\n", &[], false, 3);
-        let text = said(&g.on_output(b"", &[Mark::End(0)], false, 4));
+        g.on_output(b"", &[Mark::Start], 2);
+        g.on_output(b"AWS_KEY=AKIA1234567890\r\n", &[], 3);
+        let text = said(&g.on_output(b"", &[Mark::End(0)], 4));
         assert!(!text.contains("AKIA1234567890"), "a secret reached the chat: {text}");
         assert!(text.contains("redacted"), "{text}");
     }
 
-    #[test]
-    fn a_full_screen_program_answers_with_a_picture_not_empty_text() {
-        let mut g = paired();
-        g.on_chat(7, "M", "htop", 0);
-        g.on_output(b"", &[Mark::Start], false, 1);
-        g.on_output(b"\x1b[?1049h", &[], true, 2);
-        let acts = g.on_output(b"", &[Mark::End(0)], false, 3);
-        assert!(acts.iter().any(|a| matches!(a, Action::Shot(_))), "expected a screenshot, got {acts:?}");
-    }
 
     #[test]
     fn full_resends_the_last_capture_as_a_file() {
         let mut g = paired();
         assert!(said(&g.on_chat(7, "M", "/full", 1)).contains("nothing captured"));
         g.on_chat(7, "M", "ls", 2);
-        g.on_output(b"", &[Mark::Start], false, 3);
-        g.on_output(b"a.txt\r\n", &[], false, 4);
-        g.on_output(b"", &[Mark::End(0)], false, 5);
+        g.on_output(b"", &[Mark::Start], 3);
+        g.on_output(b"a.txt\r\n", &[], 4);
+        g.on_output(b"", &[Mark::End(0)], 5);
         match &g.on_chat(7, "M", "/full", 6)[0] {
             Action::File { text, name, .. } => {
                 assert!(text.contains("a.txt"));
@@ -834,8 +872,8 @@ mod tests {
         let mut g = paired();
         assert!(g.on_chat(7, "M", "/status", 1)[0] == Action::Say(g.status_html()));
         assert!(g.status_html().contains("approximate"), "a degraded session must say so");
-        g.on_output(b"", &[Mark::Start], false, 2);
-        g.on_output(b"", &[Mark::End(0)], false, 3);
+        g.on_output(b"", &[Mark::Start], 2);
+        g.on_output(b"", &[Mark::End(0)], 3);
         assert!(g.status_html().contains("exact"));
     }
 
@@ -856,14 +894,33 @@ mod tests {
 
     /// Put the gate in the state a program taking the terminal produces.
     fn attach_app(g: &mut Gate) {
-        g.observe(Mirror { app_control: true, bracketed: true, app_cursor: true, generation: 1, ..Default::default() }, 0);
+        g.observe(
+            Mirror {
+                signals: attach::Signals {
+                    bracketed: true,
+                    app_cursor: true,
+                    command_running: true,
+                    ..Default::default()
+                },
+                generation: 1,
+                ..Default::default()
+            },
+            0,
+        );
         assert!(g.attached());
     }
 
     #[test]
     fn a_program_taking_the_terminal_attaches_and_announces_it() {
         let mut g = paired();
-        let acts = g.observe(Mirror { app_control: true, generation: 1, ..Default::default() }, 0);
+        let acts = g.observe(
+            Mirror {
+                signals: attach::Signals { alt: true, ..Default::default() },
+                generation: 1,
+                ..Default::default()
+            },
+            0,
+        );
         assert!(said(&acts).contains("attached"), "{:?}", said(&acts));
         assert!(acts.iter().any(|a| matches!(a, Action::Local(_))), "and the pane says so too");
         assert!(g.take_frame(), "the first screen goes out immediately");
@@ -873,10 +930,13 @@ mod tests {
     fn while_attached_plain_text_is_typed_into_the_program_and_submitted() {
         let mut g = paired();
         attach_app(&mut g);
+        // A single line is typed as-is; only a block that contains newlines needs the
+        // paste wrapper (a bracketed single keystroke breaks vim and raw readers).
         let acts = g.on_chat(7, "M", "refactor the parser", 100);
-        // Bracketed, because the program asked for it — so a multi-line prompt would
-        // arrive as one paste rather than N submissions.
-        assert_eq!(pty_bytes(&acts), b"\x1b[200~refactor the parser\x1b[201~\r");
+        assert_eq!(pty_bytes(&acts), b"refactor the parser\r");
+
+        let acts = g.on_chat(7, "M", "line one\nline two", 200);
+        assert_eq!(pty_bytes(&acts), b"\x1b[200~line one\rline two\x1b[201~\r");
     }
 
     #[test]
@@ -970,10 +1030,10 @@ mod tests {
     fn an_attached_program_exiting_reports_its_status_not_its_repaint_soup() {
         let mut g = paired();
         g.on_chat(7, "M", "vim notes.md", 0);
-        g.on_output(b"", &[Mark::Start], false, 1);
+        g.on_output(b"", &[Mark::Start], 1);
         attach_app(&mut g);
-        g.on_output(b"\x1b[?1049h\x1b[2J\x1b[Hlots of repaint escapes", &[], true, 2);
-        let acts = g.on_output(b"", &[Mark::End(0)], false, 3_000);
+        g.on_output(b"\x1b[?1049h\x1b[2J\x1b[Hlots of repaint escapes", &[], 2);
+        let acts = g.on_output(b"", &[Mark::End(0)], 3_000);
         let text = said(&acts);
         assert!(text.contains("exited"), "{text}");
         assert!(!text.contains("repaint escapes"), "the capture must not be dumped: {text}");
@@ -996,7 +1056,16 @@ mod tests {
             plain_runs: true, max_reply_messages: 3, screenshot: FileKind::Document, cols: 80, attach: false,
         });
         g.on_chat(7, "M", "/pair 418207", 0);
-        assert!(g.observe(Mirror { app_control: true, generation: 1, ..Default::default() }, 0).is_empty());
+        assert!(g
+            .observe(
+                Mirror {
+                    signals: attach::Signals { alt: true, ..Default::default() },
+                    generation: 1,
+                    ..Default::default()
+                },
+                0
+            )
+            .is_empty());
         assert!(!g.attached(), "[gates] attach = false keeps the old shell-only behaviour");
     }
 

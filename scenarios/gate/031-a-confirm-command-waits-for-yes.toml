@@ -1,0 +1,21 @@
+name = "a confirm-tier command waits for an explicit yes"
+tags = ["guard"]
+
+[setup]
+paired = true
+confirm = ["^git push --force"]
+
+[[step]]
+chat = "git push --force origin main"
+
+[[step]]
+expect_no_pty = true
+
+[[step]]
+expect_says = ["/yes", "/no"]
+
+[[step]]
+chat = "/yes"
+
+[[step]]
+expect_pty = "git push --force origin main<CR>"

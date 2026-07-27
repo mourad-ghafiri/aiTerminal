@@ -1,0 +1,14 @@
+name = "/sh runs a command without touching the shared shell"
+tags = ["shell"]
+
+[setup]
+paired = true
+
+[[step]]
+chat = "/sh git status"
+
+[[step]]
+expect_no_pty = true
+
+[[step]]
+expect_local = ["sh git status"]

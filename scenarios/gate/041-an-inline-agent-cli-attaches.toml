@@ -1,0 +1,30 @@
+name = "an inline agent CLI attaches once its command is running"
+tags = ["attach"]
+
+# Claude Code and friends render inline — they never touch the alternate screen. The
+# same bracketed paste that means nothing at a prompt is decisive once a command is
+# actually executing.
+
+[setup]
+paired = true
+
+[[step]]
+shell_prompt = true
+[[step]]
+expect_attached = false
+
+[[step]]
+chat = "claude"
+[[step]]
+expect_pty = "claude<CR>"
+
+[[step]]
+shell_start = true
+[[step]]
+app_modes = "bracketed"
+
+[[step]]
+expect_attached = true
+
+[[step]]
+expect_says = ["attached"]

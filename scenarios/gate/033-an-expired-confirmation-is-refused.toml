@@ -1,0 +1,23 @@
+name = "a confirmation that sat too long is refused, not run"
+tags = ["guard", "safety"]
+
+# A "yes" tapped hours later must not fire the command someone forgot about.
+
+[setup]
+paired = true
+confirm = ["^git push --force"]
+
+[[step]]
+chat = "git push --force origin main"
+
+[[step]]
+wait_ms = 130000
+
+[[step]]
+chat = "/yes"
+
+[[step]]
+expect_no_pty = true
+
+[[step]]
+expect_says = ["expired"]

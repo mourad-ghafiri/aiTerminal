@@ -1,0 +1,38 @@
+name = "a program exiting does not swallow the next command's output"
+tags = ["attach", "lifecycle"]
+
+# A program started at the keyboard attaches with no capture of its own. If that
+# leaves state behind, the NEXT command from the chat loses its output entirely —
+# which reads as an intermittent bug.
+
+[setup]
+paired = true
+
+[[step]]
+run_local = "htop"
+[[step]]
+app_modes = "alt"
+[[step]]
+expect_attached = true
+
+[[step]]
+app_release = true
+[[step]]
+shell_end = 0
+[[step]]
+wait_ms = 2000
+
+[[step]]
+expect_attached = false
+
+[[step]]
+chat = "ls"
+[[step]]
+shell_start = true
+[[step]]
+pty = "README.md<CR><LF>crates<CR><LF>"
+[[step]]
+shell_end = 0
+
+[[step]]
+expect_says = ["README.md", "crates"]

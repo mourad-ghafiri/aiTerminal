@@ -1,0 +1,25 @@
+name = "a denied command never reaches the terminal"
+tags = ["guard", "security"]
+
+# The destructive string appears here ONLY as text to be matched by a deny pattern.
+# The harness has no PTY and no process: `expect_no_pty` proves it went nowhere, and
+# there is no mechanism by which it could have run.
+
+[setup]
+paired = true
+deny = ["rm\\s+-rf\\s+/"]
+
+[[step]]
+chat = "rm -rf /"
+
+[[step]]
+expect_no_pty = true
+
+[[step]]
+expect_says = ["blocked"]
+
+[[step]]
+expect_local = ["blocked"]
+
+[[step]]
+expect_nothing_queued = true

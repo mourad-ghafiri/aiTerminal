@@ -213,6 +213,13 @@ impl Capture {
         matches!(self.state, State::Idle) && self.queue.is_empty()
     }
 
+    /// A command is executing — either one the chat started, or one the local user
+    /// started (which the shell's `preexec` mark tells us about). This is what makes a
+    /// shell's own bracketed paste at a prompt distinguishable from a program's.
+    pub fn busy(&self) -> bool {
+        !matches!(self.state, State::Idle) || self.local_busy
+    }
+
     /// A command is running and has already been reported as silent — almost always
     /// because it is prompting. The driver routes the next chat message to its stdin
     /// instead of treating it as a new command.
@@ -249,8 +256,8 @@ impl Capture {
 
     /// Offer a remote command. It runs now if the shell is free, otherwise it waits —
     /// it is never spliced into a half-typed local line.
-    pub fn submit(&mut self, cmd: String, alt: bool, now: u64) -> Submit {
-        if self.can_dispatch(alt) {
+    pub fn submit(&mut self, cmd: String, owns: bool, now: u64) -> Submit {
+        if self.can_dispatch(owns) {
             self.start(cmd, now);
             return Submit::Running;
         }
@@ -289,7 +296,7 @@ impl Capture {
 
     /// PTY output plus any marks extracted from it. `alt` is the mirror terminal's
     /// alt-screen state *after* feeding this chunk.
-    pub fn on_output(&mut self, chunk: &[u8], marks: &[Mark], alt: bool, now: u64) {
+    pub fn on_output(&mut self, chunk: &[u8], marks: &[Mark], owns: bool, now: u64) {
         for m in marks {
             self.marks_seen = true;
             match m {
@@ -302,13 +309,13 @@ impl Capture {
                 ring.push(chunk);
                 *quiet_since = now;
             }
-            *saw_alt |= alt;
+            *saw_alt |= owns;
         }
-        self.pump(alt, now);
+        self.pump(owns, now);
     }
 
     /// Time passed. Drives the grace period, the debounce fallback, and progress notes.
-    pub fn tick(&mut self, alt: bool, now: u64) {
+    pub fn tick(&mut self, owns: bool, now: u64) {
         // No mark arrived in time: this shell isn't reporting, so switch this command
         // to silence-based detection rather than hanging forever.
         if let State::Pending { cmd, at } = &self.state {
@@ -319,7 +326,7 @@ impl Capture {
                     start: at,
                     quiet_since: now,
                     ring: Ring::new(),
-                    saw_alt: alt,
+                    saw_alt: owns,
                     marked: false,
                     next_interim: FIRST_INTERIM_MS,
                     interim_step: FIRST_INTERIM_MS,
@@ -358,13 +365,13 @@ impl Capture {
         if finish_unmarked {
             self.finish(None, now);
         }
-        self.pump(alt, now);
+        self.pump(owns, now);
     }
 
     // ── internals ────────────────────────────────────────────────────────────
 
-    fn can_dispatch(&self, alt: bool) -> bool {
-        matches!(self.state, State::Idle) && !self.local_busy && !self.local_line_dirty && !alt
+    fn can_dispatch(&self, owns: bool) -> bool {
+        matches!(self.state, State::Idle) && !self.local_busy && !self.local_line_dirty && !owns
     }
 
     fn start(&mut self, cmd: String, now: u64) {
@@ -373,8 +380,8 @@ impl Capture {
     }
 
     /// Send the next queued command if the shell has come free.
-    fn pump(&mut self, alt: bool, now: u64) {
-        while self.can_dispatch(alt) {
+    fn pump(&mut self, owns: bool, now: u64) {
+        while self.can_dispatch(owns) {
             let Some(cmd) = self.queue.pop_front() else { break };
             self.start(cmd, now);
         }

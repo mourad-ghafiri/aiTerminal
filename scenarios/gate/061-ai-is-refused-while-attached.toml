@@ -1,0 +1,36 @@
+name = "/ai is refused while a program owns the terminal, never queued"
+tags = ["attach", "safety"]
+
+# `/ai` builds a shell line just like `/run`, so it has exactly the same hazard.
+
+[setup]
+paired = true
+
+[[step]]
+run_local = "claude"
+[[step]]
+app_modes = "bracketed"
+[[step]]
+expect_attached = true
+
+[[step]]
+chat = "/ai why did the build fail"
+
+[[step]]
+expect_no_pty = true
+
+[[step]]
+expect_not_says = ["queued"]
+
+[[step]]
+expect_nothing_queued = true
+
+[[step]]
+app_release = true
+[[step]]
+shell_end = 0
+[[step]]
+wait_ms = 3000
+
+[[step]]
+expect_no_pty = true

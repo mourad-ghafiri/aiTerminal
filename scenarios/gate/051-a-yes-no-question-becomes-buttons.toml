@@ -1,0 +1,25 @@
+name = "a yes/no prompt becomes two buttons with the default first"
+tags = ["attach", "buttons"]
+
+[setup]
+paired = true
+
+[[step]]
+run_local = "some-tool"
+[[step]]
+app_modes = "bracketed"
+
+[[step]]
+screen = ["Overwrite existing file? [y/N]"]
+
+[[step]]
+wait_ms = 2500
+
+[[step]]
+expect_buttons = ["k:y", "k:N"]
+
+[[step]]
+tap = "k:N"
+
+[[step]]
+expect_pty = "N"

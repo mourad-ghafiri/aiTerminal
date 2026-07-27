@@ -1,0 +1,26 @@
+name = "/no drops a pending confirmation"
+tags = ["guard"]
+
+[setup]
+paired = true
+confirm = ["^git push --force"]
+
+[[step]]
+chat = "git push --force origin main"
+[[step]]
+chat = "/no"
+
+[[step]]
+expect_says = ["dropped"]
+
+[[step]]
+expect_no_pty = true
+
+[[step]]
+chat = "/yes"
+
+[[step]]
+expect_says = ["nothing is waiting"]
+
+[[step]]
+expect_no_pty = true

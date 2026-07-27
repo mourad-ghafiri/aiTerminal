@@ -309,16 +309,19 @@ README.md  crates  docs
       live screen stays at the bottom where you can see it.</p>
 
     <div class="callout"><b>Nothing here knows about Claude Code.</b> The same thing works for Codex,
-      opencode, aider, <code>vim</code>, <code>htop</code>, <code>lazygit</code>,
-      <code>python3</code>, <code>psql</code> — and whatever ships next month. Two generic signals do
-      all of it. <b>The terminal protocol:</b> a program that manages the screen says so in DEC
-      private modes — alternate screen, bracketed paste, application cursor keys, mouse reporting.
-      Deliberately not just the alternate screen, since plenty of modern CLIs render inline.
-      <b>The shape of a prompt:</b> a REPL sets no modes, so the fallback is the universal picture of
-      one — a command running, output gone quiet, and the cursor parked after text on its own line.
-      A merely slow command leaves the cursor at column 0, so <code>sleep 60</code> does not trip it.
-      The buttons come from the same place: the <i>shape</i> of a question (a numbered list, a
-      <code>[y/N]</code> bracket), never knowledge of who is asking.</div>
+      opencode, aider, <code>vim</code>, <code>htop</code>, <code>python3</code>, <code>psql</code> —
+      and whatever ships next month. <b>The terminal protocol</b> is the signal: a program that
+      manages the screen says so in DEC private modes. The catch is that a shell's line editor arms
+      two of them at <i>every prompt</i> (<code>zle_bracketed_paste</code> and <code>smkx</code>), so
+      bracketed paste and application cursor keys mean nothing on their own — only the alternate
+      screen and mouse reporting are shell-proof. For the ambiguous pair the shell integration
+      already tells us the truth, since a command runs between the preexec and precmd marks:
+      <code>alt || mouse || ((bracketed || app_cursor) &amp;&amp; command_running)</code>. At a prompt
+      nothing is running; once <code>claude</code> starts, the same modes become decisive.
+      <b>A REPL</b> sets no modes at all, so the fallback is the shape of a prompt — quiet output and
+      the cursor parked after a prompt character, which is also what tells it from a download that
+      stalled mid-line. Buttons follow the shape of a <i>question</i>, so an agent listing its plan is
+      left alone.</div>
 
     <p>Reading those modes is not only detection — it is also how input is encoded. <b>Arrows</b> go
       out as <code>ESC O A</code> when the program asked for application cursor keys and

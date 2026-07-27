@@ -1,0 +1,20 @@
+name = "/keys sends a bare keystroke, not a bracketed paste"
+tags = ["attach", "input"]
+
+# A single character answering a prompt must arrive as that character. Wrapping it in
+# a paste makes vim insert the literal text and makes a raw single-key reader see the
+# escape instead.
+
+[setup]
+paired = true
+
+[[step]]
+run_local = "claude"
+[[step]]
+app_modes = "bracketed"
+
+[[step]]
+chat = "/keys y"
+
+[[step]]
+expect_pty = "y"

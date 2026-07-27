@@ -1,0 +1,16 @@
+name = "a full-screen program attaches even with no shell integration"
+tags = ["attach"]
+
+# The alternate screen and mouse reporting are never set by a shell, so they stand on
+# their own — which is what keeps fish and `[shell] integration = false` working.
+
+[setup]
+paired = true
+
+[[step]]
+chat = "htop"
+[[step]]
+app_modes = "alt,mouse"
+
+[[step]]
+expect_attached = true

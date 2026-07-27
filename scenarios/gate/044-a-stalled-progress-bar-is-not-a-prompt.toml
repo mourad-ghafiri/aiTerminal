@@ -1,0 +1,25 @@
+name = "a stalled download is not mistaken for a prompt"
+tags = ["attach", "false-positive"]
+
+# A progress bar sits mid-line with no newline, exactly like a REPL prompt. If that
+# counted, the next chat message would be fed to the stalled command's stdin instead
+# of being run — silently losing it, and bypassing the command guard on the way.
+
+[setup]
+paired = true
+
+[[step]]
+chat = "curl -O https://example.invalid/big.iso"
+[[step]]
+shell_start = true
+[[step]]
+pty = "45.2 MiB / 120 MiB  38%"
+
+[[step]]
+wait_ms = 4000
+
+[[step]]
+expect_attached = false
+
+[[step]]
+expect_not_says = ["attached"]

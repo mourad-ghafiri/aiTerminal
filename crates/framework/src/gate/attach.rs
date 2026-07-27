@@ -19,6 +19,49 @@
 //! Frames are debounced rather than streamed: a TUI repaints tens of times a second, and
 //! a chat is not a video codec. We wait for the screen to settle, then send one frame.
 
+/// What the terminal reports about who is driving it.
+///
+/// The policy below is the whole detector, and the reason it lives here rather than in
+/// the emulator: `platform::term` reports *facts*, and only the gate knows what they
+/// mean.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Signals {
+    /// The alternate screen is up.
+    pub alt: bool,
+    /// Mouse reporting is on.
+    pub mouse: bool,
+    /// Bracketed paste is on.
+    pub bracketed: bool,
+    /// Application cursor keys (DECCKM) are on.
+    pub app_cursor: bool,
+    /// A command is actually executing — from the shell's own preexec/precmd marks.
+    pub command_running: bool,
+}
+
+impl Signals {
+    /// Is a *program* driving this terminal, as opposed to the shell?
+    ///
+    /// Getting this wrong breaks everything, and the trap is subtle: **a shell's line
+    /// editor arms bracketed paste and application cursor keys at every prompt.** zsh
+    /// reports `zle_bracketed_paste = ESC[?2004h` and `smkx = ESC[?1h ESC=`; bash ≥ 5.1
+    /// does the same through readline. So neither means anything on its own — treating
+    /// them as evidence attaches the gate to your own shell the moment it starts, and
+    /// never lets go.
+    ///
+    /// Two signals *are* shell-proof, because no shell sets them: the alternate screen
+    /// and mouse reporting. For the ambiguous pair, the shell integration already tells
+    /// us the truth — a command runs between the `preexec` and `precmd` marks. At a
+    /// prompt nothing is running, so the shell's own modes are correctly ignored; once
+    /// `claude` starts, the very same modes become decisive.
+    ///
+    /// Without shell integration (fish, or `[shell] integration = false`) only
+    /// alternate-screen and mouse programs are detectable — `/status` says so rather
+    /// than pretending otherwise.
+    pub fn owns_terminal(&self) -> bool {
+        self.alt || self.mouse || ((self.bracketed || self.app_cursor) && self.command_running)
+    }
+}
+
 /// Why we attached — shown to the user, and it decides how much we claim to know.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Why {
@@ -87,10 +130,14 @@ impl Attacher {
         self.on
     }
 
-    /// Force a frame on the next observation — used after we send input, so the user
-    /// sees the result without waiting for the program to happen to repaint.
+    /// Force a frame as soon as the screen settles — used after we send input.
+    ///
+    /// This resets the rate-limit clock too. That limit exists to stop a *program*
+    /// flooding the chat while it streams; throttling a deliberate user action by the
+    /// same two seconds just reads as "I tapped Yes and nothing happened".
     pub fn invalidate(&mut self) {
         self.framed_gen = self.framed_gen.wrapping_sub(1);
+        self.framed_ms = 0;
     }
 
     /// Detach immediately (the command that owned the terminal ended).
@@ -177,9 +224,17 @@ pub fn choices(screen: &[String]) -> Vec<Choice> {
     // Only the tail of the screen matters: a question is the last thing printed, and an
     // earlier numbered list (a search result, a changelog) is not something to answer.
     let tail = screen.len().saturating_sub(14);
+    let recent = &screen[tail..];
     let mut out: Vec<Choice> = Vec::new();
 
-    for line in &screen[tail..] {
+    // A numbered list is only something to ANSWER when it is a question. An agent
+    // listing its plan, a test runner listing failures, and a numbered changelog all
+    // look identical otherwise — and turning those into buttons sends stray digits
+    // into the program the moment someone taps one.
+    if !asks_something(recent) {
+        return yes_no_choices(recent);
+    }
+    for line in recent {
         if let Some((n, label)) = numbered(line) {
             if !out.iter().any(|(_, d)| d == &format!("k:{n}")) {
                 out.push((format!("{n} · {}", clip(label, 18)), format!("k:{n}")));
@@ -193,9 +248,29 @@ pub fn choices(screen: &[String]) -> Vec<Choice> {
         return out;
     }
 
-    // No numbered list — look for a yes/no bracket, and honour which one is capitalized
-    // (the default) by putting it first.
-    for line in screen[tail..].iter().rev() {
+    yes_no_choices(recent)
+}
+
+/// Is the program actually asking something?
+///
+/// Either a line ends in a question mark or a colon (every prompt ever written), or one
+/// of the options carries a selection marker — which only appears on a live menu.
+fn asks_something(recent: &[String]) -> bool {
+    recent.iter().any(|l| {
+        let t = l.trim_end();
+        t.ends_with('?') || t.ends_with(':') || {
+            let s = t.trim_start();
+            s.starts_with(['❯', '▶', '→']) && numbered(l).is_some()
+        }
+    })
+}
+
+/// A yes/no bracket, honouring which side is capitalized (the default) by putting it
+/// first. Only the last few lines: an already-answered `[y/N]` still on screen must not
+/// keep offering buttons under a different question.
+fn yes_no_choices(recent: &[String]) -> Vec<Choice> {
+    let from = recent.len().saturating_sub(4);
+    for line in recent[from..].iter().rev() {
         if let Some(default_yes) = yes_no(line) {
             return if default_yes {
                 vec![("Y · yes".into(), "k:Y".into()), ("n · no".into(), "k:n".into())]
@@ -265,6 +340,36 @@ mod tests {
     /// Drive the attacher with a fixed generation, i.e. "the screen is not changing".
     fn still(a: &mut Attacher, app: bool, gen: u64, now: u64) -> Option<Event> {
         a.observe(app, false, gen, now)
+    }
+
+    #[test]
+    fn a_shell_prompt_is_not_a_program() {
+        // zsh and bash arm BOTH ambiguous modes at every prompt. If either counted on
+        // its own, the gate would attach to your own shell and never let go.
+        let prompt = Signals { bracketed: true, app_cursor: true, ..Default::default() };
+        assert!(!prompt.owns_terminal());
+    }
+
+    #[test]
+    fn the_same_modes_are_decisive_once_a_command_is_running() {
+        let running = Signals { bracketed: true, command_running: true, ..Default::default() };
+        assert!(running.owns_terminal(), "an inline CLI never touches the alternate screen");
+        let cursor = Signals { app_cursor: true, command_running: true, ..Default::default() };
+        assert!(cursor.owns_terminal());
+    }
+
+    #[test]
+    fn the_shell_proof_signals_stand_on_their_own() {
+        // No shell sets these, so they work even with no shell integration at all —
+        // which is what keeps fish and `[shell] integration = false` usable.
+        assert!(Signals { alt: true, ..Default::default() }.owns_terminal());
+        assert!(Signals { mouse: true, ..Default::default() }.owns_terminal());
+    }
+
+    #[test]
+    fn a_quiet_terminal_owns_nothing() {
+        assert!(!Signals::default().owns_terminal());
+        assert!(!Signals { command_running: true, ..Default::default() }.owns_terminal());
     }
 
     #[test]
@@ -404,6 +509,26 @@ mod tests {
     }
 
     #[test]
+    fn a_plan_or_a_failure_list_is_not_a_question() {
+        // The misfire that matters: tapping one of these would send a digit into the
+        // program for no reason.
+        let plan: Vec<String> = ["Here is what I will do", "  1. Read the file", "  2. Apply the edit", "Working"]
+            .iter().map(|s| s.to_string()).collect();
+        assert!(choices(&plan).is_empty(), "{:?}", choices(&plan));
+
+        let failures: Vec<String> = ["Failures", "  1) MyClass does something", "  2) MyClass does another"]
+            .iter().map(|s| s.to_string()).collect();
+        assert!(choices(&failures).is_empty(), "{:?}", choices(&failures));
+    }
+
+    #[test]
+    fn a_stale_yes_no_further_up_the_screen_is_not_offered() {
+        let mut screen: Vec<String> = vec!["Overwrite? [y/N]".into(), "n".into()];
+        screen.extend((0..6).map(|i| format!("copied file {i}")));
+        assert!(choices(&screen).is_empty(), "an answered prompt must stop offering buttons");
+    }
+
+    #[test]
     fn other_numbering_styles_work_too() {
         let screen: Vec<String> = ["Pick a target:", " 1) debug", " 2) release"].iter().map(|s| s.to_string()).collect();
         let c = choices(&screen);
@@ -454,7 +579,8 @@ mod tests {
 
     #[test]
     fn at_most_six_buttons_are_offered() {
-        let screen: Vec<String> = (1..=9).map(|i| format!("  {i}. option {i}")).collect();
+        let mut screen: Vec<String> = vec!["Which one?".to_string()];
+        screen.extend((1..=9).map(|i| format!("  {i}. option {i}")));
         assert_eq!(choices(&screen).len(), 6);
     }
 }
