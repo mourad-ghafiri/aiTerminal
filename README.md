@@ -183,11 +183,24 @@ docs/              the manual
 ```
 
 Three CI gates keep it honest: 🚫 **zero external crates**, 🧱 **strict layer edges**, and
-🔒 **`unsafe` confined to `platform/src/os/`**. The 500+ test suite is hermetic —
-all AI is mocked (scripted transports, dummy keys), no network, no user state
-(temp `$HOME`s), no dangerous commands (see the testing policy in
-[docs/architecture.md](docs/architecture.md#testing-policy)) — plus pty-driven
-checks that verify the generated shell integration against a *real* zsh.
+🔒 **`unsafe` confined to `platform/src/os/`**.
+
+## 🧪 Tested
+
+**854 unit tests** and **173 scenarios**, in a few seconds, with no network and no API key.
+
+A unit test proves a function; a **scenario** proves a *product*. Scenarios are real user
+journeys written as TOML and played against the real code — *a destructive suggestion is
+blocked before it can reach the shell*, *a chatty model cannot smuggle a second command
+into your shell*. When `@gate` shipped with a full unit suite and users still hit bugs,
+35 scenarios against that same code found **22 defects** that no unit test could see.
+
+The suite is hermetic and harmless by design: all AI is mocked (scripted transports
+replaying real provider SSE, dummy keys), no network, no user state (temp `$HOME`s), and
+no dangerous commands — which is what makes it safe to write a test *about* `rm -rf /`:
+the string exists only as text asserted to go nowhere.
+
+📖 [docs/testing.md](docs/testing.md) — every kind of test, and what isn't covered.
 
 ## 📚 Docs
 

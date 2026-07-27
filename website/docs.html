@@ -62,6 +62,7 @@
     <a href="#redaction">The redactor</a>
     <a href="#logging">Logging</a>
     <a href="#architecture">Architecture</a>
+    <a href="#testing">Testing</a>
   </aside>
 
   <!-- ============ CONTENT ============ -->
@@ -124,8 +125,10 @@ du -sh .                             <span class="c"># the proposed command</spa
 The most common causes are cache invalidation and copying node_modules…</code></pre>
     <p><code>@ai</code> is <b>dual-mode</b>: it turns your request into one shell command — proposed
       at your prompt to review, edit, and run — or, for a question, a prose answer. It never runs
-      anything itself. A tiny model-agnostic JSON contract (<code>{"cmd":…}</code> / <code>{"answer":…}</code>),
-      parsed leniently, keeps routing reliable across any model.</p>
+      anything itself. The contract is deliberately tiny and <b>streamable</b>: either the whole
+      reply is one <code>RUN: &lt;command&gt;</code> line, or it is prose. Only the undecided first
+      few characters are held back, so an answer starts rendering while it is still arriving — and
+      a model that keeps talking after the command cannot get a second line onto your prompt.</p>
     <ul>
       <li><b>Command</b> — collected fully and checked by the guard <em>before</em> your shell
         sees it: <b>manual</b> (default) preloads it for review (Enter runs it); <b>auto</b> runs
@@ -268,9 +271,9 @@ README.md  crates  docs
       history, same running program. Every remote action prints a dim line in the pane first, so
       nothing anyone does from the chat is invisible.</p>
     <p>In a paired chat a plain message is a command; the reply comes back as a code block with its
-      exit status and duration. <code>/shot</code> sends a <b>PNG of the live terminal</b> — and when a
-      full-screen program like <code>vim</code> or <code>htop</code> is open, replies become
-      screenshots automatically and plain text becomes keystrokes. If a command goes quiet waiting for
+      exit status and duration. <code>/shot</code> sends a <b>PNG of the live terminal</b>, which is
+      worth asking for when a heavily-styled TUI is on screen: the live text frame keeps the box
+      drawing but loses the colours. If a command goes quiet waiting for
       a password, your next message is routed to its <b>stdin</b>. A long build sends progress notes
       and still reports its real exit status. And if you have a half-typed line at the prompt, a
       command from the chat <b>waits its turn</b> rather than being spliced into it.</p>
@@ -690,11 +693,37 @@ scope   = <span class="s">"ai"</span></code></pre>
     <p>A four-layer Rust workspace — <code>corelib &lt; platform &lt; framework &lt; app</code> —
       with three CI gates: <b>zero external crates</b> in the lockfile, strict layer edges, and
       <code>unsafe</code> confined to <code>platform/src/os/</code> (every other crate root forbids
-      it). ~34k lines of Rust, 507 hermetic tests (all AI mocked, no network, temp homes).</p>
+      it). ~52k lines of Rust, and a test suite covered in <a href="#testing">Testing</a> below.</p>
     <p>The performance model: the event loop <b>idles</b> (~0% CPU, one wake per real change,
       renders paced to 60&nbsp;Hz and damage-tracked to the GPU); every stream, subprocess and
       transcript carries a named byte cap with an over-cap regression test; every deadline kills
       its child; the regex engine is step-budgeted; a panic degrades to one dropped frame.</p>
+
+    <h2 id="testing">Testing</h2>
+    <p><b>854 unit tests</b> and <b>173 scenarios</b>, running in a few seconds with no network and
+      no API key. A unit test proves a function; a <b>scenario</b> proves a product — a real user
+      journey written as TOML and played against the real code.</p>
+    <pre><code><span class="p">❯</span> cargo test --workspace                          <span class="c"># everything</span>
+<span class="p">❯</span> cargo test -p framework scenario -- --nocapture <span class="c"># the scenario report</span>
+
+  ai scenarios
+  <span class="ok">✓</span> a destructive suggestion is blocked before it can reach the shell
+  <span class="ok">✓</span> a chatty model cannot smuggle a second command into your shell
+  22/23 passed</code></pre>
+    <p>The distinction earns its keep. When <code>@gate</code> shipped with a large unit suite and
+      users still hit bugs, 35 scenarios against that same code found <b>22 defects</b> — failures
+      of product behaviour that a unit test is structurally unable to see. There is now a folder of
+      scenarios per feature: <code>gate</code> 35 · <code>ai</code> 23 · <code>terminal</code> 22 ·
+      <code>markdown</code> 20 · <code>config</code> 16 · <code>security</code> 15 ·
+      <code>plugins</code> 14 · <code>shell</code> 10 · <code>keymap</code> 10 ·
+      <code>theme</code> 8. Each folder asserts a minimum count, so coverage cannot silently shrink.</p>
+    <p>The suite is <b>hermetic and harmless by design</b>. All AI is mocked — scenarios write what
+      the model replies, encode it as the provider's real SSE wire format and decode it with the
+      real decoder, so the streaming path runs with no socket and no key. Nothing spawns a process,
+      opens a socket or touches a PTY, which is what makes it safe to write a test <em>about</em>
+      <code>rm -rf /</code>: the string exists only as text asserted to go nowhere. The one
+      deliberate exception is <code>zsh -n</code>/<code>bash -n</code> on the generated shell init —
+      parse-only, no command executed — because a quoting slip there would break every new pane.</p>
 
     <div class="callout" style="margin-top:40px"><b>Want the deep details?</b> The repo's
       <code>docs/</code> folder carries the full engineering documentation — architecture,

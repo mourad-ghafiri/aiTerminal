@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Use cases — aiTerminal</title>
-<meta name="description" content="47 real-world aiTerminal workflows: shipping features with @flow, fixing CI with @loop, incident response, code review, DevOps, data wrangling, automation and everyday shell superpowers.">
+<meta name="description" content="60 real-world aiTerminal workflows: shipping features with @flow, fixing CI with @loop, driving your terminal from Telegram with @gate, incident response, code review, DevOps, automation and everyday shell superpowers.">
 <link rel="icon" type="image/png" href="assets/icon.png">
 <link rel="stylesheet" href="css/main.css">
 </head>
@@ -29,7 +29,7 @@
 <!-- ================= HEAD ================= -->
 <section class="page-head">
   <div class="wrap">
-    <span class="tag accent">47 real workflows, real prompts</span>
+    <span class="tag accent">60 real workflows, real prompts</span>
     <h1>What people actually <em>do with it.</em></h1>
     <p class="sub">Every one of these runs at a normal shell prompt — no context switch, no
       copy-paste. The AI sees your (redacted) session, the guard reviews every command, and
@@ -131,7 +131,7 @@ Reproduced: rounding applied before the zero-check …</pre>
 
       <div class="uc">
         <h3><span class="em">🏗</span>Scaffold with your conventions, not the internet's</h3>
-        <p>Your <code>ai/aiTerminal.md</code> and memories teach it the house style once — every run after follows it.</p>
+        <p>Your <code>~/.aiTerminal/aiTerminal.md</code> and folder memories teach it the house style once — every run after follows it.</p>
         <pre><span class="p">❯</span> <span class="ab">@coder</span><span class="c"> "add a new /health endpoint following our handler pattern"</span>
 <span class="d">∴ recalling: handlers live in api/handlers, one file per route, table-driven tests…</span>
 <span class="d">  ⚙ fs.write {"path":"api/handlers/health.rs"} · 5ms · 890B</span></pre>
@@ -333,9 +333,108 @@ load 2.1 1.8 1.6 · battery 84% (charging)</pre>
     </div>
   </div>
 
+
+  <!-- ═══════════ AWAY FROM YOUR DESK ═══════════ -->
+  <div class="uc-cat reveal">
+    <span class="tag">04 · away from your desk</span>
+    <h2>Your terminal, from your phone</h2>
+    <div class="uc-grid">
+
+      <div class="uc">
+        <h3><span class="em">🤝</span>Pair once — a stranger gets nothing</h3>
+        <p>The six-digit code prints <em>in your terminal</em>. Until someone types it, an unknown chat gets <b>no reply at all</b> — not even a hint the bot is live.</p>
+        <pre><span class="p">❯</span> <span class="ab">@gate</span><span class="c"> telegram start</span>
+<span class="d">  ⬤ telegram gate live · @mourad_term_bot</span>
+<span class="d">  pair from the chat: </span>/pair 418-207<span class="d">   (nothing runs until you do)</span>
+<span class="d">  ▸ unknown chat 8814… — </span><span class="w">no reply sent</span><span class="d"> (not paired)</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🚂</span>Answer Claude Code from the train</h3>
+        <p>Start an interactive CLI in the gated shell and the gate <b>attaches</b>: the chat becomes its screen — one message, edited in place — and its numbered question becomes buttons.</p>
+        <pre><span class="d">You ▸</span> claude
+<span class="d">Bot ◂</span> <span class="g">▶ attached to claude</span> — send text to type into it.
+<span class="d">You ▸</span> add a --json flag to export
+<span class="d">Bot ◂  Do you want to make this edit?</span>
+<span class="g">       ❯ 1. Yes</span><span class="d">   2. Yes, and don't ask again</span>
+<span class="d">       [ 1 · Yes ] [ 2 · Yes, and… ] [ 3 · No, tell… ]</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🛡</span>The guard still applies remotely</h3>
+        <p>A remote command meets the same <code>[security]</code> rules as an AI suggestion — denied outright, or held until you reply <code>/yes</code>.</p>
+        <pre><span class="d">You ▸</span> rm -rf /
+<span class="d">Bot ◂</span> <span class="e">✗ blocked by guard</span> — matches a denied pattern.
+<span class="d">You ▸</span> git push --force
+<span class="d">Bot ◂</span> <span class="w">⚠ confirm</span> — reply <span class="c">/yes</span> to run it.
+<span class="d">You ▸</span> /yes</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🙈</span>Secrets never reach the chat</h3>
+        <p>Your <code>[[redact]]</code> rules apply to everything leaving the machine — <em>both</em> scopes, because a chat app is off-machine either way. Your screen still shows the real thing.</p>
+        <pre><span class="d">You ▸</span> cat .env
+<span class="d">Bot ◂</span> AWS_ACCESS_KEY_ID=<span class="g">«redacted»</span>
+       ANTHROPIC_<span class="g">«redacted»</span>
+       LOG_LEVEL=debug
+<span class="d">  ◂ sent 3 lines to telegram · 2 redacted</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🌙</span>Check the long build from bed</h3>
+        <p>A long command sends progress notes and always finishes with its <b>real exit status</b> — never abandoned part-way. <code>/status</code> says what's happening right now.</p>
+        <pre><span class="d">You ▸</span> cargo build --release
+<span class="d">Bot ◂</span> ⏳ still running — 2m elapsed.
+<span class="d">Bot ◂</span> ❯ cargo build --release · <span class="g">✓ 0</span> · 2m41s
+<span class="d">You ▸</span> /status
+<span class="d">Bot ◂</span> <span class="c">gate</span> · idle
+       host <span class="c">mourad-mbp</span>
+       completion detection: exact</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🔑</span>The password prompt, handled</h3>
+        <p>When a command goes quiet waiting for input, the gate sends what it has and routes your <b>next message to its stdin</b> instead of starting a new command.</p>
+        <pre><span class="d">You ▸</span> sudo dscacheutil -flushcache
+<span class="d">Bot ◂</span> ⌨ <span class="c">sudo</span> is waiting for input:
+       Password:
+<span class="d">Bot ◂</span> Your next message goes to it, not to a new command.
+<span class="d">  ▸ Mourad sent 8 characters to stdin</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🪟</span>Run something while vim owns the shell</h3>
+        <p><code>/run</code> is <b>refused</b> rather than fired unattended minutes later. <code>/sh</code> runs out-of-band in its own shell; <code>/shot</code> gets you the screen in colour.</p>
+        <pre><span class="d">You ▸</span> /run git diff
+<span class="d">Bot ◂</span> <span class="c">vim</span> is using the terminal — there is no shell
+       to run that in. Try <span class="c">/sh git diff</span>.
+<span class="d">You ▸</span> /sh git diff --stat
+<span class="d">Bot ◂</span> ❯ git diff --stat · <span class="g">✓ 0</span> · 0.2s</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🧠</span>Your terminal's own AI, from the chat</h3>
+        <p><code>/ai</code> reaches the same models, memory and redaction as <code>@ai</code> at the keyboard — no second account, no second config.</p>
+        <pre><span class="d">You ▸</span> /ai why is the release build so slow?
+<span class="d">Bot ◂</span> <span class="c">lto = "fat"</span> and <span class="c">codegen-units = 1</span> trade build
+       time for runtime speed. Try <span class="c">lto = "thin"</span>.</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🔒</span>Close it from either side</h3>
+        <p><code>@gate stop</code> from any pane, <code>/stop</code> from the chat, <code>exit</code> in the pane, or <code>idle_timeout_minutes</code>. Stopping always restores the terminal.</p>
+        <pre><span class="p">❯</span> <span class="ab">@gate</span><span class="c"> status</span>
+telegram  gate-8f2a  pid 40118  ·  Mourad
+<span class="p">❯</span> <span class="ab">@gate</span><span class="c"> stop</span>
+<span class="d">  ⬤ gate closed — raw mode off, cursor back</span></pre>
+      </div>
+
+    </div>
+  </div>
+
   <!-- ═══════════ AUTOMATE ═══════════ -->
   <div class="uc-cat reveal">
-    <span class="tag">04 · automate the boring</span>
+    <span class="tag">05 · automate the boring</span>
     <h2>Jobs do it while you don't</h2>
     <div class="uc-grid">
 
@@ -372,6 +471,24 @@ load 2.1 1.8 1.6 · battery 84% (charging)</pre>
       </div>
 
       <div class="uc">
+        <h3><span class="em">⏰</span>Say when, in plain English</h3>
+        <p>End a task with a natural time and it is <b>scheduled</b> — it runs later, in the folder where you typed it.</p>
+        <pre><span class="p">❯</span> <span class="ab">@job</span><span class="c"> back up the db in 2 minutes</span>
+⧖ scheduled job 1753112100-4310 — fires in 2m
+<span class="p">❯</span> <span class="ab">@job</span><span class="c"> post the standup summary at 09:00</span>
+<span class="p">❯</span> <span class="ab">@job</span><span class="c"> cancel 1753112100-4310</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🪵</span>Watch a job like a log file</h3>
+        <p>Every job is a folder: <code>job.toml</code> for status and exit code, <code>log.md</code> for the full streamed output. Closing the terminal never kills it.</p>
+        <pre><span class="p">❯</span> <span class="ab">@job</span><span class="c"> audit the deps --agent reviewer --bg</span>
+▶ background job 1753112000-4242
+<span class="p">❯</span> tail -f ~/.aiTerminal/ai/jobs/1753112000-4242/log.md
+<span class="p">❯</span> <span class="ab">@job</span><span class="c"> clear</span>   <span class="d"># prune everything finished</span></pre>
+      </div>
+
+      <div class="uc">
         <h3><span class="em">🔤</span>Convert anything, hash anything</h3>
         <p>The encode plugin: base64, hex, URL, JSON, SHA, UUID — no web tools, nothing leaves your machine.</p>
         <pre><span class="p">❯</span> b64 "user:pass"        <span class="d"># dXNlcjpwYXNz</span>
@@ -400,7 +517,7 @@ Three tickets: API-231 (rate limits), API-238, INFRA-12.</pre>
 
   <!-- ═══════════ EVERYDAY ═══════════ -->
   <div class="uc-cat reveal">
-    <span class="tag">05 · everyday superpowers</span>
+    <span class="tag">06 · everyday superpowers</span>
     <h2>The thousand little wins</h2>
     <div class="uc-grid">
 
@@ -444,10 +561,29 @@ switched to profile 'work' — applies within a second
       </div>
 
       <div class="uc">
-        <h3><span class="em">🔎</span>Search 18 engines without a browser tab first</h3>
+        <h3><span class="em">🔎</span>Search 19 engines without a browser tab first</h3>
         <p>Google, Stack Overflow, GitHub, MDN, crates.io, PyPI — straight from the prompt.</p>
         <pre><span class="p">❯</span> so "borrow checker E0502 split at mut"
 <span class="p">❯</span> crates "toml parser no_std"</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📖</span>Read a README without leaving the shell</h3>
+        <p><code>@md render</code> pretty-prints Markdown with diagrams drawn natively; <code>@md edit</code> is a live split — source left, rendered preview right.</p>
+        <pre><span class="p">❯</span> <span class="ab">@md</span><span class="c"> render README.md</span>
+<span class="p">❯</span> <span class="ab">@md</span><span class="c"> edit notes.md</span>
+<span class="d">┌ notes.md ● (42L) ──────┬────────────────┐
+│ 1 # Release plan       │ Release plan   │
+│ 3 - cut the branch     │  • cut the br… │</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">⌨️</span>Bind it the way your hands expect</h3>
+        <p>Keymaps are TOML too. Modifier names are forgiving (<code>cmd</code>/<code>super</code>, <code>alt</code>/<code>opt</code>), and a number binding still fires on a layout where the digit needs Shift.</p>
+        <pre><span class="d"># ~/.aiTerminal/keymaps/mine.toml</span>
+[[keybinding]]
+key    = "cmd+shift+d"
+action = "split_down"</pre>
       </div>
 
       <div class="uc">
@@ -460,12 +596,16 @@ theme 'mine' applied — running shells restyle too</pre>
       </div>
 
       <div class="uc">
-        <h3><span class="em">📦</span>Ship agents inside the repo</h3>
-        <p>A project-local <code>ai/</code> folder shadows the global set — clone the repo, get its agents.</p>
-        <pre><span class="p">❯</span> ls ai/agents/
-api-reviewer.md   migration-writer.md
-<span class="p">❯</span> <span class="ab">@api-reviewer</span><span class="c"> "check my changes against our API rules"</span>
-<span class="d">✦ @api-reviewer · claude-opus-4-8   ← the repo's own agent</span></pre>
+        <h3><span class="em">📦</span>Write an agent, share the file</h3>
+        <p>An agent is one Markdown file: front-matter picks its tools, the body is its system prompt. Drop it in and <code>@&lt;name&gt;</code> works.</p>
+        <pre><span class="p">❯</span> cat ~/.aiTerminal/ai/agents/api-reviewer.md
+<span class="d">---
+tools = ["fs.read", "fs.search", "sys.run"]
+skills = ["code-review"]
+max_steps = 12
+---
+You review changes against our API conventions…</span>
+<span class="p">❯</span> <span class="ab">@api-reviewer</span><span class="c"> check my changes against our API rules</span></pre>
       </div>
 
       <div class="uc">

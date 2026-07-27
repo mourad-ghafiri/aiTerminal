@@ -20,3 +20,4 @@ every setting is a TOML file — there is no settings UI.
 | [logging.md](logging.md) | The diagnostic logger. |
 | [packaging.md](packaging.md) | Bundling the macOS .app. |
 | [architecture.md](architecture.md) | The four-layer workspace, module map, invariants, and how to develop/test. |
+| [testing.md](testing.md) | The test suite: unit tests, scenarios, the CI gates, and why it never touches your machine. |

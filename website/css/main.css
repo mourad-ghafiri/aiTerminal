@@ -259,6 +259,13 @@ kbd {
 .cap h3 em { font-style: italic; color: var(--accent-soft); }
 .cap p { color: var(--ink-soft); font-size: 14.5px; margin-top: 8px; }
 .cap-extra { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
+/* a non-interactive pill — the chapter's vocabulary at a glance. Same shape as
+   .chip, without the affordances, because there is nothing here to click. */
+.cap-extra .lbl {
+  display: inline-flex; align-items: center;
+  background: var(--surface); border: 1px solid var(--hair); border-radius: 999px;
+  font: 500 12px var(--mono); color: var(--ink-soft); padding: 4px 11px;
+}
 .chip {
   display: inline-flex; align-items: center; gap: 7px;
   background: var(--surface); border: 1px solid var(--hair); border-radius: 999px;
@@ -605,6 +612,16 @@ kbd {
   background: radial-gradient(circle at 0 0, transparent 9px, var(--ph-in) 9.5px);
 }
 .ph-body { white-space: pre-wrap; }
+/* Telegram renders a bot's <b> and <code>, and the gate sends both — so a message
+   that names a command reads as one instead of as prose with punctuation in it. */
+.ph-body b { font-weight: 700; color: #fff; }
+.ph-code, .ph-live-line .ph-code {
+  font-family: Menlo, "SF Mono", Consolas, monospace;
+  background: rgba(0, 0, 0, .3); border-radius: 4px;
+  padding: 0 3px; color: #9ED2F5;
+  /* a long path in a bubble must wrap, not push the bubble past the screen */
+  overflow-wrap: anywhere;
+}
 .ph-meta {
   display: flex; align-items: center; justify-content: flex-end; gap: 3px;
   margin-top: 1px; font-size: 9px; color: rgba(255, 255, 255, .45);

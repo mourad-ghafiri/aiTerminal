@@ -105,15 +105,16 @@ aiTerminal --render-icon /tmp/icon.png                    # the app icon
 
 ## Testing policy
 
-The suite (450+ tests) is **hermetic and harmless by design** — it can run on a
-developer's machine without touching their real state:
+854 unit tests and 173 scenarios. **[testing.md](testing.md) is the full guide** — the
+two kinds of test and why both exist, coverage per feature, the CI gates, and the honest
+list of what is *not* covered. The policy, in short:
 
 - **AI is always mocked.** Every model interaction runs against
   `MockTransport`/`ScriptedTransport` with canned SSE fixtures — the client,
   the agent loop, flows (`run_orchestration`), and the `@loop` engine
   (`drive_loop` is transport-generic precisely so tests can script the maker's
-  answers and the verifier's verdicts). API keys in tests are dummy values behind
-  test-only env vars; `CurlTransport` is constructed only at runtime.
+  answers and the verifier's verdicts). API keys in tests are dummy values;
+  `CurlTransport` is constructed only at runtime.
 - **No network.** SSRF/network gating is tested through the refusal paths (`[ai]
   network = false`, https-only) that fail *before* any socket; the git-browsing
   test builds a throwaway local repo in a temp dir.
@@ -133,6 +134,6 @@ developer's machine without touching their real state:
   `re`), the AI runtime, `caps` tool families, plugins, security, config,
   profiles, i18n, the CLI (flows/jobs/loop/delegation), and the pure GUI logic
   (panes, keymap actions, link routing, workspace persistence) — has direct
-  unit tests. The thin remainder is OS-bound by nature (the FFI seam, the
-  window event loop) and is covered by the live app + headless render proofs
-  rather than unit tests.
+  unit tests, and each feature also has a folder of scenarios under `scenarios/`.
+  The thin remainder is OS-bound by nature (the FFI seam, the window event loop)
+  and is covered by the live app + headless render proofs.

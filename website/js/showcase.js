@@ -44,6 +44,28 @@ document.addEventListener("DOMContentLoaded", () => {
         case "footer":
           w.line([S("t-success", st.glyph || "✓"), DIM(" " + st.text)], st.paneIdx);
           break;
+        case "typing": {
+          // A line typed but NOT submitted — it stays on screen with its cursor,
+          // which is the state that makes a chat command queue instead of splice.
+          w._typing = await typeCmd(w, st.text, st);
+          w._typing.appendChild(el("span", "t-cursor"));
+          break;
+        }
+        case "submit": {
+          // …and finishing that line is what releases the queue.
+          const line = w._typing;
+          w._typing = null;
+          if (!line) break;
+          const rest = spanEl(FG(""));
+          line.insertBefore(rest, line.lastChild); // before the cursor
+          for (const ch of st.text || "") {
+            rest.textContent += ch;
+            await sleep(st.speed || 34);
+          }
+          await sleep(220);
+          line.lastChild.remove(); // the cursor: the line is sent
+          break;
+        }
         case "pause": await sleep(st.ms); break;
         case "call": await st.fn(w); break;
       }
@@ -163,6 +185,23 @@ document.addEventListener("DOMContentLoaded", () => {
     back: "M14.7 5.3 8 12l6.7 6.7 1.4-1.4L10.8 12l5.3-5.3z",
   };
 
+  /* Telegram renders a bot's `<b>` and `<code>` — and the real gate sends exactly those
+     (see `gate/driver.rs`), so the demo's message text is the production text verbatim.
+     `el` sets textContent, which is correct for this file's no-innerHTML-for-content rule
+     but would print the tags literally, so the markers are parsed into real nodes here. */
+  const TAG_RE = /<(b|code)>([\s\S]*?)<\/\1>/g;
+  function rich(parent, text) {
+    TAG_RE.lastIndex = 0; // a shared /g/ regex carries state between calls
+    let at = 0;
+    for (let m; (m = TAG_RE.exec(text)); ) {
+      if (m.index > at) parent.appendChild(document.createTextNode(text.slice(at, m.index)));
+      parent.appendChild(el(m[1], m[1] === "code" ? "ph-code" : null, m[2]));
+      at = m.index + m[0].length;
+    }
+    if (at < text.length) parent.appendChild(document.createTextNode(text.slice(at)));
+    return parent;
+  }
+
   /* the 13 theme variables `setTheme` writes inline on the window root — copied
      onto a screenshot so the clone renders in the terminal's live colors */
   const THEME_VARS = ["--t-bg", "--t-surface", "--t-fg", "--t-muted", "--t-accent",
@@ -239,7 +278,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function bubble(side, text, extra, cls) {
       const b = el("div", "ph-msg " + side + (cls ? " " + cls : ""));
       if (extra) b.appendChild(extra);
-      if (text) b.appendChild(el("div", "ph-body", text));
+      if (text) b.appendChild(rich(el("div", "ph-body"), text));
       const meta = el("div", "ph-meta");
       meta.appendChild(el("span", null, stamp()));
       if (side === "me") meta.appendChild(el("span", "ph-tick", "✓✓"));
@@ -300,7 +339,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const pad = el("div", "ph-keys live");
         const paint = (ls, bs) => {
           body.replaceChildren();
-          ls.forEach(([kind, text]) => body.appendChild(el("div", "ph-live-line " + kind, text)));
+          ls.forEach(([kind, text]) => body.appendChild(rich(el("div", "ph-live-line " + kind), text)));
           pad.replaceChildren();
           (bs || []).forEach((row) => {
             const r = el("div", "ph-keyrow");
@@ -655,13 +694,22 @@ document.addEventListener("DOMContentLoaded", () => {
       },
     },
 
+    /* ── @gate, in four chapters ───────────────────────────────────────────────
+       The feature is too large for one story: pairing, the shell relay, attaching
+       to a program, the guard, and the awkward real-world cases are each a
+       different claim. So each is its own chapter, and the phone is rebuilt for
+       every one — a chapter must make sense on its own, because a visitor will
+       click straight into the middle of the list.
+
+       The bot's words are the production strings (`gate/driver.rs`), tags and all. */
+
     gate: {
       opts: { title: "aiTerminal — @gate telegram", tabs: [{ title: "Terminal [project][@gate]", active: true }] },
-      caption: () => caption("<code>@gate</code> — your terminal, from your phone",
-        "<code>@gate telegram start</code> hands this pane to a chat: you keep typing here while a <b>paired</b> chat drives the same shell. Start <b>Claude Code, Codex, vim or a REPL</b> and it <b>attaches</b> — the chat becomes that program's live screen, with buttons for whatever it's asking. Detected from the terminal protocol itself, so it works for any program, with no code for any of them."),
+      caption: () => caption("<code>@gate</code> — pair, then run",
+        "<code>@gate telegram start</code> prints a six-digit code <em>in your terminal</em>. Until someone types it, a stranger who finds the bot gets <b>no reply at all</b> — not even a hint that it is live. Once paired, a plain message <em>is</em> a command: it runs in the shared shell and comes back with its exit status and how long it took.",
+        "<span class=\"lbl\">/run</span><span class=\"lbl\">/status</span><span class=\"lbl\">/full</span><span class=\"lbl\">/help</span><span class=\"lbl\">/stop</span>"),
       demo(w, myEpoch) {
         const g = makePhone(phoneEl);
-        let live = null;
         /* Every beat is its own step, so `run` can abandon the story the moment
            another feature is selected — the phone lives outside the window and
            would otherwise keep animating on screen. */
@@ -673,21 +721,25 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "out", spans: [ACC("  ⬤ telegram gate live"), DIM(" · @mourad_term_bot")], ms: 320 },
           { do: "out", spans: [MUT("  pair from the chat: "), ACC2("/pair 418-207"), MUT("   (nothing runs until you do)")], ms: 700 },
 
-          /* 2 — pairing, from the phone */
+          /* 2 — a stranger finds the bot and learns nothing. The pane is the only
+             place this is visible; the phone stays empty, which is the point. */
+          { do: "out", spans: [MUT("  ▸ unknown chat 8814… — "), WARN("no reply sent"), MUT(" (not paired)")], ms: 950 },
+
+          /* 3 — pairing, from the phone that can see the screen */
           { do: "call", fn: async () => { await g.type("/pair 418-207"); g.send("/pair 418-207"); } },
           { do: "call", fn: async () => { g.typing(true); await sleep(650); g.typing(false); } },
-          { do: "call", fn: async () => { g.reply("✓ paired — you are driving mourad-mbp"); await sleep(500); } },
+          { do: "call", fn: async () => { g.reply("<b>paired</b> — you are driving <code>mourad-mbp</code>"); await sleep(500); } },
           { do: "call", fn: async () => {
             g.menu("Send a command and I'll run it in your terminal.",
               ["/shot", "/status", "/full", "/help", "/stop"]);
           } },
-          { do: "out", spans: [MUT("  ▸ Mourad paired from telegram")], ms: 800 },
+          { do: "out", spans: [MUT("  ▸ Mourad paired from telegram")], ms: 850 },
 
-          /* 3 — the pane is still yours */
+          /* 4 — the pane is still yours, and still a normal shell */
           { do: "cmd", text: "ls" },
           { do: "out", spans: [FG("README.md  crates  docs  website")], ms: 900 },
 
-          /* 4 — …and the chat drives the very same shell */
+          /* 5 — …and the chat drives the very same shell */
           { do: "call", fn: async () => { await g.type("git status"); g.send("git status"); await sleep(300); } },
           { do: "out", spans: [ACC("  ▸ Mourad: "), FG("git status")], ms: 260 },
           { do: "cmd", text: "git status", speed: 12 },
@@ -695,11 +747,46 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "out", spans: [FG("nothing to commit, working tree clean")], ms: 260 },
           { do: "out", spans: [MUT("  ◂ sent 2 lines to telegram")], ms: 260 },
           { do: "call", fn: async () => {
-            g.reply("❯ git status · ✓ 0 · 0.3s", "On branch main\nnothing to commit, working tree clean");
-            await sleep(850);
+            g.reply("❯ <code>git status</code> · ✓ 0 · 0.3s", "On branch main\nnothing to commit, working tree clean");
+            await sleep(900);
           } },
 
-          /* 5 — an interactive program takes over, and the chat becomes its screen */
+          /* 6 — a big output is trimmed, with the whole thing one command away */
+          { do: "call", fn: async () => { await g.type("cargo test"); g.send("cargo test"); await sleep(250); } },
+          { do: "out", spans: [ACC("  ▸ Mourad: "), FG("cargo test")], ms: 200 },
+          { do: "cmd", text: "cargo test", speed: 12 },
+          { do: "out", spans: [OK("test result: ok"), FG(". 854 passed; 0 failed")], ms: 300 },
+          { do: "call", fn: async () => {
+            g.reply("❯ <code>cargo test</code> · ✓ 0 · 41s",
+              "…\ntest result: ok. 854 passed; 0 failed");
+            await sleep(400);
+          } },
+          { do: "call", fn: async () => {
+            g.reply("output trimmed to 3 messages — send <code>/full</code> for the whole thing as a file.");
+            await sleep(750);
+          } },
+          { do: "call", fn: async () => { await g.type("/status"); g.send("/status"); await sleep(250); } },
+          { do: "call", fn: async () => {
+            g.reply("<b>gate</b> telegram · paired with Mourad · idle\n<b>shell</b> zsh at <code>~/project</code> · nothing running\n<b>uptime</b> 6m");
+            await sleep(900);
+          } },
+        ]);
+      },
+    },
+
+    gateApp: {
+      opts: { title: "aiTerminal — @gate telegram", tabs: [{ title: "Terminal [project][@gate]", active: true }] },
+      caption: () => caption("Drive <em>any</em> interactive program",
+        "Start <b>Claude Code, Codex, vim or a REPL</b> in the gated shell and the gate <b>attaches</b>: the chat becomes that program's live screen — <em>one</em> message, edited in place, so a long session never buries the chat. A numbered question turns into buttons. None of this knows what Claude Code is; it is read from the terminal protocol itself, so it works for every program and has code for none of them.",
+        "<span class=\"lbl\">/key</span><span class=\"lbl\">/keys</span><span class=\"lbl\">/cancel</span><span class=\"lbl\">/sh</span><span class=\"lbl\">/shot</span>"),
+      demo(w, myEpoch) {
+        const g = makePhone(phoneEl);
+        let live = null;
+        run(w, myEpoch, [
+          { do: "pause", ms: 300 },
+          { do: "out", spans: [ACC("  ⬤ telegram gate live"), DIM(" · paired with Mourad")], ms: 500 },
+
+          /* 1 — an interactive program takes over, and the chat becomes its screen */
           { do: "call", fn: async () => { await g.type("claude"); g.send("claude"); await sleep(280); } },
           { do: "out", spans: [ACC("  ▸ Mourad: "), FG("claude")], ms: 240 },
           { do: "cmd", text: "claude", speed: 14 },
@@ -722,6 +809,8 @@ document.addEventListener("DOMContentLoaded", () => {
             ], [["↑", "↓", "⏎", "esc", "^C", "📷"]]);
             await sleep(1100);
           } },
+
+          /* 2 — a numbered question becomes buttons, and a tap answers it */
           { do: "call", fn: async () => {
             live.update([
               ["", "Edit src/export.rs"],
@@ -743,9 +832,35 @@ document.addEventListener("DOMContentLoaded", () => {
             ], [["↑", "↓", "⏎", "esc", "^C", "📷"]]);
             await sleep(900);
           } },
-          { do: "out", spans: [MUT("  ▸ Mourad tapped "), ACC2("1 · Yes")], ms: 700 },
+          { do: "out", spans: [MUT("  ▸ Mourad tapped "), ACC2("1 · Yes")], ms: 800 },
 
-          /* 6 — when text isn't enough, ask for the screen */
+          /* 3 — /run has nowhere to go while a program holds the terminal, so it is
+             refused rather than fired unattended minutes later. /sh is the way. */
+          { do: "call", fn: async () => { await g.type("/run git diff"); g.send("/run git diff"); await sleep(280); } },
+          { do: "call", fn: async () => {
+            g.reply("<b>claude</b> is using the terminal, so there is no shell to run that in.\nTry <code>/sh git diff</code> to run it out-of-band, or <code>/key ctrl-c</code> to interrupt.");
+            await sleep(1000);
+          } },
+          { do: "call", fn: async () => { await g.type("/sh git diff --stat"); g.send("/sh git diff --stat"); await sleep(260); } },
+          { do: "out", spans: [MUT("  ▸ Mourad: "), FG("/sh git diff --stat"), MUT("  (own shell)")], ms: 300 },
+          { do: "call", fn: async () => {
+            g.reply("❯ <code>git diff --stat</code> · ✓ 0 · 0.2s", " src/export.rs | 3 +++\n 1 file changed, 3 insertions(+)");
+            await sleep(950);
+          } },
+
+          /* 4 — keys, for everything a sentence cannot say */
+          { do: "call", fn: async () => { await g.type("/key ctrl-r"); g.send("/key ctrl-r"); await sleep(250); } },
+          { do: "call", fn: async () => {
+            live.update([
+              ["dim", "(reverse-i-search)`': "],
+              ["", ""],
+              ["dim", "any key name works: enter tab esc up f1–f12,"],
+              ["dim", "ctrl-<letter>, alt-<char>, or a single character."],
+            ], [["↑", "↓", "⏎", "esc", "^C", "📷"]]);
+            await sleep(1200);
+          } },
+
+          /* 5 — when the text frame isn't enough, ask for the real screen */
           { do: "call", fn: async () => { await g.type("/shot"); g.send("/shot"); await sleep(300); } },
           // capture first, THEN report it — so the photo shows the terminal as it
           // was asked for, not the line announcing itself
@@ -754,11 +869,145 @@ document.addEventListener("DOMContentLoaded", () => {
             g.photo("terminal.png · 68 KB", w);
             await sleep(240);
           } },
-          { do: "out", spans: [MUT("  ◂ sent a screenshot (68 KB)")], ms: 1100 },
+          { do: "out", spans: [MUT("  ◂ sent a screenshot (68 KB)")], ms: 900 },
 
-          /* 7 — and the person at the keyboard takes it back */
+          /* 6 — the program exits and the shell comes back on its own */
+          { do: "out", spans: [MUT("  ⬤ detached — claude exited, back to the shell")], ms: 500 },
+          { do: "call", fn: async () => { g.reply("■ <b>detached</b> — <code>claude</code> exited. Back to the shell."); } },
+        ]);
+      },
+    },
+
+    gateSafe: {
+      opts: { title: "aiTerminal — @gate telegram", tabs: [{ title: "Terminal [project][@gate]", active: true }] },
+      caption: () => caption("A paired chat still meets the guard",
+        "A remote command goes through the same <code>[security]</code> rules as an AI suggestion — <b>denied</b> outright, or <b>held</b> until you reply <code>/yes</code>. Your <code>[[redact]]</code> rules apply to everything leaving the machine, in <em>both</em> scopes, because a chat app is off-machine either way. And every remote command, block and reply is echoed in the pane, so the screen in front of you is always the truth.",
+        "<span class=\"lbl\">deny</span><span class=\"lbl\">confirm</span><span class=\"lbl\">redact</span><span class=\"lbl\">echoed in the pane</span>"),
+      demo(w, myEpoch) {
+        const g = makePhone(phoneEl);
+        run(w, myEpoch, [
+          { do: "pause", ms: 300 },
+          { do: "out", spans: [ACC("  ⬤ telegram gate live"), DIM(" · paired with Mourad")], ms: 550 },
+
+          /* 1 — denied outright. It never reaches the shell. */
+          { do: "call", fn: async () => { await g.type("rm -rf /"); g.send("rm -rf /"); await sleep(300); } },
+          { do: "out", spans: [ACC("  ▸ Mourad: "), FG("rm -rf /")], ms: 200 },
+          { do: "out", spans: [WARN("  ✗ blocked by guard"), MUT(" — never reached the shell")], ms: 500 },
+          { do: "call", fn: async () => {
+            g.reply("✗ <b>blocked by guard</b> — <code>rm -rf /</code> matches a denied pattern.");
+            await sleep(1000);
+          } },
+
+          /* 2 — held for confirmation. The tier that exists for legitimate-but-serious. */
+          { do: "call", fn: async () => { await g.type("git push --force"); g.send("git push --force"); await sleep(280); } },
+          { do: "out", spans: [ACC("  ▸ Mourad: "), FG("git push --force"), MUT("  (held)")], ms: 300 },
+          { do: "call", fn: async () => {
+            g.menu("⚠ <b>confirm</b> — <code>git push --force</code> matches a confirm rule.\nReply <code>/yes</code> to run it.", ["/yes", "/no"]);
+            await sleep(1100);
+          } },
+          { do: "call", fn: async () => { await g.type("/yes"); g.send("/yes"); await sleep(260); } },
+          { do: "cmd", text: "git push --force", speed: 12 },
+          { do: "out", spans: [OK("  + 3f2a91c...8d4e07b "), FG("main -> main (forced update)")], ms: 400 },
+          { do: "call", fn: async () => {
+            g.reply("❯ <code>git push --force</code> · ✓ 0 · 1.4s", " + 3f2a91c...8d4e07b main -> main (forced update)");
+            await sleep(900);
+          } },
+
+          /* 3 — secrets are masked on the way out. The pane shows the real thing,
+             because the boundary is egress, not display. */
+          { do: "call", fn: async () => { await g.type("cat .env"); g.send("cat .env"); await sleep(280); } },
+          { do: "out", spans: [ACC("  ▸ Mourad: "), FG("cat .env")], ms: 200 },
+          { do: "cmd", text: "cat .env", speed: 12 },
+          { do: "out", spans: [ACC2("AWS_ACCESS_KEY_ID"), MUT("="), WARN("AKIA3RJHF2P9QLXMZB4T")], ms: 90 },
+          { do: "out", spans: [ACC2("ANTHROPIC_API_KEY"), MUT("="), WARN("sk-ant-api03-9Fk2LmQ7xTvB")], ms: 90 },
+          { do: "out", spans: [ACC2("LOG_LEVEL"), MUT("="), FG("debug")], ms: 260 },
+          { do: "out", spans: [MUT("  ◂ sent 3 lines to telegram "), OK("· 2 redacted")], ms: 300 },
+          { do: "call", fn: async () => {
+            g.reply("❯ <code>cat .env</code> · ✓ 0 · 0.1s",
+              "AWS_ACCESS_KEY_ID=«redacted»\nANTHROPIC_«redacted»\nLOG_LEVEL=debug");
+            await sleep(1100);
+          } },
+
+          /* 4 — you are mid-line at the keyboard. A command from the chat WAITS
+             rather than being spliced into what you are typing. */
+          { do: "typing", text: "git comm", speed: 40 },
+          { do: "pause", ms: 500 },
+          { do: "call", fn: async () => { await g.type("ls -la"); g.send("ls -la"); await sleep(280); } },
+          { do: "call", fn: async () => {
+            g.reply("queued — the terminal is busy (1 ahead). It will run when the shell is free.");
+            await sleep(500);
+          } },
+          { do: "out", spans: [MUT("  ▸ Mourad: "), FG("ls -la"), MUT("  ⏸ queued — your line is half-typed")], ms: 1100 },
+
+          /* …and the moment your line is sent, the queue drains. Your typing was
+             never cleared to make room for it. */
+          { do: "submit", text: "it -m \"wip\"" },
+          { do: "out", spans: [FG("[main 8d4e07b] wip")], ms: 500 },
+          { do: "out", spans: [MUT("  ▸ the line is clear — running the queued command")], ms: 400 },
+          { do: "cmd", text: "ls -la", speed: 12 },
+          { do: "out", spans: [FG("total 48   README.md  crates  docs  website")], ms: 400 },
+          { do: "call", fn: async () => {
+            g.reply("❯ <code>ls -la</code> · ✓ 0 · 0.1s", "total 48\nREADME.md  crates  docs  website");
+          } },
+        ]);
+      },
+    },
+
+    gateKit: {
+      opts: { title: "aiTerminal — @gate telegram", tabs: [{ title: "Terminal [project][@gate]", active: true }] },
+      caption: () => caption("The awkward cases, handled",
+        "A long build sends progress and always finishes with its <b>real exit status</b> — never abandoned part-way. A command that goes quiet (<code>sudo</code>, an <code>ssh</code> host prompt) hands your next message to its <b>stdin</b> instead of starting a new one. <code>/ai</code> asks this terminal's own AI, from the chat. And stopping always restores the terminal — raw mode off, cursor back, out of the alternate screen.",
+        "<span class=\"lbl\">/ai</span><span class=\"lbl\">/cancel</span><span class=\"lbl\">/stop</span><span class=\"lbl\">idle_timeout</span>"),
+      demo(w, myEpoch) {
+        const g = makePhone(phoneEl);
+        run(w, myEpoch, [
+          { do: "pause", ms: 300 },
+          { do: "out", spans: [ACC("  ⬤ telegram gate live"), DIM(" · paired with Mourad")], ms: 500 },
+
+          /* 1 — a long command is never abandoned part-way */
+          { do: "call", fn: async () => { await g.type("cargo build --release"); g.send("cargo build --release"); await sleep(280); } },
+          { do: "out", spans: [ACC("  ▸ Mourad: "), FG("cargo build --release")], ms: 220 },
+          { do: "cmd", text: "cargo build --release", speed: 12 },
+          { do: "out", spans: [DIM("   Compiling framework v0.0.0")], ms: 500 },
+          { do: "call", fn: async () => {
+            g.reply("⏳ still running — <code>cargo build --release</code>, 2m elapsed.");
+            await sleep(800);
+          } },
+          { do: "out", spans: [OK("    Finished"), FG(" `release` profile in 2m 41s")], ms: 320 },
+          { do: "call", fn: async () => {
+            g.reply("❯ <code>cargo build --release</code> · ✓ 0 · 2m41s", "    Finished `release` profile in 2m 41s");
+            await sleep(950);
+          } },
+
+          /* 2 — something goes quiet and wants input. The next message is stdin,
+             not a new command. */
+          { do: "call", fn: async () => { await g.type("sudo dscacheutil -flushcache"); g.send("sudo dscacheutil -flushcache"); await sleep(280); } },
+          { do: "cmd", text: "sudo dscacheutil -flushcache", speed: 12 },
+          { do: "out", spans: [FG("Password:")], ms: 400 },
+          { do: "call", fn: async () => {
+            g.reply("⌨ <code>sudo</code> is waiting for input:", "Password:");
+            await sleep(400);
+          } },
+          { do: "call", fn: async () => {
+            g.reply("Your next message goes to it, not to a new command.");
+            await sleep(900);
+          } },
+          { do: "out", spans: [MUT("  ▸ Mourad sent 8 characters to stdin")], ms: 400 },
+          { do: "out", spans: [OK("  ✓ cache flushed")], ms: 800 },
+
+          /* 3 — the terminal's own AI, reachable from the chat */
+          { do: "call", fn: async () => { await g.type("/ai why is the release build so slow?"); g.send("/ai why is the release build so slow?"); await sleep(300); } },
+          { do: "out", spans: [ACC("  ▸ Mourad: "), FG("/ai why is the release build so slow?")], ms: 260 },
+          { do: "call", fn: async () => { g.typing(true); await sleep(900); g.typing(false); } },
+          { do: "call", fn: async () => {
+            g.reply("<code>lto = \"fat\"</code> and <code>codegen-units = 1</code> in your release profile trade build time for runtime speed. Set <code>lto = \"thin\"</code> for a faster build with most of the win.");
+            await sleep(1100);
+          } },
+
+          /* 4 — and the person at the keyboard takes it back */
           { do: "cmd", text: "@gate stop" },
           { do: "out", spans: [ACC("  ⬤ gate closed"), DIM(" — stopped from this pane")], ms: 340 },
+          { do: "out", spans: [MUT("  terminal restored · raw mode off · cursor back")], ms: 300 },
           { do: "call", fn: async () => { g.reply("gate closed · this terminal is no longer reachable"); } },
           { do: "out", spans: [MUT(" ")], ms: 200 },
           // the shell, back to being just yours

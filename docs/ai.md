@@ -13,9 +13,14 @@ AI is **off by default** — no vendor is assumed. Enable it by declaring a mode
 
 `@ai` is **dual-mode**: the model turns your request into a single shell **command** —
 proposed at your prompt to review, edit, and run — or, for a question, a prose **answer**.
-It never runs anything itself; you stay in control. Under the hood it uses a small
-model-agnostic JSON contract (`{"cmd":…}` / `{"answer":…}`) parsed leniently, so *any* model —
-weak or strong — routes reliably however it decorates its reply.
+It never runs anything itself; you stay in control.
+
+The contract under the hood is deliberately tiny and **streamable**: either the whole reply
+is one `RUN: <command>` line, or it is prose. Only the undecided first few characters are held
+back, so an answer starts rendering block-by-block while it is still arriving rather than
+appearing all at once at the end. The marker is matched case-insensitively and after leading
+space, because models are inconsistent about both — and only the **first line** of a command is
+ever taken, so a model that keeps talking cannot append a second line to your prompt.
 
 ```text
 ❯ @ai list files
