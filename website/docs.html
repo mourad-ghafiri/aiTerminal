@@ -59,6 +59,7 @@
     <a href="#tools">The tool catalog</a>
     <b>Trust</b>
     <a href="#security">Security</a>
+    <a href="#redaction">The redactor</a>
     <a href="#logging">Logging</a>
     <a href="#architecture">Architecture</a>
   </aside>
@@ -529,9 +530,96 @@ strategy = <span class="s">"weighted"</span>       <span class="c"># weighted (d
     <p><b>The AI proposes, the guard disposes.</b></p>
     <ul>
       <li><b>Command guard</b> — three regex tiers, <b>deny &gt; confirm &gt; allow</b>. Defaults deny fork bombs, <code>rm -rf /</code>, <code>mkfs</code>, raw disk writes; confirm <code>sudo</code>, force-pushes, <code>rm -rf</code>, <code>curl | sh</code>. Auto mode additionally runs only a safe-list of read-only commands.</li>
-      <li><b>Redaction</b> — scoped rules (terminal / ai / all) scrub AWS·OpenAI·GitHub·Slack·Google keys, bearer tokens, JWTs, PEM blocks and <code>KEY=value</code> secrets from everything AI-bound. The engine is step-budgeted: a pathological pattern can never hang your terminal.</li>
+      <li><b>The redactor</b> — nine scoped rules rewrite secrets on their way out, before a model, a chat app or the session file ever sees them. <a href="#redaction">Full reference below.</a></li>
       <li><b>Agent confinement</b> — per-agent tool allowlists; file writes sandboxed to the invocation directory; secret-path reads blocked; sub-agents are read-only and cannot re-delegate; agent names and job ids are validated before touching the filesystem.</li>
       <li><b>Keys</b> — never searched for on your machine; only config/env supply them; request bodies never appear in process argv.</li>
+    </ul>
+
+
+    <h2 id="redaction">The redactor — secrets stay on your machine</h2>
+    <p>A secret you <code>cat</code> is <i>yours</i>: it is already on your screen, your disk, your
+      environment. The boundary that matters is <b>egress</b> — the moment text is about to leave for
+      a model, a chat app, or a file another process can read. The redactor sits exactly there and
+      rewrites matches to <code>«redacted»</code> before they cross.</p>
+
+    <pre><code><span class="p">❯</span> cat .env
+DATABASE_URL=postgres://db.internal/prod
+AWS_ACCESS_KEY_ID=<span class="w">AKIA3RJHF2P9QLXMZB4T</span>
+ANTHROPIC_API_KEY=<span class="w">sk-ant-api03-9Fk2LmQ7xTvB</span>
+LOG_LEVEL=debug
+
+<span class="c"># what actually leaves for the model</span>
+DATABASE_URL=postgres://db.internal/prod        <span class="c">← untouched</span>
+AWS_ACCESS_KEY_ID=<span class="ok">«redacted»</span>
+<span class="ok">ANTHROPIC_«redacted»</span>
+LOG_LEVEL=debug                                 <span class="c">← untouched</span></code></pre>
+
+    <p>Two things to read off that. Redaction is <b>targeted</b> — the connection string and the log
+      level pass through, so the model keeps enough context to be useful. And rules <b>compose</b>:
+      each runs over the previous one's output, so a key caught by the <code>sk-</code> rule can be
+      caught again by the <code>KEY=value</code> rule, which takes the key <i>name</i> with it. That
+      is why <code>ANTHROPIC_API_KEY=…</code> collapses to <code>ANTHROPIC_«redacted»</code> while
+      <code>AWS_ACCESS_KEY_ID=…</code> keeps its name. Over-redacting is the safe direction.</p>
+
+    <h3>Scopes</h3>
+    <table>
+      <tr><th>Scope</th><th>Applied to</th></tr>
+      <tr><td><code>ai</code></td><td>Everything bound for a model — the terminal context <code>@ai</code> grounds on, tool results returned to an agent, <code>@loop</code>/<code>@job</code> context, and the session-context file.</td></tr>
+      <tr><td><code>terminal</code></td><td>Live PTY output as it is displayed — applied per printable run, <b>never</b> to an escape sequence, so colors and cursor moves can't be corrupted.</td></tr>
+      <tr><td><code>all</code></td><td>Both. The default when a rule omits <code>scope</code>.</td></tr>
+    </table>
+    <p><code>@gate</code> deliberately applies <b>both</b> scopes to anything it sends to a chat — a
+      phone is off-machine either way, so the narrower reading would be the wrong one.</p>
+
+    <h3>The nine default rules</h3>
+    <p>They ship as the <code>redactor</code> plugin, all scoped <code>ai</code>. The mechanism is
+      native; the plugin only supplies the rules, so you can edit them or
+      <code>@plugin disable redactor</code> outright.</p>
+    <table>
+      <tr><th>Catches</th><th>Pattern</th></tr>
+      <tr><td>AWS access key ids</td><td><code>AKIA[0-9A-Z]{16}</code></td></tr>
+      <tr><td>OpenAI / Anthropic keys</td><td><code>sk-[A-Za-z0-9_-]{16,}</code></td></tr>
+      <tr><td>GitHub tokens</td><td><code>gh[pousr]_[A-Za-z0-9]{20,}</code></td></tr>
+      <tr><td>Slack tokens</td><td><code>xox[abps]-[A-Za-z0-9-]{8,}</code></td></tr>
+      <tr><td>Google API keys</td><td><code>AIza[A-Za-z0-9_-]{20,}</code></td></tr>
+      <tr><td>Bearer tokens</td><td><code>(?i)bearer\s+[A-Za-z0-9._~+/-]+=*</code></td></tr>
+      <tr><td>JWTs</td><td><code>eyJ….eyJ….…</code></td></tr>
+      <tr><td>Sensitive <code>KEY=value</code></td><td><code>(?i)(api_key|access_key|client_secret|token|secret|password|credential|auth)\s*[:=]\s*\S+</code></td></tr>
+      <tr><td>PEM private-key blocks</td><td><code>-----BEGIN … PRIVATE KEY----- … -----END …-----</code></td></tr>
+    </table>
+    <div class="callout"><b>They are off your screen by default.</b> Every shipped rule is
+      <code>scope = "ai"</code>, so <code>cat .env</code> still shows you your own values — only what
+      <i>leaves</i> is rewritten. Add <code>scope = "terminal"</code> rules to mask them in the
+      display too, which is what you want before screen-sharing or recording.</div>
+
+    <h3>Your own rules</h3>
+    <p>Add <code>[[redact]]</code> tables to <code>config.toml</code> — or to any plugin's
+      <code>plugin.toml</code>. Config rules run <b>before</b> plugin rules, so yours get first
+      refusal on a match.</p>
+    <pre><code><span class="k">[[redact]]</span>
+pattern     = <span class="s">"acme_[a-z0-9]{32}"</span>   <span class="c"># regex by default</span>
+replacement = <span class="s">"«acme key»"</span>          <span class="c"># optional; defaults to «redacted»</span>
+scope       = <span class="s">"all"</span>                 <span class="c"># terminal | ai | all</span>
+
+<span class="k">[[redact]]</span>
+pattern = <span class="s">"10.0.42.17"</span>              <span class="c"># an exact string</span>
+literal = <span class="n">true</span>                      <span class="c"># skip the regex engine entirely</span>
+scope   = <span class="s">"ai"</span></code></pre>
+
+    <h3>Properties worth knowing</h3>
+    <ul>
+      <li><b>Step-budgeted engine</b> — a pathological pattern fails fast instead of hanging your
+        terminal. There is no ReDoS surface, even from a plugin you installed.</li>
+      <li><b>A bad pattern is skipped, not fatal</b> — it prints <code>security rule skipped — …</code>
+        and the rest of the policy still loads.</li>
+      <li><b>Clean text costs nothing</b> — each rule carries its literal head (<code>sk-</code>,
+        <code>AKIA</code>) as a <code>contains</code> prefilter, and a rule that changes nothing never
+        reallocates. This runs on every PTY chunk.</li>
+      <li><b>Agents can call it</b> — <code>sec.redact(text, scope)</code> is in the tool catalog, so
+        an agent can scrub something before writing it into a file or a report.</li>
+      <li><b>It is not a secret scanner</b> — it rewrites text in flight; it does not search your
+        disk, and it cannot mask a secret that never passes through it. API keys are never hunted for
+        on your machine: only config and env supply them.</li>
     </ul>
 
     <h2 id="logging">Logging</h2>

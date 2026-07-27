@@ -406,6 +406,39 @@ kbd {
 .rw-md-hint { margin-left: auto; opacity: .8; }
 
 
+/* ── the redactor: before / after, aligned line for line ────────────────────
+   A grid, not columns of padded text, so the two sides stay paired whatever
+   the pane width. */
+.rw-red {
+  margin-top: 10px; padding: 9px 10px 8px;
+  border: 1px solid var(--t-border); border-radius: 8px;
+  background: color-mix(in srgb, var(--t-fg) 4%, transparent);
+}
+.rw-red-grid {
+  display: grid; grid-template-columns: minmax(0, auto) 22px minmax(0, auto);
+  align-items: center; row-gap: 2px; column-gap: 2px;
+}
+.rw-red-head {
+  padding-bottom: 5px; margin-bottom: 3px;
+  border-bottom: 1px solid var(--t-border);
+  color: var(--t-muted); font-size: .88em; letter-spacing: .02em;
+}
+.rw-red-head.out { color: var(--t-accent); }
+.rw-red-head.mid { border-color: transparent; }
+.rw-red-cell { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.rw-red-cell.plain { color: var(--t-muted); }
+.rw-red-cell.secret { color: var(--t-warn); }
+.rw-red-cell.safe { color: var(--t-success); }
+.rw-red-arrow { text-align: center; color: var(--t-accent); opacity: .75; }
+.rw-red-foot {
+  margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--t-border);
+  color: var(--t-muted); font-size: .9em;
+  display: flex; align-items: baseline; flex-wrap: wrap;
+}
+.rw-red-lock { margin-right: 6px; }
+.rw-red-foot b { color: var(--t-accent); font-weight: 600; }
+.rw-red-note { opacity: .75; }
+
 /* ── @gate: a phone standing beside the terminal ────────────────────────────
    The phone keeps Telegram's OWN palette rather than the terminal's `--t-*`
    theme: a real phone on your desk doesn't restyle when you change your terminal

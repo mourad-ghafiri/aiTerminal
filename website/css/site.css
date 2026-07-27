@@ -263,6 +263,9 @@ footer { border-top: 1px solid var(--border); margin-top: 70px; padding: 40px 0 
 .docs-main pre .k { color: var(--accent2); }      /* key / flag */
 .docs-main pre .s { color: var(--mark-green); }   /* string */
 .docs-main pre .p { color: var(--accent); }       /* prompt */
+.docs-main pre .n { color: var(--accent2); }      /* literal / number */
+.docs-main pre .w { color: var(--warn, #FF9F0A); }  /* a secret, in the clear */
+.docs-main pre .ok { color: var(--mark-green); }  /* redacted / safe */
 .docs-main table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
 .docs-main th { text-align: left; color: var(--fg); font-weight: 650; border-bottom: 1px solid var(--border); padding: 8px 10px; }
 .docs-main td { border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); padding: 8px 10px; color: var(--muted); vertical-align: top; }

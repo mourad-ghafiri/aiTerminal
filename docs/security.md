@@ -19,18 +19,100 @@ denied".
   denied; `sudo`, force-pushes, recursive deletes → confirm; plus the Auto-mode
   safe-list (`auto_safe_commands`).
 
-## Redaction
+## The redactor — secrets stay on your machine
 
-Scoped rules (`terminal` / `ai` / `all`) from config + the `redactor` plugin mask
-keys, tokens, and secrets:
+A secret you `cat` is *yours*: it is already on your screen, on your disk, in your
+environment. The boundary that matters is **egress** — the moment text is about to
+leave for a model, a chat app, or a file another process can read. The redactor sits
+exactly there, rewriting matches to `«redacted»` before they cross.
 
-- **AI scope** — applied to everything sent to a model (terminal context, tool
-  results) and to the session-context file.
-- **Terminal scope** — applied to displayed PTY output (ANSI sequences preserved).
+### Scopes — where a rule applies
 
-The defaults cover Anthropic/OpenAI-style keys, AWS keys, bearer tokens,
-`KEY=value` secrets, and more. API keys are **never** searched for on your machine —
-only config/env supply them.
+| Scope | Applied to |
+| --- | --- |
+| `ai` | Everything bound for a model: the terminal context `@ai` grounds on, tool results returned to an agent, the `@loop`/`@job` prompt context, and the session-context file the GUI writes for the CLI. |
+| `terminal` | Live PTY output, as it is displayed. Applied **per printable run**, never to an escape sequence, so colors and cursor moves can't be corrupted. |
+| `all` | Both. This is the default when a rule omits `scope`. |
+
+`@gate` deliberately applies **both** scopes to anything it sends to a chat — a phone
+is off-machine either way, so the narrower reading would be the wrong one.
+
+### The default rules
+
+Nine patterns ship as the `redactor` plugin (`builtin/plugins/redactor/plugin.toml`),
+all scoped `ai`. The *mechanism* is native; the plugin only supplies the rules, so you
+can edit, extend, or `@plugin disable redactor` them.
+
+| Catches | Pattern |
+| --- | --- |
+| AWS access key ids | `AKIA[0-9A-Z]{16}` |
+| OpenAI / Anthropic keys | `sk-[A-Za-z0-9_-]{16,}` |
+| GitHub tokens | `gh[pousr]_[A-Za-z0-9]{20,}` |
+| Slack tokens | `xox[abps]-[A-Za-z0-9-]{8,}` |
+| Google API keys | `AIza[A-Za-z0-9_-]{20,}` |
+| `Authorization: Bearer …` | `(?i)bearer\s+[A-Za-z0-9._~+/-]+=*` |
+| JWTs | `eyJ….eyJ….…` |
+| Any sensitive-looking `KEY=value` | `(?i)(api[_-]?key\|access[_-]?key\|client[_-]?secret\|token\|secret\|password\|passwd\|credential\|auth)["']?\s*[:=]\s*\S+` |
+| PEM private-key blocks | `-----BEGIN … PRIVATE KEY----- … -----END …-----` |
+
+**They are off your screen by default.** Every shipped rule is `scope = "ai"`, so
+`cat .env` still shows you your own values — only what leaves is rewritten. Add
+`scope = "terminal"` rules if you also want them masked in the display (useful when
+you screen-share or record).
+
+### What it looks like
+
+Real output from the shipped rules:
+
+```
+DATABASE_URL=postgres://db.internal/prod      →  DATABASE_URL=postgres://db.internal/prod
+AWS_ACCESS_KEY_ID=AKIA3RJHF2P9QLXMZB4T        →  AWS_ACCESS_KEY_ID=«redacted»
+ANTHROPIC_API_KEY=sk-ant-api03-9Fk2LmQ7xTvB   →  ANTHROPIC_«redacted»
+GITHUB_TOKEN=ghp_8sK2mVx91QpLzR4tYnB7wDe3Fg   →  GITHUB_«redacted»
+LOG_LEVEL=debug                               →  LOG_LEVEL=debug
+```
+
+Two things to read off that. Redaction is **targeted** — the connection string and the
+log level pass through untouched, so the model keeps enough context to be useful. And
+rules **compose**: each runs over the previous one's output, so a key caught by the
+`sk-` rule can then be caught again by the `KEY=value` rule, which takes the key *name*
+with it. That is why `ANTHROPIC_API_KEY=…` becomes `ANTHROPIC_«redacted»` while
+`AWS_ACCESS_KEY_ID=…` keeps its name (`ACCESS_KEY_ID=` doesn't match `access[_-]?key`
+followed immediately by `=`). Over-redacting is the safe direction.
+
+### Your own rules
+
+Add `[[redact]]` tables to `config.toml` (or to any plugin's `plugin.toml`):
+
+```toml
+[[redact]]
+pattern     = "acme_[a-z0-9]{32}"   # regex by default
+replacement = "«acme key»"          # optional; defaults to «redacted»
+scope       = "all"                 # terminal | ai | all (default all)
+
+[[redact]]
+pattern = "10.0.42.17"              # an exact string
+literal = true                      # skip the regex engine entirely
+scope   = "ai"
+```
+
+Config rules are applied **before** plugin rules, so yours get first refusal on a
+match.
+
+### Properties worth knowing
+
+- **The regex engine is step-budgeted.** A pathological pattern fails fast instead of
+  hanging your terminal — there is no ReDoS surface, even from a plugin you installed.
+- **A bad pattern is skipped, not fatal.** It prints `security rule skipped — …` and
+  the rest of the policy still loads.
+- **Clean text costs nothing.** Each rule carries its mandatory literal head (`sk-`,
+  `AKIA`) as a `contains` prefilter, and a rule that changes nothing never reallocates
+  — this runs on every PTY chunk.
+- **Agents can call it too.** `sec.redact(text, scope)` is in the tool catalog, so an
+  agent can scrub something before writing it into a file or a report.
+- **It is not a secret scanner.** It rewrites text in flight; it does not search your
+  disk, and it cannot mask a secret that never passes through it. API keys are never
+  hunted for on your machine — only config and env supply them.
 
 ## Agent confinement
 

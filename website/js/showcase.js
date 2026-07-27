@@ -327,6 +327,53 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
+  /* ── the redactor: the same lines, before and after they leave ─────────────
+     Two aligned columns so the eye can pair them line for line. The right-hand
+     side is not invented: these are the exact strings the shipped `redactor`
+     rules produce, including the cases where the `KEY=value` rule takes the key
+     name with it (`ANTHROPIC_API_KEY=sk-…` → `ANTHROPIC_«redacted»`). */
+  const REDACT_ROWS = [
+    ["DATABASE_URL=postgres://db.internal/prod", "DATABASE_URL=postgres://db.internal/prod", ""],
+    ["AWS_ACCESS_KEY_ID=AKIA3RJHF2P9QLXMZB4T", "AWS_ACCESS_KEY_ID=«redacted»", "AKIA[0-9A-Z]{16}"],
+    ["ANTHROPIC_API_KEY=sk-ant-api03-9Fk2LmQ7xTvB", "ANTHROPIC_«redacted»", "sk-[A-Za-z0-9_-]{16,}"],
+    ["GITHUB_TOKEN=ghp_8sK2mVx91QpLzR4tYnB7wDe3Fg", "GITHUB_«redacted»", "gh[pousr]_[A-Za-z0-9]{20,}"],
+    ["LOG_LEVEL=debug", "LOG_LEVEL=debug", ""],
+  ];
+
+  function buildRedactView(w) {
+    const root = el("div", "rw-red");
+
+    const grid = el("div", "rw-red-grid");
+    grid.append(
+      el("div", "rw-red-head", "on your screen"),
+      el("div", "rw-red-head mid", ""),
+      el("div", "rw-red-head out", "what leaves your machine")
+    );
+
+    REDACT_ROWS.forEach(([before, after, rule]) => {
+      const hit = before !== after;
+      const l = el("div", "rw-red-cell" + (hit ? " secret" : " plain"));
+      l.textContent = before;
+      const mid = el("div", "rw-red-arrow", hit ? "→" : "");
+      const r = el("div", "rw-red-cell" + (hit ? " safe" : " plain"));
+      r.textContent = after;
+      if (hit) r.title = "matched " + rule;
+      grid.append(l, mid, r);
+    });
+
+    const foot = el("div", "rw-red-foot");
+    foot.append(
+      el("span", "rw-red-lock", "🔒"),
+      el("span", null, "9 rules · redactor plugin · scope "),
+      el("b", null, "ai"),
+      el("span", "rw-red-note", " — the values stay intact on your own screen")
+    );
+
+    root.append(grid, foot);
+    w.pane().appendChild(root);
+  }
+
+
   /* ---------------- features ---------------- */
   const FEATURES = {
 
@@ -655,6 +702,30 @@ document.addEventListener("DOMContentLoaded", () => {
         ]);
       },
     },
+
+    redact: {
+      caption: () => caption("Your secrets <em>never leave the room</em>",
+        "Nine regex rules — AWS · OpenAI · Anthropic · GitHub · Slack · Google keys, bearer tokens, JWTs, PEM blocks and any <code>KEY=value</code> that looks sensitive — rewrite text on its way out. The AI still gets the shape of your config; it never gets the secret. Add <code>scope = \"terminal\"</code> and the masking applies to your screen too."),
+      demo(w, myEpoch) {
+        run(w, myEpoch, [
+          { do: "pause", ms: 300 },
+          { do: "cmd", text: "cat .env" },
+          { do: "out", spans: [ACC2("DATABASE_URL"), MUT("="), FG("postgres://db.internal/prod")], ms: 70 },
+          { do: "out", spans: [ACC2("AWS_ACCESS_KEY_ID"), MUT("="), WARN("AKIA3RJHF2P9QLXMZB4T")], ms: 70 },
+          { do: "out", spans: [ACC2("ANTHROPIC_API_KEY"), MUT("="), WARN("sk-ant-api03-9Fk2LmQ7xTvB")], ms: 70 },
+          { do: "out", spans: [ACC2("GITHUB_TOKEN"), MUT("="), WARN("ghp_8sK2mVx91QpLzR4tYnB7wDe3Fg")], ms: 70 },
+          { do: "out", spans: [ACC2("LOG_LEVEL"), MUT("="), FG("debug")], ms: 900 },
+
+          // your own machine shows you everything — the boundary is egress, not display
+          { do: "cmd", text: "@ai why can't the app reach the database?" },
+          { do: "spin", label: "reading your terminal…", ms: 1000 },
+          { do: "call", fn: async (t) => buildRedactView(t) },
+          { do: "pause", ms: 1400 },
+          { do: "out", spans: [FG("db.internal has no port — try "), ACC2("db.internal:5432"), FG(" in DATABASE_URL")] },
+        ]);
+      },
+    },
+
 
   };
 

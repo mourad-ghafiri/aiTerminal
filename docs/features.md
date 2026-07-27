@@ -102,6 +102,15 @@ See [shell.md](shell.md).
 
 ## Security
 
-A command guard (allow/confirm/deny) over AI-suggested commands and agent `sys.run`,
-plus scoped secret redaction (terminal display / AI egress). See
-[security.md](security.md).
+A command guard (allow/confirm/deny) over AI-suggested commands and agent `sys.run`.
+
+**The redactor** rewrites secrets on their way *out* — AWS/OpenAI/Anthropic/GitHub/
+Slack/Google keys, bearer tokens, JWTs, PEM blocks and any sensitive-looking
+`KEY=value` become `«redacted»` before a model, a chat app or the session file ever
+sees them. It is targeted, not blanket: your connection strings and log levels pass
+through, so the AI keeps enough context to be useful. And it is scoped — the nine
+shipped rules are `ai`-only, so `cat .env` still shows *you* your own values; add
+`scope = "terminal"` to mask them on screen too, which is what you want before a
+screen-share.
+
+See [security.md](security.md#the-redactor--secrets-stay-on-your-machine).

@@ -16,7 +16,7 @@ every setting is a TOML file — there is no settings UI.
 | [plugins.md](plugins.md) | The declarative plugin system (`plugin.toml` + shell snippets). |
 | [shell.md](shell.md) | Shell integration: how snippets/aliases/colors are injected. |
 | [theme.md](theme.md) | Themes: the token model, the collection, custom themes. |
-| [security.md](security.md) | The command guard, redaction, agent tool gating, SSRF rules. |
+| [security.md](security.md) | The command guard, **the redactor** (scoped secret redaction on egress), agent tool gating, `@gate` pairing, SSRF rules. |
 | [logging.md](logging.md) | The diagnostic logger. |
 | [packaging.md](packaging.md) | Bundling the macOS .app. |
 | [architecture.md](architecture.md) | The four-layer workspace, module map, invariants, and how to develop/test. |

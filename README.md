@@ -91,6 +91,7 @@ profiles. The AI is woven into the shell itself through one idea:
 | 📄 `@md <file>` | `@md render` pretty-prints a Markdown file (diagrams drawn natively); `@md edit` is a live split editor — Markdown left, rendered preview right, scroll by keyboard + mouse. |
 | 📱 `@gate telegram start` | Hand a tab or split to a chat app and drive your terminal from your phone. The pane becomes a shell you **share** — you keep typing while a paired chat runs commands in the same session — plus `/shot` for a screenshot of the live terminal. Off by default; nothing is accepted until a chat sends the pairing code printed in your pane. |
 | 👤 `@profile [<id>]` | List profiles, switch directly (`@profile work`), `create`/`rename`/`delete`, and `edit` (opens the overlay in `$EDITOR`). A running window follows switches and edits live. |
+| 🔒 The redactor | Secrets are rewritten on their way **out**: AWS/OpenAI/Anthropic/GitHub/Slack/Google keys, bearer tokens, JWTs, PEM blocks and any sensitive `KEY=value` become `«redacted»` before a model, a chat app or the session file sees them. Targeted, not blanket — your connection strings still get through, so the AI stays useful. Scoped `ai` by default, so your own screen keeps showing your own values. |
 | ⚙️ `@config` / `@theme` / `@plugin` | Inspect config, list/**switch** themes live (`@theme nord`), manage plugins. |
 
 `@`-commands ride the shell's `command_not_found` hook, so they can never shadow a
