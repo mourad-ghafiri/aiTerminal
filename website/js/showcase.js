@@ -9,6 +9,7 @@
 document.addEventListener("DOMContentLoaded", () => {
   const host = document.getElementById("showcase-window");
   const captionEl = document.getElementById("showcase-caption");
+  const phoneEl = document.getElementById("showcase-phone");
   if (!host || !captionEl) return;
 
   let current = null;
@@ -16,6 +17,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function fresh(opts) {
     epoch++;
+    // `makeWindow` wipes the window host, but the phone sits OUTSIDE it, so it
+    // has to be torn down here or it would linger over the next feature.
+    if (phoneEl) {
+      phoneEl.hidden = true;
+      phoneEl.innerHTML = "";
+    }
     return makeWindow(host, opts);
   }
 
@@ -115,55 +122,207 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
 
-  /* The @gate demo: the pane becomes a shared shell on the left and the chat that
-     is driving it on the right — the whole point of the feature is that both are
-     live at once, so both are shown side by side. */
-  function buildGateSplit(w) {
-    const pane = w.pane();
-    pane.innerHTML = "";
-    const root = el("div", "rw-gate");
+  /* ── the phone standing beside the terminal (@gate) ────────────────────────
+     A scripted Telegram mock, not a chat client: the point of `@gate` is that the
+     chat lives somewhere ELSE while the terminal keeps running on your desk, so
+     the phone is built outside the terminal window and driven beat by beat from
+     the demo script.
 
-    const term = el("div", "rw-gate-term");
-    const chat = el("div", "rw-gate-chat");
-    const head = el("div", "rw-gate-head");
-    head.append(el("span", "rw-gate-dot"), el("span", null, "@mourad_term_bot"),
-      el("span", "rw-gate-sub", "telegram"));
-    const feed = el("div", "rw-gate-feed");
-    chat.append(head, feed);
-    root.append(term, chat);
-    pane.appendChild(root);
+     The `/shot` reply is not a drawing of a terminal — it CLONES the live pane,
+     carrying its theme variables across, so the photo in the chat is pixel-for-
+     pixel whatever the terminal was showing at that moment. That is exactly what
+     the real command does, and it keeps the two halves honest. */
 
-    const scroll = (n) => { n.scrollTop = n.scrollHeight; };
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  /* A monochrome line icon from one or more path strings. Built as real SVG nodes
+     rather than markup, matching this file's no-innerHTML-for-content rule. */
+  function icon(paths, cls, size) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", size || 15);
+    svg.setAttribute("height", size || 15);
+    if (cls) svg.setAttribute("class", cls);
+    (Array.isArray(paths) ? paths : [paths]).forEach((d) => {
+      const p = document.createElementNS(SVG_NS, "path");
+      p.setAttribute("d", d);
+      svg.appendChild(p);
+    });
+    return svg;
+  }
+
+  const ICONS = {
+    clip: "M16 7v9.2a4.2 4.2 0 0 1-8.4 0V6.3a2.6 2.6 0 0 1 5.2 0v9.4a1 1 0 0 1-2 0V7.2H9.3v8.5a2.4 2.4 0 0 0 4.8 0V6.3a4 4 0 0 0-8 0v9.9a5.8 5.8 0 0 0 11.6 0V7H16z",
+    mic: ["M12 3.2a2.5 2.5 0 0 1 2.5 2.5v5.6a2.5 2.5 0 0 1-5 0V5.7A2.5 2.5 0 0 1 12 3.2z",
+          "M6.6 11.3a5.4 5.4 0 0 0 10.8 0h1.7a7.1 7.1 0 0 1-6.2 6.9v2.6h-1.8v-2.6a7.1 7.1 0 0 1-6.2-6.9h1.7z"],
+    send: "M2.4 20.8 22 12 2.4 3.2l0 6.9 13.4 1.9-13.4 1.9z",
+    smile: ["M12 2.4A9.6 9.6 0 1 0 12 21.6 9.6 9.6 0 0 0 12 2.4zm0 1.9a7.7 7.7 0 1 1 0 15.4 7.7 7.7 0 0 1 0-15.4z",
+            "M8.7 9a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6zm6.6 0a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6z",
+            "M7.4 13.6a5 5 0 0 0 9.2 0H7.4z"],
+    wifi: ["M12 17.6l2.3-2.7a3.5 3.5 0 0 0-4.6 0L12 17.6z",
+           "M12 10.3a8.8 8.8 0 0 0-6.2 2.5l1.6 1.7a6.6 6.6 0 0 1 9.2 0l1.6-1.7A8.8 8.8 0 0 0 12 10.3z"],
+    back: "M14.7 5.3 8 12l6.7 6.7 1.4-1.4L10.8 12l5.3-5.3z",
+  };
+
+  /* the 13 theme variables `setTheme` writes inline on the window root — copied
+     onto a screenshot so the clone renders in the terminal's live colors */
+  const THEME_VARS = ["--t-bg", "--t-surface", "--t-fg", "--t-muted", "--t-accent",
+    "--t-accent2", "--t-success", "--t-warn", "--t-error", "--t-cursor",
+    "--t-selection", "--t-border", "--t-hover"];
+
+  function makePhone(host) {
+    // No phone host on the page → the terminal half of the story still plays.
+    if (!host) {
+      const noop = () => {};
+      return { type: async () => {}, send: noop, typing: noop, reply: noop, photo: noop, menu: noop };
+    }
+    host.hidden = false;
+    host.innerHTML = "";
+
+    const root = el("div", "ph");
+    ["up", "dn", "pwr"].forEach((k) => root.appendChild(el("span", "ph-side " + k)));
+
+    const screen = el("div", "ph-screen");
+
+    /* iOS status bar: clock left, island centred, radios right */
+    const sys = el("div", "ph-sys");
+    const sigs = el("div", "ph-sig");
+    [0, 1, 2, 3].forEach(() => sigs.appendChild(el("i")));
+    const batt = el("div", "ph-batt");
+    batt.appendChild(el("i"));
+    const island = el("div", "ph-island");
+    island.appendChild(el("span", "ph-cam"));
+    const radios = el("div", "ph-sys-ic");
+    radios.append(sigs, icon(ICONS.wifi, "ph-wifi", 12), batt);
+    sys.append(el("span", "ph-sys-time", "9:41"), island, radios);
+
+    /* the chat header */
+    const head = el("div", "ph-head");
+    const who = el("div", "ph-who");
+    const status = el("div", "ph-status", "bot");
+    who.append(el("div", "ph-name", "aiTerminal gate"), status);
+    const dots = el("div", "ph-menu");
+    dots.append(el("i"), el("i"), el("i"));
+    head.append(icon(ICONS.back, "ph-back", 17), el("div", "ph-avatar", "A"), who, dots);
+
+    const feed = el("div", "ph-feed");
+    feed.appendChild(el("div", "ph-day", "today"));
+
+    /* the composer */
+    const bar = el("div", "ph-bar");
+    const field = el("div", "ph-field");
+    const input = el("div", "ph-input empty", "Message");
+    field.append(icon(ICONS.smile, "ph-ic", 16), input, icon(ICONS.clip, "ph-ic", 16));
+    const action = el("button", "ph-action");
+    action.setAttribute("tabindex", "-1");
+    action.setAttribute("aria-hidden", "true");
+    action.appendChild(icon(ICONS.mic, "ph-ic", 16));
+    bar.append(field, action);
+
+    screen.append(sys, head, feed, bar, el("div", "ph-home"));
+    root.append(screen, el("div", "ph-glare"));
+    host.appendChild(root);
+
+    const scroll = () => { feed.scrollTop = feed.scrollHeight; };
+    /* A fixed wall clock, ticking a minute per exchange — a live clock would date
+       any screenshot of this page. */
+    let minute = 41;
+    const stamp = () => `09:${String(minute++).padStart(2, "0")}`;
+
+    /* swap the mic for a send button while there is text to send */
+    function armed(on) {
+      action.classList.toggle("send", on);
+      action.replaceChildren(icon(on ? ICONS.send : ICONS.mic, "ph-ic", 16));
+    }
+
+    /* the shared bubble: body, an optional attachment, then time (+ read ticks) */
+    function bubble(side, text, extra, cls) {
+      const b = el("div", "ph-msg " + side + (cls ? " " + cls : ""));
+      if (extra) b.appendChild(extra);
+      if (text) b.appendChild(el("div", "ph-body", text));
+      const meta = el("div", "ph-meta");
+      meta.appendChild(el("span", null, stamp()));
+      if (side === "me") meta.appendChild(el("span", "ph-tick", "✓✓"));
+      b.appendChild(meta);
+      feed.appendChild(b); scroll();
+      return b;
+    }
+
     return {
-      /* one line in the shared shell; kind: prompt | out | in | back */
-      line(kind, text) {
-        const row = el("div", "rw-gate-line " + kind);
-        if (kind === "prompt") {
-          row.append(el("span", "rw-gate-p", "❯ "), el("span", null, text));
-        } else {
-          row.textContent = text;
+      /* type into the composer, the way a thumb would */
+      async type(text) {
+        input.classList.remove("empty");
+        input.textContent = "";
+        const caret = el("span", "ph-caret");
+        input.appendChild(caret);
+        armed(true);
+        for (const ch of text) {
+          caret.insertAdjacentText("beforebegin", ch);
+          await sleep(36 + Math.random() * 26);
         }
-        term.appendChild(row); scroll(term); return row;
+        await sleep(240);
       },
-      caret() {
-        const row = el("div", "rw-gate-line prompt");
-        row.append(el("span", "rw-gate-p", "❯ "), el("span", "rw-gate-caret", "▊"));
-        term.appendChild(row); scroll(term);
+      /* commit whatever was typed as an outgoing message */
+      send(text) {
+        input.replaceChildren();
+        input.textContent = "Message";
+        input.classList.add("empty");
+        armed(false);
+        return bubble("me", text);
       },
-      /* a chat bubble; side: me | bot */
-      bubble(side, text, pre) {
-        const b = el("div", "rw-gate-msg " + side);
-        if (text) b.appendChild(el("div", null, text));
-        if (pre) b.appendChild(el("div", "rw-gate-pre", pre));
-        feed.appendChild(b); scroll(feed); return b;
+      /* the bot is composing — the line every chat app shows under the name */
+      typing(on) {
+        status.textContent = on ? "typing…" : "bot";
+        status.classList.toggle("live", !!on);
       },
-      shot() {
-        const b = el("div", "rw-gate-msg bot");
-        const card = el("div", "rw-gate-shot");
-        ["❯ cargo build", "   Compiling aiTerminal", "    Finished dev", "❯ ▊"].forEach((t) =>
-          card.appendChild(el("div", "rw-gate-shotline", t)));
-        b.append(el("div", null, "📷 terminal.png · 120×34"), card);
-        feed.appendChild(b); scroll(feed);
+      reply(text, pre) {
+        return bubble("bot", text, pre ? el("div", "ph-pre", pre) : null);
+      },
+      /* a bot's inline keyboard — the command buttons Telegram renders under a
+         message, and the same list `@gate` publishes with setMyCommands */
+      menu(text, keys) {
+        const b = bubble("bot", text);
+        const pad = el("div", "ph-keys");
+        keys.forEach((k) => pad.appendChild(el("span", "ph-key", k)));
+        b.appendChild(pad);
+        scroll();
+        return b;
+      },
+      /* `/shot` — a real clone of the live pane, not an impression of one */
+      photo(caption, w) {
+        const shot = el("div", "ph-shot");
+        const chrome = el("div", "ph-shot-bar");
+        chrome.append(el("i"), el("i"), el("i"), el("span", "ph-shot-name", "aiTerminal"));
+
+        const frame = el("div", "ph-shot-frame");
+        const stage = el("div", "ph-shot-stage");
+        // The pane renders with variables set inline on the window root; the clone
+        // lives outside that subtree, so they travel with it.
+        THEME_VARS.forEach((v) => stage.style.setProperty(v, w.root.style.getPropertyValue(v)));
+
+        const pane = w.pane();
+        const rect = pane.getBoundingClientRect();
+        const clone = pane.cloneNode(true);
+        clone.classList.remove("focused", "enter");
+        // pin the clone to the pane's real box, so the miniature is a true
+        // reduction rather than a reflow at a different width
+        clone.style.width = (rect.width || 500) + "px";
+        clone.style.height = (rect.height || 380) + "px";
+        stage.appendChild(clone);
+        frame.appendChild(stage);
+        shot.append(chrome, frame);
+
+        const b = bubble(null, caption, shot, "photo");
+
+        // Scale the full-size clone down to the bubble, measured after layout so
+        // it is right at any window width.
+        const avail = frame.clientWidth || 172;
+        const k = rect.width ? Math.min(1, avail / rect.width) : 0.34;
+        stage.style.width = (rect.width || 500) + "px";
+        stage.style.height = (rect.height || 380) + "px";
+        stage.style.transform = `scale(${k})`;
+        frame.style.height = Math.round((rect.height || 380) * k) + "px";
+        scroll();
+        return b;
       },
     };
   }
@@ -412,45 +571,64 @@ document.addEventListener("DOMContentLoaded", () => {
     gate: {
       opts: { title: "aiTerminal — @gate telegram", tabs: [{ title: "Terminal [project][@gate]", active: true }] },
       caption: () => caption("<code>@gate</code> — your terminal, from your phone",
-        "<code>@gate telegram start</code> hands a split to a chat. You keep typing locally while a <b>paired</b> chat drives the <b>same shell</b> — same cwd, same history — with <code>/shot</code> for a live screenshot. Nothing runs until a chat sends the code printed in your pane."),
+        "<code>@gate telegram start</code> hands this pane to a chat. It becomes a shell you <b>share</b>: you keep typing here while a <b>paired</b> chat drives the same shell — same folder, same history — with <code>/shot</code> for a live screenshot. Nothing runs until a chat sends the code printed in <i>your</i> terminal, and <code>@gate stop</code> takes the pane straight back."),
       demo(w, myEpoch) {
+        const g = makePhone(phoneEl);
+        /* Every beat is its own step, so `run` can abandon the story the moment
+           another feature is selected — the phone lives outside the window and
+           would otherwise keep animating on screen. */
         run(w, myEpoch, [
-          { do: "pause", ms: 250 },
+          { do: "pause", ms: 350 },
+
+          /* 1 — the gate opens, and prints a code only this screen can see */
           { do: "cmd", text: "@gate telegram start" },
-          { do: "pause", ms: 300 },
-          { do: "call", fn: async (t) => {
-            const g = buildGateSplit(t);
-            g.line("banner", "⬤ telegram gate live · @mourad_term_bot");
-            g.line("dim", "pair from the chat: /pair 418-207");
-            await sleep(700);
-            g.bubble("me", "/pair 418-207");
-            await sleep(600);
-            g.bubble("bot", "paired — you are driving mourad-mbp");
-            await sleep(500);
+          { do: "out", spans: [ACC("  ⬤ telegram gate live"), DIM(" · @mourad_term_bot")], ms: 320 },
+          { do: "out", spans: [MUT("  pair from the chat: "), ACC2("/pair 418-207"), MUT("   (nothing runs until you do)")], ms: 700 },
 
-            g.line("prompt", "ls");
-            g.line("out", "README.md  crates  docs");
-            await sleep(700);
-
-            g.bubble("me", "cargo build");
-            await sleep(500);
-            g.line("in", "  ▸ Mourad: cargo build");
-            g.line("prompt", "cargo build");
-            await sleep(450);
-            g.line("out", "   Compiling aiTerminal…");
-            await sleep(700);
-            g.line("out", "    Finished dev [optimized] in 8.4s");
-            g.line("back", "  ◂ sent 3 lines");
-            g.bubble("bot", "❯ cargo build · ✓ 0 · 8.4s",
-              "   Compiling aiTerminal…\n    Finished dev [optimized] in 8.4s");
-            await sleep(800);
-
-            g.bubble("me", "/shot");
-            await sleep(500);
-            g.line("back", "  ◂ sent a screenshot (68 KB)");
-            g.shot();
-            g.caret();
+          /* 2 — pairing, from the phone */
+          { do: "call", fn: async () => { await g.type("/pair 418-207"); g.send("/pair 418-207"); } },
+          { do: "call", fn: async () => { g.typing(true); await sleep(650); g.typing(false); } },
+          { do: "call", fn: async () => { g.reply("✓ paired — you are driving mourad-mbp"); await sleep(500); } },
+          { do: "call", fn: async () => {
+            g.menu("Send a command and I'll run it in your terminal.",
+              ["/shot", "/status", "/full", "/help", "/stop"]);
           } },
+          { do: "out", spans: [MUT("  ▸ Mourad paired from telegram")], ms: 800 },
+
+          /* 3 — the pane is still yours */
+          { do: "cmd", text: "ls" },
+          { do: "out", spans: [FG("README.md  crates  docs  website")], ms: 900 },
+
+          /* 4 — …and the chat drives the very same shell */
+          { do: "call", fn: async () => { await g.type("git status"); g.send("git status"); await sleep(300); } },
+          { do: "out", spans: [ACC("  ▸ Mourad: "), FG("git status")], ms: 260 },
+          { do: "cmd", text: "git status", speed: 12 },
+          { do: "out", spans: [FG("On branch "), OK("main")], ms: 110 },
+          { do: "out", spans: [FG("nothing to commit, working tree clean")], ms: 260 },
+          { do: "out", spans: [MUT("  ◂ sent 2 lines to telegram")], ms: 260 },
+          { do: "call", fn: async () => {
+            g.reply("❯ git status · ✓ 0 · 0.3s", "On branch main\nnothing to commit, working tree clean");
+            await sleep(850);
+          } },
+
+          /* 5 — when text isn't enough, ask for the screen */
+          { do: "call", fn: async () => { await g.type("/shot"); g.send("/shot"); await sleep(300); } },
+          // capture first, THEN report it — so the photo shows the terminal as it
+          // was asked for, not the line announcing itself
+          { do: "call", fn: async () => {
+            // a clone of the live pane: same lines, same theme, same geometry
+            g.photo("terminal.png · 68 KB", w);
+            await sleep(240);
+          } },
+          { do: "out", spans: [MUT("  ◂ sent a screenshot (68 KB)")], ms: 1100 },
+
+          /* 6 — and the person at the keyboard takes it back */
+          { do: "cmd", text: "@gate stop" },
+          { do: "out", spans: [ACC("  ⬤ gate closed"), DIM(" — stopped from this pane")], ms: 340 },
+          { do: "call", fn: async () => { g.reply("gate closed · this terminal is no longer reachable"); } },
+          { do: "out", spans: [MUT(" ")], ms: 200 },
+          // the shell, back to being just yours
+          { do: "out", spans: [ACC("~/project"), OK(" ⎇ main"), ACC2(" ❯ "), S("t-cursor", " ")] },
         ]);
       },
     },

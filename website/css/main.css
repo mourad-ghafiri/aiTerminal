@@ -406,55 +406,256 @@ kbd {
 .rw-md-hint { margin-left: auto; opacity: .8; }
 
 
-/* ── @gate: the shared shell (left) beside the chat driving it (right) ──────
-   Laid out with flexbox rather than drawn with box characters, so the two
-   columns stay aligned at any window width. */
-.rw-gate { display: flex; height: 100%; min-height: 0; gap: 0; }
-.rw-gate-term {
-  flex: 1 1 58%; min-width: 0; overflow: auto;
-  padding-right: 12px; border-right: 1px solid var(--t-border);
-}
-.rw-gate-line { white-space: pre-wrap; word-break: break-word; line-height: 1.5; color: var(--t-fg); }
-.rw-gate-line.out { color: var(--t-muted); }
-.rw-gate-line.banner { color: var(--t-accent); font-weight: 600; margin-top: 2px; }
-.rw-gate-line.dim { color: var(--t-muted); margin-bottom: 8px; }
-.rw-gate-line.in { color: var(--t-accent); margin-top: 6px; }
-.rw-gate-line.back { color: var(--t-muted); opacity: .85; margin-bottom: 6px; }
-.rw-gate-p { color: var(--t-accent2); }
-.rw-gate-caret { background: var(--t-fg); color: var(--t-bg); }
+/* ── @gate: a phone standing beside the terminal ────────────────────────────
+   The phone keeps Telegram's OWN palette rather than the terminal's `--t-*`
+   theme: a real phone on your desk doesn't restyle when you change your terminal
+   theme, and a fixed palette stays legible against all 19 of them (several are
+   light). Everything here is scoped under `.ph`. */
+.stage-rig { display: flex; gap: 30px; align-items: center; }
+.stage-rig .stage-shadow { flex: 1 1 auto; min-width: 0; }
+.stage-phone { flex: none; }
+.stage-phone[hidden] { display: none; }
 
-.rw-gate-chat { flex: 0 1 42%; min-width: 0; display: flex; flex-direction: column; padding-left: 12px; }
-.rw-gate-head {
-  display: flex; align-items: center; gap: 7px; padding-bottom: 8px;
-  border-bottom: 1px solid var(--t-border); color: var(--t-fg); font-weight: 600;
+.ph {
+  --ph-blue: #2AABEE;        /* Telegram brand blue */
+  --ph-ground: #0E1621;      /* chat wallpaper */
+  --ph-chrome: #17212B;      /* header + composer */
+  --ph-in: #182533;          /* incoming bubble */
+  --ph-out: #2B5278;         /* outgoing bubble */
+  --ph-text: #F2F5F8;
+  --ph-dim: #7D8E9E;
+  position: relative;
+  width: 244px; height: 494px;
+  display: flex; flex-direction: column;
+  padding: 11px 10px;
+  border-radius: 42px;
+  /* a brushed metal rim: light along the top-left, dark along the bottom-right */
+  background: linear-gradient(150deg, #4C5561 0%, #23282F 22%, #14181D 55%, #33393F 88%, #545C68 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, .07),
+    inset 0 1px 2px rgba(255, 255, 255, .18),
+    0 30px 55px rgba(0, 0, 0, .62),
+    0 6px 16px rgba(0, 0, 0, .5);
+  font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  font-size: 11px; line-height: 1.4;
+  color: var(--ph-text);
+  animation: ph-in .5s cubic-bezier(.2, .8, .3, 1) both;
 }
-.rw-gate-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--t-accent); flex: none; }
-.rw-gate-sub { margin-left: auto; color: var(--t-muted); font-weight: 400; opacity: .8; }
-.rw-gate-feed { flex: 1 1 auto; min-height: 0; overflow: auto; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+@keyframes ph-in { from { opacity: 0; transform: translateY(16px) scale(.96); } }
 
-.rw-gate-msg {
-  max-width: 88%; padding: 6px 10px; border-radius: 12px; line-height: 1.45;
-  white-space: pre-wrap; word-break: break-word;
+/* side buttons, machined into the rim */
+.ph-side {
+  position: absolute; width: 2px; border-radius: 2px;
+  background: linear-gradient(180deg, #3C444F, #1C2027);
+  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .12);
 }
-.rw-gate-msg.me {
-  align-self: flex-end; border-bottom-right-radius: 4px; color: var(--t-bg);
-  background: var(--t-accent);
+.ph-side.up  { left: -2px; top: 108px; height: 30px; }
+.ph-side.dn  { left: -2px; top: 146px; height: 30px; }
+.ph-side.pwr { right: -2px; top: 124px; height: 46px; }
+
+.ph-screen {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+  border-radius: 32px; overflow: hidden;
+  background: var(--ph-ground);
 }
-.rw-gate-msg.bot {
-  align-self: flex-start; border-bottom-left-radius: 4px; color: var(--t-fg);
-  background: color-mix(in srgb, var(--t-fg) 10%, transparent);
-  border: 1px solid var(--t-border);
+/* a soft diagonal reflection across the glass */
+.ph-glare {
+  position: absolute; inset: 11px 10px; border-radius: 32px; pointer-events: none;
+  background: linear-gradient(128deg, rgba(255, 255, 255, .09) 0%, rgba(255, 255, 255, .03) 26%, transparent 46%);
 }
-.rw-gate-pre {
-  margin-top: 5px; padding: 6px 8px; border-radius: 6px; color: var(--t-muted);
-  background: color-mix(in srgb, var(--t-bg) 70%, transparent);
-  overflow-x: auto;
+
+/* iOS status bar */
+.ph-sys {
+  flex: none; position: relative;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 30px; padding: 0 15px 0 18px;
+  background: var(--ph-chrome);
+  font-size: 10.5px; font-weight: 600; letter-spacing: .1px;
 }
-.rw-gate-shot {
-  margin-top: 6px; padding: 8px; border-radius: 8px;
-  border: 1px solid var(--t-border); background: var(--t-bg);
+.ph-island {
+  position: absolute; left: 50%; top: 5px; transform: translateX(-50%);
+  width: 68px; height: 20px; border-radius: 999px; background: #000;
+  display: flex; align-items: center; justify-content: flex-end; padding-right: 7px;
 }
-.rw-gate-shotline { color: var(--t-muted); line-height: 1.4; white-space: pre; }
+.ph-cam {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: radial-gradient(circle at 34% 32%, #2C3E52 0%, #0B1016 62%);
+  box-shadow: inset 0 0 0 .5px rgba(120, 170, 220, .35);
+}
+.ph-sys-time { flex: none; }
+.ph-sys-ic { display: flex; align-items: center; gap: 5px; }
+.ph-sig { display: flex; align-items: flex-end; gap: 1.5px; height: 9px; }
+.ph-sig i { width: 2.5px; border-radius: .5px; background: var(--ph-text); }
+.ph-sig i:nth-child(1) { height: 3.5px; }
+.ph-sig i:nth-child(2) { height: 5.5px; }
+.ph-sig i:nth-child(3) { height: 7.5px; }
+.ph-sig i:nth-child(4) { height: 9px; }
+.ph-wifi { fill: var(--ph-text); }
+.ph-batt {
+  position: relative; width: 20px; height: 10px;
+  border: 1px solid rgba(242, 245, 248, .5); border-radius: 3px; padding: 1.2px;
+}
+.ph-batt::after {
+  content: ""; position: absolute; right: -3px; top: 3px;
+  width: 1.6px; height: 4px; border-radius: 0 1px 1px 0;
+  background: rgba(242, 245, 248, .5);
+}
+.ph-batt i { display: block; width: 72%; height: 100%; border-radius: 1.5px; background: var(--ph-text); }
+
+/* chat header */
+.ph-head {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 7px 11px 8px; background: var(--ph-chrome);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, .35);
+}
+.ph-back { fill: var(--ph-blue); flex: none; margin-left: -3px; }
+.ph-avatar {
+  width: 29px; height: 29px; flex: none; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(160deg, #55C2F5, var(--ph-blue) 45%, #1E88C7);
+  color: #fff; font-weight: 700; font-size: 12px;
+  box-shadow: inset 0 -1px 3px rgba(0, 0, 0, .22);
+}
+.ph-who { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
+.ph-name {
+  font-weight: 600; font-size: 12px; letter-spacing: .1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ph-status { color: var(--ph-dim); font-size: 10px; transition: color .2s ease; }
+.ph-status.live { color: var(--ph-blue); }
+.ph-menu { flex: none; display: flex; flex-direction: column; gap: 2.5px; padding: 3px; }
+.ph-menu i { width: 3px; height: 3px; border-radius: 50%; background: var(--ph-dim); }
+
+/* the conversation */
+.ph-feed {
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+  padding: 9px 9px 11px; display: flex; flex-direction: column; gap: 7px;
+  /* Telegram's dark wallpaper: a deep blue ground under a faint dot weave */
+  background-color: var(--ph-ground);
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, .045) 1px, transparent 1.2px),
+    radial-gradient(115% 70% at 15% 0%, rgba(42, 171, 238, .13), transparent 62%),
+    radial-gradient(115% 70% at 92% 100%, rgba(93, 122, 255, .10), transparent 62%);
+  background-size: 15px 15px, 100% 100%, 100% 100%;
+  scrollbar-width: none;
+}
+.ph-feed::-webkit-scrollbar { width: 0; }
+
+.ph-day {
+  align-self: center; margin-bottom: 2px;
+  padding: 2px 9px; border-radius: 999px;
+  background: rgba(0, 0, 0, .32); color: #C6D2DC;
+  font-size: 9.5px; font-weight: 500;
+}
+
+.ph-msg {
+  position: relative; max-width: 84%;
+  padding: 5px 9px 4px; border-radius: 13px;
+  word-break: break-word;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+  animation: ph-pop .3s cubic-bezier(.2, .8, .3, 1) both;
+}
+@keyframes ph-pop { from { opacity: 0; transform: translateY(7px) scale(.95); } }
+.ph-msg.me  { align-self: flex-end;   background: var(--ph-out); border-bottom-right-radius: 5px; }
+.ph-msg.bot { align-self: flex-start; background: var(--ph-in);  border-bottom-left-radius: 5px; }
+/* the little tail every Telegram bubble has */
+.ph-msg::after {
+  content: ""; position: absolute; bottom: 0; width: 9px; height: 11px;
+}
+.ph-msg.me::after {
+  right: -5px;
+  background: radial-gradient(circle at 100% 0, transparent 9px, var(--ph-out) 9.5px);
+}
+.ph-msg.bot::after {
+  left: -5px;
+  background: radial-gradient(circle at 0 0, transparent 9px, var(--ph-in) 9.5px);
+}
+.ph-body { white-space: pre-wrap; }
+.ph-meta {
+  display: flex; align-items: center; justify-content: flex-end; gap: 3px;
+  margin-top: 1px; font-size: 9px; color: rgba(255, 255, 255, .45);
+}
+.ph-msg.me .ph-meta { color: #A5C6E3; }
+.ph-tick { color: #62BCF3; letter-spacing: -2.5px; margin-right: 1px; }
+
+.ph-pre {
+  margin-top: 5px; padding: 6px 7px; border-radius: 7px;
+  font-family: Menlo, "SF Mono", Consolas, monospace; font-size: 9.5px; line-height: 1.5;
+  white-space: pre; overflow-x: auto; color: #CBD8E2;
+  background: rgba(0, 0, 0, .32); border-left: 2px solid var(--ph-blue);
+  scrollbar-width: none;
+}
+.ph-pre::-webkit-scrollbar { height: 0; }
+
+/* a bot's inline keyboard */
+.ph-keys { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; }
+.ph-key {
+  flex: 1 1 auto; text-align: center;
+  padding: 4px 7px; border-radius: 6px;
+  background: rgba(255, 255, 255, .09); color: #BBD9F0;
+  font-family: Menlo, "SF Mono", Consolas, monospace; font-size: 9.5px;
+}
+
+/* `/shot` — a real, scaled clone of the live pane */
+.ph-msg.photo { max-width: 92%; padding: 4px 4px 3px; }
+.ph-shot { border-radius: 9px; overflow: hidden; background: #0B0E14; }
+.ph-shot-bar {
+  display: flex; align-items: center; gap: 3.5px;
+  padding: 4px 6px; background: #161A23;
+}
+.ph-shot-bar i { width: 5px; height: 5px; border-radius: 50%; background: #38404E; }
+.ph-shot-name { margin-left: 3px; font-size: 8px; color: #6C7482; }
+.ph-shot-frame { position: relative; width: 100%; overflow: hidden; background: var(--t-bg, #0B0E14); }
+.ph-shot-stage {
+  transform-origin: top left;
+  font-family: Menlo, "SF Mono", Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 12.5px; line-height: 1.35; text-align: left;
+  background: var(--t-bg); color: var(--t-fg);
+}
+.ph-msg.photo .ph-body { padding: 4px 5px 0; font-size: 10px; color: #C6D2DC; }
+.ph-msg.photo .ph-meta { padding: 0 5px 1px; }
+
+/* the composer */
+.ph-bar {
+  flex: none; display: flex; align-items: center; gap: 7px;
+  padding: 7px 9px 8px; background: var(--ph-chrome);
+  box-shadow: 0 -1px 0 rgba(0, 0, 0, .3);
+}
+.ph-field {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px;
+  padding: 5px 9px; border-radius: 16px; background: #242F3D;
+}
+.ph-ic { fill: var(--ph-dim); flex: none; }
+.ph-input {
+  flex: 1 1 auto; min-width: 0; color: var(--ph-text);
+  white-space: nowrap; overflow: hidden; text-overflow: clip;
+}
+.ph-input.empty { color: var(--ph-dim); }
+.ph-caret {
+  display: inline-block; width: 1.5px; height: 12px; margin-left: 1px;
+  vertical-align: -2px; background: var(--ph-blue);
+  animation: ph-blink 1s step-end infinite;
+}
+@keyframes ph-blink { 50% { opacity: 0; } }
+.ph-action {
+  flex: none; width: 30px; height: 30px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 50%; background: transparent; cursor: default;
+  transition: background .2s ease, transform .2s ease;
+}
+.ph-action.send { background: var(--ph-blue); transform: scale(1.04); }
+.ph-action.send .ph-ic { fill: #fff; margin-left: 1px; }
+
+.ph-home {
+  flex: none; width: 92px; height: 4px; margin: 5px auto 6px;
+  border-radius: 999px; background: rgba(242, 245, 248, .82);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ph, .ph-msg { animation: none; }
+  .ph-caret { animation: none; }
+}
 
 /* the selection band — the real app's neutral 50% fg-over-bg blend */
 .t-sel { background: color-mix(in srgb, var(--t-fg) 50%, var(--t-bg)); border-radius: 2px; }
@@ -638,6 +839,12 @@ footer { padding: 34px 0 46px; color: var(--muted); font-size: 13.5px; border-to
   .cards { grid-template-columns: 1fr 1fr; }
   .facts { grid-template-columns: 1fr; }
 }
+/* below this the stage is too narrow for a phone beside the window, so it
+   stands underneath instead — the story still reads top to bottom. */
+@media (max-width: 860px) {
+  .stage-rig { flex-direction: column; gap: 22px; }
+  .stage-rig .stage-shadow { width: 100%; }
+}
 @media (max-width: 640px) {
   .nav-links { display: none; position: absolute; top: 62px; left: 0; right: 0;
     background: var(--paper); border-bottom: 1px solid var(--hair);
@@ -646,5 +853,6 @@ footer { padding: 34px 0 46px; color: var(--muted); font-size: 13.5px; border-to
   .nav-toggle { display: block; margin-left: auto; }
   .cards { grid-template-columns: 1fr; }
   .rw { height: 420px; font-size: 11.5px; }
+  .ph { height: 420px; }
   .rw[data-tabpos="left"] .rw-tabbar, .rw[data-tabpos="right"] .rw-tabbar { width: 120px; }
 }
