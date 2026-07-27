@@ -1,0 +1,13 @@
+name = "a dragged selection spans rows and joins them with newlines"
+tags = ["selection"]
+
+[[step]]
+feed_lines = ["alpha", "beta", "gamma"]
+
+[[step]]
+select = ["0", "0"]
+mode = "char"
+extend_to = ["4", "1"]
+
+[[step]]
+expect_selection = "alpha<LF>beta"

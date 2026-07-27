@@ -1,0 +1,17 @@
+name = "a line longer than the terminal wraps at the edge"
+tags = ["grid", "wrap"]
+
+[setup]
+cols = 10
+rows = 6
+
+[[step]]
+feed = "abcdefghijKLMNO"
+
+[[step]]
+expect_line = "abcdefghij"
+row = 0
+
+[[step]]
+expect_line = "KLMNO"
+row = 1

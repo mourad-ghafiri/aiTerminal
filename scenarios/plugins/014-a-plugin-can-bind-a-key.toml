@@ -1,0 +1,8 @@
+name = "a plugin can bind a key to a built-in action"
+tags = ["plugins", "keymap"]
+
+[[step]]
+plugin = ["name = \"splits\"", "[[keybinding]]", "key = \"cmd+shift+d\"", "action = \"split_down\""]
+
+[[step]]
+expect_keybindings = ["cmd+shift+d=split_down"]

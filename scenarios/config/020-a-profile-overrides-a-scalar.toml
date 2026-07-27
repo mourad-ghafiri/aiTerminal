@@ -1,0 +1,20 @@
+name = "a profile overrides the keys it sets and inherits the rest"
+tags = ["profiles", "overlay"]
+
+[[step]]
+config = ["[appearance]", "theme = \"midnight\"", "font_family = \"Menlo\"", "[behavior]", "scrollback = 5000"]
+
+[[step]]
+profile = ["[appearance]", "theme = \"sunset\""]
+
+[[step]]
+expect = "sunset"
+field = "theme"
+
+[[step]]
+expect = "Menlo"
+field = "font_family"
+
+[[step]]
+expect = "5000"
+field = "scrollback"

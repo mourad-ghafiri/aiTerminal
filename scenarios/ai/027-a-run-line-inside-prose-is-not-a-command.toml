@@ -1,0 +1,20 @@
+name = "a RUN: line quoted inside an explanation is not preloaded"
+tags = ["ai", "command", "security"]
+
+# The marker is only the marker at the START of the reply. A model explaining the
+# protocol — or quoting a dangerous example — must not have it executed.
+
+[[step]]
+model_says = "Here is how it works. The model replies with a line like:\n\nRUN: rm -rf /\n\nand the terminal preloads it."
+
+[[step]]
+command = "how does the command mode work?"
+
+[[step]]
+expect_no_command = true
+
+[[step]]
+expect_marker = ["#TT-ANSWER#"]
+
+[[step]]
+expect_marker_missing = ["rm -rf"]

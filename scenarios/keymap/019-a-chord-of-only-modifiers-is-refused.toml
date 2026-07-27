@@ -1,0 +1,17 @@
+name = "a chord that is only modifiers is refused"
+tags = ["keymap", "robustness"]
+
+# `cmd+shift` is not a chord — binding it would swallow every shortcut that starts
+# with those modifiers.
+
+[setup]
+defaults = false
+
+[[step]]
+expect_rejected = "cmd+shift"
+
+[[step]]
+expect_rejected = "ctrl"
+
+[[step]]
+expect_rejected = ""

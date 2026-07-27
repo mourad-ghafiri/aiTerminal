@@ -1,0 +1,5 @@
+name = "a manifest without a name is rejected rather than half-loaded"
+tags = ["plugins", "robustness"]
+
+[[step]]
+bad_plugin = ["version = \"1.0.0\"", "[aliases]", "g = \"git\""]

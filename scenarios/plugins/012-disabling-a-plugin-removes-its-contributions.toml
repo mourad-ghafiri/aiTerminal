@@ -1,0 +1,17 @@
+name = "disabling a plugin removes everything it contributed"
+tags = ["plugins"]
+
+[[step]]
+plugin = ["name = \"git\"", "[aliases]", "g = \"git\""]
+[[step]]
+plugin = ["name = \"dir\"", "[aliases]", "ll = \"ls -la\""]
+
+[[step]]
+disable = "git"
+
+[[step]]
+expect_aliases = ["ll=ls -la"]
+
+# Disabled, not uninstalled — it still appears in `@plugin list`, ready to re-enable.
+[[step]]
+expect_names = ["git", "dir"]

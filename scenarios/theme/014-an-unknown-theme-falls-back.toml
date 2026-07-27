@@ -1,0 +1,8 @@
+name = "asking for a theme that does not exist falls back rather than failing"
+tags = ["theme", "robustness"]
+
+[[step]]
+resolve = "no-such-theme"
+
+[[step]]
+expect_name = "Midnight"

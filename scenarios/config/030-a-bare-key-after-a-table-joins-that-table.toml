@@ -1,0 +1,21 @@
+name = "a bare key written after a table joins that table, not the section"
+tags = ["config", "footgun"]
+
+# This is the TOML rule that bit us: `[ai] memory = false` written BELOW an
+# `[[ai.model]]` block becomes a key of the model, and the setting silently does
+# nothing. The shipped file keeps every scalar above the model blocks for exactly
+# this reason.
+
+[[step]]
+config = ["[ai]", "[[ai.model]]", "id = \"m1\"", "memory = false"]
+
+[[step]]
+expect = "true"
+field = "ai_memory"
+
+[[step]]
+config = ["[ai]", "memory = false", "[[ai.model]]", "id = \"m1\""]
+
+[[step]]
+expect = "false"
+field = "ai_memory"

@@ -169,94 +169,39 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
     // carries the marker line); rendering is on when stderr is a TTY.
     if as_command {
         let started = std::time::Instant::now();
-        let mut spinner = Some(Spinner::start("thinking\u{2026}".into()));
         let (dim, r) = (muted(), reset());
-        let mut live = err_is_tty().then(|| LiveMarkdown::new(md_style(), md_width(), term_rows().saturating_sub(2)));
-        let mut head = String::new(); // undecided prefix while it could still be `RUN:`
-        let mut mode: Option<bool> = None; // None=undecided, Some(true)=command, Some(false)=answer
-        let mut command = String::new();
-        let mut raw = String::new(); // fallback when stderr isn't a TTY (no live renderer)
-        let (mut tin, mut tout) = (0u64, 0u64);
-        let up = |s: &str| s.trim_start().to_ascii_uppercase();
-        let answer = |text: &str, live: &mut Option<LiveMarkdown>, raw: &mut String| match live {
-            Some(l) => l.push(&mut std::io::stderr(), text),
-            None => raw.push_str(text),
+        let mut sink = TerminalSink::new(cfg.ai_show_reasoning);
+        let out = crate::ai::classify_command_reply(client.to_command(prompt, &ctx).into_iter(), &mut sink);
+        sink.quiet();
+        let (tin, tout) = (out.input_tokens as u64, out.output_tokens as u64);
+        let footer = |tin, tout| {
+            run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget)
         };
-        for ev in client.to_command(prompt, &ctx) {
-            match ev {
-                crate::ai::StreamEvent::Delta(s) => {
-                    if let Some(mut sp) = spinner.take() {
-                        sp.stop();
-                    }
-                    match mode {
-                        Some(true) => command.push_str(&s),
-                        Some(false) => answer(&s, &mut live, &mut raw),
-                        None => {
-                            head.push_str(&s);
-                            let h = up(&head);
-                            if h.len() < crate::ai::RUN_PREFIX.len() && crate::ai::RUN_PREFIX.starts_with(&h) {
-                                continue; // still might be `RUN:`
-                            }
-                            if h.starts_with(crate::ai::RUN_PREFIX) {
-                                mode = Some(true);
-                                command = head.trim_start()[crate::ai::RUN_PREFIX.len()..].to_string();
-                            } else {
-                                mode = Some(false);
-                                answer(&head, &mut live, &mut raw);
-                            }
-                            head.clear();
-                        }
-                    }
-                }
-                crate::ai::StreamEvent::Thinking(t) => {
-                    if cfg.ai_show_reasoning {
-                        if let Some(mut sp) = spinner.take() {
-                            sp.stop();
-                        }
-                        eprint!("{dim}{t}{r}");
-                    }
-                }
-                crate::ai::StreamEvent::Done { input_tokens, output_tokens, .. } => {
-                    tin = input_tokens as u64;
-                    tout = output_tokens as u64;
-                    break;
-                }
-                crate::ai::StreamEvent::Error(e) => {
-                    drop(spinner.take());
-                    println!("{}", error_comment(&format!("AI error: {e}")));
-                    return 0;
-                }
+
+        match out.reply {
+            crate::ai::CommandReply::Failed(e) => {
+                println!("{}", error_comment(&format!("AI error: {e}")));
+            }
+            crate::ai::CommandReply::Command(cmd) => {
+                eprintln!("{dim}{cmd}{r}");
+                eprintln!("{dim}{}{r}", footer(tin, tout));
+                let verdict = policy.check_command(&cmd);
+                println!("{}", command_marker(Some(&cmd), Some(verdict), &cfg.ai_command_mode, &cmd));
+                record_session_run(session.as_ref(), "@ai", prompt, &cmd);
+            }
+            crate::ai::CommandReply::Answer => {
+                sink.finish();
+                eprintln!();
+                eprintln!("{dim}{}{r}", footer(tin, tout));
+                println!("{ANSWER_MARK}");
+                record_session_run(session.as_ref(), "@ai", prompt, "answered");
+            }
+            // Nothing came back. Say so on the marker line — an empty answer would
+            // print nothing and preload nothing, which reads as the terminal ignoring you.
+            crate::ai::CommandReply::Empty => {
+                println!("{}", command_marker(None, None, &cfg.ai_command_mode, ""));
             }
         }
-        drop(spinner.take());
-        // A stream that ended before deciding (a short reply) — classify the buffered head now.
-        if mode.is_none() {
-            if up(&head).starts_with(crate::ai::RUN_PREFIX) {
-                mode = Some(true);
-                command = head.trim_start()[crate::ai::RUN_PREFIX.len()..].to_string();
-            } else {
-                mode = Some(false);
-                answer(&head, &mut live, &mut raw);
-            }
-        }
-        if mode == Some(true) {
-            let cmd = command.trim().lines().next().unwrap_or("").trim();
-            eprintln!("{dim}{cmd}{r}");
-            eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget));
-            let verdict = policy.check_command(cmd);
-            println!("{}", command_marker(Some(cmd), Some(verdict), &cfg.ai_command_mode, cmd));
-            record_session_run(session.as_ref(), "@ai", prompt, cmd);
-            return 0;
-        }
-        // Answer mode: finalize the live tail (or emit the raw buffer on a non-TTY).
-        match &mut live {
-            Some(l) => l.flush(&mut std::io::stderr()),
-            None => eprint!("{raw}"),
-        }
-        eprintln!();
-        eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget));
-        println!("{ANSWER_MARK}");
-        record_session_run(session.as_ref(), "@ai", prompt, "answered");
         return 0;
     }
 
@@ -416,12 +361,12 @@ const RUN_MARK: &str = "#TT-RUN# ";
 const EDIT_MARK: &str = "#TT-EDIT# ";
 const CONFIRM_MARK: &str = "#TT-CONFIRM# ";
 /// A prose answer was already streamed to stderr — the shell preloads nothing.
-const ANSWER_MARK: &str = "#TT-ANSWER#";
+pub(crate) const ANSWER_MARK: &str = "#TT-ANSWER#";
 
 /// The single line `@ai --command` prints for a suggested command + guard verdict.
 /// Pure (no I/O) so the dispatch policy is unit-testable: auto vs manual, the
 /// always-review confirm tier, a guard block, and a model refusal / empty answer.
-fn command_marker(cmd: Option<&str>, verdict: Option<crate::security::Verdict>, mode: &str, refusal: &str) -> String {
+pub(crate) fn command_marker(cmd: Option<&str>, verdict: Option<crate::security::Verdict>, mode: &str, refusal: &str) -> String {
     use crate::security::Verdict;
     match (cmd, verdict) {
         (Some(c), Some(Verdict::Allow)) => {
@@ -449,7 +394,7 @@ fn command_marker(cmd: Option<&str>, verdict: Option<crate::security::Verdict>, 
 
 /// A `#`-comment the shell shows but never runs — used so `@ai` failures (no key, a
 /// model/transport error) are VISIBLE instead of swallowed by the `2>/dev/null` capture.
-fn error_comment(msg: &str) -> String {
+pub(crate) fn error_comment(msg: &str) -> String {
     format!("# \u{26A0} {msg}")
 }
 
@@ -559,6 +504,65 @@ fn term_rows() -> usize {
 /// Markdown render options when writing to a TTY; `None` (raw text) when piped.
 fn markdown_opts(is_tty: bool) -> Option<(corelib::md::Style, usize)> {
     is_tty.then(|| (md_style(), md_width()))
+}
+
+/// Where `@ai --command` shows a streaming reply: live Markdown on a terminal, plain text
+/// when stderr is redirected.
+///
+/// It owns the spinner because stopping it is the same event as having something to show.
+/// Reasoning is dropped unless the user asked for it, and the spinner deliberately keeps
+/// animating through hidden reasoning — otherwise a long think looks like a hang.
+struct TerminalSink {
+    spinner: Option<Spinner>,
+    /// `None` when stderr is not a TTY; the raw buffer is emitted instead.
+    live: Option<LiveMarkdown>,
+    raw: String,
+    show_reasoning: bool,
+}
+
+impl TerminalSink {
+    fn new(show_reasoning: bool) -> Self {
+        TerminalSink {
+            spinner: Some(Spinner::start("thinking\u{2026}".into())),
+            live: err_is_tty().then(|| LiveMarkdown::new(md_style(), md_width(), term_rows().saturating_sub(2))),
+            raw: String::new(),
+            show_reasoning,
+        }
+    }
+
+    /// Nothing may be printed while the spinner owns the line.
+    fn quiet(&mut self) {
+        if let Some(mut sp) = self.spinner.take() {
+            sp.stop();
+        }
+    }
+
+    /// Flush the live tail once the answer is complete.
+    fn finish(&mut self) {
+        self.quiet();
+        match &mut self.live {
+            Some(l) => l.flush(&mut std::io::stderr()),
+            None => eprint!("{}", self.raw),
+        }
+    }
+}
+
+impl crate::ai::ReplySink for TerminalSink {
+    fn answer(&mut self, text: &str) {
+        self.quiet();
+        match &mut self.live {
+            Some(l) => l.push(&mut std::io::stderr(), text),
+            None => self.raw.push_str(text),
+        }
+    }
+
+    fn thinking(&mut self, text: &str) {
+        if !self.show_reasoning {
+            return;
+        }
+        self.quiet();
+        eprint!("{}{text}{}", muted(), reset());
+    }
 }
 
 /// A REALTIME Markdown renderer: completed blocks are committed once (they scroll away

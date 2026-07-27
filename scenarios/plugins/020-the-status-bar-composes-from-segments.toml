@@ -1,0 +1,16 @@
+name = "the status bar composes from each plugin's segments"
+tags = ["plugins", "status"]
+
+[[step]]
+plugin = ["name = \"git\"", "[[segment]]", "align = \"left\"", "template = \"⎇ {git.branch}\"", "when = \"git.branch\""]
+[[step]]
+plugin = ["name = \"clock\"", "[[segment]]", "align = \"right\"", "template = \"{time}\""]
+
+[[step]]
+vars = ["git.branch=main", "time=09:41"]
+
+[[step]]
+expect_status_left = ["⎇ main"]
+
+[[step]]
+expect_status_right = ["09:41"]

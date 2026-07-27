@@ -1,0 +1,17 @@
+name = "a trusted plugin contributes its shell snippet, per dialect"
+tags = ["plugins", "shell"]
+
+# A plugin ships one snippet per dialect; a zsh-only plugin contributes nothing to bash
+# rather than contributing something bash cannot parse.
+
+[[step]]
+plugin = ["name = \"prompt\""]
+zsh = "PROMPT='%~ '"
+
+[[step]]
+expect_snippets = ["prompt"]
+bash = false
+
+[[step]]
+expect_snippets = []
+bash = true

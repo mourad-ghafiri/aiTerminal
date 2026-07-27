@@ -1,0 +1,11 @@
+name = "the theme we ship by default is dark and complete"
+tags = ["theme"]
+
+[[step]]
+builtin = "midnight"
+
+[[step]]
+expect_name = "Midnight"
+
+[[step]]
+expect_dark = true

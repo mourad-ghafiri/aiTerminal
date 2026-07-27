@@ -1,0 +1,13 @@
+name = "a gate channel is read from its table name, so a new one needs no parser change"
+tags = ["config", "gate"]
+
+[[step]]
+config = ["[gates]", "enabled = true", "[gates.telegram]", "token = \"$TG\"", "allow = [7, \"9\"]"]
+
+[[step]]
+expect = "telegram"
+field = "gate_channels"
+
+[[step]]
+expect = "7,9"
+field = "gate_allow"

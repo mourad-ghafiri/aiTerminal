@@ -1,0 +1,14 @@
+name = "action names are forgiving about spacing and case"
+tags = ["keymap"]
+
+[[step]]
+expect_action_name = "split_down"
+action = "SplitDown"
+
+[[step]]
+expect_action_name = "Split Down"
+action = "SplitDown"
+
+[[step]]
+expect_action_name = "split-down"
+action = "SplitDown"

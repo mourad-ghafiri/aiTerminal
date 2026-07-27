@@ -1,0 +1,10 @@
+name = "a theme name becomes a predictable filename"
+tags = ["theme"]
+
+[[step]]
+expect_slug = "deep-purple"
+of = "Deep Purple"
+
+[[step]]
+expect_slug = "midnight"
+of = "Midnight"

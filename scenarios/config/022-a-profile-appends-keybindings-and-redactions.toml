@@ -1,0 +1,19 @@
+name = "a profile adds keybindings and redaction rules rather than replacing them"
+tags = ["profiles", "overlay"]
+
+# These are additive on purpose: a profile should be able to add a rule without
+# knowing, or repeating, every rule the global file already set.
+
+[[step]]
+config = ["[[keybinding]]", "key = \"cmd+1\"", "action = \"go_to_tab_1\"", "[[redact]]", "pattern = \"AKIA\\\\w+\""]
+
+[[step]]
+profile = ["[[keybinding]]", "key = \"cmd+2\"", "action = \"go_to_tab_2\"", "[[redact]]", "pattern = \"ghp_\\\\w+\""]
+
+[[step]]
+expect = "cmd+1=go_to_tab_1,cmd+2=go_to_tab_2"
+field = "keybindings"
+
+[[step]]
+expect = "AKIA\\w+,ghp_\\w+"
+field = "redactions"

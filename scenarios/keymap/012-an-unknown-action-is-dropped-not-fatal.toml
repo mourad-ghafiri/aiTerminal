@@ -1,0 +1,17 @@
+name = "a binding naming an action that no longer exists is dropped, not fatal"
+tags = ["keymap", "robustness"]
+
+# A config written for an older build must not stop the terminal from starting.
+
+[setup]
+defaults = false
+
+[[step]]
+bind = ["[[keybinding]]", "key = \"cmd+9\"", "action = \"summon_a_dragon\"", "[[keybinding]]", "key = \"cmd+8\"", "action = \"next_tab\""]
+
+[[step]]
+expect_unbound = "cmd+9"
+
+[[step]]
+expect_action = "cmd+8"
+action = "NextTab"

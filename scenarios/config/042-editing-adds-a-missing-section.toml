@@ -1,0 +1,11 @@
+name = "setting a value in a section that does not exist yet creates it"
+tags = ["config", "edit"]
+
+[[step]]
+edit = ["[appearance]", "theme = \"midnight\""]
+section = "behavior"
+key = "tab_bar"
+value = "\"left\""
+
+[[step]]
+expect_edited = ["[appearance]", "theme = \"midnight\"", "", "[behavior]", "tab_bar = \"left\""]

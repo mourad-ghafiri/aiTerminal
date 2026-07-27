@@ -1,0 +1,20 @@
+name = "a question gets a streamed answer"
+tags = ["ai"]
+
+# The model is scripted, encoded as the provider's real SSE wire format and decoded by
+# the real decoder — so this is the streaming path, with no network and no key.
+
+[[step]]
+model_says = "Rust is a systems language with no garbage collector."
+
+[[step]]
+ask = "what is rust?"
+
+[[step]]
+expect_answer = "Rust is a systems language with no garbage collector."
+
+[[step]]
+expect_input_tokens = 10
+
+[[step]]
+expect_output_tokens = 5

@@ -1,0 +1,12 @@
+name = "double-clicking selects the word under the pointer"
+tags = ["selection"]
+
+[[step]]
+feed = "cargo build --release"
+
+[[step]]
+select = ["8", "0"]
+mode = "word"
+
+[[step]]
+expect_selection = "build"

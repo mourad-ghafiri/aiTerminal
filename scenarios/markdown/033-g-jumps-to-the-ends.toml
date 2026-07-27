@@ -1,0 +1,20 @@
+name = "g and G jump to the top and the bottom"
+tags = ["pager"]
+
+[[step]]
+markdown = ["a", "", "b", "", "c", "", "d", "", "e", "", "f", "", "g"]
+
+[[step]]
+expect_preview_rows = 14
+
+[[step]]
+keys = ["G"]
+body_h = 4
+[[step]]
+expect_top = 10
+
+[[step]]
+keys = ["g"]
+body_h = 4
+[[step]]
+expect_top = 0

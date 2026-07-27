@@ -61,11 +61,11 @@ impl ShellKind {
 /// What a dialect assembles: the plugins' alias / abbr / completion data and the
 /// trusted plugins' shell snippets (`(plugin name, code)`). Theme colors are NOT
 /// inlined — they live in the shared, live-refreshed colors file.
-struct Integration {
-    aliases: Vec<(String, String)>,
-    abbrs: Vec<(String, String)>,
-    completions: Vec<CompletionSpec>,
-    snippets: Vec<(String, String)>,
+pub(crate) struct Integration {
+    pub(crate) aliases: Vec<(String, String)>,
+    pub(crate) abbrs: Vec<(String, String)>,
+    pub(crate) completions: Vec<CompletionSpec>,
+    pub(crate) snippets: Vec<(String, String)>,
 }
 
 /// Per-shell init strategy.
@@ -206,7 +206,7 @@ fn header() -> String {
 /// The integration body sourced from our rc: theme-color vars + the alias reverse-map
 /// (context for plugin snippets), the declarative aliases + abbreviations, then each
 /// enabled plugin's snippet (the features).
-fn zsh_integration(ctx: &Integration) -> String {
+pub(crate) fn zsh_integration(ctx: &Integration) -> String {
     let mut s = header();
     s.push_str(&colors_source_block());
     s.push_str("typeset -ga precmd_functions\n(( ${precmd_functions[(I)_tt_refresh_colors]} )) || precmd_functions+=(_tt_refresh_colors)\n");
@@ -227,7 +227,7 @@ fn zsh_integration(ctx: &Integration) -> String {
     s
 }
 
-fn bash_integration(ctx: &Integration) -> String {
+pub(crate) fn bash_integration(ctx: &Integration) -> String {
     let mut s = header();
     s.push_str(&colors_source_block());
     s.push_str("case \";${PROMPT_COMMAND};\" in *\";_tt_refresh_colors;\"*) ;; *) PROMPT_COMMAND=\"_tt_refresh_colors${PROMPT_COMMAND:+;$PROMPT_COMMAND}\" ;; esac\n");

@@ -1,0 +1,20 @@
+name = "space and b page down and up, keeping a line of overlap"
+tags = ["pager"]
+
+# A page is one line short of the screen, so you always see a line you already read —
+# the same thing `less` does, and the reason you never lose your place.
+
+[[step]]
+markdown = ["a", "", "b", "", "c", "", "d", "", "e", "", "f", "", "g", "", "h", "", "i", "", "j"]
+
+[[step]]
+keys = [" "]
+body_h = 5
+[[step]]
+expect_top = 4
+
+[[step]]
+keys = ["b"]
+body_h = 5
+[[step]]
+expect_top = 0

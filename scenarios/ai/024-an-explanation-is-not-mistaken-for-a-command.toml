@@ -1,0 +1,19 @@
+name = "an explanation is read as prose, not preloaded as a command"
+tags = ["ai", "command"]
+
+# Getting this wrong puts a sentence on the user's prompt as if it were a command.
+
+[[step]]
+model_says = "Running `git status` shows what changed. RUN: is not what I mean here."
+
+[[step]]
+command = "how do I see what changed?"
+
+[[step]]
+expect_no_command = true
+
+[[step]]
+expect_marker = ["#TT-ANSWER#"]
+
+[[step]]
+expect_answer_contains = ["Running `git status`"]

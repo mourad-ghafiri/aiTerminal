@@ -1,0 +1,23 @@
+name = "scrolling stops at the top and the bottom rather than running off"
+tags = ["pager"]
+
+# Landing past the end shows a blank screen, which reads as a crash.
+
+[[step]]
+markdown = ["a", "", "b", "", "c"]
+
+[[step]]
+expect_preview_rows = 6
+
+[[step]]
+keys = ["<ESC>[A", "<ESC>[A", "<ESC>[A"]
+body_h = 3
+[[step]]
+expect_top = 0
+
+# six rows in a three-row window: the last line you can reach is row 3
+[[step]]
+keys = ["<ESC>[B", "<ESC>[B", "<ESC>[B", "<ESC>[B", "<ESC>[B"]
+body_h = 3
+[[step]]
+expect_top = 3

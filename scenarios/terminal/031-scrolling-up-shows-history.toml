@@ -1,0 +1,23 @@
+name = "scrolling up shows history, and coming back shows the live edge"
+tags = ["scrollback"]
+
+[setup]
+cols = 20
+rows = 3
+scrollback = 50
+
+[[step]]
+feed_lines = ["one", "two", "three", "four", "five"]
+
+[[step]]
+# positive scrolls UP into history (the offset counts lines back from the live edge)
+scroll_view = 2
+
+[[step]]
+expect_view = ["two", "three", "four"]
+
+[[step]]
+scroll_to_bottom = true
+
+[[step]]
+expect_view = ["four", "five"]

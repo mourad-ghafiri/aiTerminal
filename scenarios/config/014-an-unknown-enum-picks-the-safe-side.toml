@@ -1,0 +1,16 @@
+name = "a typo in an enum takes the safe reading"
+tags = ["config", "robustness"]
+
+[[step]]
+config = ["[ai]", "mode = \"yolo\""]
+
+[[step]]
+expect = "manual"
+field = "ai_command_mode"
+
+[[step]]
+config = ["[gates]", "screenshot = \"jpeg\"", "plain_text = \"maybe\""]
+
+[[step]]
+expect = "document"
+field = "gates_screenshot"

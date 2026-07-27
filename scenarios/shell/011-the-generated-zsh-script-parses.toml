@@ -1,0 +1,15 @@
+name = "the generated zsh script actually parses"
+tags = ["shell", "robustness"]
+
+# A quoting slip here breaks every new pane, and no amount of substring matching would
+# catch it. `zsh -n` parses the file and exits without running a single command.
+
+[[step]]
+plugin = ["name = \"git\"", "[aliases]", "gst = \"git status\"", "quoted = \"echo 'it'\\''s fine'\""]
+
+[[step]]
+generate = "zsh"
+
+[[step]]
+expect_valid_syntax = true
+dialect = "zsh"

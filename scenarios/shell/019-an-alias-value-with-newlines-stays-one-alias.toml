@@ -1,0 +1,15 @@
+name = "an alias value containing a newline stays one alias"
+tags = ["shell", "robustness"]
+
+# A newline in the value is the classic way a single generated line becomes two — the
+# second of which is a bare command the shell would run.
+
+[[step]]
+plugin = ["name = \"multi\"", "[aliases]", "m = \"echo one\\necho two\""]
+
+[[step]]
+generate = "zsh"
+
+[[step]]
+expect_valid_syntax = true
+dialect = "zsh"

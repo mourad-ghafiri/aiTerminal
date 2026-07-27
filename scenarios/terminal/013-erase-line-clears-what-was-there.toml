@@ -1,0 +1,11 @@
+name = "erasing a line clears what was there, not just what is overwritten"
+tags = ["grid"]
+
+[[step]]
+feed = "a very long status message<CR>"
+
+[[step]]
+feed = "<ESC>[2Kdone"
+
+[[step]]
+expect_screen = ["done"]

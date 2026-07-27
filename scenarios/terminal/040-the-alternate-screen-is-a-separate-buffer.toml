@@ -1,0 +1,23 @@
+name = "a full-screen program gets its own buffer and gives yours back intact"
+tags = ["modes", "alt-screen"]
+
+[[step]]
+feed_lines = ["your shell session"]
+
+[[step]]
+feed = "<ESC>[?1049h<ESC>[Hvim is here"
+
+[[step]]
+expect_alt_screen = true
+
+[[step]]
+expect_screen = ["vim is here"]
+
+[[step]]
+feed = "<ESC>[?1049l"
+
+[[step]]
+expect_alt_screen = false
+
+[[step]]
+expect_screen = ["your shell session"]

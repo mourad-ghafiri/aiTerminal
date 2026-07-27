@@ -1,0 +1,14 @@
+name = "a program writing the clipboard is staged, never written directly"
+tags = ["osc", "security"]
+
+# The emulator stages it and the host performs the real write — so a scenario can
+# observe the intent without anything touching the system clipboard.
+
+[[step]]
+feed = "<ESC>]52;c;aGVsbG8=<BEL>"
+
+[[step]]
+expect_clipboard = "hello"
+
+[[step]]
+expect_clipboard = ""

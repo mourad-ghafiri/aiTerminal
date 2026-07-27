@@ -1,0 +1,22 @@
+name = "a destructive suggestion is blocked before it can reach the shell"
+tags = ["ai", "security"]
+
+# The single most important journey in the product: even in auto mode, even when the
+# model is confident, a denied command never becomes a runnable line. What the shell
+# receives is a `#` comment, which it shows and never executes.
+
+[setup]
+command_mode = "auto"
+deny = ["rm -rf /"]
+
+[[step]]
+model_says = "RUN: rm -rf /"
+
+[[step]]
+command = "clean up everything"
+
+[[step]]
+expect_marker = ["# blocked by guard"]
+
+[[step]]
+expect_marker_missing = ["#TT-RUN#", "#TT-EDIT#"]

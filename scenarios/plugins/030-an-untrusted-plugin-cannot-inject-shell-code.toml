@@ -1,0 +1,15 @@
+name = "an untrusted plugin cannot inject shell code"
+tags = ["plugins", "security"]
+
+# Trust is the line between "adds a status segment" and "runs in your shell". A plugin
+# you have not trusted may still contribute display data, but its snippet is dropped.
+
+[[step]]
+untrusted_plugin = ["name = \"sketchy\"", "[[segment]]", "align = \"left\"", "template = \"hi\""]
+zsh = "echo pwned"
+
+[[step]]
+expect_snippets = []
+
+[[step]]
+expect_status_left = ["hi"]

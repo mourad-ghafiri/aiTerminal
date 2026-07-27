@@ -1,0 +1,10 @@
+name = "punctuation keys can be bound by name or by glyph"
+tags = ["keymap"]
+
+[[step]]
+expect_parses = "cmd+minus"
+[[step]]
+expect_parses = "cmd+-"
+[[step]]
+expect_same_chord = "cmd+bracketleft"
+as = "cmd+["

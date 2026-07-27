@@ -1,0 +1,20 @@
+name = "the auto-run safe list is separate from the allow list"
+tags = ["guard"]
+
+# Auto mode runs ONLY what the safe list names. Being merely allowed is not enough.
+
+[setup]
+safe = ["^git status", "^ls\\b"]
+
+[[step]]
+expect_safe = true
+cmd = "git status --short"
+
+[[step]]
+expect_safe = false
+cmd = "git push"
+
+[[step]]
+check = "git push"
+[[step]]
+expect_verdict = "allow"

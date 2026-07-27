@@ -1,0 +1,20 @@
+name = "a failed command request is visible instead of silently doing nothing"
+tags = ["ai", "robustness"]
+
+# `@ai --command` discards stderr, so a failure that only went to stderr would look
+# like the terminal ignored you. It rides the stdout comment instead.
+
+[[step]]
+model_fails = "503 service unavailable"
+
+[[step]]
+command = "list the files"
+
+[[step]]
+expect_failed = ["503 service unavailable"]
+
+[[step]]
+expect_marker = ["#", "503 service unavailable"]
+
+[[step]]
+expect_marker_missing = ["#TT-RUN#", "#TT-EDIT#"]

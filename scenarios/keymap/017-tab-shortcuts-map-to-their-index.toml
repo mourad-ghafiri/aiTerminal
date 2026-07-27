@@ -1,0 +1,12 @@
+name = "go_to_tab_N maps to the tab a person would count to"
+tags = ["keymap"]
+
+# The names are 1-based because that is what the keycap says; the value is 0-based.
+
+[[step]]
+expect_action_name = "go_to_tab_1"
+action = "GoToTab(0)"
+
+[[step]]
+expect_action_name = "go_to_tab_9"
+action = "GoToTab(8)"

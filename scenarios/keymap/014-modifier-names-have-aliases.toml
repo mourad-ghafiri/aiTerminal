@@ -1,0 +1,14 @@
+name = "modifiers can be written the way you think of them"
+tags = ["keymap"]
+
+[[step]]
+expect_same_chord = "cmd+t"
+as = "super+t"
+
+[[step]]
+expect_same_chord = "alt+left"
+as = "opt+left"
+
+[[step]]
+expect_same_chord = "ctrl+a"
+as = "control+a"

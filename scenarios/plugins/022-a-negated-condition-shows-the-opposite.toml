@@ -1,0 +1,15 @@
+name = "a negated condition shows a segment only when the variable is empty"
+tags = ["plugins", "status"]
+
+[[step]]
+plugin = ["name = \"clean\"", "[[segment]]", "align = \"left\"", "template = \"clean\"", "when = \"!git.dirty\""]
+
+[[step]]
+vars = ["git.dirty="]
+[[step]]
+expect_status_left = ["clean"]
+
+[[step]]
+vars = ["git.dirty=1"]
+[[step]]
+expect_status_left = []

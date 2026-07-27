@@ -1,0 +1,9 @@
+name = "a binding in your config wins over the shipped default"
+tags = ["keymap"]
+
+[[step]]
+bind = ["[[keybinding]]", "key = \"cmd+t\"", "action = \"split_down\""]
+
+[[step]]
+expect_action = "cmd+t"
+action = "SplitDown"

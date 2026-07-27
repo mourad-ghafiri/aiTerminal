@@ -1,0 +1,8 @@
+name = "a block quote is visually set apart"
+tags = ["render"]
+
+[[step]]
+markdown = ["> a quoted remark"]
+
+[[step]]
+expect_contains = ["a quoted remark"]

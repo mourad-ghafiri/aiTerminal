@@ -1,0 +1,11 @@
+name = "a segment can print a literal brace"
+tags = ["plugins", "status"]
+
+[[step]]
+plugin = ["name = \"x\"", "[[segment]]", "align = \"left\"", "template = \"{{{host}}}\""]
+
+[[step]]
+vars = ["host=air"]
+
+[[step]]
+expect_status_left = ["{air}"]

@@ -1,0 +1,11 @@
+name = "deny outranks confirm"
+tags = ["guard", "security"]
+
+[setup]
+confirm = ["^sudo\\b"]
+deny = ["mkfs"]
+
+[[step]]
+check = "sudo mkfs.ext4 /dev/disk9"
+[[step]]
+expect_verdict = "deny"

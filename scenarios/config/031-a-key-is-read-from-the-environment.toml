@@ -1,0 +1,12 @@
+name = "an api key can be a reference instead of the secret itself"
+tags = ["config", "security", "ai"]
+
+# The value is kept verbatim here and resolved at request time, so rotating a key
+# never means editing a config file — and the file never holds the secret.
+
+[[step]]
+config = ["[[ai.model]]", "id = \"m\"", "api_key = \"$MY_PROVIDER_KEY\""]
+
+[[step]]
+expect = "$MY_PROVIDER_KEY"
+field = "ai_keys"

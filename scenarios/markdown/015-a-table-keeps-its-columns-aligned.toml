@@ -1,0 +1,14 @@
+name = "a table keeps its columns aligned"
+tags = ["render", "tables"]
+
+[setup]
+width = 60
+
+[[step]]
+markdown = ["| Key | Action |", "| --- | --- |", "| q | quit |", "| G | bottom |"]
+
+[[step]]
+expect_contains = ["Key", "Action", "quit", "bottom"]
+
+[[step]]
+expect_width_at_most = 60

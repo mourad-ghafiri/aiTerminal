@@ -1,0 +1,14 @@
+name = "in auto mode an allowed command runs without a keystroke"
+tags = ["ai", "command"]
+
+[setup]
+command_mode = "auto"
+
+[[step]]
+model_says = "RUN: ls -la"
+
+[[step]]
+command = "list the files"
+
+[[step]]
+expect_marker = ["#TT-RUN# ls -la"]

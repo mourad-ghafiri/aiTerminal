@@ -1,0 +1,17 @@
+name = "a program can hide the cursor while it repaints"
+tags = ["modes", "cursor"]
+
+[[step]]
+expect_cursor_visible = true
+
+[[step]]
+feed = "<ESC>[?25l"
+
+[[step]]
+expect_cursor_visible = false
+
+[[step]]
+feed = "<ESC>[?25h"
+
+[[step]]
+expect_cursor_visible = true

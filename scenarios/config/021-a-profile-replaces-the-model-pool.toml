@@ -1,0 +1,19 @@
+name = "a profile that declares a model replaces the whole pool"
+tags = ["profiles", "overlay", "ai"]
+
+# Merging pools would silently keep sending traffic to a model the profile meant to
+# stop using — and paying for it.
+
+[[step]]
+config = ["[[ai.model]]", "id = \"big-expensive\"", "weight = 90", "[[ai.model]]", "id = \"cheap\"", "weight = 10"]
+
+[[step]]
+expect = "big-expensive,cheap"
+field = "ai_models"
+
+[[step]]
+profile = ["[[ai.model]]", "id = \"local-only\""]
+
+[[step]]
+expect = "local-only"
+field = "ai_models"

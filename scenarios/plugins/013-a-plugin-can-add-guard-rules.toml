@@ -1,0 +1,14 @@
+name = "a plugin can add command-guard and redaction rules"
+tags = ["plugins", "security"]
+
+# This is how the shipped defaults arrive: the guard and the redactor are plugins,
+# so you can read, edit or remove them.
+
+[[step]]
+plugin = ["name = \"command-guard\"", "[[deny_command]]", "pattern = \"rm -rf /\"", "[[redact]]", "pattern = \"AKIA\\\\w+\""]
+
+[[step]]
+expect_denied = ["rm -rf /"]
+
+[[step]]
+expect_redactions = ["AKIA\\w+"]

@@ -1,0 +1,23 @@
+name = "one sequence can turn on several modes at once"
+tags = ["modes"]
+
+# `ESC[?1000;1002;1006h` is what ratatui and bubbletea send. Reading only the first
+# parameter drops the SGR half of the mouse handshake.
+
+[[step]]
+feed = "<ESC>[?1000;1002;1006h"
+
+[[step]]
+expect_modes = ["mouse", "mouse_sgr"]
+
+[[step]]
+feed = "<ESC>[?2004h<ESC>[?1h"
+
+[[step]]
+expect_modes = ["mouse", "mouse_sgr", "bracketed", "app_cursor"]
+
+[[step]]
+feed = "<ESC>[?1000l<ESC>[?1006l<ESC>[?2004l<ESC>[?1l"
+
+[[step]]
+expect_modes = []

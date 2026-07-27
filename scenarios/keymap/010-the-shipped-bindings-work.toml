@@ -1,0 +1,10 @@
+name = "the bindings we ship resolve to real actions"
+tags = ["keymap"]
+
+[[step]]
+expect_action = "cmd+t"
+action = "NewTab"
+
+[[step]]
+expect_action = "cmd+d"
+action = "SplitRight"

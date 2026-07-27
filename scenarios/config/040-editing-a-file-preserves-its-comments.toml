@@ -1,0 +1,14 @@
+name = "changing one setting preserves every comment around it"
+tags = ["config", "edit"]
+
+# There is no serializer — a written config would lose the documentation that makes
+# the file readable. Edits are line-surgical instead.
+
+[[step]]
+edit = ["# The theme collection", "[appearance]", "theme = \"midnight\"  # the default", "font_size = 13"]
+section = "appearance"
+key = "theme"
+value = "\"nebula\""
+
+[[step]]
+expect_edited = ["# The theme collection", "[appearance]", "theme = \"nebula\"", "font_size = 13"]

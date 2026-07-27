@@ -1,0 +1,8 @@
+name = "a number binding works on a layout where the digit needs shift"
+tags = ["keymap", "i18n"]
+
+# On AZERTY, typing 1 sends shift+&. A binding on cmd+1 must still fire.
+
+[[step]]
+expect_same_chord = "cmd+1"
+as = "cmd+shift+1"

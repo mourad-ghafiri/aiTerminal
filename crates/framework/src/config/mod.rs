@@ -636,7 +636,7 @@ impl Config {
     /// profile declares overrides the global. A profile that declares any `[[ai.model]]`
     /// REPLACES the inherited pool (not merged); scalars/maps override in place; the
     /// `keybinding`/`redact` lists append (the keymap is "later wins", redaction is additive).
-    fn apply_toml(&mut self, text: &str) {
+    pub(crate) fn apply_toml(&mut self, text: &str) {
         // A syntax error collapses the WHOLE document to empty, silently reverting every
         // setting to its default — warn so the user learns their config wasn't applied
         // (rather than mysteriously losing all customization to one stray bracket).

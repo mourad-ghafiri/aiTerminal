@@ -1,0 +1,11 @@
+name = "each reserved diagram row knows where it sits in the diagram"
+tags = ["preview", "diagrams"]
+
+# Scrolling into the middle of a diagram has to draw the middle of it, so every
+# reserved row carries its own offset.
+
+[[step]]
+markdown = ["```mermaid", "flowchart LR", "  A-->B", "```"]
+
+[[step]]
+expect_preview = ["<diagram 1/4>", "<diagram 2/4>", "<diagram 3/4>", "<diagram 4/4>"]

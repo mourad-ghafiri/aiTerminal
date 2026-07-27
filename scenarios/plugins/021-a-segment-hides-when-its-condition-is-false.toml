@@ -1,0 +1,19 @@
+name = "a segment hides when its condition is not met"
+tags = ["plugins", "status"]
+
+# Outside a repository the git segment must vanish, not render an empty box.
+
+[[step]]
+plugin = ["name = \"git\"", "[[segment]]", "align = \"left\"", "template = \"⎇ {git.branch}\"", "when = \"git.branch\""]
+
+[[step]]
+vars = ["git.branch="]
+
+[[step]]
+expect_status_left = []
+
+[[step]]
+vars = ["git.branch=main"]
+
+[[step]]
+expect_status_left = ["⎇ main"]

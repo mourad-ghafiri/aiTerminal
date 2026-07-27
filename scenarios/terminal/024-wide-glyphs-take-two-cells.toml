@@ -1,0 +1,15 @@
+name = "a double-width glyph takes two cells but reads as one character"
+tags = ["style", "unicode"]
+
+# The spacer half carries a blank. Any reader that forgets to skip it pads every CJK
+# character with a phantom space.
+
+[[step]]
+feed = "日本語 ok"
+
+[[step]]
+expect_screen = ["日本語 ok"]
+
+[[step]]
+# 3 double-width glyphs (6 cells) + a space + "ok" = 9
+expect_cursor = ["9", "0"]

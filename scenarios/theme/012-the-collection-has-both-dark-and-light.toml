@@ -1,0 +1,10 @@
+name = "the bundled collection is large and includes light themes"
+tags = ["theme"]
+
+[[step]]
+expect_collection_at_least = 15
+
+[[step]]
+builtin = "starlight"
+[[step]]
+expect_dark = false

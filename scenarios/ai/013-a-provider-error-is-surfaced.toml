@@ -1,0 +1,11 @@
+name = "a provider error is surfaced, not swallowed"
+tags = ["ai", "robustness"]
+
+[[step]]
+model_fails = "401 invalid api key"
+
+[[step]]
+ask = "hello"
+
+[[step]]
+expect_failed = ["401 invalid api key"]

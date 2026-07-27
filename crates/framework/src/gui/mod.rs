@@ -6,7 +6,7 @@
 // The GUI front-end is split across sibling submodules; they reach this module's
 // items through `use super::*`, so the shared imports, types, constants, and
 // helper fns are `pub(crate)`.
-mod action;
+pub(crate) mod action;
 mod boot;
 mod focus;
 mod frame;

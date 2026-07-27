@@ -161,14 +161,14 @@ fn char_at_display(s: &str, target: usize) -> usize {
 
 /// One row of the rendered preview: a styled text line, or one row-slice of a diagram (the app
 /// reserves `rows` rows and draws the diagram natively over them).
-enum PRow {
+pub(crate) enum PRow {
     Text(String),
     Diagram { source: String, rows: usize, offset: usize },
 }
 
 /// Render the whole document to preview rows at `width`, splitting diagrams out so they can be
 /// drawn natively and scrolled by exact row.
-fn build_preview(text: &str, width: usize, style: corelib::md::Style) -> Vec<PRow> {
+pub(crate) fn build_preview(text: &str, width: usize, style: corelib::md::Style) -> Vec<PRow> {
     let mut sr = corelib::md::StreamRenderer::new(style, width.max(4), &[DIAGRAM_LANG]);
     let mut rows = Vec::new();
     let take = |chunks: Vec<corelib::md::Chunk>, rows: &mut Vec<PRow>| {
@@ -271,7 +271,7 @@ fn hslice_ansi(s: &str, left: usize, width: usize) -> String {
 // ─────────────────────────────── input parsing ───────────────────────────────
 
 #[derive(Debug, PartialEq)]
-enum Key {
+pub(crate) enum Key {
     Char(char),
     Enter,
     Backspace,
@@ -293,7 +293,7 @@ enum Key {
 
 /// Parse the next key from the front of `buf`, returning it and how many bytes it consumed, or
 /// `None` if the buffer holds only an incomplete sequence (read more, then retry).
-fn parse_key(buf: &[u8]) -> Option<(Key, usize)> {
+pub(crate) fn parse_key(buf: &[u8]) -> Option<(Key, usize)> {
     let b = *buf.first()?;
     match b {
         0x1b => {
@@ -852,19 +852,19 @@ pub(crate) fn preview_height(text: &str, width: usize, style: corelib::md::Style
 /// A read-only full-screen pager for `@md render` on long files: the rendered Markdown fills the
 /// width, scrolls / paginates by keyboard + mouse, and — because it re-renders at the current
 /// `terminal_size()` every frame — a resize reflows the whole document (diagrams included).
-struct Pager {
+pub(crate) struct Pager {
     path: String,
-    top: usize,
-    left: usize,
-    quit: bool,
+    pub(crate) top: usize,
+    pub(crate) left: usize,
+    pub(crate) quit: bool,
 }
 
 impl Pager {
-    fn new(path: &str) -> Self {
+    pub(crate) fn new(path: &str) -> Self {
         Pager { path: path.to_string(), top: 0, left: 0, quit: false }
     }
 
-    fn on_key(&mut self, key: Key, body_h: usize, len: usize) {
+    pub(crate) fn on_key(&mut self, key: Key, body_h: usize, len: usize) {
         let page = body_h.saturating_sub(1).max(1);
         let max_top = len.saturating_sub(body_h);
         match key {

@@ -1,0 +1,26 @@
+name = "an agent stops at its step limit"
+tags = ["ai", "agent", "robustness"]
+
+# Bounded autonomy: the agent gets N tool calls, not an open-ended loop. The calls
+# differ each time, so the stall breaker does not fire — only the budget stops it.
+
+[setup]
+max_steps = 3
+
+[[step]]
+tool = "fs.read"
+
+[[step]]
+tool_returns = ["fs.read=..."]
+
+[[step]]
+model_says_in_turn = ["@tool fs.read {\"path\":\"a\"}", "@tool fs.read {\"path\":\"b\"}", "@tool fs.read {\"path\":\"c\"}", "@tool fs.read {\"path\":\"d\"}"]
+
+[[step]]
+agent = "read everything"
+
+[[step]]
+expect_outcome = "step_limit"
+
+[[step]]
+expect_tool_calls = ["fs.read {\"path\":\"a\"}", "fs.read {\"path\":\"b\"}", "fs.read {\"path\":\"c\"}"]

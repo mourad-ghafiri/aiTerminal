@@ -1,0 +1,11 @@
+name = "a diagram arriving in pieces is emitted once, whole"
+tags = ["stream", "diagrams"]
+
+[[step]]
+stream = ["```mermaid<LF>flowchart LR<LF>", "  A-->B<LF>```<LF>"]
+
+[[step]]
+expect_diagrams = ["flowchart LR<LF>  A-->B"]
+
+[[step]]
+expect_diagram_rows = 4

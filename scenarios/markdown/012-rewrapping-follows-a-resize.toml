@@ -1,0 +1,15 @@
+name = "changing the width rewraps the document"
+tags = ["render", "wrap"]
+
+[setup]
+width = 20
+
+[[step]]
+markdown = ["one two three four five six seven eight nine ten"]
+[[step]]
+expect_width_at_most = 20
+
+[[step]]
+width = 60
+[[step]]
+expect_width_at_most = 60

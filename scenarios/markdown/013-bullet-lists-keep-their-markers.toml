@@ -1,0 +1,8 @@
+name = "bullet and numbered lists keep their markers"
+tags = ["render", "lists"]
+
+[[step]]
+markdown = ["- cut the branch", "- run the suite", "", "1. first", "2. second"]
+
+[[step]]
+expect_contains = ["cut the branch", "run the suite", "first", "second"]

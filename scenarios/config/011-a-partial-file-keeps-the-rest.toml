@@ -1,0 +1,13 @@
+name = "a file that sets one key leaves everything else alone"
+tags = ["config"]
+
+[[step]]
+config = ["[appearance]", "theme = \"nebula\""]
+
+[[step]]
+expect = "nebula"
+field = "theme"
+
+[[step]]
+expect = "Menlo"
+field = "font_family"

@@ -1,0 +1,14 @@
+name = "a flow runs its steps in order and returns the last answer"
+tags = ["ai", "flow"]
+
+[[step]]
+model_says_in_turn = ["A plan.", "The code.", "The review."]
+
+[[step]]
+flow = ["plan: design it", "build: write it", "review: check it"]
+
+[[step]]
+expect_step_answers = ["plan=A plan.", "build=The code.", "review=The review."]
+
+[[step]]
+expect_answer = "The review."

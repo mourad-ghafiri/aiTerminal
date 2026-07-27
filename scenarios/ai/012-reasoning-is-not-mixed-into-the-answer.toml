@@ -1,0 +1,18 @@
+name = "a model's reasoning is kept out of the answer"
+tags = ["ai"]
+
+# Extended-thinking models stream both. Concatenating them would put the model's
+# private scratchpad into a piped answer.
+
+[[step]]
+model_thinks = "the user probably means the language, not the game"
+then = "Rust is a systems language."
+
+[[step]]
+ask = "what is rust?"
+
+[[step]]
+expect_answer = "Rust is a systems language."
+
+[[step]]
+expect_thinking = "the user probably means the language, not the game"

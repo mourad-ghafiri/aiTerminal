@@ -1,0 +1,15 @@
+name = "a theme written to a file and read back is the same theme"
+tags = ["theme"]
+
+# `@theme export` writes one; editing and reloading it must not drift.
+
+[[step]]
+builtin = "sunset"
+[[step]]
+serialize = true
+[[step]]
+reload = true
+[[step]]
+expect_name = "Sunset"
+[[step]]
+expect_round_trip = true

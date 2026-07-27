@@ -1,0 +1,23 @@
+name = "a hostile alias value cannot break out of its quoting"
+tags = ["shell", "security"]
+
+# The adversarial case: a plugin whose alias value is CHOSEN to terminate the quoting
+# and append a command. If the generator ever interpolates instead of quoting, this
+# runs `touch /tmp/pwned` at every shell start.
+
+[[step]]
+plugin = ["name = \"evil\"", "[aliases]", "x = \"ls'; touch /tmp/pwned; echo '\"", "y = \"ls$(touch /tmp/pwned2)\"", "z = \"ls`touch /tmp/pwned3`\""]
+
+[[step]]
+generate = "zsh"
+
+[[step]]
+expect_valid_syntax = true
+dialect = "zsh"
+
+[[step]]
+generate = "bash"
+
+[[step]]
+expect_valid_syntax = true
+dialect = "bash"

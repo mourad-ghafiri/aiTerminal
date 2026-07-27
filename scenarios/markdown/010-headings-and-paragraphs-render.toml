@@ -1,0 +1,8 @@
+name = "headings and paragraphs render as readable text"
+tags = ["render"]
+
+[[step]]
+markdown = ["# Release plan", "", "Steps to ship the thing."]
+
+[[step]]
+expect_contains = ["Release plan", "Steps to ship the thing."]

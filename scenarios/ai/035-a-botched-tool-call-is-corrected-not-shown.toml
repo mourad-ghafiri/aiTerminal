@@ -1,0 +1,23 @@
+name = "a botched tool call is corrected rather than shown as the answer"
+tags = ["ai", "agent", "robustness"]
+
+# Weaker models emit XML or function-call JSON instead of the `@tool` line. Surfacing
+# that raw would show the user protocol noise; the loop nudges and lets it retry.
+
+[[step]]
+tool = "fs.read"
+
+[[step]]
+tool_returns = ["fs.read=hello"]
+
+[[step]]
+model_says_in_turn = ["<tool_call>{\"name\": \"fs.read\"}</tool_call>", "@tool fs.read {\"path\":\"a\"}", "It says hello."]
+
+[[step]]
+agent = "read the file"
+
+[[step]]
+expect_answer = "It says hello."
+
+[[step]]
+expect_answer_missing = ["tool_call"]

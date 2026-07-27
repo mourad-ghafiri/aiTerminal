@@ -1,0 +1,24 @@
+name = "an agent uses a tool and then answers"
+tags = ["ai", "agent"]
+
+[[step]]
+tool = "fs.read"
+describe = "read a file"
+
+[[step]]
+tool_returns = ["fs.read=fn main() {}"]
+
+[[step]]
+model_says_in_turn = ["@tool fs.read {\"path\":\"src/main.rs\"}", "It is an empty main function."]
+
+[[step]]
+agent = "what is in src/main.rs?"
+
+[[step]]
+expect_tool_calls = ["fs.read {\"path\":\"src/main.rs\"}"]
+
+[[step]]
+expect_answer = "It is an empty main function."
+
+[[step]]
+expect_outcome = "completed"

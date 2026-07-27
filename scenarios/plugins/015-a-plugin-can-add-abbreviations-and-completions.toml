@@ -1,0 +1,13 @@
+name = "a plugin can add abbreviations and completions"
+tags = ["plugins"]
+
+# An abbreviation expands as you type (`cb` → `cargo build`); an alias does not.
+
+[[step]]
+plugin = ["name = \"cargo\"", "[[abbr]]", "trigger = \"cb\"", "expansion = \"cargo build\"", "[[completion]]", "command = \"cargo\"", "subcommands = [\"build\", \"test\"]", "flags = [\"--release\"]"]
+
+[[step]]
+expect_abbreviations = ["cb=cargo build"]
+
+[[step]]
+expect_completions = ["cargo"]

@@ -1,0 +1,17 @@
+name = "a rule scoped to one destination does not fire in the other"
+tags = ["redaction"]
+
+[setup]
+redact_ai = ["SECRET-[A-Z]+"]
+
+[[step]]
+redact = "token SECRET-ABC"
+scope = "ai"
+[[step]]
+expect_not_text = ["SECRET-ABC"]
+
+[[step]]
+redact = "token SECRET-ABC"
+scope = "terminal"
+[[step]]
+expect_kept = ["SECRET-ABC"]

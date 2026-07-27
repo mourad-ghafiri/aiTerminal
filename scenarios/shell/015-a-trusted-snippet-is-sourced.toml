@@ -1,0 +1,12 @@
+name = "a trusted plugin's snippet is sourced into the shell"
+tags = ["shell"]
+
+[[step]]
+plugin = ["name = \"autosuggest\""]
+zsh = "TT_AUTOSUGGEST=1"
+
+[[step]]
+generate = "zsh"
+
+[[step]]
+expect_contains = ["TT_AUTOSUGGEST=1"]

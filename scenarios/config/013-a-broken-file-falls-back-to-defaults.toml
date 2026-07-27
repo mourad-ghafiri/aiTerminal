@@ -1,0 +1,8 @@
+name = "a file with a syntax error falls back to defaults instead of failing to start"
+tags = ["config", "robustness"]
+
+[[step]]
+config = ["[appearance", "theme = \"nebula\""]
+
+[[step]]
+expect_defaults = true

@@ -19,6 +19,7 @@ mod model;
 mod orchestrate;
 pub mod pool;
 pub mod provider;
+mod reply;
 mod request;
 pub mod session;
 mod setup;
@@ -35,6 +36,7 @@ pub use orchestrate::{run_orchestration, Orchestration, OrchestrationStep, StepR
 pub use memory::{MemoryEntry, MemoryService};
 pub use session::Session;
 pub use pool::{ModelOverrides, ModelPool, PoolEntry, Strategy};
+pub use reply::{classify_command_reply, Classified, CommandReply, ReplySink};
 pub use request::{command_request, qa_request, ChatRequest, ImageData, Message, Role, RUN_PREFIX};
 pub use setup::{setup_hint, setup_hint_short};
 pub use stream::StreamEvent;

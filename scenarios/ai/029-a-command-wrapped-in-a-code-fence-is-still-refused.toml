@@ -1,0 +1,17 @@
+name = "a command wrapped in a code fence is read as prose"
+tags = ["ai", "command"]
+
+# Models love markdown. A fenced block is an explanation, not the one-line contract,
+# and preloading its first line would put a backtick on the prompt.
+
+[[step]]
+model_says = "```sh\ngit status\n```"
+
+[[step]]
+command = "show me what changed"
+
+[[step]]
+expect_no_command = true
+
+[[step]]
+expect_marker = ["#TT-ANSWER#"]

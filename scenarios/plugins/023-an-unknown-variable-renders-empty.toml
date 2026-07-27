@@ -1,0 +1,10 @@
+name = "a template referring to a variable nobody set renders empty, not literally"
+tags = ["plugins", "status"]
+
+# A plugin written for a newer build must degrade to a blank, never print `{nope}`.
+
+[[step]]
+plugin = ["name = \"x\"", "[[segment]]", "align = \"left\"", "template = \"[{nope}]\""]
+
+[[step]]
+expect_status_left = ["[]"]

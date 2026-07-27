@@ -1,0 +1,15 @@
+name = "the preview reserves real rows for a diagram"
+tags = ["preview", "diagrams"]
+
+# The editor pane and the pager lay out from the same row model, so a diagram has to
+# occupy the height it will actually be drawn at — otherwise scrolling jumps over it.
+
+[[step]]
+markdown = ["# Plan", "", "```mermaid", "flowchart LR", "  A-->B-->C", "```"]
+
+[[step]]
+expect_contains = ["Plan"]
+
+# heading + its rule + a blank + the diagram's reserved rows
+[[step]]
+expect_preview_rows = 7

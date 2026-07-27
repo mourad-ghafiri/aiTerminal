@@ -1,0 +1,11 @@
+name = "printed text lands where it was printed"
+tags = ["grid"]
+
+[[step]]
+feed_lines = ["first line", "second line"]
+
+[[step]]
+expect_screen = ["first line", "second line"]
+
+[[step]]
+expect_cursor = ["0", "2"]

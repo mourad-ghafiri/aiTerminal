@@ -1,0 +1,20 @@
+name = "a theme file you write is used instead of the default"
+tags = ["theme"]
+
+[[step]]
+theme_file = ["name = \"Daylight\"", "is_dark = false", "bg = \"#FFFFFF\"", "fg = \"#101010\"", "accent = \"#0055FF\""]
+name = "daylight"
+
+[[step]]
+resolve = "daylight"
+
+[[step]]
+expect_name = "Daylight"
+
+[[step]]
+expect_token = "#FFFFFF"
+token = "bg"
+
+[[step]]
+expect_token = "#0055FF"
+token = "accent"

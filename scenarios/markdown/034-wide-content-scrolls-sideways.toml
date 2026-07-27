@@ -1,0 +1,17 @@
+name = "a wide line can be scrolled sideways and back"
+tags = ["pager"]
+
+[[step]]
+markdown = ["```", "a very wide line of code that runs past the edge of the pane", "```"]
+
+[[step]]
+keys = ["<ESC>[C", "<ESC>[C"]
+body_h = 6
+[[step]]
+expect_left = 8
+
+[[step]]
+keys = ["<ESC>[D"]
+body_h = 6
+[[step]]
+expect_left = 4

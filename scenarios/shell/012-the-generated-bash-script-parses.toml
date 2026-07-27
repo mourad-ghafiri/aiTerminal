@@ -1,0 +1,12 @@
+name = "the generated bash script actually parses"
+tags = ["shell", "robustness"]
+
+[[step]]
+plugin = ["name = \"dir\"", "[aliases]", "ll = \"ls -la\""]
+
+[[step]]
+generate = "bash"
+
+[[step]]
+expect_valid_syntax = true
+dialect = "bash"

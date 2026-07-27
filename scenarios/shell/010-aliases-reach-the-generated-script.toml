@@ -1,0 +1,11 @@
+name = "a plugin's aliases reach the generated shell script"
+tags = ["shell"]
+
+[[step]]
+plugin = ["name = \"git\"", "[aliases]", "gst = \"git status\""]
+
+[[step]]
+generate = "zsh"
+
+[[step]]
+expect_contains = ["gst", "git status"]

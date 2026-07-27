@@ -1,0 +1,11 @@
+name = "an empty reply does not preload anything"
+tags = ["ai", "robustness"]
+
+[[step]]
+model_says = ""
+
+[[step]]
+command = "do the thing"
+
+[[step]]
+expect_marker = ["# the AI did not suggest a command"]

@@ -1,0 +1,13 @@
+name = "SGR 0 clears every attribute at once"
+tags = ["style"]
+
+[[step]]
+feed = "<ESC>[1;3;4;7;9;31;42mS<ESC>[0mP"
+
+[[step]]
+expect_cell = "P"
+row = 0
+col = 1
+fg = "default"
+bg = "default"
+not_flags = ["bold", "italic", "underline", "reverse", "strike"]

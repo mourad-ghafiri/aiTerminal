@@ -1,0 +1,17 @@
+name = "cursor addressing puts text exactly where the program asked"
+tags = ["grid", "cursor"]
+
+[setup]
+cols = 20
+rows = 5
+
+[[step]]
+feed = "<ESC>[3;5HX"
+
+[[step]]
+expect_cell = "X"
+row = 2
+col = 4
+
+[[step]]
+expect_cursor = ["5", "2"]

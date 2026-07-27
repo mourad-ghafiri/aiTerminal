@@ -1,0 +1,15 @@
+name = "q and Esc leave the pager"
+tags = ["pager"]
+
+[[step]]
+markdown = ["something"]
+
+[[step]]
+expect_quit = false
+
+[[step]]
+keys = ["q"]
+body_h = 4
+
+[[step]]
+expect_quit = true

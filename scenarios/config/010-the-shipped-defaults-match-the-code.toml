@@ -1,0 +1,11 @@
+name = "the config file we ship parses back to the code defaults"
+tags = ["config"]
+
+# A fresh install and a no-config run must behave identically, or the documented
+# default and the real one drift apart.
+
+[[step]]
+shipped_defaults = true
+
+[[step]]
+expect_defaults = true

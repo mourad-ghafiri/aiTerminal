@@ -1,0 +1,26 @@
+name = "an agent that spins on the same tool call is stopped"
+tags = ["ai", "agent", "robustness"]
+
+# A model retrying an identical failing call would otherwise burn the whole budget —
+# and the user's money — before saying anything.
+
+[setup]
+max_steps = 20
+
+[[step]]
+tool = "sys.run"
+
+[[step]]
+tool_fails = ["sys.run=permission denied"]
+
+[[step]]
+model_says = "@tool sys.run {\"cmd\":\"date\"}"
+
+[[step]]
+agent = "what time is it?"
+
+[[step]]
+expect_outcome = "tool_stall"
+
+[[step]]
+expect_answer_contains = ["sys.run"]

@@ -1,0 +1,14 @@
+name = "a model's refusal is shown to the user and never preloaded"
+tags = ["ai", "command"]
+
+[[step]]
+model_says = "I will not help with that."
+
+[[step]]
+command = "delete all my files"
+
+[[step]]
+expect_no_command = true
+
+[[step]]
+expect_answer_contains = ["I will not help with that."]

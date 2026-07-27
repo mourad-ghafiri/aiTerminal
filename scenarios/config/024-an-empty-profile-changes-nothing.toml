@@ -1,0 +1,12 @@
+name = "an empty profile changes nothing"
+tags = ["profiles", "overlay"]
+
+[[step]]
+config = ["[appearance]", "theme = \"graphite\""]
+
+[[step]]
+profile = []
+
+[[step]]
+expect = "graphite"
+field = "theme"

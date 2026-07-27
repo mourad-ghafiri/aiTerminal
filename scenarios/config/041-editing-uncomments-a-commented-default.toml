@@ -1,0 +1,11 @@
+name = "setting a value that ships commented-out uncomments it"
+tags = ["config", "edit"]
+
+[[step]]
+edit = ["[behavior]", "# zoom = 1.0"]
+section = "behavior"
+key = "zoom"
+value = "1.5"
+
+[[step]]
+expect_edited = ["[behavior]", "zoom = 1.5"]

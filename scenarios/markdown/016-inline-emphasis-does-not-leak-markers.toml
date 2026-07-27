@@ -1,0 +1,11 @@
+name = "inline emphasis renders as text, not as asterisks"
+tags = ["render"]
+
+[[step]]
+markdown = ["This is **bold** and *italic* and `code`."]
+
+[[step]]
+expect_contains = ["bold", "italic", "code"]
+
+[[step]]
+expect_not_contains = ["**bold**", "*italic*", "`code`"]

@@ -1,0 +1,14 @@
+name = "a long paragraph wraps to the pane width"
+tags = ["render", "wrap"]
+
+[setup]
+width = 30
+
+[[step]]
+markdown = ["The quick brown fox jumps over the lazy dog and keeps on running well past the margin."]
+
+[[step]]
+expect_width_at_most = 30
+
+[[step]]
+expect_contains = ["quick brown fox"]

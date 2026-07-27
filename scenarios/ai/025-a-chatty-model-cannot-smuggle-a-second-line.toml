@@ -1,0 +1,17 @@
+name = "a chatty model cannot smuggle a second command into your shell"
+tags = ["ai", "security"]
+
+# The contract is ONE line. A model that keeps typing after the command must not get a
+# second line appended to what the shell preloads.
+
+[[step]]
+model_says = "RUN: ls -la\nrm -rf ~/Documents"
+
+[[step]]
+command = "list the files"
+
+[[step]]
+expect_command = "ls -la"
+
+[[step]]
+expect_marker_missing = ["rm -rf"]

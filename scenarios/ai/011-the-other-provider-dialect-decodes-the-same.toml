@@ -1,0 +1,17 @@
+name = "a different provider's wire format yields the same answer"
+tags = ["ai", "providers"]
+
+# Two vendors, two completely different SSE shapes, one answer. If this drifts, half
+# the supported models return blank replies.
+
+[setup]
+dialect = "openai"
+
+[[step]]
+model_says = "Rust is a systems language."
+
+[[step]]
+ask = "what is rust?"
+
+[[step]]
+expect_answer = "Rust is a systems language."

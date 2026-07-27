@@ -1,0 +1,15 @@
+name = "a theme file with missing and malformed tokens still yields a usable theme"
+tags = ["theme", "robustness"]
+
+# You edit a theme by hand; you will get a colour wrong. The terminal must still start,
+# falling back per-token rather than refusing to render.
+
+[[step]]
+theme_file = ["name = \"Broken\"", "is_dark = true", "bg = \"not-a-colour\"", "accent = \"#GGGGGG\""]
+name = "broken"
+
+[[step]]
+resolve = "broken"
+
+[[step]]
+expect_name = "Broken"

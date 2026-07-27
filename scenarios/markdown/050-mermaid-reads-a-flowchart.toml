@@ -1,0 +1,11 @@
+name = "mermaid reads a flowchart into nodes and edges"
+tags = ["diagrams"]
+
+[[step]]
+markdown = ["```mermaid", "flowchart LR", "  branch --> test --> ship", "```"]
+
+[[step]]
+stream = ["```mermaid<LF>flowchart LR<LF>  branch --> test --> ship<LF>```<LF>"]
+
+[[step]]
+expect_mermaid_nodes = ["branch", "test", "ship"]

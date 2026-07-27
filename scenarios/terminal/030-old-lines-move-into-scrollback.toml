@@ -1,0 +1,16 @@
+name = "lines that scroll off the top are kept in scrollback"
+tags = ["scrollback"]
+
+[setup]
+cols = 20
+rows = 3
+scrollback = 50
+
+[[step]]
+feed_lines = ["one", "two", "three", "four", "five"]
+
+[[step]]
+expect_screen = ["four", "five"]
+
+[[step]]
+expect_scrollback = 3

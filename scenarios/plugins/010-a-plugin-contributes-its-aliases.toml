@@ -1,0 +1,10 @@
+name = "a plugin contributes its aliases"
+tags = ["plugins"]
+
+# A plugin is pure data — there is no git code in the terminal, only a plugin.toml.
+
+[[step]]
+plugin = ["name = \"git\"", "version = \"1.0.0\"", "[aliases]", "g = \"git\"", "gst = \"git status\""]
+
+[[step]]
+expect_aliases = ["g=git", "gst=git status"]

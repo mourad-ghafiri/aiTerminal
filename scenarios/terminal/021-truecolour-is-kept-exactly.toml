@@ -1,0 +1,11 @@
+name = "24-bit colour is kept exactly, not approximated"
+tags = ["style"]
+
+[[step]]
+feed = "<ESC>[38;2;10;20;30mX"
+
+[[step]]
+expect_cell = "X"
+row = 0
+col = 0
+fg = "rgb 10,20,30"

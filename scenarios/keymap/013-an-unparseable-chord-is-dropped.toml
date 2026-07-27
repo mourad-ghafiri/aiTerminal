@@ -1,0 +1,11 @@
+name = "a chord that cannot be parsed is dropped, not fatal"
+tags = ["keymap", "robustness"]
+
+[setup]
+defaults = false
+
+[[step]]
+bind = ["[[keybinding]]", "key = \"cmd+shift+banana\"", "action = \"next_tab\""]
+
+[[step]]
+expect_rejected = "cmd+shift+banana"

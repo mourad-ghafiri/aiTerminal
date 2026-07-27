@@ -1,0 +1,16 @@
+name = "with no plugins at all the script is still valid"
+tags = ["shell", "robustness"]
+
+# `[plugins] enabled = false` is a supported configuration, not an edge case.
+
+[[step]]
+generate = "zsh"
+[[step]]
+expect_valid_syntax = true
+dialect = "zsh"
+
+[[step]]
+generate = "bash"
+[[step]]
+expect_valid_syntax = true
+dialect = "bash"

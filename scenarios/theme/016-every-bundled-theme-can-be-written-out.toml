@@ -1,0 +1,12 @@
+name = "every bundled theme can be written out and listed"
+tags = ["theme"]
+
+# `@theme list` reads this directory, so a theme that fails to serialize disappears.
+
+[[step]]
+write_collection = true
+
+[[step]]
+resolve = "midnight"
+[[step]]
+expect_name = "Midnight"

@@ -1,0 +1,23 @@
+name = "resizing the window does not lose what was on screen"
+tags = ["resize"]
+
+[setup]
+cols = 20
+rows = 5
+
+[[step]]
+feed_lines = ["keep me", "and me"]
+
+[[step]]
+resize_cols = 40
+rows = 5
+
+[[step]]
+expect_screen = ["keep me", "and me"]
+
+[[step]]
+resize_cols = 12
+rows = 5
+
+[[step]]
+expect_contains = ["keep me", "and me"]

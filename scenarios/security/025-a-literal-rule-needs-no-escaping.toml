@@ -1,0 +1,20 @@
+name = "a literal rule matches exactly, with no regex escaping"
+tags = ["redaction"]
+
+# An IP or a hostname is full of regex metacharacters; `literal = true` means you can
+# paste it in as-is.
+
+[setup]
+redact_literal = ["10.0.42.17"]
+
+[[step]]
+redact = "connecting to 10.0.42.17:5432"
+scope = "ai"
+[[step]]
+expect_text = "connecting to «redacted»:5432"
+
+[[step]]
+redact = "connecting to 10X0Y42Z17"
+scope = "ai"
+[[step]]
+expect_kept = ["10X0Y42Z17"]

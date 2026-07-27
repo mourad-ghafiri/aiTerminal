@@ -1,4 +1,4 @@
-//! The step vocabulary — what a user, a shell, and a program can do.
+//! The gate's step vocabulary — what a user, a shell, and a program can do.
 //!
 //! A closed set, so this is an enum rather than a registry of trait objects: the parser
 //! rejects an unknown verb outright (a typo in a scenario must fail loudly, never pass
@@ -6,6 +6,8 @@
 //! cannot be half-implemented.
 
 use corelib::wire::Toml;
+
+use super::super::world;
 
 /// One line of a scenario.
 #[derive(Clone, Debug)]
@@ -62,19 +64,7 @@ pub enum Step {
     ExpectNothingQueued,
 }
 
-/// Escapes a TOML string cannot carry. `corelib`'s parser handles `\n \t \r \" \\` and
-/// nothing else, so control bytes get readable names instead of being unwritable.
-fn unescape(s: &str) -> String {
-    s.replace("<ESC>", "\u{1b}").replace("<BEL>", "\u{7}").replace("<CR>", "\r").replace("<LF>", "\n")
-}
-
-fn str_at(t: &Toml, k: &str) -> Option<String> {
-    t.get(k).and_then(|v| v.as_str()).map(|s| unescape(s))
-}
-
-fn list_at(t: &Toml, k: &str) -> Option<Vec<String>> {
-    t.get(k).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_str()).map(unescape).collect())
-}
+use world::{list as list_at, text as str_at};
 
 impl Step {
     pub fn parse(t: &Toml) -> Result<Step, String> {
@@ -151,42 +141,6 @@ impl Step {
             return Ok(Step::ExpectNothingQueued);
         }
 
-        let keys: Vec<&str> =
-            t.as_table().map(|kv| kv.iter().map(|(k, _)| k.as_str()).collect()).unwrap_or_default();
-        Err(format!("no known verb in this step (keys: {})", keys.join(", ")))
+        Err(world::unknown_verb(t))
     }
-
-    /// A short label for the failure report.
-    pub fn label(&self) -> String {
-        match self {
-            Step::Chat { text, .. } => format!("chat {text:?}"),
-            Step::Tap { data, .. } => format!("tap {data:?}"),
-            Step::Pty(s) => format!("pty {:?}", clip(s)),
-            Step::Screen(l) => format!("screen ({} lines)", l.len()),
-            Step::Local(s) => format!("local {:?}", clip(s)),
-            Step::RunLocal(s) => format!("run_local {s:?}"),
-            Step::ShellStart => "shell_start".into(),
-            Step::ShellEnd(n) => format!("shell_end {n}"),
-            Step::ShellPrompt => "shell_prompt".into(),
-            Step::AppModes(m) => format!("app_modes {}", m.join(",")),
-            Step::AppRelease => "app_release".into(),
-            Step::Wait(ms) => format!("wait {ms}ms"),
-            Step::ExpectSays(v) => format!("expect_says {v:?}"),
-            Step::ExpectNotSays(v) => format!("expect_not_says {v:?}"),
-            Step::ExpectPty(s) => format!("expect_pty {:?}", clip(s)),
-            Step::ExpectNoPty => "expect_no_pty".into(),
-            Step::ExpectAttached(b) => format!("expect_attached {b}"),
-            Step::ExpectButtons(v) => format!("expect_buttons {v:?}"),
-            Step::ExpectLocal(v) => format!("expect_local {v:?}"),
-            Step::ExpectChatId(n) => format!("expect_chat_id {n}"),
-            Step::ExpectFrameWithin(ms) => format!("expect_frame_within_ms {ms}"),
-            Step::ExpectLiveReposted(b) => format!("expect_live_reposted {b}"),
-            Step::ExpectNothingQueued => "expect_nothing_queued".into(),
-        }
-    }
-}
-
-fn clip(s: &str) -> String {
-    let shown: String = s.chars().take(32).collect();
-    shown.replace('\u{1b}', "<ESC>").replace('\r', "<CR>").replace('\n', "<LF>")
 }

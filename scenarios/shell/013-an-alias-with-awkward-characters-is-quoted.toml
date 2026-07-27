@@ -1,0 +1,15 @@
+name = "an alias containing quotes and dollars is escaped, not interpolated"
+tags = ["shell", "security"]
+
+# An alias value is plugin data. If it were interpolated into the script, a plugin
+# could run anything at shell start — and `$HOME` would expand at the wrong time.
+
+[[step]]
+plugin = ["name = \"odd\"", "[aliases]", "weird = \"echo $HOME \\\"x\\\" `date`\""]
+
+[[step]]
+generate = "zsh"
+
+[[step]]
+expect_valid_syntax = true
+dialect = "zsh"

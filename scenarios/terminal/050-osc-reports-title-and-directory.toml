@@ -1,0 +1,17 @@
+name = "a program can report its title and working directory"
+tags = ["osc"]
+
+# The title names an attached program in `@gate`; the cwd drives the status bar and
+# opens a new split in the right folder.
+
+[[step]]
+feed = "<ESC>]0;my session<BEL>"
+
+[[step]]
+expect_title = "my session"
+
+[[step]]
+feed = "<ESC>]7;file://laptop/Users/me/project<BEL>"
+
+[[step]]
+expect_cwd = "laptop:/Users/me/project"

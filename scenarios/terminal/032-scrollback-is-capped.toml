@@ -1,0 +1,15 @@
+name = "scrollback stops growing at its limit"
+tags = ["scrollback", "memory"]
+
+# An unbounded buffer is a slow memory leak on a machine left running for weeks.
+
+[setup]
+cols = 20
+rows = 3
+scrollback = 4
+
+[[step]]
+feed_lines = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+
+[[step]]
+expect_scrollback = 4

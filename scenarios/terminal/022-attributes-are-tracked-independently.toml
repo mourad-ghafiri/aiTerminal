@@ -1,0 +1,22 @@
+name = "bold, underline and reverse are tracked independently"
+tags = ["style"]
+
+[[step]]
+feed = "<ESC>[1;4mB"
+
+[[step]]
+expect_cell = "B"
+row = 0
+col = 0
+flags = ["bold", "underline"]
+not_flags = ["reverse", "italic"]
+
+[[step]]
+feed = "<ESC>[0m<ESC>[7mR"
+
+[[step]]
+expect_cell = "R"
+row = 0
+col = 1
+flags = ["reverse"]
+not_flags = ["bold", "underline"]

@@ -1,0 +1,15 @@
+name = "a plugin's completions reach the generated script"
+tags = ["shell"]
+
+[[step]]
+plugin = ["name = \"cargo\"", "[[completion]]", "command = \"cargo\"", "subcommands = [\"build\", \"test\"]", "flags = [\"--release\"]"]
+
+[[step]]
+generate = "zsh"
+
+[[step]]
+expect_contains = ["cargo", "build", "--release"]
+
+[[step]]
+expect_valid_syntax = true
+dialect = "zsh"

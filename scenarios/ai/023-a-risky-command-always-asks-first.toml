@@ -1,0 +1,18 @@
+name = "a risky command always asks first, even in auto mode"
+tags = ["ai", "security"]
+
+# The confirm tier exists for commands that are legitimate but worth a second look.
+# Auto mode must not be able to skip it.
+
+[setup]
+command_mode = "auto"
+confirm = ["git push --force"]
+
+[[step]]
+model_says = "RUN: git push --force origin main"
+
+[[step]]
+command = "force push my branch"
+
+[[step]]
+expect_marker = ["#TT-CONFIRM# git push --force origin main"]

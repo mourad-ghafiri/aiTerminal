@@ -1,0 +1,11 @@
+name = "a progress bar rewriting its line leaves only the final state"
+tags = ["grid"]
+
+# `cargo`, `npm` and `docker pull` all redraw one line with a bare carriage return.
+# Anything reading the grid must see the last frame, not every frame.
+
+[[step]]
+feed = "10%<CR>50%<CR>100%"
+
+[[step]]
+expect_screen = ["100%"]

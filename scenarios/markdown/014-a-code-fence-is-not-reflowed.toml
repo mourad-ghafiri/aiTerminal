@@ -1,0 +1,18 @@
+name = "code inside a fence is never reflowed"
+tags = ["render", "code"]
+
+# Rewrapping code would change what it means, so a fence is boxed and left alone.
+# A line wider than the pane is clipped rather than wrapped — the pager scrolls
+# sideways to reach the rest.
+
+[setup]
+width = 60
+
+[[step]]
+markdown = ["```", "let x = some_function(a, b, c);", "```"]
+
+[[step]]
+expect_contains = ["let x = some_function(a, b, c);"]
+
+[[step]]
+expect_width_at_most = 60

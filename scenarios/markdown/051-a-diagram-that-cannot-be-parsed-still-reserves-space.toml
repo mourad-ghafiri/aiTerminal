@@ -1,0 +1,10 @@
+name = "an unreadable diagram still reserves a sensible amount of space"
+tags = ["diagrams"]
+
+# It falls back to a labelled box rather than collapsing the layout to nothing.
+
+[[step]]
+stream = ["```mermaid<LF>this is not a diagram at all<LF>```<LF>"]
+
+[[step]]
+expect_diagram_rows = 3

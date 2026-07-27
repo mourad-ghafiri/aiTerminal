@@ -1,0 +1,13 @@
+name = "several plugins compose into one set"
+tags = ["plugins"]
+
+[[step]]
+plugin = ["name = \"git\"", "[aliases]", "g = \"git\""]
+[[step]]
+plugin = ["name = \"dir\"", "[aliases]", "ll = \"ls -la\""]
+
+[[step]]
+expect_aliases = ["g=git", "ll=ls -la"]
+
+[[step]]
+expect_names = ["git", "dir"]

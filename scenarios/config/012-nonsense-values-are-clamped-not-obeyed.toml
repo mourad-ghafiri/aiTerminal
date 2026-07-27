@@ -1,0 +1,15 @@
+name = "an out-of-range number is clamped, not obeyed"
+tags = ["config", "robustness"]
+
+# `scrollback = 999999999999` must not drive a multi-gigabyte allocation.
+
+[[step]]
+config = ["[behavior]", "scrollback = 999999999999", "zoom = 99.0"]
+
+[[step]]
+expect = "1000000"
+field = "scrollback"
+
+[[step]]
+expect = "3"
+field = "zoom"

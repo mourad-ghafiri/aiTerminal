@@ -1,0 +1,12 @@
+name = "an answer arriving in pieces renders as whole blocks"
+tags = ["stream"]
+
+# This is the `@ai` live-answer path: a model sends fragments, and a block is only
+# rendered once it is complete — otherwise half a table flickers past.
+
+[[step]]
+stream = ["# Head", "ing", "<LF><LF>Some prose.<LF><LF>"]
+
+# The heading arrives split across two deltas and still comes out whole, under its rule.
+[[step]]
+expect_stream = ["Heading", "────────────────────────────────────────────────────────────", "", "Some prose.", ""]

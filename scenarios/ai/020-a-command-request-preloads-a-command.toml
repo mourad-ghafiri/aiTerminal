@@ -1,0 +1,17 @@
+name = "asking for a command preloads it at your prompt"
+tags = ["ai", "command"]
+
+# `@ai --command` has a deliberately tiny contract: one `RUN:` line. The shell reads
+# the marker on stdout and puts the command on your prompt to review.
+
+[[step]]
+model_says = "RUN: git status --short"
+
+[[step]]
+command = "show me what changed"
+
+[[step]]
+expect_command = "git status --short"
+
+[[step]]
+expect_marker = ["#TT-EDIT# git status --short"]
