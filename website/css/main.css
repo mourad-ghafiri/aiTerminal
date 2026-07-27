@@ -630,6 +630,29 @@ kbd {
   font-family: Menlo, "SF Mono", Consolas, monospace; font-size: 9.5px;
 }
 
+/* the live screen of an attached program — ONE bubble, edited in place */
+.ph-msg.live { max-width: 96%; padding: 5px 5px 3px; }
+.ph-live {
+  border-radius: 8px; padding: 6px 7px;
+  background: rgba(0, 0, 0, .34); border-left: 2px solid var(--ph-blue);
+  font-family: Menlo, "SF Mono", Consolas, monospace; font-size: 9.5px; line-height: 1.55;
+}
+.ph-live-title { color: var(--ph-blue); font-weight: 700; margin-bottom: 3px; }
+.ph-live-body { display: flex; flex-direction: column; }
+.ph-live-line { white-space: pre; color: #C8D4DE; min-height: 1.55em; }
+.ph-live-line.dim { color: #7D8E9E; }
+.ph-live-line.ok { color: #6FCF97; }
+.ph-live-line.sel { color: #fff; background: rgba(42, 171, 238, .22); border-radius: 3px; }
+.ph-keys.live { flex-direction: column; gap: 3px; }
+.ph-keyrow { display: flex; gap: 3px; }
+.ph-keyrow .ph-key { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* an in-place edit should read AS an edit, not as a new message */
+.ph-msg.live.pulse { animation: ph-edit .5s ease; }
+@keyframes ph-edit {
+  0% { box-shadow: 0 0 0 2px rgba(42, 171, 238, .55); }
+  100% { box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+}
+
 /* `/shot` — a real, scaled clone of the live pane */
 .ph-msg.photo { max-width: 92%; padding: 4px 4px 3px; }
 .ph-shot { border-radius: 9px; overflow: hidden; background: #0B0E14; }
@@ -686,7 +709,7 @@ kbd {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ph, .ph-msg { animation: none; }
+  .ph, .ph-msg, .ph-msg.live.pulse { animation: none; }
   .ph-caret { animation: none; }
 }
 

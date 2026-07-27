@@ -107,6 +107,14 @@ pub struct Term {
     mouse_track: u16,
     /// SGR extended mouse encoding (DEC 1006) — reports are `ESC[<b;x;y(M|m)` with 1-based cells.
     mouse_sgr: bool,
+    /// Bracketed paste (DEC 2004): the program wants pasted text delivered between
+    /// `ESC[200~` and `ESC[201~` so it can tell a paste from typing — which is how a
+    /// multi-line paste reaches an input box as ONE block instead of N submissions.
+    bracketed_paste: bool,
+    /// Application cursor keys (DECCKM, DEC 1): arrows must be sent as SS3 (`ESC O A`)
+    /// rather than CSI (`ESC [ A`). Plenty of full-screen programs accept only the
+    /// former, so a host that ignores this simply cannot drive them.
+    app_cursor_keys: bool,
     parser: Parser,
 }
 
@@ -139,6 +147,8 @@ impl Term {
             alt_placements: Vec::new(),
             mouse_track: 0,
             mouse_sgr: false,
+            bracketed_paste: false,
+            app_cursor_keys: false,
             parser: Parser::new(),
         }
     }
@@ -162,6 +172,59 @@ impl Term {
     /// Whether the program requested SGR (1006) mouse encoding (`ESC[<b;x;y(M|m)`).
     pub fn mouse_sgr(&self) -> bool {
         self.mouse_sgr
+    }
+
+    /// Whether the program wants pasted text bracketed by `ESC[200~`/`ESC[201~` (DEC 2004).
+    /// A host that honours this can deliver a multi-line block to an input box as one
+    /// paste instead of N separate submissions.
+    pub fn bracketed_paste(&self) -> bool {
+        self.bracketed_paste
+    }
+
+    /// Whether the program put the cursor keys in application mode (DECCKM), i.e. arrows
+    /// must be sent as `ESC O A` rather than `ESC [ A`.
+    pub fn app_cursor_keys(&self) -> bool {
+        self.app_cursor_keys
+    }
+
+    /// **A full-terminal program is driving this screen.**
+    ///
+    /// Any of these four is a program announcing, in the protocol itself, that it is
+    /// managing the whole terminal rather than printing a line of output: the alternate
+    /// screen, bracketed paste, application cursor keys, or mouse reporting. That makes
+    /// this a completely generic detector — `vim`, `htop`, a ratatui or bubbletea app, an
+    /// Ink/React CLI, a `prompt_toolkit` REPL — with no knowledge of any of them.
+    ///
+    /// Notably it does NOT require the alternate screen: plenty of modern CLIs render
+    /// inline and would otherwise look like an ordinary slow command.
+    pub fn app_control(&self) -> bool {
+        self.in_alt || self.bracketed_paste || self.app_cursor_keys || self.mouse_track != 0
+    }
+
+    /// The **visible** screen as plain text — the alternate screen when one is up, the
+    /// primary otherwise.
+    ///
+    /// This is deliberately not [`content_ansi`](Self::content_ansi), which serves session
+    /// restore: that one reads the *primary* buffer even while the alt screen is live and
+    /// drops the cursor row as "live input". To show what a program is displaying right
+    /// now, you want exactly the grid in front of you.
+    ///
+    /// Wide-glyph spacer cells are skipped (they carry a blank that would otherwise pad
+    /// every CJK character), each row is right-trimmed, and trailing blank rows are
+    /// dropped.
+    pub fn screen_text(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .screen
+            .lines
+            .iter()
+            .map(|row| {
+                row.iter().filter(|c| !c.is_wide_spacer()).map(|c| c.ch).collect::<String>().trim_end().to_string()
+            })
+            .collect();
+        while out.last().is_some_and(|l| l.is_empty()) {
+            out.pop();
+        }
+        out
     }
 
     /// Drain text staged by `OSC 52` (a program writing the system clipboard).
@@ -646,12 +709,14 @@ impl Term {
             return;
         }
         match mode {
+            1 => self.app_cursor_keys = on, // DECCKM — arrows become SS3
             25 => self.cursor_visible = on,
             1049 | 47 | 1047 => self.set_alt_screen(on),
             // Mouse reporting: 1000 = click, 1002 = click+drag, 1003 = any-motion. We track the
             // level so the host knows to forward events; disabling any resets to off.
             1000 | 1002 | 1003 => self.mouse_track = if on { mode } else { 0 },
             1006 => self.mouse_sgr = on, // SGR extended encoding
+            2004 => self.bracketed_paste = on,
             _ => {}
         }
     }
@@ -922,8 +987,19 @@ impl Perform for Term {
                     self.screen.cy = top;
                 }
             }
-            b'h' => self.set_mode(private == Some(b'?'), param_or(params, 0, 0), true),
-            b'l' => self.set_mode(private == Some(b'?'), param_or(params, 0, 0), false),
+            // `ESC[?1000;1002;1006h` sets THREE modes. Applying only the first would
+            // silently drop the SGR encoding half of the mouse handshake every
+            // ratatui/bubbletea program sends.
+            b'h' | b'l' => {
+                let on = action == b'h';
+                let priv_ = private == Some(b'?');
+                if params.is_empty() {
+                    self.set_mode(priv_, 0, on);
+                }
+                for &m in params {
+                    self.set_mode(priv_, m, on);
+                }
+            }
             b's' => self.screen.saved = Some((self.screen.cx, self.screen.cy, self.screen.pen)),
             b'u' => {
                 if let Some((x, y, pen)) = self.screen.saved {
@@ -1499,6 +1575,92 @@ mod tests {
         assert!(!t.wants_mouse());
         t.feed(b"\x1b[?1006l");
         assert!(!t.mouse_sgr());
+    }
+
+    #[test]
+    fn one_sequence_can_set_several_modes_at_once() {
+        // `ESC[?1000;1002;1006h` is what ratatui and bubbletea actually send. Applying
+        // only the first parameter drops the SGR half of the mouse handshake — reports
+        // then arrive in the legacy encoding the host never asked for.
+        let mut t = Term::new(40, 12);
+        t.feed(b"\x1b[?1000;1002;1006h");
+        assert!(t.wants_mouse(), "tracking enabled");
+        assert!(t.mouse_sgr(), "the third parameter must not be dropped");
+
+        t.feed(b"\x1b[?1002;1006l");
+        assert!(!t.wants_mouse() && !t.mouse_sgr(), "and a combined reset clears them all");
+    }
+
+    #[test]
+    fn bracketed_paste_and_application_cursor_keys_are_tracked() {
+        // Both tell a host HOW to talk to the program: wrap pastes, and send SS3 arrows.
+        let mut t = Term::new(40, 12);
+        assert!(!t.bracketed_paste() && !t.app_cursor_keys());
+        t.feed(b"\x1b[?2004h\x1b[?1h");
+        assert!(t.bracketed_paste() && t.app_cursor_keys());
+        t.feed(b"\x1b[?2004l\x1b[?1l");
+        assert!(!t.bracketed_paste() && !t.app_cursor_keys());
+    }
+
+    #[test]
+    fn app_control_is_true_for_any_full_terminal_program() {
+        // The generic "a program owns this screen" detector. Each mode alone is enough,
+        // because real programs pick different subsets — and an inline CLI that never
+        // touches the alternate screen must still be recognized.
+        for seq in [
+            &b"\x1b[?1049h"[..], // vim, htop, a ratatui app
+            &b"\x1b[?2004h"[..], // an Ink/React CLI or prompt_toolkit REPL
+            &b"\x1b[?1h"[..],    // application cursor keys
+            &b"\x1b[?1000h"[..], // mouse reporting
+        ] {
+            let mut t = Term::new(40, 12);
+            assert!(!t.app_control(), "a bare shell is not an app");
+            t.feed(seq);
+            assert!(t.app_control(), "{:?} should count as app control", String::from_utf8_lossy(seq));
+        }
+    }
+
+    #[test]
+    fn app_control_clears_when_the_program_hands_the_terminal_back() {
+        let mut t = Term::new(40, 12);
+        t.feed(b"\x1b[?1049h\x1b[?2004h\x1b[?1h\x1b[?1000;1006h");
+        assert!(t.app_control());
+        t.feed(b"\x1b[?1000l\x1b[?1l\x1b[?2004l\x1b[?1049l");
+        assert!(!t.app_control(), "everything released → back to a plain shell");
+    }
+
+    #[test]
+    fn screen_text_reads_the_visible_screen_including_the_alternate_one() {
+        // `content_ansi` deliberately reads the PRIMARY buffer even while alt is live
+        // (it serves session restore). Showing what a program displays needs the grid
+        // actually in front of you.
+        let mut t = Term::new(20, 5);
+        t.feed(b"shell line\r\n");
+        assert_eq!(t.screen_text(), vec!["shell line"]);
+
+        t.feed(b"\x1b[?1049h\x1b[HTUI frame\r\nsecond row");
+        assert_eq!(t.screen_text(), vec!["TUI frame", "second row"]);
+        assert!(!t.content_ansi(20, None).iter().any(|l| l.contains("TUI")), "alt content is not history");
+
+        t.feed(b"\x1b[?1049l");
+        assert_eq!(t.screen_text(), vec!["shell line"], "the primary comes back intact");
+    }
+
+    #[test]
+    fn screen_text_drops_padding_without_eating_real_content() {
+        let mut t = Term::new(24, 6);
+        t.feed(b"first\r\n\r\nthird   \r\n");
+        // Interior blank lines are content; only the trailing run of empties goes.
+        assert_eq!(t.screen_text(), vec!["first", "", "third"]);
+    }
+
+    #[test]
+    fn screen_text_does_not_pad_wide_glyphs() {
+        // A double-width glyph occupies two cells; the spacer carries a blank that would
+        // otherwise appear after every CJK character.
+        let mut t = Term::new(20, 3);
+        t.feed("日本語 ok".as_bytes());
+        assert_eq!(t.screen_text(), vec!["日本語 ok"]);
     }
 
     #[test]

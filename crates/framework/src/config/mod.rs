@@ -145,6 +145,10 @@ pub struct Config {
     pub gates_max_reply_messages: usize,
     /// Stop a gate after this many minutes with no remote traffic. `0` = never.
     pub gates_idle_minutes: u64,
+    /// Attach to interactive programs: when one takes the terminal, the chat shows its
+    /// live screen and your messages are typed into it rather than run as shell
+    /// commands. Default `true`; off falls back to shell-only relaying.
+    pub gates_attach: bool,
     /// The configured gateways, one per `[gates.<channel>]` table.
     pub gates: Vec<GateSpec>,
 
@@ -202,6 +206,7 @@ impl Default for Config {
             gates_screenshot: "document".into(),
             gates_max_reply_messages: 3,
             gates_idle_minutes: 0,
+            gates_attach: true,
             gates: Vec::new(),
             log_level: "error".into(),
             log_retention_days: 7,
@@ -758,6 +763,9 @@ impl Config {
             if let Some(v) = g.get("idle_timeout_minutes").and_then(|v| v.as_int()) {
                 c.gates_idle_minutes = v.clamp(0, 43_200) as u64;
             }
+            if let Some(v) = g.get("attach").and_then(|v| v.as_bool()) {
+                c.gates_attach = v;
+            }
             // Every OTHER sub-table is a channel: `[gates.telegram]` → a GateSpec named
             // "telegram". Keeping this generic is what lets a new adapter ship without
             // touching the config parser at all. A document declaring any gate REPLACES
@@ -1104,7 +1112,7 @@ mod tests {
         assert_eq!(Config::from_toml(DEFAULT_CONFIG), Config::default());
         // …and it documents every parseable key (a spot-check the active set is full).
         for key in
-            ["locale", "scrollback", "share_terminal_context", "auto_safe_commands", "top_p", "max_tokens", "require_pairing", "plain_text"]
+            ["locale", "scrollback", "share_terminal_context", "auto_safe_commands", "top_p", "max_tokens", "require_pairing", "plain_text", "attach"]
         {
             assert!(DEFAULT_CONFIG.contains(key), "the default config should document `{key}`");
         }
@@ -1187,12 +1195,19 @@ mod tests {
         assert_eq!(c.gates_screenshot, "photo");
         assert_eq!(c.gates_max_reply_messages, 7);
         assert_eq!(c.gates_idle_minutes, 45);
+        assert!(c.gates_attach, "attaching is on unless it is turned off");
         assert_eq!(c.gates.len(), 1);
         assert_eq!(c.gates[0].channel, "telegram");
         assert_eq!(c.gates[0].token, "$TG");
         // Ids compare as text, so a 64-bit chat id never rides through an f64 — and
         // both the natural spellings (`[123]` and `["123"]`) land the same way.
         assert_eq!(c.gates[0].allow, vec!["51234903".to_string(), "77".to_string()]);
+    }
+
+    #[test]
+    fn attaching_to_interactive_programs_can_be_turned_off() {
+        assert!(Config::default().gates_attach);
+        assert!(!Config::from_toml("[gates]\nattach = false\n").gates_attach);
     }
 
     #[test]

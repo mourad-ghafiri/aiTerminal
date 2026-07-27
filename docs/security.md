@@ -146,6 +146,13 @@ blocks, `confirm_commands` waits for an explicit `/yes` from the chat), and ever
 records under `~/.aiTerminal/gates/` are written `0600` and are on the agent's blocked
 path list.
 
+**The guard covers shell commands, not program input.** When `@gate` attaches to an
+interactive program (Claude Code, a REPL, `vim`), what you send is typed *into that
+program* — it is not a shell line, and there is nothing for a command regex to check. An
+explicit `/run` is refused outright while a program holds the terminal rather than being
+queued for later. In that mode the program's own confirmations are the control, which is
+the point: you answer them from your phone.
+
 Stated plainly: **the guard is a speed bump, not a sandbox** (`l=rm; $l -rf /` defeats
 any regex), and a paired chat has your shell — your files, your keys, your money.
 Pairing is the real control. The full threat discussion, including what this does *not*

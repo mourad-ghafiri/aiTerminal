@@ -21,7 +21,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use super::api::{decode_ack, decode_updates, decode_whoami, ApiError, BotApi, FileKind, Update};
+use super::api::{decode_ack, decode_edit, decode_sent, decode_updates, decode_whoami, ApiError, BotApi, FileKind, Keyboard, Update};
 
 /// Read cap on any single response — a runaway body must not become a runaway
 /// allocation.
@@ -171,7 +171,7 @@ pub(super) fn split_response(raw: &str) -> (u16, String) {
 impl BotApi for CurlBotApi {
     fn get_updates(&self, offset: i64, timeout_s: u32) -> Result<Vec<Update>, ApiError> {
         let url = format!(
-            "{}?offset={offset}&timeout={timeout_s}&allowed_updates=%5B%22message%22%5D",
+            "{}?offset={offset}&timeout={timeout_s}&allowed_updates=%5B%22message%22%2C%22callback_query%22%5D",
             self.url("getUpdates")
         );
         // curl must outlast the server's hold, or every poll dies on our own clock.
@@ -179,8 +179,19 @@ impl BotApi for CurlBotApi {
         decode_updates(status, &body)
     }
 
-    fn send_message(&self, chat_id: i64, html: &str) -> Result<(), ApiError> {
-        let (status, body) = self.post_json("sendMessage", &super::api::message_body(chat_id, html))?;
+    fn send_message(&self, chat_id: i64, html: &str, keys: Option<&Keyboard>) -> Result<i64, ApiError> {
+        let (status, body) = self.post_json("sendMessage", &super::api::message_body(chat_id, html, keys))?;
+        decode_sent(status, &body)
+    }
+
+    fn edit_message(&self, chat_id: i64, message_id: i64, html: &str, keys: Option<&Keyboard>) -> Result<(), ApiError> {
+        let body = super::api::edit_body(chat_id, message_id, html, keys);
+        let (status, resp) = self.post_json("editMessageText", &body)?;
+        decode_edit(status, &resp)
+    }
+
+    fn answer_callback(&self, id: &str) -> Result<(), ApiError> {
+        let (status, body) = self.post_json("answerCallbackQuery", &super::api::answer_body(id))?;
         decode_ack(status, &body)
     }
 
@@ -243,12 +254,12 @@ mod tests {
     }
 
     #[test]
-    fn the_long_poll_url_carries_the_offset_and_asks_only_for_messages() {
+    fn the_long_poll_url_carries_the_offset_and_asks_for_messages_and_taps() {
         let api = CurlBotApi::with_base("123:ABC", "https://example.invalid");
         let url = api.url("getUpdates");
         assert_eq!(url, "https://example.invalid/bot123:ABC/getUpdates");
         // The bot must not be handed edits/joins it would then have to filter.
-        assert!(format!("{url}?offset=5&timeout=25&allowed_updates=%5B%22message%22%5D").contains("allowed_updates"));
+        assert!(format!("{url}?offset=5&timeout=25&allowed_updates=%5B%22message%22%2C%22callback_query%22%5D").contains("allowed_updates"));
     }
 
     #[test]
@@ -264,6 +275,7 @@ mod tests {
         let api = CurlBotApi::with_base("t", "https://example.invalid");
         api.shutdown();
         assert_eq!(api.get_updates(0, 1), Err(ApiError::Cancelled), "no process is spawned after shutdown");
-        assert_eq!(api.send_message(1, "hi"), Err(ApiError::Cancelled));
+        assert_eq!(api.send_message(1, "hi", None), Err(ApiError::Cancelled));
+        assert_eq!(api.answer_callback("cb1"), Err(ApiError::Cancelled));
     }
 }

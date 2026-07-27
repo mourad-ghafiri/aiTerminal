@@ -24,11 +24,13 @@
 //! every command passes the same `[security]` guard as an AI suggestion. See
 //! `docs/gate.md`, which also states plainly what that guard cannot do.
 
+pub mod attach;
 pub mod auth;
 pub mod capture;
 pub mod chrome;
 pub mod command;
 pub mod driver;
+pub mod keys;
 pub mod marks;
 pub mod record;
 pub mod reply;
@@ -45,11 +47,11 @@ use crate::config::{Config, GateSpec};
 use auth::Auth;
 use capture::{Clock, SystemClock};
 use chrome::{Chrome, Style};
-use driver::{Action, Gate, Settings};
+use driver::{Action, Gate, Mirror, Settings};
 use marks::MarkScanner;
 use record::GateRecord;
 use session::{GateSession, PaneSink, Sink};
-use telegram::api::{ApiError, BotApi, FileKind};
+use telegram::api::{ApiError, BotApi, FileKind, Keyboard, Kind};
 use telegram::{CurlBotApi, PollStep, Poller};
 
 /// The main loop's tick. Also the ceiling on how long a resize can go unnoticed.
@@ -70,6 +72,8 @@ enum Ev {
     Pty(Vec<u8>),
     PtyEof,
     Chat { chat_id: i64, name: String, text: String },
+    /// A button on the live screen was tapped. Already acknowledged by the poller.
+    Tap { chat_id: i64, name: String, id: String, data: String },
     Note(String),
     Fatal(String),
 }
@@ -78,6 +82,9 @@ enum Ev {
 /// relay.
 enum Out {
     Text(String),
+    /// The live screen: edited into the existing message when there is one, otherwise
+    /// posted fresh.
+    Live { html: String, keys: Keyboard },
     File { kind: FileKind, name: String, mime: String, bytes: Vec<u8>, caption: Option<String> },
 }
 
@@ -319,6 +326,7 @@ fn relay(
             max_reply_messages: cfg.gates_max_reply_messages,
             screenshot: FileKind::parse(&cfg.gates_screenshot),
             cols,
+            attach: cfg.gates_attach,
         },
     );
 
@@ -329,11 +337,16 @@ fn relay(
     let queued = Arc::new(AtomicUsize::new(0));
     let stopping = Arc::new(AtomicBool::new(false));
     let peer_id = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    // The live screen's message id. Zero means "post a fresh one": set when a frame is
+    // sent, cleared whenever the user types, because their message pushes the live
+    // screen up the conversation and editing it there would be invisible. Button taps
+    // create no message, so those keep editing the same one.
+    let live_id = Arc::new(std::sync::atomic::AtomicI64::new(0));
 
     spawn_stdin_reader(tx.clone());
     spawn_pty_reader(session.pty(), tx.clone(), queued.clone());
     spawn_poller(api.clone(), poller, tx.clone(), stopping.clone());
-    let out_tx = spawn_sender(api.clone(), stopping.clone(), peer_id.clone());
+    let out_tx = spawn_sender(api.clone(), stopping.clone(), peer_id.clone(), live_id.clone());
 
     let mut scanner = MarkScanner::new();
     let mut glyphs = corelib::gfx::text::GlyphCache::new(platform::os::text_shaper_with(&cfg.font_family));
@@ -394,6 +407,14 @@ fn relay(
         chrome.set_alt(alt);
         let acts = gate.tick(alt, now);
         ctx.perform(acts, &mut sink);
+        let acts = gate.observe(mirror_of(&sink.term, &gate, now), now);
+        ctx.perform(acts, &mut sink);
+        if gate.take_frame() {
+            let screen = sink.term.screen_text();
+            gate.set_title(sink.term.title());
+            let acts = gate.frame(&screen);
+            ctx.perform(acts, &mut sink);
+        }
         if ctx.stop {
             break;
         }
@@ -406,7 +427,6 @@ fn relay(
                 }
                 for ev in batch {
                     let now = clock.now_ms();
-                    let alt = sink.term.in_alt_screen();
                     let acts = match ev {
                         Ev::Local(bytes) => {
                             ctx.session.write(&bytes);
@@ -426,7 +446,15 @@ fn relay(
                         Ev::Chat { chat_id, name, text } => {
                             // The sender needs a destination even for a refusal.
                             let _ = peer_id.compare_exchange(0, chat_id, Ordering::Relaxed, Ordering::Relaxed);
-                            gate.on_chat(chat_id, &name, &text, alt, now)
+                            // A typed message lands below the live screen, so the next
+                            // frame must be a fresh message rather than an edit nobody
+                            // would see. Taps create no message, so they keep editing.
+                            live_id.store(0, Ordering::Relaxed);
+                            gate.on_chat(chat_id, &name, &text, now)
+                        }
+                        Ev::Tap { chat_id, name, id, data } => {
+                            let _ = peer_id.compare_exchange(0, chat_id, Ordering::Relaxed, Ordering::Relaxed);
+                            gate.on_callback(chat_id, &name, &id, &data, now)
                         }
                         Ev::Note(msg) => {
                             sink.emit(style.notice(&msg).as_bytes());
@@ -455,6 +483,35 @@ fn relay(
     Ok(0)
 }
 
+/// Read the mirror's cheap facts for the gate.
+///
+/// The screen itself is deliberately NOT rendered here — this runs ~33×/s, and the
+/// grid is only turned into text when a frame is actually due.
+fn mirror_of(term: &platform::term::Term, gate: &Gate, now: u64) -> Mirror {
+    Mirror {
+        app_control: term.app_control(),
+        bracketed: term.bracketed_paste(),
+        app_cursor: term.app_cursor_keys(),
+        at_prompt: at_prompt(term, gate, now),
+        generation: term.generation(),
+    }
+}
+
+/// Does the cursor look like it is parked at a REPL's prompt?
+///
+/// A `python` or `psql` session sets no terminal modes at all, so there is nothing to
+/// detect but the shape: a command is running, output has gone quiet, and the cursor
+/// sits *after* text on its own line (`>>> `, `psql=#`). A merely slow command leaves
+/// the cursor at column 0 after its last newline, so `sleep 60` does not qualify.
+fn at_prompt(term: &platform::term::Term, gate: &Gate, now: u64) -> bool {
+    let Some(quiet) = gate.capture().quiet_for(now) else { return false };
+    if quiet < super::gate::attach::PROMPT_QUIET_MS {
+        return false;
+    }
+    let (cx, cy) = term.cursor();
+    cx > 0 && term.row(cy).iter().take(cx as usize).any(|c| !c.ch.is_whitespace())
+}
+
 /// The side-effect executor: everything an [`Action`] needs to touch.
 struct Perform<'a> {
     session: &'a GateSession,
@@ -478,6 +535,12 @@ impl Perform<'_> {
                 Action::Say(html) => {
                     let _ = self.out.send(Out::Text(html));
                 }
+                Action::Live { html, keys } => {
+                    let _ = self.out.send(Out::Live { html, keys });
+                }
+                // Answering a tap happens on the poller thread the moment it arrives;
+                // by the time an action reaches here it is already done.
+                Action::Answer(_) => {}
                 Action::Peer(peer) => {
                     if let Some(id) = peer.rsplit_once('(').and_then(|(_, r)| r.trim_end_matches(')').parse().ok()) {
                         self.peer_id.store(id, Ordering::Relaxed);
@@ -610,7 +673,20 @@ fn spawn_poller(api: Arc<dyn BotApi>, mut poller: Poller, tx: mpsc::Sender<Ev>, 
             match poller.poll(&*api) {
                 PollStep::Updates(updates) => {
                     for u in updates {
-                        if tx.send(Ev::Chat { chat_id: u.chat_id, name: u.from_name, text: u.text }).is_err() {
+                        let ev = match u.kind {
+                            Kind::Text(text) => Ev::Chat { chat_id: u.chat_id, name: u.from_name, text },
+                            Kind::Callback { id, data, .. } => {
+                                // Acknowledged HERE, not through the paced send queue:
+                                // that queue sits behind a 1.1 s gap and possibly a
+                                // multi-minute screenshot upload, and a button that
+                                // spins for two minutes is worse than no button.
+                                let _ = api.answer_callback(&id);
+                                Ev::Tap { chat_id: u.chat_id, name: u.from_name, id, data }
+                            }
+                            // Kept only so the poll offset advances past it.
+                            Kind::Other => continue,
+                        };
+                        if tx.send(ev).is_err() {
                             return;
                         }
                     }
@@ -645,6 +721,7 @@ fn spawn_sender(
     api: Arc<dyn BotApi>,
     stopping: Arc<AtomicBool>,
     peer_id: Arc<std::sync::atomic::AtomicI64>,
+    live_id: Arc<std::sync::atomic::AtomicI64>,
 ) -> mpsc::Sender<Out> {
     let (tx, rx) = mpsc::channel::<Out>();
     std::thread::spawn(move || {
@@ -663,7 +740,22 @@ fn spawn_sender(
                 std::thread::sleep(std::time::Duration::from_millis(wait));
             }
             let sent = match &msg {
-                Out::Text(html) => api.send_message(chat_id, html),
+                Out::Text(html) => api.send_message(chat_id, html, None).map(|_| ()),
+                Out::Live { html, keys } => {
+                    let existing = live_id.load(Ordering::Relaxed);
+                    let edited = (existing != 0)
+                        .then(|| api.edit_message(chat_id, existing, html, Some(keys)))
+                        .transpose();
+                    match edited {
+                        // Edited in place: the live screen stays where it is.
+                        Ok(Some(())) => Ok(()),
+                        // No message yet, or the old one can no longer be edited (deleted,
+                        // or too old) — post a fresh one and track it from now on.
+                        _ => api.send_message(chat_id, html, Some(keys)).map(|id| {
+                            live_id.store(id, Ordering::Relaxed);
+                        }),
+                    }
+                }
                 Out::File { kind, name, mime, bytes, caption } => {
                     api.send_file(chat_id, *kind, name, mime, bytes, caption.as_deref())
                 }
@@ -671,7 +763,7 @@ fn spawn_sender(
             // A message the API refuses to format is still worth delivering — resend it
             // once as plain text rather than losing it silently.
             if let (Err(ApiError::Request { .. }), Out::Text(html)) = (&sent, &msg) {
-                let _ = api.send_message(chat_id, &strip_tags(html));
+                let _ = api.send_message(chat_id, &strip_tags(html), None);
             }
             last = Some(clock.now_ms());
         }

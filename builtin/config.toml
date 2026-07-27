@@ -155,6 +155,11 @@ screenshot       = "document"  # how /shot arrives: "document" (the PNG byte-for
                                # or "photo" (the chat app recompresses — small text blurs)
 max_reply_messages   = 3   # messages one command's output may span before it is
                            # truncated with a pointer to /full (1–20)
+attach           = true    # when an interactive program takes the terminal (Claude Code,
+                           # Codex, vim, a python/psql REPL), show its live screen in the
+                           # chat and type your messages into it instead of running them
+                           # as shell commands. Detected from the terminal protocol
+                           # itself, so it works for any program. false = shell only.
 idle_timeout_minutes = 0   # stop a gate after this long with no remote traffic; 0 = never
 
 # ── The gateways ──────────────────────────────────────────────────────────────

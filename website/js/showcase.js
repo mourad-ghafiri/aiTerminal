@@ -173,7 +173,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // No phone host on the page → the terminal half of the story still plays.
     if (!host) {
       const noop = () => {};
-      return { type: async () => {}, send: noop, typing: noop, reply: noop, photo: noop, menu: noop };
+      return { type: async () => {}, send: noop, typing: noop, reply: noop, photo: noop, menu: noop,
+        live: () => ({ update: noop }) };
     }
     host.hidden = false;
     host.innerHTML = "";
@@ -286,6 +287,45 @@ document.addEventListener("DOMContentLoaded", () => {
         b.appendChild(pad);
         scroll();
         return b;
+      },
+      /* The live screen of an attached program: ONE bubble, edited in place, with the
+         program's current choices as buttons beneath it. Returns a handle so the demo
+         updates that same bubble instead of posting another — which is exactly what the
+         real gate does, and the reason a long session never buries the chat. */
+      live(title, lines, buttons) {
+        const b = el("div", "ph-msg bot live");
+        const card = el("div", "ph-live");
+        card.appendChild(el("div", "ph-live-title", title));
+        const body = el("div", "ph-live-body");
+        const pad = el("div", "ph-keys live");
+        const paint = (ls, bs) => {
+          body.replaceChildren();
+          ls.forEach(([kind, text]) => body.appendChild(el("div", "ph-live-line " + kind, text)));
+          pad.replaceChildren();
+          (bs || []).forEach((row) => {
+            const r = el("div", "ph-keyrow");
+            row.forEach((t) => r.appendChild(el("span", "ph-key", t)));
+            pad.appendChild(r);
+          });
+        };
+        paint(lines, buttons);
+        card.appendChild(body);
+        b.append(card, pad);
+        const meta = el("div", "ph-meta");
+        meta.appendChild(el("span", null, stamp()));
+        b.appendChild(meta);
+        feed.appendChild(b);
+        scroll();
+        return {
+          update(nextLines, nextButtons) {
+            paint(nextLines, nextButtons);
+            // restart the highlight so an in-place edit is visibly an edit
+            b.classList.remove("pulse");
+            void b.offsetWidth;
+            b.classList.add("pulse");
+            scroll();
+          },
+        };
       },
       /* `/shot` — a real clone of the live pane, not an impression of one */
       photo(caption, w) {
@@ -618,9 +658,10 @@ document.addEventListener("DOMContentLoaded", () => {
     gate: {
       opts: { title: "aiTerminal — @gate telegram", tabs: [{ title: "Terminal [project][@gate]", active: true }] },
       caption: () => caption("<code>@gate</code> — your terminal, from your phone",
-        "<code>@gate telegram start</code> hands this pane to a chat. It becomes a shell you <b>share</b>: you keep typing here while a <b>paired</b> chat drives the same shell — same folder, same history — with <code>/shot</code> for a live screenshot. Nothing runs until a chat sends the code printed in <i>your</i> terminal, and <code>@gate stop</code> takes the pane straight back."),
+        "<code>@gate telegram start</code> hands this pane to a chat: you keep typing here while a <b>paired</b> chat drives the same shell. Start <b>Claude Code, Codex, vim or a REPL</b> and it <b>attaches</b> — the chat becomes that program's live screen, with buttons for whatever it's asking. Detected from the terminal protocol itself, so it works for any program, with no code for any of them."),
       demo(w, myEpoch) {
         const g = makePhone(phoneEl);
+        let live = null;
         /* Every beat is its own step, so `run` can abandon the story the moment
            another feature is selected — the phone lives outside the window and
            would otherwise keep animating on screen. */
@@ -658,7 +699,53 @@ document.addEventListener("DOMContentLoaded", () => {
             await sleep(850);
           } },
 
-          /* 5 — when text isn't enough, ask for the screen */
+          /* 5 — an interactive program takes over, and the chat becomes its screen */
+          { do: "call", fn: async () => { await g.type("claude"); g.send("claude"); await sleep(280); } },
+          { do: "out", spans: [ACC("  ▸ Mourad: "), FG("claude")], ms: 240 },
+          { do: "cmd", text: "claude", speed: 14 },
+          { do: "out", spans: [MUT("  ⬤ attached — the chat is driving claude")], ms: 500 },
+          { do: "call", fn: async () => {
+            g.reply("▶ <b>attached to claude</b> — send text to type into it.");
+            await sleep(600);
+          } },
+          { do: "call", fn: async () => {
+            await g.type("add a --json flag to export");
+            g.send("add a --json flag to export");
+            await sleep(400);
+          } },
+          { do: "call", fn: async () => {
+            // ONE bubble from here on — it is edited, never re-posted.
+            live = g.live("claude", [
+              ["", "> add a --json flag to export"],
+              ["", ""],
+              ["dim", "✦ Thinking… (esc to interrupt)"],
+            ], [["↑", "↓", "⏎", "esc", "^C", "📷"]]);
+            await sleep(1100);
+          } },
+          { do: "call", fn: async () => {
+            live.update([
+              ["", "Edit src/export.rs"],
+              ["ok", "  + #[arg(long)] json: bool"],
+              ["", ""],
+              ["", "Do you want to make this edit?"],
+              ["sel", "❯ 1. Yes"],
+              ["", "  2. Yes, and don't ask again"],
+              ["", "  3. No, tell Claude what to do"],
+            ], [["1 · Yes", "2 · Yes, and…", "3 · No, tell…"], ["↑", "↓", "⏎", "esc", "^C", "📷"]]);
+            await sleep(1400);
+          } },
+          { do: "call", fn: async () => {
+            // A tap sends no message — the live screen stays put and updates.
+            live.update([
+              ["ok", "✓ Edited src/export.rs"],
+              ["", ""],
+              ["dim", "✦ Running tests…"],
+            ], [["↑", "↓", "⏎", "esc", "^C", "📷"]]);
+            await sleep(900);
+          } },
+          { do: "out", spans: [MUT("  ▸ Mourad tapped "), ACC2("1 · Yes")], ms: 700 },
+
+          /* 6 — when text isn't enough, ask for the screen */
           { do: "call", fn: async () => { await g.type("/shot"); g.send("/shot"); await sleep(300); } },
           // capture first, THEN report it — so the photo shows the terminal as it
           // was asked for, not the line announcing itself
@@ -669,7 +756,7 @@ document.addEventListener("DOMContentLoaded", () => {
           } },
           { do: "out", spans: [MUT("  ◂ sent a screenshot (68 KB)")], ms: 1100 },
 
-          /* 6 — and the person at the keyboard takes it back */
+          /* 7 — and the person at the keyboard takes it back */
           { do: "cmd", text: "@gate stop" },
           { do: "out", spans: [ACC("  ⬤ gate closed"), DIM(" — stopped from this pane")], ms: 340 },
           { do: "call", fn: async () => { g.reply("gate closed · this terminal is no longer reachable"); } },

@@ -12,7 +12,12 @@
 pub enum Command {
     /// `/pair <code>` — the authorization handshake.
     Pair(String),
-    /// Run in the shared shell.
+    /// Plain text the user sent. In the shell that means "run this"; while a program
+    /// owns the terminal it means "type this into it". Kept separate from [`Run`] so
+    /// those two can differ — an explicit `/run` is always a shell command, and while
+    /// a program is attached that has to be refused rather than typed at it.
+    Text(String),
+    /// `/run <cmd>` — explicitly a shell command.
     Run(String),
     /// Run out-of-band, without touching the shared shell.
     Sh(String),
@@ -43,7 +48,7 @@ pub const MENU: &[(&str, &str)] = &[
     ("/shot", "screenshot the terminal"),
     ("/run", "run a command in the shared shell"),
     ("/sh", "run a command out-of-band (works while a full-screen app is open)"),
-    ("/key", "press a key: enter tab esc up down ctrl-c ctrl-d ctrl-l pgup pgdn q"),
+    ("/key", "press a key: enter tab esc up down ctrl-c shift-tab f5, or any character"),
     ("/keys", "type text without pressing enter"),
     ("/cancel", "interrupt the running command (Ctrl-C)"),
     ("/ai", "ask this terminal's AI"),
@@ -60,7 +65,7 @@ pub fn parse(text: &str, plain_runs: bool) -> Command {
         return Command::Help;
     }
     if !t.starts_with('/') {
-        return if plain_runs { Command::Run(t.to_string()) } else { Command::Ignored(t.to_string()) };
+        return if plain_runs { Command::Text(t.to_string()) } else { Command::Ignored(t.to_string()) };
     }
 
     // A chat app may append its bot handle: `/shot@mourad_term_bot`.
@@ -89,48 +94,13 @@ pub fn parse(text: &str, plain_runs: bool) -> Command {
     }
 }
 
-/// The bytes a named key sends.
-pub fn key_bytes(name: &str) -> Option<Vec<u8>> {
-    let n = name.trim().to_ascii_lowercase();
-    let seq: &[u8] = match n.as_str() {
-        "enter" | "return" | "cr" => b"\r",
-        "tab" => b"\t",
-        "esc" | "escape" => b"\x1b",
-        "space" => b" ",
-        "backspace" | "bs" => b"\x7f",
-        "up" => b"\x1b[A",
-        "down" => b"\x1b[B",
-        "right" => b"\x1b[C",
-        "left" => b"\x1b[D",
-        "home" => b"\x1b[H",
-        "end" => b"\x1b[F",
-        "pgup" | "pageup" => b"\x1b[5~",
-        "pgdn" | "pagedown" => b"\x1b[6~",
-        "del" | "delete" => b"\x1b[3~",
-        "ctrl-c" | "^c" => b"\x03",
-        "ctrl-d" | "^d" => b"\x04",
-        "ctrl-l" | "^l" => b"\x0c",
-        "ctrl-u" | "^u" => b"\x15",
-        "ctrl-z" | "^z" => b"\x1a",
-        "ctrl-a" | "^a" => b"\x01",
-        "ctrl-e" | "^e" => b"\x05",
-        "ctrl-r" | "^r" => b"\x12",
-        // A bare single character is itself — how `q` quits `less` and `y` answers a
-        // prompt, without needing a name for every key on the board.
-        _ => {
-            let mut ch = n.chars();
-            let (c, rest) = (ch.next()?, ch.next());
-            return (rest.is_none() && !c.is_control()).then(|| c.to_string().into_bytes());
-        }
-    };
-    Some(seq.to_vec())
-}
-
 /// The `/help` reply, generated from [`MENU`] so it cannot go stale.
 pub fn help_html(plain_runs: bool) -> String {
     let mut s = String::from("<b>aiTerminal gate</b>\n");
     s.push_str(if plain_runs {
-        "Send a command and I'll run it in your terminal.\n\n"
+        "Send a command and I'll run it in your terminal.\n\
+         Start an interactive program (Claude Code, Codex, vim, a REPL) and I'll attach \
+         to it — its screen appears here and your messages are typed into it.\n\n"
     } else {
         "Send <code>/run &lt;command&gt;</code> to run something.\n\n"
     });
@@ -146,8 +116,8 @@ mod tests {
 
     #[test]
     fn plain_text_runs_when_configured_to() {
-        assert_eq!(parse("git status", true), Command::Run("git status".into()));
-        assert_eq!(parse("  ls -la  ", true), Command::Run("ls -la".into()));
+        assert_eq!(parse("git status", true), Command::Text("git status".into()));
+        assert_eq!(parse("  ls -la  ", true), Command::Text("ls -la".into()));
     }
 
     #[test]
@@ -192,31 +162,13 @@ mod tests {
         // Group chats address commands as `/shot@my_bot`.
         assert_eq!(parse("/shot@mourad_term_bot", true), Command::Shot);
         assert_eq!(parse("/run@mourad_term_bot ls", true), Command::Run("ls".into()));
+        assert_ne!(parse("ls", true), parse("/run ls", true), "plain text and an explicit /run are distinguishable");
     }
 
     #[test]
     fn typed_text_keeps_its_leading_spaces() {
         // `/keys` types literally — indentation inside a here-doc must survive.
         assert_eq!(parse("/keys    indented", true), Command::Keys("   indented".into()));
-    }
-
-    #[test]
-    fn key_names_map_to_the_right_bytes() {
-        assert_eq!(key_bytes("enter").unwrap(), b"\r");
-        assert_eq!(key_bytes("ctrl-c").unwrap(), b"\x03");
-        assert_eq!(key_bytes("UP").unwrap(), b"\x1b[A");
-        assert_eq!(key_bytes("pgdn").unwrap(), b"\x1b[6~");
-        // A bare character is itself — `q` quits a pager, `y` answers a prompt.
-        assert_eq!(key_bytes("q").unwrap(), b"q");
-        assert_eq!(key_bytes("y").unwrap(), b"y");
-    }
-
-    #[test]
-    fn an_unknown_key_name_is_rejected_rather_than_typed_as_text() {
-        // Otherwise `/key delete-everything` would type that string at the prompt.
-        assert_eq!(key_bytes("delete-everything"), None);
-        assert_eq!(key_bytes(""), None);
-        assert_eq!(key_bytes("ctrl-shift-meta-x"), None);
     }
 
     #[test]

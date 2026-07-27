@@ -220,6 +220,17 @@ impl Capture {
         matches!(&self.state, State::Active { quiet_noted, .. } if *quiet_noted)
     }
 
+    /// How long a running command has been silent, if one is running at all.
+    ///
+    /// The driver pairs this with the cursor position to recognize a REPL waiting at
+    /// its prompt — the case no terminal mode announces.
+    pub fn quiet_for(&self, now: u64) -> Option<u64> {
+        match &self.state {
+            State::Active { quiet_since, .. } => Some(now.saturating_sub(*quiet_since)),
+            _ => None,
+        }
+    }
+
     /// The command currently running, if any.
     pub fn running(&self) -> Option<&str> {
         match &self.state {

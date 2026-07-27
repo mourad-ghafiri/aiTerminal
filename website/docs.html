@@ -283,6 +283,60 @@ README.md  crates  docs
       <tr><td><code>/ai &lt;prompt&gt;</code></td><td>ask this terminal's own AI, from the chat</td></tr>
       <tr><td><code>/full</code> · <code>/status</code> · <code>/help</code> · <code>/stop</code></td><td>untruncated output as a file · what's running · the menu · end the gate</td></tr>
     </table>
+    <h3>Driving a program — Claude Code, Codex, vim, a REPL</h3>
+    <p>Start something interactive in the gated shell and the gate <b>attaches</b> to it. The chat
+      becomes that program's screen: <b>one message that keeps updating</b> as it redraws, with
+      buttons for whatever it is currently asking. Anything you type is typed into the program and
+      submitted. When it exits, the gate detaches and you are back at the shell.</p>
+
+    <pre><code><span class="p">You ▸</span> claude
+<span class="p">Bot ◂</span> <span class="ok">▶ attached to claude</span> — it has taken over the terminal.
+
+<span class="p">You ▸</span> add a --json flag to the export command
+<span class="p">Bot ◂</span> ┌ claude ────────────────────────────┐
+       │  Edit src/export.rs                │
+       │  │ + #[arg(long)] json: bool       │
+       │                                    │
+       │  Do you want to make this edit?    │
+       │  <span class="ok">❯ 1. Yes</span>                          │
+       │    2. Yes, and don't ask again     │
+       │    3. No, tell Claude what to do   │
+       └────────────────────────────────────┘
+       <span class="k">[ 1 · Yes ] [ 2 · Yes, and… ] [ 3 · No, tell… ]</span>
+       <span class="k">[ ↑ ] [ ↓ ] [ ⏎ ] [ esc ] [ ^C ] [ 📷 ]</span></code></pre>
+
+    <p>Tap <b>1</b>. The same message updates in place — taps add nothing to the conversation, so the
+      live screen stays at the bottom where you can see it.</p>
+
+    <div class="callout"><b>Nothing here knows about Claude Code.</b> The same thing works for Codex,
+      opencode, aider, <code>vim</code>, <code>htop</code>, <code>lazygit</code>,
+      <code>python3</code>, <code>psql</code> — and whatever ships next month. Two generic signals do
+      all of it. <b>The terminal protocol:</b> a program that manages the screen says so in DEC
+      private modes — alternate screen, bracketed paste, application cursor keys, mouse reporting.
+      Deliberately not just the alternate screen, since plenty of modern CLIs render inline.
+      <b>The shape of a prompt:</b> a REPL sets no modes, so the fallback is the universal picture of
+      one — a command running, output gone quiet, and the cursor parked after text on its own line.
+      A merely slow command leaves the cursor at column 0, so <code>sleep 60</code> does not trip it.
+      The buttons come from the same place: the <i>shape</i> of a question (a numbered list, a
+      <code>[y/N]</code> bracket), never knowledge of who is asking.</div>
+
+    <p>Reading those modes is not only detection — it is also how input is encoded. <b>Arrows</b> go
+      out as <code>ESC O A</code> when the program asked for application cursor keys and
+      <code>ESC [ A</code> when it did not; many programs accept only the form they requested.
+      <b>A multi-line prompt</b> is wrapped in <code>ESC[200~ … ESC[201~</code> when the program
+      enabled bracketed paste, so it arrives as <b>one paste</b> instead of the first line being
+      submitted and the rest becoming follow-ups. That is what makes sending a real prompt from a
+      phone work at all.</p>
+
+    <p>While attached, <code>/run</code> is <b>refused</b> rather than queued — there is no shell to
+      run it in, and firing it minutes later when the program exits would be worse; use
+      <code>/sh &lt;cmd&gt;</code> for an out-of-band shell. The command guard does not apply to
+      program input: that is the honest description, and also the point — the program's own
+      confirmations, which you now answer from your phone, are the control. Frames wait for the
+      screen to settle and never redraw more than once every couple of seconds, so a program
+      streaming a long answer cannot flood the chat. <code>[gates] attach = false</code> turns it
+      all off.</p>
+
     <div class="callout"><b>This is remote code execution over a chat app.</b> It ships off
       (<code>[gates] enabled = false</code>), and a bot accepts messages from anyone who learns its
       @name — so a chat id is an address, not a credential. The real control is <b>pairing</b>: a

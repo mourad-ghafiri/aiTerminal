@@ -280,17 +280,8 @@ impl GuiApp {
     /// is no terminal pane. Pure grid read: NEVER spawns a process.
     pub(in crate::gui) fn focused_terminal_lines(&self) -> Option<Vec<String>> {
         let s = &self.context_pane()?.session;
-        let mut lines: Vec<String> = Vec::new();
-        {
-            let t = s.term.lock().unwrap_or_else(|e| e.into_inner());
-            for row in t.rows_iter() {
-                lines.push(row.iter().map(|c| c.ch).collect::<String>().trim_end().to_string());
-            }
-        }
-        while lines.last().is_some_and(|l| l.trim().is_empty()) {
-            lines.pop();
-        }
-        Some(lines)
+        let t = s.term.lock().unwrap_or_else(|e| e.into_inner());
+        Some(t.screen_text())
     }
 
     /// The pane the session context is sourced from — the active tab's first

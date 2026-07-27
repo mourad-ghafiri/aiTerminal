@@ -5,12 +5,14 @@
 
 use std::sync::Mutex;
 
-use super::api::{ApiError, BotApi, FileKind, Update};
+use super::api::{ApiError, BotApi, FileKind, Keyboard, Kind, Update};
 
 /// Something the gate sent.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Sent {
-    Message { chat_id: i64, html: String },
+    Message { chat_id: i64, html: String, keys: Option<Keyboard> },
+    Edit { chat_id: i64, message_id: i64, html: String, keys: Option<Keyboard> },
+    Answered(String),
     File { chat_id: i64, kind: FileKind, name: String, bytes: usize, caption: Option<String> },
     Commands(Vec<String>),
 }
@@ -24,6 +26,9 @@ pub struct MockBotApi {
     /// Every `(offset, timeout)` the poller asked for.
     pub polls: Mutex<Vec<(i64, u32)>>,
     stopped: std::sync::atomic::AtomicBool,
+    /// Ids handed back by `send_message`, so a test can assert an edit targeted the
+    /// message that was actually sent.
+    next_id: std::sync::atomic::AtomicI64,
 }
 
 impl Default for MockBotApi {
@@ -39,6 +44,7 @@ impl MockBotApi {
             sent: Mutex::new(Vec::new()),
             polls: Mutex::new(Vec::new()),
             stopped: std::sync::atomic::AtomicBool::new(false),
+            next_id: std::sync::atomic::AtomicI64::new(1000),
         }
     }
 
@@ -58,7 +64,23 @@ impl MockBotApi {
                 chat_id,
                 from_id: chat_id,
                 from_name: "Tester".into(),
-                text: (*t).to_string(),
+                kind: Kind::Text((*t).to_string()),
+            })
+            .collect();
+        self.push(Ok(updates))
+    }
+
+    /// Queue a batch of button taps from one chat.
+    pub fn push_taps(&self, chat_id: i64, first_update_id: i64, data: &[&str]) -> &Self {
+        let updates = data
+            .iter()
+            .enumerate()
+            .map(|(i, d)| Update {
+                update_id: first_update_id + i as i64,
+                chat_id,
+                from_id: chat_id,
+                from_name: "Tester".into(),
+                kind: Kind::Callback { id: format!("cb{i}"), data: (*d).to_string(), message_id: 1000 },
             })
             .collect();
         self.push(Ok(updates))
@@ -73,7 +95,7 @@ impl MockBotApi {
         self.sent()
             .into_iter()
             .filter_map(|s| match s {
-                Sent::Message { html, .. } => Some(html),
+                Sent::Message { html, .. } | Sent::Edit { html, .. } => Some(html),
                 _ => None,
             })
             .collect()
@@ -93,11 +115,27 @@ impl BotApi for MockBotApi {
         self.replies.lock().unwrap_or_else(|e| e.into_inner()).pop_front().unwrap_or(Ok(Vec::new()))
     }
 
-    fn send_message(&self, chat_id: i64, html: &str) -> Result<(), ApiError> {
-        self.sent
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(Sent::Message { chat_id, html: html.to_string() });
+    fn send_message(&self, chat_id: i64, html: &str, keys: Option<&Keyboard>) -> Result<i64, ApiError> {
+        self.sent.lock().unwrap_or_else(|e| e.into_inner()).push(Sent::Message {
+            chat_id,
+            html: html.to_string(),
+            keys: keys.cloned(),
+        });
+        Ok(self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+
+    fn edit_message(&self, chat_id: i64, message_id: i64, html: &str, keys: Option<&Keyboard>) -> Result<(), ApiError> {
+        self.sent.lock().unwrap_or_else(|e| e.into_inner()).push(Sent::Edit {
+            chat_id,
+            message_id,
+            html: html.to_string(),
+            keys: keys.cloned(),
+        });
+        Ok(())
+    }
+
+    fn answer_callback(&self, id: &str) -> Result<(), ApiError> {
+        self.sent.lock().unwrap_or_else(|e| e.into_inner()).push(Sent::Answered(id.to_string()));
         Ok(())
     }
 

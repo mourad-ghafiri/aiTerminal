@@ -4,7 +4,7 @@ pub mod api;
 pub mod curl;
 pub mod mock;
 
-pub use api::{ApiError, BotApi, FileKind, Update};
+pub use api::{ApiError, BotApi, FileKind, Keyboard, Kind, Update};
 pub use curl::CurlBotApi;
 pub use mock::MockBotApi;
 
@@ -166,7 +166,7 @@ mod tests {
         // So the first real poll asks only for what arrives from now on.
         api.push_texts(7, 902, &["ls"]);
         match p.poll(&api) {
-            PollStep::Updates(u) => assert_eq!(u.iter().map(|u| u.text.as_str()).collect::<Vec<_>>(), ["ls"]),
+            PollStep::Updates(u) => assert_eq!(u.iter().filter_map(|u| u.text()).collect::<Vec<_>>(), ["ls"]),
             other => panic!("unexpected {other:?}"),
         }
         assert_eq!(api.polls(), vec![(-1, 0), (902, 25)], "primed with -1, then resumed from the backlog's end");
@@ -181,6 +181,23 @@ mod tests {
         let mut p = Poller::new(25);
         let mut s = no_sleep();
         assert!(p.prime(&api, &mut s).is_err(), "starting blind risks replaying stale commands");
+    }
+
+    #[test]
+    fn an_update_we_ignore_still_advances_the_offset() {
+        // Without this the same update is redelivered instantly on every poll — a hot
+        // loop that burns the rate limit and never makes progress.
+        let api = MockBotApi::new();
+        api.push(Ok(vec![Update {
+            update_id: 500,
+            chat_id: 0,
+            from_id: 0,
+            from_name: String::new(),
+            kind: Kind::Other,
+        }]));
+        let mut p = Poller::new(25);
+        assert!(matches!(p.poll(&api), PollStep::Updates(_)));
+        assert_eq!(p.offset(), 501, "the ignored update was still acknowledged");
     }
 
     #[test]
