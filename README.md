@@ -136,13 +136,18 @@ aiTerminal ai "hello"          # the CLI (what @ai calls)
 ### 🍎 Or build the macOS app
 
 ```sh
-./tools/bundle-macos.sh                  # → dist/aiTerminal.app + dist/aiTerminal.zip
+./tools/bundle-macos.sh                  # this Mac's CPU → dist/aiTerminal.app
 open dist/aiTerminal.app                 # run it — or install it:
 cp -R dist/aiTerminal.app /Applications/ # then launch from Spotlight / the Dock
+
+./tools/bundle-macos.sh all              # arm64 + x86_64 + universal, ready to ship
 ```
 
 The script produces a self-contained bundle (release binary + the `builtin/`
-data + icon) — see [docs/packaging.md](docs/packaging.md).
+data + icon) for **Apple Silicon, Intel, or a universal binary** —
+`dist/aiTerminal-macos-{arm64,x86_64,universal}.zip`. Cross-building needs the
+other standard library once: `rustup target add x86_64-apple-darwin` (or
+`aarch64-apple-darwin`). See [docs/packaging.md](docs/packaging.md).
 
 Configuration lives in `~/.aiTerminal/config.toml` (seeded, documented). AI is off
 until you declare a model — see the `[ai]` section in the config, or
