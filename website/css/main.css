@@ -22,6 +22,8 @@
   --error: #FF453A;
   --mark-green: #4ADE80;
   --mark-blue: #38BDF8;
+  --on-ink: #0A0A0C;       /* text ON an --ink surface (the solid CTA) */
+  color-scheme: dark;
   --serif: "New York", ui-serif, Georgia, "Times New Roman", serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
   --mono: "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
@@ -86,12 +88,35 @@ kbd {
 .nav-links a:hover { color: var(--ink); text-decoration: none; }
 .nav-links a.on { color: var(--ink); border-bottom: 2px solid var(--accent); padding-bottom: 2px; }
 .btn-ink {
-  background: var(--ink); color: #0A0A0C !important;
+  background: var(--ink); color: var(--on-ink) !important;
   padding: 8px 18px; border-radius: 9px; font-weight: 650; font-size: 14px;
   transition: transform .15s ease, box-shadow .2s ease;
 }
 .btn-ink:hover { transform: translateY(-1px); box-shadow: 0 8px 26px rgba(244,244,246,.18); text-decoration: none; }
 .nav-toggle { display: none; background: none; border: none; color: var(--ink); font-size: 22px; cursor: pointer; }
+
+/* the light/dark switch — last thing in the bar, a quiet square next to the CTA.
+   `order` puts it after the links without depending on document order, so on a
+   narrow screen (where .nav-links leaves the flow) it can sit beside ☰. */
+.mode-toggle {
+  order: 3;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; padding: 0; flex: none;
+  border: 1px solid var(--hair); border-radius: 10px;
+  background: var(--surface); color: var(--ink-soft);
+  cursor: pointer;
+  transition: color .18s ease, border-color .2s ease, transform .15s ease, background .2s ease;
+}
+.mode-toggle:hover { color: var(--ink); border-color: var(--muted); transform: translateY(-1px); }
+.mode-toggle svg {
+  width: 17px; height: 17px; display: block;
+  fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+/* show what the click will DO: a sun on the dark page, a moon on the light one */
+.mode-toggle .ic-moon { display: none; }
+:root[data-theme="light"] .mode-toggle .ic-sun { display: none; }
+:root[data-theme="light"] .mode-toggle .ic-moon { display: block; }
 
 /* ================= hero: copy left, the logo beside it ================= */
 .hero { padding: 72px 0 44px; position: relative; overflow: hidden; }
@@ -147,11 +172,11 @@ kbd {
   cursor: pointer;
 }
 .btn:hover { transform: translateY(-2px); text-decoration: none; border-color: var(--muted); box-shadow: 0 14px 32px rgba(0,0,0,.5); }
-.btn.dark { background: var(--ink); border-color: var(--ink); color: #0A0A0C; }
+.btn.dark { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
 .btn.dark:hover { box-shadow: 0 14px 34px rgba(244,244,246,.16); }
 .btn svg { width: 19px; height: 19px; fill: currentColor; flex: none; }
 .btn .os { display: block; font-size: 11.5px; font-weight: 450; color: var(--muted); line-height: 1.1; margin-top: 2px; }
-.btn.dark .os { color: rgba(10,10,12,.6); }
+.btn.dark .os { color: color-mix(in srgb, var(--on-ink) 62%, transparent); }
 .btn .soon { font-size: 10px; border: 1px solid var(--hair); color: var(--muted); border-radius: 5px; padding: 1px 6px; }
 .hero-note { margin-top: 14px; color: var(--muted); font-size: 13px; }
 .hero-note code { font-size: 12px; }
@@ -923,9 +948,84 @@ footer { padding: 34px 0 46px; color: var(--muted); font-size: 13.5px; border-to
     background: var(--paper); border-bottom: 1px solid var(--hair);
     flex-direction: column; padding: 16px 28px; align-items: flex-start; }
   .nav-links.open { display: flex; }
-  .nav-toggle { display: block; margin-left: auto; }
+  /* the links leave the flow — the switch takes over the auto margin so the
+     bar reads brand … ☀ ☰ */
+  .nav-inner { gap: 12px; }
+  .mode-toggle { order: 0; margin-left: auto; }
+  .nav-toggle { display: block; margin-left: 0; }
   .cards { grid-template-columns: 1fr; }
   .rw { height: 420px; font-size: 11.5px; }
   .ph { height: 420px; }
   .rw[data-tabpos="left"] .rw-tabbar, .rw[data-tabpos="right"] .rw-tabbar { width: 120px; }
 }
+
+/* ============================================================================
+   LIGHT MODE — the same editorial design, printed instead of lit.
+
+   Dark stays the default: this whole section is inert until js/theme-mode.js
+   puts `data-theme="light"` on <html>. Only three things really change —
+   the palette, the shadows (ink shadows on paper, not black ones), and the
+   handful of places that hardcoded a dark-page value.
+
+   NOT re-themed, on purpose:
+     · the replica window (.rw) — it carries the real themes' own --t-* palette
+       and must keep looking like a terminal on either background;
+     · the phone (.ph) — Telegram's palette, which is Telegram's, not ours;
+     · the use-case snippets (.uc pre) — they ARE a terminal; a dark block on
+       paper reads as a screenshot. Their accent spans are re-lit below so
+       they stay bright against it.
+   ========================================================================== */
+:root[data-theme="light"] {
+  --paper: #FCFCFB;        /* warm porcelain, a breath off white */
+  --paper-2: #F4F4F2;
+  --surface: #FFFFFF;      /* cards, chips, buttons */
+  --hover: #F1F1EF;
+  --ink: #16161A;          /* the text, now the darkest thing on the page */
+  --ink-soft: #454A55;
+  --muted: #767B87;
+  --hair: #E4E4E7;
+  --accent: #0A63D2;
+  --accent-soft: #0B6FA8;
+  --green: #15803D;
+  --warn: #B45309;
+  --error: #C0362C;
+  --mark-green: #15803D;
+  --mark-blue: #0369A1;
+  --on-ink: #FCFCFB;       /* the solid CTA inverts: paper text on ink */
+  color-scheme: light;
+}
+
+:root[data-theme="light"] body {
+  background:
+    radial-gradient(1100px 640px at 50% -180px, rgba(10, 99, 210, .10), transparent 62%),
+    radial-gradient(900px 560px at 88% 12%, rgba(21, 128, 61, .06), transparent 60%),
+    var(--paper);
+}
+:root[data-theme="light"] ::selection { background: rgba(10, 99, 210, .18); }
+
+/* shadows: on paper a shadow is ink-blue and shallow, never black */
+:root[data-theme="light"] .btn:hover { box-shadow: 0 12px 26px rgba(20, 24, 34, .10); }
+:root[data-theme="light"] .btn.dark:hover { box-shadow: 0 14px 30px rgba(22, 22, 26, .22); }
+:root[data-theme="light"] .btn-ink:hover { box-shadow: 0 8px 22px rgba(22, 22, 26, .22); }
+:root[data-theme="light"] .card:hover,
+:root[data-theme="light"] .uc:hover { box-shadow: 0 16px 32px rgba(20, 24, 34, .10); }
+:root[data-theme="light"] .mrow.active { box-shadow: 0 2px 12px rgba(20, 24, 34, .07); }
+:root[data-theme="light"] .stage-shadow { filter: drop-shadow(0 26px 46px rgba(20, 24, 34, .26)); }
+:root[data-theme="light"] .stage-shadow::before {
+  background: radial-gradient(closest-side, rgba(10, 99, 210, .10), transparent 72%);
+}
+:root[data-theme="light"] .hero-logo img { filter: drop-shadow(0 26px 42px rgba(20, 24, 34, .22)); }
+:root[data-theme="light"] .hero-logo::before {
+  background:
+    radial-gradient(closest-side, rgba(10, 99, 210, .13), transparent 66%),
+    radial-gradient(closest-side at 34% 28%, rgba(21, 128, 61, .08), transparent 58%);
+}
+
+/* the few places that named a dark-page color outright */
+:root[data-theme="light"] .fact p { color: var(--muted); }
+
+/* the terminal snippets stay dark — so their syntax colors must stay lit */
+:root[data-theme="light"] .uc pre { border-color: #20262F; }
+:root[data-theme="light"] .uc pre .p,
+:root[data-theme="light"] .uc pre .ab { color: #4DA3FF; }
+:root[data-theme="light"] .uc pre .c { color: #7CD4FD; }

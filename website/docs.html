@@ -7,12 +7,19 @@
 <meta name="description" content="Full aiTerminal documentation: getting started, the @-command family, configuration, profiles, themes, plugins, keybindings, shell integration, security, AI models, and architecture.">
 <link rel="icon" type="image/png" href="assets/icon.png">
 <link rel="stylesheet" href="css/site.css">
+<!-- synchronous, in <head>: the stored light/dark choice must land on <html>
+     before the first paint, or the page flashes the other mode. -->
+<script src="js/theme-mode.js"></script>
 </head>
 <body>
 
 <header class="nav">
   <div class="wrap nav-inner">
     <a class="nav-brand" href="../index.html"><img src="assets/icon.png" alt="">aiTerminal</a>
+    <button class="mode-toggle" type="button" aria-label="Switch to light mode" title="Light mode" aria-pressed="false">
+      <svg class="ic-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.7v2.4M12 18.9v2.4M2.7 12h2.4M18.9 12h2.4M5.4 5.4l1.7 1.7M16.9 16.9l1.7 1.7M18.6 5.4l-1.7 1.7M7.1 16.9l-1.7 1.7"/></svg>
+      <svg class="ic-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 14.7A8.7 8.7 0 0 1 9.3 3.4 8.7 8.7 0 1 0 20.6 14.7z"/></svg>
+    </button>
     <button class="nav-toggle" aria-label="menu">☰</button>
     <nav class="nav-links">
       <a href="../index.html">Home</a>

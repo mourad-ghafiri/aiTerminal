@@ -21,6 +21,7 @@
   --teal: #64D2FF;
   --mark-green: #4ADE80;
   --mark-blue: #38BDF8;
+  color-scheme: dark;
   --mono: "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
 }
@@ -66,6 +67,28 @@ img { max-width: 100%; }
 .nav-gh { display: inline-flex; align-items: center; gap: 6px; }
 .nav-gh svg { width: 18px; height: 18px; fill: currentColor; }
 .nav-toggle { display: none; background: none; border: none; color: var(--fg); font-size: 22px; cursor: pointer; }
+
+/* the light/dark switch — `order` places it after the links regardless of
+   document order, so it can move beside ☰ when the links leave the flow. */
+.mode-toggle {
+  order: 3;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; padding: 0; flex: none;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--muted);
+  cursor: pointer;
+  transition: color .18s ease, border-color .2s ease, transform .15s ease, background .2s ease;
+}
+.mode-toggle:hover { color: var(--fg); border-color: var(--accent); transform: translateY(-1px); }
+.mode-toggle svg {
+  width: 17px; height: 17px; display: block;
+  fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+/* show what the click will DO: a sun on the dark page, a moon on the light one */
+.mode-toggle .ic-moon { display: none; }
+:root[data-theme="light"] .mode-toggle .ic-sun { display: none; }
+:root[data-theme="light"] .mode-toggle .ic-moon { display: block; }
 
 /* ---------------- hero ---------------- */
 .hero {
@@ -321,7 +344,10 @@ footer { border-top: 1px solid var(--border); margin-top: 70px; padding: 40px 0 
     background: var(--bg); border-bottom: 1px solid var(--border);
     flex-direction: column; padding: 16px 24px; align-items: flex-start; }
   .nav-links.open { display: flex; }
-  .nav-toggle { display: block; margin-left: auto; }
+  /* the links leave the flow — the switch takes over the auto margin */
+  .nav-inner { gap: 12px; }
+  .mode-toggle { order: 0; margin-left: auto; }
+  .nav-toggle { display: block; margin-left: 0; }
   .cards.c3, .cards.c4 { grid-template-columns: 1fr; }
   .stats-inner { grid-template-columns: repeat(2, 1fr); }
 }
@@ -464,3 +490,49 @@ footer { border-top: 1px solid var(--border); margin-top: 70px; padding: 40px 0 
   .palette { position: static; }
   .pal-row .pal-desc { white-space: normal; }
 }
+
+/* ============================================================================
+   LIGHT MODE — the docs on paper.
+
+   Dark stays the default; this section is inert until js/theme-mode.js puts
+   `data-theme="light"` on <html>. The design language is unchanged — the same
+   Midnight accent, one stop darker so it holds its contrast on white — and
+   the code blocks simply invert with the page, since here they are prose,
+   not screenshots.
+   ========================================================================== */
+:root[data-theme="light"] {
+  --bg: #FBFBFD;
+  --bg2: #F2F3F7;          /* pre / inset blocks */
+  --surface: #FFFFFF;
+  --hover: #EFF1F6;
+  --border: #E2E4EC;
+  --fg: #181A1F;
+  --muted: #656B78;
+  --accent: #0A63D2;
+  --accent2: #0B57B8;      /* links — one stop darker than the accent */
+  --green: #15803D;
+  --warn: #B45309;
+  --error: #C0362C;
+  --purple: #7C3AED;
+  --teal: #0E7490;
+  --mark-green: #15803D;
+  --mark-blue: #0369A1;
+  color-scheme: light;
+}
+
+:root[data-theme="light"] ::selection { background: rgba(10, 99, 210, .18); }
+:root[data-theme="light"] .hero::before {
+  background:
+    radial-gradient(640px 420px at 18% 20%, rgba(10, 99, 210, .10), transparent 65%),
+    radial-gradient(520px 380px at 85% 10%, rgba(21, 128, 61, .06), transparent 65%);
+}
+:root[data-theme="light"] .hero-icon { box-shadow: 0 18px 44px -14px rgba(20, 24, 34, .34); }
+:root[data-theme="light"] .card:hover { box-shadow: 0 14px 32px -14px rgba(20, 24, 34, .45); }
+:root[data-theme="light"] .palette { box-shadow: 0 22px 52px -30px rgba(20, 24, 34, .55); }
+:root[data-theme="light"] #stage::before,
+:root[data-theme="light"] .hero-static::after {
+  background: radial-gradient(closest-side, rgba(10, 99, 210, .10), transparent 74%);
+}
+/* a hairline needs a hair more contrast against paper than against ink */
+:root[data-theme="light"] .docs-main pre,
+:root[data-theme="light"] .uc pre { border-color: #DDE0E9; }
