@@ -6,8 +6,22 @@
 //! The [`msg_send!`] macro forces every call site to spell out the exact return
 //! type and each argument type, transmuting the symbol to that precise function
 //! pointer. The shim itself is unit-tested against known Foundation classes so
-//! the ABI is validated, not assumed. arm64 only for now (uniform calling
-//! convention; x86_64 stret/fpret paths are a later port).
+//! the ABI is validated, not assumed.
+//!
+//! Both macOS architectures are covered, and they do NOT share one entry point:
+//!
+//! * **arm64** — uniform convention. Every return shape (including large structs,
+//!   returned indirectly via `x8`) goes through plain `objc_msgSend`.
+//! * **x86_64** — System V returns an aggregate larger than two eightbytes *in
+//!   memory*: the caller passes a hidden result pointer in `rdi`, which shifts
+//!   `self` to `rsi` and `_cmd` to `rdx`. Plain `objc_msgSend` reads the receiver
+//!   from `rdi` and would dereference the caller's stack slot as an object — an
+//!   immediate segfault inside `lookUpImpOrForward`. libobjc ships a separate
+//!   entry point, `objc_msgSend_stret`, for exactly that shape;
+//!   [`msg_send_entry`] picks it from the return type's size.
+//!
+//! Not covered (and unused): `long double` returns, which need
+//! `objc_msgSend_fpret` on x86_64 — `f32`/`f64` return normally in `xmm0`.
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
@@ -53,6 +67,28 @@ extern "C" {
     /// Untyped on purpose — only ever invoked through [`msg_send!`], which casts
     /// it to the correct typed function pointer per call site.
     pub fn objc_msgSend();
+    /// x86_64 only: the memory-return (`sret`) variant. Does not exist on arm64,
+    /// where `objc_msgSend` handles every return shape.
+    #[cfg(target_arch = "x86_64")]
+    pub fn objc_msgSend_stret();
+}
+
+/// The libobjc entry point a call site returning `R` must dispatch through.
+///
+/// `size_of::<R>() > 16` is the System V "returned in memory" rule: no aggregate
+/// wider than two eightbytes is ever returned in registers, and no scalar is that
+/// wide, so the size alone decides it. (The one shape this rule would miss —
+/// a `≤16`-byte aggregate forced to MEMORY by a misaligned field — cannot occur
+/// with the `#[repr(C)]` geometry types below.) Const-folds to a fixed symbol at
+/// every call site: zero runtime cost, and on arm64 it is unconditionally
+/// `objc_msgSend`.
+#[inline(always)]
+pub fn msg_send_entry<R>() -> *const () {
+    #[cfg(target_arch = "x86_64")]
+    if std::mem::size_of::<R>() > 16 {
+        return objc_msgSend_stret as *const ();
+    }
+    objc_msgSend as *const ()
 }
 
 /// Look up a class by name (`nil` if it doesn't exist).
@@ -71,15 +107,31 @@ pub fn sel(name: &str) -> Sel {
 
 /// Send an Objective-C message with an explicit return type and explicit
 /// per-argument types: `msg_send![RetTy; receiver, selector, arg => ArgTy, …]`.
+///
+/// The entry point is chosen from the return type ([`msg_send_entry`]), so a
+/// struct-returning selector (`bounds`, `frame`, …) is correct on x86_64 too.
 #[macro_export]
 macro_rules! msg_send {
+    // `BOOL` is `signed char` on x86_64 (only the low byte is defined) and `bool`
+    // on arm64. Take it as `i8` and normalize — a method that answers with a raw
+    // mask byte instead of 0/1 must never become an invalid Rust `bool`.
+    (bool ; $obj:expr, $sel:expr $(, $a:expr => $at:ty)* $(,)?) => {{
+        let f: extern "C" fn(
+            $crate::os::macos::objc::Id,
+            $crate::os::macos::objc::Sel
+            $(, $at)*
+        ) -> i8 = ::core::mem::transmute(
+            $crate::os::macos::objc::msg_send_entry::<i8>()
+        );
+        f($obj, $sel $(, $a)*) != 0
+    }};
     ($ret:ty ; $obj:expr, $sel:expr $(, $a:expr => $at:ty)* $(,)?) => {{
         let f: extern "C" fn(
             $crate::os::macos::objc::Id,
             $crate::os::macos::objc::Sel
             $(, $at)*
         ) -> $ret = ::core::mem::transmute(
-            $crate::os::macos::objc::objc_msgSend as *const ()
+            $crate::os::macos::objc::msg_send_entry::<$ret>()
         );
         f($obj, $sel $(, $a)*)
     }};
@@ -146,6 +198,54 @@ mod tests {
         let n = unsafe { msg_send![Id; class("NSNumber"), sel("numberWithInt:"), 42i32 => i32] };
         let v: i32 = unsafe { msg_send![i32; n, sel("intValue")] };
         assert_eq!(v, 42);
+    }
+
+    #[test]
+    fn msgsend_bool_return() {
+        let _pool = AutoreleasePool::new();
+        // [[NSNumber numberWithBool:YES] boolValue] (validates the BOOL byte ABI)
+        let y = unsafe { msg_send![Id; class("NSNumber"), sel("numberWithBool:"), 1i8 => i8] };
+        assert!(unsafe { msg_send![bool; y, sel("boolValue")] });
+        let n = unsafe { msg_send![Id; class("NSNumber"), sel("numberWithBool:"), 0i8 => i8] };
+        assert!(!unsafe { msg_send![bool; n, sel("boolValue")] });
+    }
+
+    /// The x86_64 regression guard: a 32-byte `CGRect` return is passed in memory
+    /// (`objc_msgSend_stret`), a 16-byte `CGSize`/`CGPoint` in registers. Sending
+    /// all three through the wrong entry point segfaults on Intel and is silently
+    /// fine on arm64 — so this must run on BOTH architectures to mean anything.
+    #[test]
+    fn msgsend_struct_returns_round_trip() {
+        let _pool = AutoreleasePool::new();
+        let r = CGRect::new(1.0, 2.0, 300.0, 400.5);
+        let v = unsafe { msg_send![Id; class("NSValue"), sel("valueWithRect:"), r => CGRect] };
+        let got: CGRect = unsafe { msg_send![CGRect; v, sel("rectValue")] };
+        assert_eq!(got, r);
+
+        let s = CGSize { width: 12.0, height: 34.0 };
+        let v = unsafe { msg_send![Id; class("NSValue"), sel("valueWithSize:"), s => CGSize] };
+        let got: CGSize = unsafe { msg_send![CGSize; v, sel("sizeValue")] };
+        assert_eq!(got, s);
+
+        let p = CGPoint { x: -5.0, y: 6.25 };
+        let v = unsafe { msg_send![Id; class("NSValue"), sel("valueWithPoint:"), p => CGPoint] };
+        let got: CGPoint = unsafe { msg_send![CGPoint; v, sel("pointValue")] };
+        assert_eq!(got, p);
+    }
+
+    /// The rule [`msg_send_entry`] encodes: only `> 16` bytes is returned in memory.
+    #[test]
+    fn stret_entry_point_selected_by_return_size() {
+        let plain = objc_msgSend as *const ();
+        assert_eq!(msg_send_entry::<Id>(), plain);
+        assert_eq!(msg_send_entry::<f64>(), plain);
+        assert_eq!(msg_send_entry::<CGSize>(), plain); // 16 bytes — registers
+        assert_eq!(msg_send_entry::<CGPoint>(), plain);
+        if cfg!(target_arch = "x86_64") {
+            assert_ne!(msg_send_entry::<CGRect>(), plain); // 32 bytes — sret
+        } else {
+            assert_eq!(msg_send_entry::<CGRect>(), plain); // arm64: one entry point
+        }
     }
 
     #[test]
