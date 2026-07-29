@@ -131,14 +131,14 @@ One command — it clones the source, installs Rust if you don't have it, builds
 and puts `aiTerminal.app` in `/Applications`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh
+curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh
 ```
 
 The **same command updates** it later. To uninstall — your settings in `~/.aiTerminal`
 are kept unless you add `--purge`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh -s -- remove
+curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh -s -- remove
 ```
 
 Or [download a build](https://github.com/mourad-ghafiri/aiTerminal/releases) —

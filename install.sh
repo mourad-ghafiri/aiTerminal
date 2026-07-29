@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # aiTerminal installer — install, update and remove, from one command.
 #
-#   curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh
+#   curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh
 #   curl -fsSL .../install.sh | sh -s -- update
 #   curl -fsSL .../install.sh | sh -s -- remove
 #
@@ -30,10 +30,14 @@
 #   AITERMINAL_SRC       where the source lives (default ~/.local/share/aiTerminal/src)
 #   AITERMINAL_REPO      the git remote to clone (default the official GitHub repo)
 #   AITERMINAL_BRANCH    the branch to track (default main)
+#   AITERMINAL_INSTALL_URL  where this script lives (only for the hints it prints)
 set -eu
 
 APP_NAME="aiTerminal"
 REPO="${AITERMINAL_REPO:-https://github.com/mourad-ghafiri/aiTerminal.git}"
+# Where this script itself lives — the project's GitHub Pages site, which serves the repo
+# root. Only used for the "how to update / remove" hints it prints at the end.
+INSTALL_URL="${AITERMINAL_INSTALL_URL:-https://mourad-ghafiri.github.io/aiTerminal/install.sh}"
 SRC="${AITERMINAL_SRC:-$HOME/.local/share/aiTerminal/src}"
 BRANCH="${AITERMINAL_BRANCH:-main}"
 
@@ -64,7 +68,7 @@ usage() {
     cat <<'USAGE'
 aiTerminal installer — install, update and remove, from one command.
 
-  curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh
+  curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh
   curl -fsSL .../install.sh | sh -s -- update
   curl -fsSL .../install.sh | sh -s -- remove
 
@@ -91,6 +95,7 @@ Environment
   AITERMINAL_SRC       where the source lives (default ~/.local/share/aiTerminal/src)
   AITERMINAL_REPO      the git remote to clone (default the official GitHub repo)
   AITERMINAL_BRANCH    the branch to track (default main)
+  AITERMINAL_INSTALL_URL  where this script lives (only for the hints it prints)
 USAGE
 }
 
@@ -287,6 +292,5 @@ fi
 
 printf '\n%sOpen it:%s     open -a "%s"\n' "$BOLD" "$RESET" "$APP_NAME"
 # The same one-liner does both, which is the whole point of it.
-raw="$(printf '%s' "${REPO%.git}" | sed 's#https://github.com/#https://raw.githubusercontent.com/#')/$BRANCH/install.sh"
-printf '%sUpdate later:%s curl -fsSL %s | sh\n' "$BOLD" "$RESET" "$raw"
-printf '%sRemove it:%s    curl -fsSL %s | sh -s -- remove\n\n' "$BOLD" "$RESET" "$raw"
+printf '%sUpdate later:%s curl -fsSL %s | sh\n' "$BOLD" "$RESET" "$INSTALL_URL"
+printf '%sRemove it:%s    curl -fsSL %s | sh -s -- remove\n\n' "$BOLD" "$RESET" "$INSTALL_URL"

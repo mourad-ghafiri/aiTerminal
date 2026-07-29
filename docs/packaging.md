@@ -74,7 +74,7 @@ cargo test -p platform --lib --target x86_64-apple-darwin objc # the other one
 `install.sh` at the repo root is the user-facing entry point:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh
+curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh
 curl -fsSL … | sh -s -- remove          # uninstall (--purge also deletes ~/.aiTerminal)
 sh install.sh --no-install --universal  # build only, both slices
 ```

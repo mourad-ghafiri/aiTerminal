@@ -81,14 +81,14 @@
     <h2 id="install">Install &amp; first launch</h2>
     <p>One command installs aiTerminal on macOS 12+ — it clones the source, installs Rust if you
       don't have it, builds the app and puts <code>aiTerminal.app</code> in <code>/Applications</code>:</p>
-    <pre><code><span class="p">❯</span> curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh</code></pre>
+    <pre><code><span class="p">❯</span> curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh</code></pre>
     <p>The <b>same command updates</b> it later. To uninstall, add <code>-s -- remove</code>
       (your settings in <code>~/.aiTerminal</code> are kept unless you add <code>--purge</code>):</p>
     <pre><code><span class="c"># update</span>
-curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh
+curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh
 
 <span class="c"># uninstall (add --purge to delete your settings too)</span>
-curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh -s -- remove</code></pre>
+curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh -s -- remove</code></pre>
     <p>It builds for the Mac you are on — Apple Silicon or Intel — so there is no build to choose.
       Or do it by hand:</p>
     <pre><code><span class="c"># zero external crates — this is the whole build</span>
