@@ -78,6 +78,17 @@ impl Session {
         self.dir.join("memory")
     }
 
+    /// The folder-scoped store the `todo.*` / `data.*` / `queue.*` / `store.*` tools
+    /// write under (`sessions/<id>/data/`).
+    ///
+    /// Per project, for the same reason memory is: a checklist an agent keeps while it
+    /// works, or a table it builds up, belongs to the folder you were in — not to every
+    /// folder at once. Without this the four families have nowhere to write and every
+    /// call returns "only available to installed apps", which is what they did.
+    pub fn data_dir(&self) -> PathBuf {
+        self.dir.join("data")
+    }
+
     /// The current rolling digest (`session.md`), or empty when none yet. Bounded on
     /// disk, so this is a small read.
     pub fn digest(&self) -> String {

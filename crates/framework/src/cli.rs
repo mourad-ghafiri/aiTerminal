@@ -1584,9 +1584,14 @@ fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::AiSettings, w
     // Folder-scoped memory: the agent's `memory.*` tools read/write THIS project's session
     // store (recall folder-first, then global). Derived from the same workspace that bounds
     // fs writes, so identity is consistent — no separate plumbing.
-    let memory_dir = workspace
-        .as_ref()
-        .map(|w| crate::ai::Session::at(w, &crate::config::Config::sessions_dir()).memory_dir());
+    let session = workspace.as_ref().map(|w| crate::ai::Session::at(w, &crate::config::Config::sessions_dir()));
+    let memory_dir = session.as_ref().map(|s| s.memory_dir());
+    // …and the same session backs `todo.*` / `data.*` / `queue.*` / `store.*`. Those four
+    // families key everything off `app_data`, and this is the only place in the product
+    // that builds a `CapCtx` — so while it was `None`, all nineteen of their methods
+    // answered "only available to installed apps" everywhere, including the four `todo.*`
+    // tools `coder` declares and its prompt tells it to use.
+    let app_data = session.as_ref().map(|s| s.data_dir());
     let mcp = if with_mcp {
         let mcp_dirs = vec![crate::config::Config::mcp_dir()];
         let servers = crate::ai::load_servers(&mcp_dirs);
@@ -1600,7 +1605,7 @@ fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::AiSettings, w
         None
     };
     CliToolRunner {
-        ctx: crate::caps::CapCtx { policy, app_data: None, remote_enabled: cfg.ai_network, origin: "terminal://ai/".into(), sandbox: workspace, memory_dir },
+        ctx: crate::caps::CapCtx { policy, app_data, remote_enabled: cfg.ai_network, origin: "terminal://ai/".into(), sandbox: workspace, memory_dir },
         mcp,
         trace: None,
         sub: SubAgentCtx {
@@ -1682,6 +1687,16 @@ fn ai_agent_cmd(args: &[String]) -> i32 {
     }
     println!("\n  {dim}{}{r}", crate::config::Config::agents_dir().join(format!("{}.md", a.name)).display());
     0
+}
+
+/// Make this process behave like a command rather than a server.
+///
+/// One thing so far: the Rust runtime ignores `SIGPIPE` before `main`, so a write to a
+/// pipe whose reader has gone returns `EPIPE` and `println!` panics. That turns
+/// `aiTerminal ai flow | head -2` into an intermittent backtrace where `ls | head` is
+/// silent — and the docs promise that piping stays clean.
+pub fn install_command_defaults() {
+    platform::os::restore_sigpipe();
 }
 
 /// "try one of: coder, explorer, …" — the installed agent names for not-found errors.
@@ -6109,6 +6124,60 @@ mod tests {
         // Nothing that could escape the flows directory is a name at all.
         assert!(super::load_flow("../../etc/passwd").is_err());
         assert!(super::load_flow("").is_err());
+    }
+
+    #[test]
+    fn the_tool_families_an_agent_declares_actually_work() {
+        // `app_data` was `None` at the one place in the whole product that builds a
+        // `CapCtx`, so `todo.*` / `data.*` / `queue.*` / `store.*` — nineteen registered
+        // methods — answered "only available to installed apps" everywhere. Four of them
+        // are declared by `coder`, whose own prompt tells it to mark `todo.done` as it
+        // works, and five are granted to any agent that declares no tools.
+        let (_h, _home) = crate::test_home::lock_home("cli-app-data");
+        crate::config::Config::ensure_default();
+        let cfg = crate::config::Config::load();
+        let policy = std::sync::Arc::new(crate::security::Policy::new());
+        let runner = super::build_runner(&cfg, &cfg.ai_settings(), None, policy, false);
+        let ctx = &runner.ctx;
+        assert!(ctx.app_data.is_some(), "a terminal run has somewhere to keep its own state");
+
+        let run = |m: &str, args: &[(&str, &str)]| {
+            let pairs: Vec<(String, String)> =
+                args.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            crate::caps::run(m, &pairs, ctx)
+        };
+        // A checklist an agent keeps while it works.
+        run("todo.set", &[("items", "[\"map the code\", \"make the edit\"]")]).expect("todo.set");
+        run("todo.add", &[("text", "run the tests")]).expect("todo.add");
+        run("todo.done", &[("text", "map the code")]).expect("todo.done");
+        let todos = super::json_text(&run("todo.list", &[]).expect("todo.list"));
+        assert!(todos.contains("run the tests"), "the list survives the calls: {todos}");
+
+        // A table it builds up, and gets back.
+        run("data.insert", &[("table", "notes"), ("row", "{\"who\":\"ada\",\"n\":1}")]).expect("data.insert");
+        let rows = super::json_text(&run("data.query", &[("table", "notes")]).expect("data.query"));
+        assert!(rows.contains("ada"), "the row reads back: {rows}");
+
+        // And the other two families the same context unlocks.
+        run("queue.push", &[("queue", "work"), ("item", "one")]).expect("queue.push");
+        assert!(super::json_text(&run("queue.size", &[("queue", "work")]).expect("queue.size")).contains('1'));
+        run("store.set", &[("key", "k"), ("value", "v")]).expect("store.set");
+        assert!(super::json_text(&run("store.get", &[("key", "k")]).expect("store.get")).contains('v'));
+
+        // It is the *project's* state, not a global pile: the folder decides.
+        let session = crate::ai::Session::at(
+            &std::env::current_dir().unwrap(),
+            &crate::config::Config::sessions_dir(),
+        );
+        assert_eq!(ctx.app_data.as_ref(), Some(&session.data_dir()));
+        assert!(session.data_dir().ends_with("data"));
+
+        // And this is the shape of the bug, so the guard explains itself: with nowhere
+        // to write, every one of those calls is a wasted turn and an error string the
+        // model has to interpret.
+        let nowhere = crate::caps::CapCtx { app_data: None, ..ctx.clone() };
+        let err = crate::caps::run("todo.list", &[], &nowhere).expect_err("refused");
+        assert!(err.contains("only available to installed apps"), "{err}");
     }
 
     #[test]
