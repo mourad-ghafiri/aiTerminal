@@ -202,26 +202,49 @@ label  = <span class="s">"verify"</span>
 agent  = <span class="s">"tester"</span>
 prompt = <span class="s">"Verify the change above."</span></code></pre>
 
-    <h2 id="cmd-loop">@loop — iterate to a verified goal</h2>
-    <pre><code><span class="p">❯</span> @loop "make the config tests pass" --check "cargo test -p framework config::"
+    <h2 id="cmd-loop">@loop — iterate until it verifies</h2>
+    <pre><code><span class="p">❯</span> @loop "make the config tests pass"
 🔁 loop 'coder' — up to 5 iteration(s)
+  <span class="c">verifier: cargo test -p framework config:: — proposed from the goal</span>
 ▶ iteration 1/5 … ▶ iteration 2/5 …
 <span class="g">✓ goal reached after 2 iteration(s)</span></code></pre>
-    <p>Loop engineering, properly: the <b>maker</b> works the goal; an independent <b>verifier</b>
-      grades it — either your deterministic <code>--check</code> command (exit 0 = done; it passes
-      the guard first) or a separate read-only reviewer agent that must conclude
-      <code>VERDICT: PASS</code>. The model never grades its own work. Verifier output tails
-      forward into the next iteration.</p>
+    <p><b>The verifier is the whole game.</b> <code>--check "&lt;cmd&gt;"</code> is a binary stop
+      condition — exit 0 = done, no judgement involved. Give none and the AI reads the goal
+      <b>once</b> and proposes a real command, because the alternative — a model deciding for
+      itself whether it is finished — is the single most common way agent loops fail. The
+      proposal is printed before anything runs and the command guard still adjudicates it: a
+      "verifier" that would deploy, push or install is a side effect, not a measurement, and is
+      refused. Only if nothing verifiable turns up does an independent reviewer agent grade each
+      iteration.</p>
+    <p><b>And it is proven before it costs anything.</b> The check runs once <em>before</em>
+      iteration 1: guard-refused or unrunnable → exit 2 with nothing spent; already exits 0 →
+      the goal was already met, zero iterations; fails → that failure seeds iteration 1, so the
+      maker starts on the real error instead of a guess.</p>
     <table>
       <tr><th>Flag</th><th>Meaning</th></tr>
-      <tr><td><code>--check "&lt;cmd&gt;"</code></td><td>deterministic verifier; killed if it hangs past 10 minutes</td></tr>
+      <tr><td><code>--check "&lt;cmd&gt;"</code></td><td>the verifier; killed if it hangs past <code>[loop] check_timeout</code></td></tr>
+      <tr><td><code>--no-check</code></td><td>skip inference — grade with a reviewer agent</td></tr>
       <tr><td><code>--max N</code></td><td>iteration cap (default 5)</td></tr>
       <tr><td><code>--budget TOKENS</code></td><td>total token budget across iterations</td></tr>
+      <tr><td><code>--timeout 30m</code></td><td>wall clock for the whole run</td></tr>
       <tr><td><code>--agent &lt;name&gt;</code></td><td>the maker (default <code>coder</code>)</td></tr>
-      <tr><td><code>--bg</code></td><td>run the whole loop as a tracked background job</td></tr>
+      <tr><td><code>--bg</code> · <code>--dry-run</code></td><td>detach it · show the plan and the proven verifier, run nothing</td></tr>
     </table>
-    <p>Stop rules: <b>success</b> · <b>max-cap</b> · <b>stalled</b> (identical verifier output twice
-      in a row — no progress, stop burning tokens) · <b>budget</b>.</p>
+    <p>Iterations, tokens and wall clock are three different ways to run away, so all three are
+      bounded — and a flag value that can't be read is an error, never a silent default. No
+      progress is <em>detected</em>: the loop remembers its last few verifier observations, so a
+      run that repeats itself and one that oscillates between two bad states both count. The
+      first time, the maker gets one more iteration, told what was already tried and asked for a
+      materially different approach; the second time ends the run.</p>
+    <pre><code><span class="p">❯</span> @loop                              <span class="c"># recent runs: verifier · iterations · outcome</span>
+<span class="p">❯</span> @loop show last                    <span class="c"># goal, bounds, what was already tried</span>
+<span class="p">❯</span> @loop log 4310 -f                  <span class="c"># the newest iteration, live</span>
+<span class="p">❯</span> @loop resume 4310 --budget 200000  <span class="c"># carry on — with more rope</span></code></pre>
+    <p>Every iteration is written to <code>ai/loops/&lt;id&gt;/</code> — <code>loop.toml</code>
+      (goal, verifier, bounds, progress) plus <code>iterations/&lt;n&gt;.md</code>. A run stopped
+      by Ctrl+C, a timeout or the cap resumes from where it stopped, attempt log and all, rather
+      than paying for the whole thing again. Exit codes: <code>0</code> reached ·
+      <code>1</code> a bound stopped it · <code>2</code> setup error · <code>130</code> interrupted.</p>
 
     <h2 id="cmd-job">@job — say what to do, and when</h2>
     <pre><code><span class="p">❯</span> @job "check the logs at midnight"

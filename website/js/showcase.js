@@ -277,12 +277,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
     loop: {
       caption: () => caption("<code>@loop</code> — until it's <em>actually</em> done",
-        "An independent verifier grades every iteration — the model never grades its own work."),
+        "The AI proposes a real check command from your goal, the guard adjudicates it, and it is proven <em>before</em> the first token is spent — already green costs nothing."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
-          { do: "cmd", text: "@loop \"make the config tests pass\" --check \"cargo test config\"" },
+          { do: "cmd", text: "@loop \"make the config tests pass\"" },
           { do: "out", spans: [FG("🔁 loop 'coder' — up to 5 iteration(s)")] },
+          { do: "out", spans: [DIM("  verifier: cargo test -p framework config:: — proposed from the goal")] },
           { do: "out", spans: [FG("▶ iteration 1/5")] },
           { do: "tool", name: "fs.edit", args: '{"path":"src/config.rs"}', ms: 7, size: "610B" },
           { do: "out", spans: [DIM("  check: exit=1 · assertion failed: default theme")], ms: 500 },
