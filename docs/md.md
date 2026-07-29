@@ -7,9 +7,12 @@ using the same from-scratch Markdown + diagram engines that render `@ai` answers
 
 Pretty-prints a Markdown file straight into the pane: headings, **bold**/*italic*, `inline code`,
 links, bullet/numbered/task lists, block quotes, boxed fenced code, and aligned tables — wrapped to
-the **full width of the split**. Diagrams are **drawn natively** as pixels inline — every mermaid
-diagram type, from flowcharts and sequence diagrams to class, state, ER, gantt, pie and mindmaps;
-in other terminals or when piped the same layout is drawn in **Unicode box art**, and
+the **full width of the split**. It reads GitHub-flavored Markdown *and* the HTML subset GitHub
+allows — alerts, footnotes, task lists, reference links, `<details>`, centered `<div>` blocks,
+HTML tables, `<kbd>` (see [markdown.md](markdown.md)) — with fenced code **syntax highlighted**.
+Images and diagrams are **drawn natively** as pixels inline — every mermaid diagram type, from
+flowcharts and sequence diagrams to class, state, ER, gantt, pie and mindmaps; in other terminals
+or when piped a diagram is drawn in **Unicode box art**, an image becomes a labelled placeholder, and
 piped output is plain Markdown so `@md render notes.md | less` stays clean.
 
 ```

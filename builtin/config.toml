@@ -29,6 +29,14 @@ scrollback = 10000         # terminal history lines kept for scrollback (Shift+P
                            # Home scroll up; the mouse wheel scrolls too; typing snaps
                            # back to the live bottom)
 
+[md]
+# How Markdown renders (`@md render`, `@md edit`, and every AI answer).
+syntax         = true      # syntax-highlight fenced code blocks
+image_max_rows = 20        # the tallest an inline image may be drawn, in grid rows
+remote_images  = false     # fetch https:// images (badges, screenshots) when rendering.
+                           # Off by default: displaying a document should never reach the
+                           # network on its own. Local image files always draw.
+
 # Custom keybindings — rebind any built-in action (snake_case; full list of action
 # names in docs/keybindings.md). Uncomment and add [[keybinding]] tables:
 # [[keybinding]]

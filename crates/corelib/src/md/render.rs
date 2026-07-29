@@ -331,11 +331,22 @@ fn render_table(align: &[Align], head: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>]
         }
     }
     // Clamp total width to the terminal.
+    // A table draws as `│ cell │ cell │`: three columns of frame per cell plus the closing
+    // border, so that much comes off the pane width before the cells get their share.
     let budget = width.saturating_sub(3 * cols + 1);
     let total: usize = wcol.iter().sum();
     if total > budget && total > 0 {
         for w in wcol.iter_mut() {
-            *w = ((*w * budget) / total).max(3);
+            *w = ((*w * budget) / total).max(1);
+        }
+        // Rounding (and the one-column floor) can leave the sum a hair over; shave the
+        // widest column until the table really fits, so it can never overrun the pane.
+        while wcol.iter().sum::<usize>() > budget {
+            let Some(widest) = wcol.iter_mut().max_by_key(|w| **w) else { break };
+            if *widest <= 1 {
+                break;
+            }
+            *widest -= 1;
         }
     }
     let al = |c: usize| align.get(c).copied().unwrap_or(Align::None);

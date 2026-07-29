@@ -1,0 +1,23 @@
+name = "alerts, footnotes, task lists and reference links render as themselves"
+tags = ["markdown"]
+
+# A README is not just paragraphs. Every one of these used to reach the screen as literal
+# syntax, which is the one thing a renderer must never do.
+
+[[step]]
+markdown = ["> [!WARNING]", "> Mind the gap.", "", "Some claim[^1] and a [reference][docs].", "", "- [x] shipped", "- [ ] pending", "", "[^1]: The evidence.", "[docs]: https://example.com/ref"]
+
+# The callout says what it is; the footnote marker and its text both land.
+[[step]]
+expect_contains = ["WARNING", "Mind the gap", "The evidence."]
+
+# The reference resolves even though it is defined at the bottom of the file.
+[[step]]
+expect_contains = ["https://example.com/ref"]
+
+# Task boxes are boxes, and no raw syntax survives anywhere.
+[[step]]
+expect_contains = ["☑", "☐"]
+
+[[step]]
+expect_not_contains = ["[!WARNING]", "[^1]:", "[docs]:", "- [x]"]

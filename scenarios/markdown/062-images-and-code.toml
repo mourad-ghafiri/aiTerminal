@@ -1,0 +1,14 @@
+name = "an image announces itself and code keeps its language"
+tags = ["markdown"]
+
+# Outside our own window there are no pixels to draw with, so an image has to say what it
+# is rather than vanish — and a code fence has to stay verbatim whatever is inside it.
+
+[[step]]
+markdown = ["![the logo](assets/logo.png)", "", "```rust", "let x = 1; // a comment", "```"]
+
+[[step]]
+expect_contains = ["▣ the logo", "assets/logo.png", "rust", "let x = 1; // a comment"]
+
+[[step]]
+expect_not_contains = ["![the logo]", "```"]

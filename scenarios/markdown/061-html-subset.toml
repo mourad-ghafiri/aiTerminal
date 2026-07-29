@@ -1,0 +1,19 @@
+name = "the HTML a README actually uses renders as structure"
+tags = ["markdown"]
+
+# Every README opens with a centered block of badges and a logo, and half of them hide the
+# long bits behind <details>. Tags must never reach the screen.
+
+[[step]]
+markdown = ["<div align=\"center\">", "", "# Project", "", "Press <kbd>Ctrl</kbd> to win.", "", "</div>", "", "<details>", "<summary>More detail</summary>", "", "Hidden prose.", "", "</details>", "", "<table>", "<tr><th>Key</th><th>Value</th></tr>", "<tr><td>one</td><td>1</td></tr>", "</table>"]
+
+[[step]]
+expect_contains = ["Project", "Ctrl", "More detail", "Hidden prose.", "Key", "Value", "one"]
+
+# No tag, no attribute, ever.
+[[step]]
+expect_not_contains = ["<div", "</div>", "<kbd>", "<details>", "<summary>", "<table>", "align=", "<td>"]
+
+# The centered heading really is centered — it starts well past column zero.
+[[step]]
+expect_not_contains = ["\n# Project"]
