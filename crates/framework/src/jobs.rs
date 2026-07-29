@@ -286,7 +286,7 @@ impl Job {
     /// The newest occurrence log, falling back to the pre-`runs/` layout.
     pub fn latest_log(&self) -> Option<PathBuf> {
         let dir = dir(&self.id)?;
-        let newest = run_logs(&dir).into_iter().next_back();
+        let newest = crate::record::logs(&dir, "runs").into_iter().next_back();
         newest.or_else(|| {
             let legacy = dir.join("log.md");
             legacy.is_file().then_some(legacy)
@@ -294,69 +294,16 @@ impl Job {
     }
 }
 
-/// `95` → `1m`, `4000` → `1h` — coarse, glanceable durations.
-pub(crate) fn human_age(secs: u64) -> String {
-    if secs >= 86_400 {
-        format!("{}d", secs / 86_400)
-    } else if secs >= 3600 {
-        format!("{}h", secs / 3600)
-    } else if secs >= 60 {
-        format!("{}m", secs / 60)
-    } else {
-        format!("{secs}s")
-    }
-}
+pub(crate) use crate::record::{human_age, new_id, now};
 
-pub(crate) fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-}
-
-/// A fresh, sortable job id: `<unix-secs>-<pid>`.
-pub(crate) fn new_id() -> String {
-    format!("{}-{}", now(), std::process::id())
-}
-
-/// The job's folder (the id is charset-checked so it can never escape the jobs dir).
+/// The job's folder — see [`crate::record::folder`] for why the id is charset-checked.
 pub(crate) fn dir(id: &str) -> Option<PathBuf> {
-    let ok = !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
-    ok.then(|| Config::jobs_dir().join(id))
-}
-
-/// Every occurrence log in a job folder, oldest first.
-fn run_logs(dir: &std::path::Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir.join("runs")) else { return Vec::new() };
-    let mut logs: Vec<(u64, PathBuf)> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("md"))
-        .filter_map(|p| {
-            let seq: u64 = p.file_stem()?.to_str()?.parse().ok()?;
-            Some((seq, p))
-        })
-        .collect();
-    logs.sort_by_key(|(seq, _)| *seq);
-    logs.into_iter().map(|(_, p)| p).collect()
+    crate::record::folder(&Config::jobs_dir(), id)
 }
 
 /// Create the log file for the next occurrence and prune old ones.
 pub(crate) fn open_run_log(id: &str, keep: usize) -> Option<(PathBuf, std::fs::File)> {
-    let dir = dir(id)?;
-    let runs = dir.join("runs");
-    std::fs::create_dir_all(&runs).ok()?;
-    let existing = run_logs(&dir);
-    let next = existing
-        .last()
-        .and_then(|p| p.file_stem()?.to_str()?.parse::<u64>().ok())
-        .map(|n| n + 1)
-        .unwrap_or(1);
-    // Keep the newest `keep - 1`, because this call is about to add one.
-    let keep = keep.max(1);
-    for old in existing.iter().take(existing.len().saturating_sub(keep - 1)) {
-        let _ = std::fs::remove_file(old);
-    }
-    let path = runs.join(format!("{next}.md"));
-    let file = std::fs::File::create(&path).ok()?;
-    Some((path, file))
+    crate::record::open_log(&dir(id)?, "runs", keep)
 }
 
 /// Write a record. Every field the job needs to run again lives here, so a scheduled run
@@ -364,9 +311,6 @@ pub(crate) fn open_run_log(id: &str, keep: usize) -> Option<(PathBuf, std::fs::F
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write(id: &str, job: &Job) {
     let Some(dir) = dir(id) else { return };
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
     let mut pairs = vec![
         ("cmd".into(), Toml::Str(job.cmd.clone())),
         ("status".into(), Toml::Str(job.status.clone())),
@@ -412,7 +356,7 @@ pub(crate) fn write(id: &str, job: &Job) {
         }
         pairs.push(("schedule".into(), Toml::Table(sched)));
     }
-    let _ = std::fs::write(dir.join("job.toml"), Toml::Table(pairs).to_string());
+    crate::record::save(&dir.join("job.toml"), &Toml::Table(pairs).to_string());
 }
 
 /// Read one record. Records written before `[schedule]` existed still load: a missing
@@ -489,21 +433,8 @@ pub(crate) fn list() -> Vec<Job> {
 /// Resolve a user-typed job reference: an exact id, any unambiguous piece of one, or
 /// `last`.
 pub(crate) fn resolve(reference: &str) -> Result<String, String> {
-    let all = list();
-    if reference == "last" {
-        return all.first().map(|j| j.id.clone()).ok_or_else(|| "no jobs yet".to_string());
-    }
-    if all.iter().any(|j| j.id == reference) {
-        return Ok(reference.to_string());
-    }
-    // An id is `<unix-secs>-<pid>`, so the part a person actually reads off the list and
-    // retypes is usually the tail. Any unique piece of it works — start, end, or middle.
-    let hits: Vec<&Job> = all.iter().filter(|j| j.id.contains(reference)).collect();
-    match hits.len() {
-        1 => Ok(hits[0].id.clone()),
-        0 => Err(format!("no such job '{reference}'")),
-        n => Err(format!("'{reference}' matches {n} jobs — use more of the id")),
-    }
+    let ids: Vec<String> = list().into_iter().map(|j| j.id).collect();
+    crate::record::resolve(&ids, reference, "job")
 }
 
 /// Stamp a job's outcome, advancing a repeating schedule to its next fire.
@@ -904,7 +835,7 @@ mod tests {
             let (path, _f) = open_run_log("700-1", 3).expect("a log opens");
             assert!(path.ends_with(format!("{i}.md")), "sequence keeps counting: {path:?}");
         }
-        let kept = run_logs(&dir("700-1").unwrap());
+        let kept = crate::record::logs(&dir("700-1").unwrap(), "runs");
         assert_eq!(kept.len(), 3, "only the newest three survive: {kept:?}");
         assert!(kept.last().unwrap().ends_with("5.md"));
         assert_eq!(read("700-1").unwrap().latest_log().unwrap(), *kept.last().unwrap());
