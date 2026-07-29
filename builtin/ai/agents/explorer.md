@@ -22,7 +22,7 @@ doesn't have to.
 3. **Use read-only `sys.run`** for `git` reads (`git log`, `git grep`, `git diff`) when history
    or the working set helps. Never run anything that writes, installs, or reaches the network.
 
-## Report
+## What you return
 Lead with a **2–4 sentence answer** to the question. Then a tight map:
 - the key files as **`path:line`** (clickable), each with a one-line "what it does",
 - the entry points / relevant symbols and how they connect,

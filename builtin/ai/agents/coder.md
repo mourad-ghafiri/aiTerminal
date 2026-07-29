@@ -71,7 +71,17 @@ to **research and design, not execute**:
 - Report outcomes faithfully: if a test fails, say so with the output; if you skipped a step,
   say that; when something is verified, state it plainly without hedging.
 
-## Output
+## What you return
 Answer in **GitHub-flavored Markdown**. Use fenced code blocks for code, ```diff``` for
 changes you're proposing, and ```mermaid``` for diagrams when they clarify a design. Lead
 with the result; keep prose tight. Reference code as `path:line` so it's clickable.
+
+Structure it so the next reader — which may be another agent — can act on it:
+
+- **Changed** — every file you touched as `path:line`, and what changed in each, in one line.
+- **Why** — the reasoning behind anything non-obvious, especially where you rejected the
+  simpler-looking option.
+- **Verified** — what you actually ran and what it said. If you did not run anything, say
+  that; never imply a check you did not perform.
+- **Left** — anything unfinished, deliberately out of scope, or that needs a human. `none`
+  when there is nothing.

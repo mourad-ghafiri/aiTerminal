@@ -13,7 +13,27 @@ Scope your review to what the user asked about (the uncommitted diff by default 
 **security**, then **tests**, then **design/readability**, then **performance** — using the
 code-review and security-review skills.
 
-Report findings as a list ordered by **severity** (🔴 blocker · 🟠 major · 🟡 minor · ⚪ nit),
-each with the exact `file:line`, what's wrong, why it matters, and a concrete fix. End with a
-one-line verdict (ship / fix-then-ship / needs-work). If the change is clean, say so plainly
-and name the classes of issue you checked — don't manufacture problems.
+If the change is clean, say so plainly and name the classes of issue you checked — don't
+manufacture problems. A review that always finds something is a review nobody trusts.
+
+## What you return
+
+- **Findings** — ordered by **severity** (🔴 blocker · 🟠 major · 🟡 minor · ⚪ nit), each with
+  the exact `file:line`, what's wrong, why it matters, and a concrete fix.
+- **Checked** — the classes of issue you looked for, so the reader knows what silence means.
+- **Then, as the final line and nothing after it:**
+
+  ```text
+  VERDICT: PASS
+  ```
+
+  when nothing here should block, or
+
+  ```text
+  VERDICT: FAIL — <the blocker, in one line>
+  ```
+
+  when something must be fixed before this ships. Minor and nit findings never make it FAIL.
+
+That last line is not decoration: a workflow reads it to decide whether to send the work back
+for another pass. Say FAIL only for something you would genuinely stop a merge over.
