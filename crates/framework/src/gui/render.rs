@@ -237,7 +237,10 @@ fn draw_placements(surface: &mut Surface, term: &Term, theme: &Theme, cache: &mu
         let rect = Rect::new(ox + 3.0, oy + y_top as f32 * ch + 2.0, cols as f32 * cw - 6.0, p.rows as f32 * ch - 4.0);
         // Clear the reserved region (over any stray cells) then draw the diagram into it.
         surface.fill_rect(Rect::new(ox, oy + y_top as f32 * ch, cols as f32 * cw, p.rows as f32 * ch), theme.term_bg);
-        draw_diagram(surface, cache, px, theme, rect, &p.source, cw, ch);
+        match p.kind {
+            platform::term::Inline::Diagram => draw_diagram(surface, cache, px, theme, rect, &p.source, cw, ch),
+            platform::term::Inline::Image => draw_image(surface, cache, px, theme, rect, &p.source),
+        }
     }
 }
 
@@ -258,7 +261,11 @@ fn draw_alt_placements(surface: &mut Surface, term: &Term, theme: &Theme, cache:
         let h = vis_rows as f32 * ch;
         // Clear the reserved region (over any stray cells) then draw the diagram into it.
         surface.fill_rect(Rect::new(x0, y0, w, h), theme.term_bg);
-        draw_diagram(surface, cache, px, theme, Rect::new(x0 + 3.0, y0 + 2.0, w - 6.0, h - 4.0), &p.source, cw, ch);
+        let inner = Rect::new(x0 + 3.0, y0 + 2.0, w - 6.0, h - 4.0);
+        match p.kind {
+            platform::term::Inline::Diagram => draw_diagram(surface, cache, px, theme, inner, &p.source, cw, ch),
+            platform::term::Inline::Image => draw_image(surface, cache, px, theme, inner, &p.source),
+        }
     }
 }
 
@@ -348,6 +355,45 @@ fn role_color(role: corelib::mermaid::Role, theme: &Theme) -> Rgba8 {
         Role::Accent => theme.accent,
         Role::Slot(n) => theme.ansi(9 + n % 6),
     }
+}
+
+/// Decoded images, kept between frames so scrolling a README doesn't re-decode a logo on
+/// every repaint. Keyed by path; bounded, because a document can name any number of files.
+fn image_cache() -> &'static std::sync::Mutex<Vec<(String, Option<std::sync::Arc<corelib::types::DecodedImage>>)>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Vec<(String, Option<std::sync::Arc<corelib::types::DecodedImage>>)>>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+/// The decoded image at `path`, decoding (and remembering) it on first use. A file that
+/// can't be read or decoded is remembered as such, so we don't retry it every frame.
+fn decoded_image(path: &str) -> Option<std::sync::Arc<corelib::types::DecodedImage>> {
+    let mut cache = image_cache().lock().ok()?;
+    if let Some((_, img)) = cache.iter().find(|(p, _)| p == path) {
+        return img.clone();
+    }
+    let decoded = std::fs::read(path).ok().and_then(|bytes| platform::os::image_decoder().decode(&bytes)).map(std::sync::Arc::new);
+    if cache.len() >= 32 {
+        cache.remove(0);
+    }
+    cache.push((path.to_string(), decoded.clone()));
+    decoded
+}
+
+/// Draw an image file into `rect`, keeping its aspect ratio and centering the result.
+fn draw_image(surface: &mut Surface, cache: &mut GlyphCache, px: f32, theme: &Theme, rect: Rect, path: &str) {
+    let Some(img) = decoded_image(path) else {
+        // Unreadable: say so where the picture would have been, rather than leave a hole.
+        let name = path.rsplit('/').next().unwrap_or(path);
+        let m = cache.metrics(px);
+        draw_text(surface, cache, &format!("▣ {name}"), px, rect.x, rect.y + m.ascent, theme.muted, rect.right(), false);
+        return;
+    };
+    if img.width == 0 || img.height == 0 {
+        return;
+    }
+    let scale = (rect.w / img.width as f32).min(rect.h / img.height as f32);
+    let (w, h) = (img.width as f32 * scale, img.height as f32 * scale);
+    surface.draw_image(Rect::new(rect.x + (rect.w - w) / 2.0, rect.y + (rect.h - h) / 2.0, w, h), &img);
 }
 
 /// Draw a parsed+laid-out diagram, scaled to fit `rect`.

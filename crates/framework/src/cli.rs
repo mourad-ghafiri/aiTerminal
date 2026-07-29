@@ -10,7 +10,7 @@
 //! The `ai` subcommand stays offline-capable: it never reads keys off the machine —
 //! the API key comes only from the configured env var (or an explicit `[ai] api_key`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// `aiTerminal ai …` — the terminal-native AI entry point.
 ///
@@ -627,6 +627,11 @@ impl LiveMarkdown {
             corelib::md::Chunk::Diagram(s) => {
                 let _ = w.write_all(diagram_output(&s).as_bytes());
             }
+            // A streamed answer has no document directory; only absolute paths and
+            // (when allowed) remote images can resolve.
+            corelib::md::Chunk::Image { src, fallback, .. } => {
+                let _ = w.write_all(image_output(&src, &fallback, Path::new(".")).as_bytes());
+            }
         }
     }
 
@@ -768,6 +773,102 @@ fn diagram_text(source: &str) -> String {
     }
 }
 
+/// An image for a terminal that can draw pixels: an `OSC 1339` placement over reserved
+/// rows. Anywhere else — or for an image we can't get hold of — the caller's `fallback`
+/// (the ordinary `▣ alt` placeholder) is what shows.
+///
+/// `base` is the document's own directory, so a README's `img/logo.png` resolves the way
+/// the document meant it.
+pub(crate) fn image_output(src: &str, fallback: &str, base: &Path) -> String {
+    if !is_native_terminal() {
+        return fallback.to_string();
+    }
+    match image_placement(src, base) {
+        Some((path, rows)) => format!("\x1b]1339;{rows};{}\x07", corelib::codec::base64_encode(path.as_bytes())),
+        None => fallback.to_string(),
+    }
+}
+
+/// Resolve an image source to a local file and the grid rows it should occupy — what a
+/// host reserves before asking the app to draw it.
+pub(crate) fn image_placement(src: &str, base: &Path) -> Option<(String, usize)> {
+    let cfg = crate::config::Config::load();
+    let path = resolve_image(src, base, &cfg)?;
+    let bytes = std::fs::read(&path).ok()?;
+    let img = platform::os::image_decoder().decode(&bytes)?;
+    if img.width == 0 || img.height == 0 {
+        return None;
+    }
+    // A grid cell is about twice as tall as it is wide, so a square image needs about
+    // half as many rows as it does columns.
+    let cols = md_width() as f32;
+    let rows = (img.height as f32 / img.width as f32 * cols * 0.5).round() as usize;
+    Some((path.to_string_lossy().into_owned(), rows.clamp(2, cfg.md_image_max_rows)))
+}
+
+/// A local path for `src`: a file beside the document, or — only when `[md]
+/// remote_images` says so — a cached download.
+fn resolve_image(src: &str, base: &Path, cfg: &crate::config::Config) -> Option<PathBuf> {
+    let src = src.trim();
+    if src.is_empty() || src.starts_with("data:") {
+        return None;
+    }
+    if src.starts_with("http://") || src.starts_with("https://") {
+        return cfg.md_remote_images.then(|| cached_download(src)).flatten();
+    }
+    let path = match src.strip_prefix("file://") {
+        Some(p) => PathBuf::from(p),
+        None => {
+            let p = PathBuf::from(src);
+            if p.is_absolute() {
+                p
+            } else {
+                base.join(p)
+            }
+        }
+    };
+    path.is_file().then_some(path)
+}
+
+/// Fetch a remote image once and keep it under `~/.<brand>/cache/images/`.
+fn cached_download(url: &str) -> Option<PathBuf> {
+    let dir = crate::config::Config::dir().join("cache").join("images");
+    let name = format!("{:016x}{}", url_hash(url), image_ext(url));
+    let path = dir.join(name);
+    if path.is_file() {
+        return Some(path);
+    }
+    std::fs::create_dir_all(&dir).ok()?;
+    let bytes = platform::transport::fetch(url).ok()?;
+    // Something that isn't an image is not worth keeping, and not worth drawing.
+    if bytes.is_empty() || platform::os::image_decoder().decode(&bytes).is_none() {
+        return None;
+    }
+    std::fs::write(&path, &bytes).ok()?;
+    Some(path)
+}
+
+/// A stable file name for a URL (FNV-1a — a cache key, not a security decision).
+fn url_hash(url: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in url.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// The extension a URL implies, so the cached file is recognizable on disk.
+fn image_ext(url: &str) -> String {
+    let tail = url.rsplit('/').next().unwrap_or("");
+    let ext = tail.rsplit_once('.').map(|(_, e)| e.split(['?', '#']).next().unwrap_or("")).unwrap_or("");
+    if (1..=5).contains(&ext.len()) && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+        format!(".{}", ext.to_ascii_lowercase())
+    } else {
+        String::new()
+    }
+}
+
 /// A diagram's drawn rows for a preview `width` columns wide, without styling — the art
 /// when it can be drawn, else the boxed source. Shared by the `@md` pager and editor so a
 /// diagram occupies exactly the rows it paints.
@@ -785,15 +886,6 @@ pub(crate) fn diagram_lines(source: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// How many rows a diagram takes in a preview `width` columns wide: the native placement's
-/// reserved rows inside our own GUI, the drawn art's own height anywhere else.
-pub(crate) fn diagram_rows_in(source: &str, width: usize) -> usize {
-    if is_native_terminal() {
-        diagram_rows(source)
-    } else {
-        diagram_lines(source, width).len()
-    }
-}
 
 /// A plain boxed rendering of a diagram's source for terminals that can't draw it.
 fn diagram_fallback_box(source: &str) -> String {
@@ -873,6 +965,8 @@ fn md_render(path: Option<&String>) -> i32 {
         }
     };
     let tty = out_is_tty();
+    // Relative image paths in a document are relative to the document itself.
+    let doc_dir = Path::new(path).parent().unwrap_or(Path::new(".")).to_path_buf();
     // On a TTY, hand long documents to the scrollable pager (reflows on resize, opens at the top).
     if tty {
         let rows = term_rows();
@@ -895,6 +989,10 @@ fn md_render(path: Option<&String>) -> i32 {
                 }
                 corelib::md::Chunk::Diagram(src) => {
                     let d = if tty { diagram_output(&src) } else { diagram_text(&src) };
+                    let _ = out.write_all(d.as_bytes());
+                }
+                corelib::md::Chunk::Image { src, fallback, .. } => {
+                    let d = if tty { image_output(&src, &fallback, &doc_dir) } else { fallback };
                     let _ = out.write_all(d.as_bytes());
                 }
             }

@@ -9,7 +9,7 @@ use corelib::md::{self, Style};
 use corelib::wire::Toml;
 
 use super::super::world::{self, World};
-use crate::mdedit::{build_preview_with, parse_key, DiagramPaint, PRow, Pager};
+use crate::mdedit::{build_preview_at, parse_key, DiagramPaint, PRow, Pager};
 
 pub struct MarkdownWorld {
     /// The document under test.
@@ -155,7 +155,7 @@ impl MarkdownWorld {
         let out = md::render(&md::parse(&self.source), &self.style, self.width);
         self.rows = out.lines().map(str::to_string).collect();
         // Pinned to the drawn-art model: a scenario asserts what a plain terminal shows.
-        self.preview = build_preview_with(&self.source, self.width, self.style.clone(), DiagramPaint::Art);
+        self.preview = build_preview_at(&self.source, self.width, self.style.clone(), DiagramPaint::Art, std::path::Path::new("."));
         Ok(())
     }
 
@@ -164,6 +164,9 @@ impl MarkdownWorld {
             match c {
                 md::Chunk::Text(t) => self.stream.extend(t.lines().map(str::to_string)),
                 md::Chunk::Diagram(src) => self.diagrams.push(src.trim().to_string()),
+                // An image arrives as its own chunk; a scenario asserts the placeholder
+                // text a plain terminal shows.
+                md::Chunk::Image { fallback, .. } => self.stream.extend(fallback.lines().map(str::to_string)),
             }
         }
     }
@@ -201,7 +204,7 @@ impl MarkdownWorld {
             .into_iter()
             .find_map(|c| match c {
                 md::Chunk::Diagram(src) => Some(src.trim().to_string()),
-                md::Chunk::Text(_) => None,
+                _ => None,
             })
             .unwrap_or_else(|| self.source.clone())
     }
@@ -211,6 +214,6 @@ impl MarkdownWorld {
 fn row_label(r: &PRow) -> String {
     match r {
         PRow::Text(t) => t.clone(),
-        PRow::Diagram { rows, offset, .. } => format!("<diagram {}/{rows}>", offset + 1),
+        PRow::Object { kind, rows, offset, .. } => format!("<{} {}/{rows}>", if *kind == crate::mdedit::PObj::Image { "image" } else { "diagram" }, offset + 1),
     }
 }

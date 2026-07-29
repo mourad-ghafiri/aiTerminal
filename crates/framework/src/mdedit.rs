@@ -159,11 +159,18 @@ fn char_at_display(s: &str, target: usize) -> usize {
 
 // ─────────────────────────────── the preview model ───────────────────────────────
 
-/// One row of the rendered preview: a styled text line, or one row-slice of a diagram (the app
-/// reserves `rows` rows and draws the diagram natively over them).
+/// What a reserved preview region holds — the two things the app can draw as pixels.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum PObj {
+    Diagram,
+    Image,
+}
+
+/// One row of the rendered preview: a styled text line, or one row-slice of a drawn object
+/// (the app reserves `rows` rows and draws over them).
 pub(crate) enum PRow {
     Text(String),
-    Diagram { source: String, rows: usize, offset: usize },
+    Object { kind: PObj, source: String, rows: usize, offset: usize },
 }
 
 /// How a diagram fills the rows it reserves: drawn natively over them by our own GUI, or
@@ -188,11 +195,17 @@ impl DiagramPaint {
 /// Render the whole document to preview rows at `width`, splitting diagrams out so they can be
 /// drawn natively and scrolled by exact row.
 pub(crate) fn build_preview(text: &str, width: usize, style: corelib::md::Style) -> Vec<PRow> {
-    build_preview_with(text, width, style, DiagramPaint::detect())
+    build_preview_at(text, width, style, DiagramPaint::detect(), std::path::Path::new("."))
 }
 
-/// [`build_preview`] with the diagram paint mode pinned — the form tests and scenarios use.
+/// [`build_preview`] with the diagram paint mode pinned — the form the tests use.
+#[cfg(test)]
 pub(crate) fn build_preview_with(text: &str, width: usize, style: corelib::md::Style, paint: DiagramPaint) -> Vec<PRow> {
+    build_preview_at(text, width, style, paint, std::path::Path::new("."))
+}
+
+/// [`build_preview`] rooted at the document's own directory, so its relative images resolve.
+pub(crate) fn build_preview_at(text: &str, width: usize, style: corelib::md::Style, paint: DiagramPaint, base: &std::path::Path) -> Vec<PRow> {
     let mut sr = corelib::md::StreamRenderer::new(style, width.max(4), &[DIAGRAM_LANG]);
     sr.seed(corelib::md::scan_defs(text)); // the document's own references resolve
     let mut rows = Vec::new();
@@ -211,7 +224,23 @@ pub(crate) fn build_preview_with(text: &str, width: usize, style: corelib::md::S
                         DiagramPaint::Art => crate::cli::diagram_lines(&src, width.max(4)).len(),
                     };
                     for offset in 0..n {
-                        rows.push(PRow::Diagram { source: src.clone(), rows: n, offset });
+                        rows.push(PRow::Object { kind: PObj::Diagram, source: src.clone(), rows: n, offset });
+                    }
+                }
+                corelib::md::Chunk::Image { src, fallback, .. } => {
+                    // Pixels when this terminal can draw them and the file resolves; the
+                    // placeholder lines otherwise.
+                    match (paint, crate::cli::image_placement(&src, base)) {
+                        (DiagramPaint::Native, Some((path, n))) => {
+                            for offset in 0..n {
+                                rows.push(PRow::Object { kind: PObj::Image, source: path.clone(), rows: n, offset });
+                            }
+                        }
+                        _ => {
+                            for line in fallback.trim_end_matches('\n').split('\n') {
+                                rows.push(PRow::Text(line.to_string()));
+                            }
+                        }
                     }
                 }
             }
@@ -723,7 +752,7 @@ fn draw_preview_region(out: &mut String, preview: &[PRow], top: usize, left: usi
         out.push_str(&format!("\x1b[{};{}H", row0 + r, col0 + 1));
         match preview.get(top + r) {
             Some(PRow::Text(line)) => out.push_str(&hslice_ansi(line, left, width)),
-            Some(PRow::Diagram { source, offset, .. }) if !native => {
+            Some(PRow::Object { kind: PObj::Diagram, source, offset, .. }) if !native => {
                 let art = crate::cli::diagram_lines(source, width);
                 let line = art.get(*offset).cloned().unwrap_or_default();
                 out.push_str(&hslice_ansi(&line, left, width));
@@ -736,12 +765,16 @@ fn draw_preview_region(out: &mut String, preview: &[PRow], top: usize, left: usi
     }
     let mut i = 0;
     while i < preview.len() {
-        if let PRow::Diagram { source, rows: dn, offset: 0 } = &preview[i] {
+        if let PRow::Object { kind, source, rows: dn, offset: 0 } = &preview[i] {
             let (dtop, dbot) = (i, i + dn);
             if dtop >= top && dbot <= top + body_h {
                 let screen_row = row0 + (dtop - top);
+                let osc = match kind {
+                    PObj::Diagram => 1338,
+                    PObj::Image => 1339,
+                };
                 out.push_str(&format!("\x1b[{};{}H", screen_row, col0 + 1));
-                out.push_str(&format!("\x1b]1338;{};{};{}\x07", dn, corelib::codec::base64_encode(source.as_bytes()), width));
+                out.push_str(&format!("\x1b]{osc};{};{};{}\x07", dn, corelib::codec::base64_encode(source.as_bytes()), width));
             }
             i = dbot;
         } else {
@@ -1102,7 +1135,7 @@ mod tests {
     fn preview_model_reserves_rows_for_diagrams() {
         let doc = "# Title\n\n```mermaid\nflowchart TD\n A-->B\n```\n";
         let rows = build_preview_with(doc, 60, plain_style(), DiagramPaint::Art);
-        let diagram_rows = rows.iter().filter(|r| matches!(r, PRow::Diagram { .. })).count();
+        let diagram_rows = rows.iter().filter(|r| matches!(r, PRow::Object { .. })).count();
         assert!(diagram_rows >= 3, "a diagram reserves several rows: {diagram_rows}");
         assert!(rows.iter().any(|r| matches!(r, PRow::Text(t) if t.contains("Title"))));
         // The diagram source is carried, not shown as text.

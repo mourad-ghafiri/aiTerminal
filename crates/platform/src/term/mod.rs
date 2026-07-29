@@ -42,12 +42,23 @@ impl Screen {
     }
 }
 
-/// A reserved region for a natively-drawn inline diagram (from `OSC 1338`). The renderer
-/// composites the diagram over `rows` grid rows starting at global line `g` (the same
-/// coordinate space `row_cells` uses: `scrollback_len() + screen_row`, decremented as history
-/// scrolls off the front). Dropped on resize / clear / alt-screen so it can never misalign.
+/// What a reserved region holds: a diagram's source, or the path of an image to draw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Inline {
+    /// `OSC 1338` — the base64 source of a diagram.
+    Diagram,
+    /// `OSC 1339` — the path of an image file to decode and draw.
+    Image,
+}
+
+/// A reserved region for a natively-drawn inline object (`OSC 1338` for a diagram,
+/// `OSC 1339` for an image). The renderer composites it over `rows` grid rows starting at
+/// global line `g` (the same coordinate space `row_cells` uses: `scrollback_len() +
+/// screen_row`, decremented as history scrolls off the front). Dropped on resize / clear /
+/// alt-screen so it can never misalign.
 #[derive(Clone, Debug)]
 pub struct Placement {
+    pub kind: Inline,
     pub source: String,
     pub rows: usize,
     pub g: usize,
@@ -60,6 +71,7 @@ pub struct Placement {
 /// per frame and never drifts. Extended `OSC 1338 ; rows ; base64 ; cols`.
 #[derive(Clone, Debug)]
 pub struct AltPlacement {
+    pub kind: Inline,
     pub source: String,
     pub rows: usize,
     pub cols: usize,
@@ -1075,7 +1087,8 @@ impl Perform for Term {
             // [`Placement`]); on the alternate screen it's positioned at the cursor cell and
             // confined to `cols` columns (default full width) for a full-screen app (see
             // [`AltPlacement`]) — no rows are reserved (the app owns its own layout).
-            "1338" if fields.len() >= 3 => {
+            "1338" | "1339" if fields.len() >= 3 => {
+                let kind = if code == "1339" { Inline::Image } else { Inline::Diagram };
                 let rows = String::from_utf8_lossy(fields[1]).trim().parse::<usize>().unwrap_or(0).clamp(1, 60);
                 let payload = String::from_utf8_lossy(fields[2]);
                 if let Ok(bytes) = corelib::codec::base64_decode(payload.trim()) {
@@ -1084,13 +1097,13 @@ impl Perform for Term {
                             if self.in_alt {
                                 let col = self.screen.cx.min(self.cols.saturating_sub(1));
                                 let span = fields.get(3).map(|f| String::from_utf8_lossy(f).trim().parse::<usize>().unwrap_or(0)).filter(|&c| c > 0).unwrap_or(self.cols).min(self.cols - col);
-                                self.alt_placements.push(AltPlacement { source, rows, cols: span, row: self.screen.cy, col });
+                                self.alt_placements.push(AltPlacement { kind, source, rows, cols: span, row: self.screen.cy, col });
                                 if self.alt_placements.len() > 64 {
                                     self.alt_placements.remove(0);
                                 }
                             } else {
                                 let g = self.scrollback.len() + self.screen.cy;
-                                self.placements.push(Placement { source, rows, g });
+                                self.placements.push(Placement { kind, source, rows, g });
                                 if self.placements.len() > 64 {
                                     self.placements.remove(0);
                                 }

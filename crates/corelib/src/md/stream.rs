@@ -8,6 +8,7 @@
 //! string is a known "diagram language" is returned as [`Chunk::Diagram`] (its raw
 //! source) so the host can draw it natively instead of boxing it.
 
+use super::ast::{Block, Inline};
 use super::parse::{parse_with, scan_defs, Defs};
 use super::render::{render, Style};
 
@@ -17,6 +18,10 @@ pub enum Chunk {
     Text(String),
     /// The raw source of a diagram-language fenced block (host renders it natively).
     Diagram(String),
+    /// An image that stands alone in its own block — a README's logo, a screenshot, a
+    /// row of badges. A host that can draw pixels resolves `src` and draws it; everyone
+    /// else prints `fallback`, which is the ordinary rendered placeholder.
+    Image { src: String, alt: String, fallback: String },
 }
 
 /// Incrementally renders Markdown as it streams in.
@@ -95,12 +100,25 @@ impl StreamRenderer {
                 if !found.is_empty() {
                     self.defs.merge(&found);
                 }
-                let mut t = render(&parse_with(&seg, &self.defs), &self.style, self.width);
-                if !t.ends_with('\n') {
-                    t.push('\n');
+                let blocks = parse_with(&seg, &self.defs);
+                // A block that is nothing but an image is offered to the host as one, so
+                // it can draw real pixels; everything else renders as text.
+                for group in split_images(&blocks) {
+                    match group {
+                        Group::Text(bs) => {
+                            let mut t = render(bs, &self.style, self.width);
+                            if !t.ends_with('\n') {
+                                t.push('\n');
+                            }
+                            t.push('\n'); // a blank line between successive blocks
+                            chunks.push(Chunk::Text(t));
+                        }
+                        Group::Image(block, src, alt) => {
+                            let fallback = render(std::slice::from_ref(block), &self.style, self.width);
+                            chunks.push(Chunk::Image { src, alt, fallback });
+                        }
+                    }
                 }
-                t.push('\n'); // a blank line between successive blocks
-                chunks.push(Chunk::Text(t));
             }
         }
         chunks
@@ -164,6 +182,50 @@ impl StreamRenderer {
             return Some(std::mem::take(&mut self.buf));
         }
         None
+    }
+}
+
+/// A run of blocks to render, or one block that is a lone image.
+enum Group<'a> {
+    Text(&'a [Block]),
+    Image(&'a Block, String, String),
+}
+
+/// Split a block list so that lone images come out on their own.
+fn split_images(blocks: &[Block]) -> Vec<Group<'_>> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, b) in blocks.iter().enumerate() {
+        let Some((src, alt)) = lone_image(b) else { continue };
+        if i > start {
+            out.push(Group::Text(&blocks[start..i]));
+        }
+        out.push(Group::Image(b, src, alt));
+        start = i + 1;
+    }
+    if start < blocks.len() {
+        out.push(Group::Text(&blocks[start..]));
+    }
+    out
+}
+
+/// `(src, alt)` when this block is a paragraph holding exactly one image — possibly
+/// wrapped in a link or an alignment, which is how every README puts a logo on the page.
+fn lone_image(b: &Block) -> Option<(String, String)> {
+    match b {
+        Block::Paragraph(inlines) => match inlines.as_slice() {
+            [Inline::Image { src, alt, .. }] => Some((src.clone(), alt.clone())),
+            [Inline::Link { text, .. }] => match text.as_slice() {
+                [Inline::Image { src, alt, .. }] => Some((src.clone(), alt.clone())),
+                _ => None,
+            },
+            _ => None,
+        },
+        Block::Aligned { blocks, .. } => match blocks.as_slice() {
+            [only] => lone_image(only),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -252,6 +314,7 @@ mod tests {
             .map(|c| match c {
                 Chunk::Text(t) => t,
                 Chunk::Diagram(d) => format!("<diagram:{d}>"),
+                Chunk::Image { src, .. } => format!("<image:{src}>"),
             })
             .collect()
     }

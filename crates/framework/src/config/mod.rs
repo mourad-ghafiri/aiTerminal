@@ -82,6 +82,14 @@ pub struct Config {
     pub tab_bar: String,
     pub shell: String,
     pub scrollback: usize,
+    /// `[md] remote_images` — fetch `https://` images (badges, screenshots) when rendering
+    /// Markdown. Off by default: displaying a document should never reach the network on
+    /// its own. Local files always draw.
+    pub md_remote_images: bool,
+    /// `[md] image_max_rows` — the tallest an inline image may be drawn, in grid rows.
+    pub md_image_max_rows: usize,
+    /// `[md] syntax` — highlight fenced code blocks. On by default.
+    pub md_syntax: bool,
     /// The primary-model pool: each `[[ai.model]]` table contributes one candidate
     /// (id + optional provider qualifier + weight + per-model overrides). Empty →
     /// the catalog's default model as a single-entry pool.
@@ -187,6 +195,9 @@ impl Default for Config {
             zoom: 1.0,
             tab_bar: "top".into(),
             shell: String::new(),
+            md_remote_images: false,
+            md_image_max_rows: 20,
+            md_syntax: true,
             scrollback: 10_000,
             ai_pool: Vec::new(),
             ai_strategy: String::new(),
@@ -686,6 +697,17 @@ impl Config {
                 // Clamp BOTH ends: a config typo (`scrollback = 999999999999`) must not drive a
                 // multi-gigabyte buffer allocation. 1M lines is already far beyond any real use.
                 c.scrollback = v.clamp(0, 1_000_000) as usize;
+            }
+        }
+        if let Some(md) = doc.get("md") {
+            if let Some(v) = md.get("remote_images").and_then(|v| v.as_bool()) {
+                c.md_remote_images = v;
+            }
+            if let Some(v) = md.get("image_max_rows").and_then(|v| v.as_int()) {
+                c.md_image_max_rows = v.clamp(1, 200) as usize;
+            }
+            if let Some(v) = md.get("syntax").and_then(|v| v.as_bool()) {
+                c.md_syntax = v;
             }
         }
         if let Some(ai) = doc.get("ai") {

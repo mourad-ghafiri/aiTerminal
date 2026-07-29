@@ -150,7 +150,7 @@ impl Highlighter {
         let b = text.as_bytes();
         let mut i = 0;
         let mut plain = String::new();
-        let mut push = |kind: Kind, s: String, out: &mut Vec<(Kind, String)>| {
+        let push = |kind: Kind, s: String, out: &mut Vec<(Kind, String)>| {
             if !s.is_empty() {
                 out.push((kind, s));
             }
