@@ -19,6 +19,7 @@ ai/                    everything AI:
   mcp/                   MCP declarations     memory/*.md    global durable memory
   models/*.toml          the provider/model catalog
   jobs/<id>/             background job records (@job)
+  loops/<id>/            @loop run records: loop.toml + iterations/<n>.md
   sessions/<id>/         per-folder AI memory: session.md (recent-run digest),
                          memory/ (folder-scoped), meta.toml — restored on return
 cache/                 regenerable caches (cloned repos for web.read)
@@ -41,6 +42,7 @@ AI works for you.
 | `[gates]` | `enabled`, `require_pairing`, `plain_text` (run/ignore), `screenshot` (document/photo), `max_reply_messages`, `idle_timeout_minutes`; then a `[gates.<channel>]` table per gateway — see [gate.md](gate.md) |
 | `[md]` | `syntax` (highlight code fences), `image_max_rows`, `remote_images` (fetch `https://` images; off by default) — see [markdown.md](markdown.md) |
 | `[jobs]` | `max_concurrent` (jobs running at once), `keep_runs` (per-occurrence logs kept), `max_log_bytes` (cap per run log) — see [ai.md](ai.md#job--say-what-to-do-and-when) |
+| `[loop]` | `max`, `timeout`, `check_timeout`, `keep_runs`, `propose_check` (let the AI infer a verifier command) — see [ai.md](ai.md#loop--iterate-until-it-verifies) |
 | `[plugins]` | `enabled`, `disabled = ["name", …]` |
 | `[shell]` | `integration` (master switch for injected aliases/snippets/colors) |
 | `[registry]` | `dir` — where the bundled `builtin/` lives (empty = auto-resolve) |

@@ -129,35 +129,73 @@ prompt = "Using the map above, review: {{input}}"
 `review` (explore → review) and `implement` (explore → implement → verify — also
 the default for free text).
 
-## `@loop` — engineered agent loops
+## `@loop` — iterate until it verifies
 
-The loop-engineering discipline, built in: don't perfect a single prompt — design
-the loop the agent runs inside, with a **verifiable goal** and hard stop rules.
+Loop engineering in one line: don't perfect a single prompt — design the loop the agent runs
+inside, with a **verifiable** goal and hard bounds.
 
 ```text
-❯ @loop "make the config tests pass" --check "cargo test -p framework config::"
+❯ @loop "make the config tests pass"
 🔁 loop 'coder' — up to 5 iteration(s)
+  verifier: cargo test -p framework config:: — proposed from the goal
 ▶ iteration 1/5 … ▶ iteration 2/5 …
 ✓ goal reached after 2 iteration(s)
 ```
 
-Each iteration: the maker agent works the goal → the verifier runs → its failure
-output (tail-capped) feeds the next iteration as structured feedback.
+**The verifier is the whole game.** `--check "<cmd>"` is a binary stop condition: exit 0 = done,
+no judgement involved. If you don't give one, the AI reads the goal **once** and proposes a real
+command — because the alternative, a model deciding for itself whether it is finished, is the
+single most common way agent loops fail. The proposal is printed before anything runs, and the
+command guard still adjudicates it: a "verifier" that would deploy, push or install is a side
+effect, not a measurement, and it is refused. Only if nothing verifiable turns up does an
+independent `reviewer` agent grade each iteration (`VERDICT: PASS` / `VERDICT: CONTINUE`).
+`--no-check` asks for that reviewer split on purpose.
 
-- **`--check "<cmd>"`** — a deterministic verifier; exit 0 = done. It passes the
-  command guard first (a denied command never runs; confirm-tier is refused).
-- **No `--check`?** The maker/checker split: an independent `reviewer` agent
-  (read-only tools) inspects the work and must conclude `VERDICT: PASS` or
-  `VERDICT: CONTINUE` + concrete gaps — the model that did the work never grades
-  its own homework.
-- **Stop rules** — success · `--max N` iteration cap (default 5) · **stalled**
-  (identical verifier output twice in a row = no progress) · `--budget TOKENS`
-  (a hard total-token ceiling). Never an open-ended run.
-- **`--agent <name>`** picks the maker (default `coder`); **`--bg`** detaches the
-  whole loop as a tracked job (`@job` + `tail -f` the log).
+**It is proven before it costs anything.** The check runs once *before* iteration 1:
 
-Exit codes: `0` goal reached · `1` stalled/exhausted/budget · `2` setup error —
-so loops compose with shell logic and CI.
+| Pre-flight | What happens |
+| --- | --- |
+| the guard refuses it, or it can't run at all | exit 2 — nothing spent |
+| it already exits 0 | `✓ the goal is already met` — exit 0, zero iterations |
+| it fails | that failure seeds iteration 1, so the maker starts on the real error |
+
+**Bounds, all three of them.** Iterations, tokens and wall clock are three different ways for a
+loop to run away, so all three are capped: `--max N` (default 5) · `--budget TOKENS` ·
+`--timeout 30m`. A value that can't be read is an error, never a silent default — a bound you
+asked for and didn't get is worse than no bound at all.
+
+**No progress is detected, not endured.** The loop remembers its last few verifier
+observations, so a run that repeats itself *and* one that oscillates between two bad states are
+both caught. The first time it happens the maker gets **one** more iteration — told what has
+already been tried and asked for a materially different approach. A second time ends the run.
+
+**Every iteration is written down** under `~/.aiTerminal/ai/loops/<id>/`: `loop.toml` (goal,
+verifier, bounds, progress) and `iterations/<n>.md` (what the maker did, what the verifier saw).
+So a run is readable, reviewable and continuable:
+
+```text
+❯ @loop                              # recent runs: outcome · verifier · iterations
+❯ @loop show last                    # goal, verifier, bounds, what was tried
+❯ @loop log 4310 -f                  # the newest iteration, followed live
+❯ @loop resume 4310 --budget 200000  # carry on with what's left — or more rope
+❯ @loop clear                        # prune finished runs
+```
+
+A run stopped by Ctrl+C, a timeout or the cap resumes from where it stopped rather than paying
+for the whole thing again.
+
+```text
+❯ @loop "fix the flaky auth tests" --check "npm test -- auth" --max 8 --timeout 20m --bg
+❯ @loop "bump tokio and fix what breaks" --check "cargo test --workspace"
+❯ @loop "make clippy clean" --check "cargo clippy -- -D warnings" && git push
+❯ @loop "…" --dry-run                # the plan and the proven verifier, nothing run
+```
+
+`--agent <name>` picks the maker (default `coder`); `--bg` detaches the whole loop as a tracked
+job (`@job` + `@job log`).
+
+Exit codes: `0` goal reached · `1` a bound stopped it (stalled/exhausted/budget/timeout) ·
+`2` setup error · `130` interrupted — so loops compose with shell logic and CI.
 
 See [examples/ai/loop.md](../examples/ai/loop.md) for recipes.
 
@@ -536,9 +574,12 @@ aiTerminal ai "<prompt>"                     # prose Q&A
 aiTerminal ai --command "<request>"          # dual-mode: a guarded command OR prose  (@ai)
 aiTerminal ai --agent <name> "<task>"        # agent run                  (@<agent>)
 aiTerminal ai --flow <name> "<input>"        # workflow                   (@flow)
-aiTerminal ai --loop "<goal>" [--check …]    # engineered agent loop      (@loop)
-                 [--max N] [--budget TOKENS] [--agent <name>]
 aiTerminal ai --bg …                         # detach any of the above    (--bg)
+aiTerminal ai loop "<goal>"                  # iterate to a verified goal (@loop)
+                 [--check "<cmd>" | --no-check] [--agent <name>]
+                 [--max N] [--budget TOKENS] [--timeout 30m] [--bg] [--dry-run]
+aiTerminal ai loop [show|log|resume] <id>    # one run: record / output / carry on
+aiTerminal ai loop [clear]                   # loop list / prune
 aiTerminal ai job "<request>"                # a job, scheduled by the AI  (@job)
                  [--every 15m | --cron "…" | --at 17:30 | --in 2m]
                  [--agent <name>] [--bg] [--dry-run]
