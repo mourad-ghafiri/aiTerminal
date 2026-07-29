@@ -1,0 +1,17 @@
+name = "a command that would ask first is refused"
+tags = ["jobs", "security"]
+
+# "Confirm" means a person decides. A job has no person in front of it, so the honest
+# answer is not to run it — never to answer the prompt on their behalf.
+
+[setup]
+confirm = ["git\\s+push"]
+
+[[step]]
+no_model = true
+
+[[step]]
+job = ["--every", "1h", "--", "git push --force"]
+
+[[step]]
+expect_guard = "a job can't ask"

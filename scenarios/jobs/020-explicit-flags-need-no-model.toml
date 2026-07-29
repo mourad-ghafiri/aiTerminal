@@ -1,0 +1,23 @@
+name = "explicit flags need no model at all"
+tags = ["jobs"]
+
+# `--every` is unambiguous, so the planner is never consulted — and this scenario has no
+# model scripted, which is exactly what a machine with AI switched off looks like.
+
+[[step]]
+no_model = true
+
+[[step]]
+job = ["--every", "15m", "--", "./sync.sh"]
+
+[[step]]
+expect_schedule = "every 15m"
+
+[[step]]
+expect_kind = "shell"
+
+[[step]]
+expect_task = "./sync.sh"
+
+[[step]]
+expect_next = "2026-03-10 12:15"

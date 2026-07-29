@@ -1,0 +1,17 @@
+name = "a quoted command line gets a shell"
+tags = ["jobs"]
+
+# A pipe only means something to a shell, and quoting is the only way to get one past your
+# own shell — so a single word after `--` is a shell line, not a program named "ls | wc -l".
+
+[[step]]
+no_model = true
+
+[[step]]
+job = ["--", "ls | wc -l"]
+
+[[step]]
+expect_kind = "shell"
+
+[[step]]
+expect_task = "ls | wc -l"

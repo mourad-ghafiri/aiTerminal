@@ -1,0 +1,28 @@
+name = "a repeat re-anchors after each run"
+tags = ["jobs"]
+
+[[step]]
+no_model = true
+
+[[step]]
+job = ["--every", "1h", "--", "./poll.sh"]
+
+[[step]]
+expect_next = "2026-03-10 13:00"
+
+[[step]]
+advance = 3600
+
+# The occurrence finished cleanly — the job goes back to waiting, with its run counted and
+# its next fire an hour out. It does not become "done": it repeats.
+[[step]]
+finishes = 0
+
+[[step]]
+expect_status = "scheduled"
+
+[[step]]
+expect_runs = 1
+
+[[step]]
+expect_next = "2026-03-10 14:00"

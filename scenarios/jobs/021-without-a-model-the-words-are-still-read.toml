@@ -1,0 +1,21 @@
+name = "without a model the timing words are still read"
+tags = ["jobs"]
+
+# No model, no flags: the deterministic parser handles the phrasings it can, so `@job`
+# never stops working because AI is off.
+
+[[step]]
+no_model = true
+
+[[step]]
+job = ["tidy the desktop in 5 minutes"]
+
+[[step]]
+expect_next = "2026-03-10 12:05"
+
+# The timing words are stripped from the task here too.
+[[step]]
+expect_task = "tidy the desktop"
+
+[[step]]
+expect_kind = "agent"

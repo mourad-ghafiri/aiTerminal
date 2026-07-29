@@ -1,0 +1,25 @@
+name = "a command request becomes a shell job"
+tags = ["jobs", "ai"]
+
+# "run ./backup.sh" is not something to think about — it is something to execute. The
+# model says so, and the record stores a command, which means this job never needs a model
+# again: it runs with AI switched off entirely.
+
+[[step]]
+model_says = """{"when":{"kind":"cron","cron":"0 18 * * 1-5"},"task":"run the backup","command":"./backup.sh","says":"weekdays at 18:00 — ./backup.sh"}"""
+
+[[step]]
+job = ["run ./backup.sh every weekday at 6pm"]
+
+[[step]]
+expect_kind = "shell"
+
+[[step]]
+expect_task = "./backup.sh"
+
+# The clock is a Tuesday noon, so the next weekday 18:00 is the same day.
+[[step]]
+expect_next = "2026-03-10 18:00"
+
+[[step]]
+expect_guard = "allowed"

@@ -32,6 +32,7 @@ const REGISTRY: &[(&str, Factory)] = &[
     ("ai", worlds::ai::build),
     ("config", worlds::config::build),
     ("gate", worlds::gate::build),
+    ("jobs", worlds::jobs::build),
     ("keymap", worlds::keymap::build),
     ("markdown", worlds::markdown::build),
     ("plugins", worlds::plugins::build),
@@ -150,6 +151,11 @@ mod tests {
     #[test]
     fn shell_scenarios() {
         check("shell", 10);
+    }
+
+    #[test]
+    fn jobs_scenarios() {
+        check("jobs", 20);
     }
 
     #[test]

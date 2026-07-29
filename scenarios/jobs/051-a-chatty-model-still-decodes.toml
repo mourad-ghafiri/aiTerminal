@@ -1,0 +1,20 @@
+name = "a chatty model still yields a plan"
+tags = ["jobs", "ai"]
+
+# Models like to wrap JSON in a sentence or a fence. The object is the only part that
+# matters, and it is found without a parser that could be fooled by a brace in a string.
+
+[[step]]
+model_says = """Sure! Here you go:\n```json\n{"when":{"kind":"cron","cron":"0 9 * * 1"},"task":"post the {weekly} update","says":"mondays at 09:00 — post the update"}\n```\nHope that helps."""
+
+[[step]]
+job = ["post the weekly update every monday morning"]
+
+[[step]]
+expect_schedule = "cron 0 9 * * 1"
+
+[[step]]
+expect_task = "post the {weekly} update"
+
+[[step]]
+expect_next = "2026-03-16 09:00"

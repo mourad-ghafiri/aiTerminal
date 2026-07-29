@@ -1,0 +1,14 @@
+name = "a monthly request lands on the right day"
+tags = ["jobs", "ai"]
+
+# "the 1st of each month at 3am" is the kind of phrasing no word matcher survives, and the
+# kind of schedule cron states exactly.
+
+[[step]]
+model_says = """{"when":{"kind":"cron","cron":"0 3 1 * *"},"task":"deploy","says":"the 1st at 03:00 — deploy"}"""
+
+[[step]]
+job = ["deploy on the 1st of each month at 3am"]
+
+[[step]]
+expect_next = "2026-04-01 03:00"

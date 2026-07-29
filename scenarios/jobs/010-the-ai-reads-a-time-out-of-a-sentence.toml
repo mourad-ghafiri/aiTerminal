@@ -1,0 +1,30 @@
+name = "the AI reads a time out of a sentence"
+tags = ["jobs", "ai"]
+
+# The whole point of `@job "<request>"`: a person writes when they want it, in their own
+# words, and the model turns that into a schedule ONCE — at creation. The reply below
+# travels the provider's real wire format and comes back through the real decoder.
+
+[[step]]
+model_says = """{"when":{"kind":"cron","cron":"0 0 * * *"},"task":"check the logs","says":"every day at 00:00 — check the logs"}"""
+
+[[step]]
+job = ["check the logs at midnight"]
+
+[[step]]
+expect_schedule = "cron 0 0 * * *"
+
+# The clock is 2026-03-10 12:00 UTC, so the next midnight is tomorrow's.
+[[step]]
+expect_next = "2026-03-11 00:00"
+
+# The timing words are gone from the task — the agent is asked to check logs, not to
+# interpret "at midnight" all over again.
+[[step]]
+expect_task = "check the logs"
+
+[[step]]
+expect_says = "every day at 00:00 — check the logs"
+
+[[step]]
+expect_kind = "agent"

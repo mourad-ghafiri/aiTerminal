@@ -1,0 +1,27 @@
+name = "clearing prunes the finished, never the pending"
+tags = ["jobs"]
+
+[[step]]
+no_model = true
+
+[[step]]
+job = ["--every", "1h", "--", "./poll.sh"]
+
+[[step]]
+job = ["--in", "10m", "--", "./once.sh"]
+
+[[step]]
+expect_jobs = 2
+
+[[step]]
+cancel = "last"
+
+# One is cancelled and one is still waiting to fire: `clear` takes exactly the first.
+[[step]]
+clear = true
+
+[[step]]
+expect_message = "1"
+
+[[step]]
+expect_jobs = 1

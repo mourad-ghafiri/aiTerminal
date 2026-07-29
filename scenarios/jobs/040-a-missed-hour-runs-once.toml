@@ -1,0 +1,24 @@
+name = "a closed laptop costs one run, not six"
+tags = ["jobs"]
+
+# The scheduler lives in a detached sleeper process; a reboot takes it with it. On the next
+# launch the supervisor finds an overdue repeat and runs it ONCE — nobody wants six
+# catch-up runs because they went to lunch.
+
+[[step]]
+no_model = true
+
+[[step]]
+job = ["--every", "1h", "--", "./poll.sh"]
+
+[[step]]
+expect_status = "scheduled"
+
+[[step]]
+advance = 21600
+
+[[step]]
+expect_supervisor = "run"
+
+[[step]]
+expect_supervisor_runs = 1

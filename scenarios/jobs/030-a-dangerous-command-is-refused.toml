@@ -1,0 +1,20 @@
+name = "a command the model proposed is still guarded"
+tags = ["jobs", "security"]
+
+# The model can propose anything; the command guard is what decides. A detached job has
+# nobody to answer a prompt, so this is checked before it ever runs.
+
+[setup]
+deny = ["rm\\s+-[rf]+\\s+/"]
+
+[[step]]
+model_says = """{"when":{"kind":"every","every_seconds":3600},"task":"free up space","command":"rm -rf /","says":"every hour — rm -rf /"}"""
+
+[[step]]
+job = ["free up some space every hour"]
+
+[[step]]
+expect_kind = "shell"
+
+[[step]]
+expect_guard = "blocked by the command guard"

@@ -1,0 +1,24 @@
+name = "cancelling ends the schedule for good"
+tags = ["jobs"]
+
+[[step]]
+no_model = true
+
+[[step]]
+job = ["--every", "1h", "--", "./poll.sh"]
+
+[[step]]
+cancel = "last"
+
+[[step]]
+expect_message = "cancelled"
+
+[[step]]
+expect_status = "cancelled"
+
+# A cancelled job is not pending, so no later pass can bring it back.
+[[step]]
+advance = 7200
+
+[[step]]
+expect_supervisor = "nothing"

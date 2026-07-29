@@ -1,0 +1,24 @@
+name = "a job whose sleeper died is re-armed"
+tags = ["jobs"]
+
+# Same crash, but the fire-time is still ahead: nothing to catch up, just a new sleeper.
+
+[[step]]
+no_model = true
+
+[[step]]
+job = ["--every", "1h", "--", "./poll.sh"]
+
+[[step]]
+advance = 600
+
+[[step]]
+expect_supervisor = "arm"
+
+# And while its sleeper IS alive, the supervisor leaves it completely alone — otherwise
+# every pass would double-schedule the job.
+[[step]]
+sleeper_alive = true
+
+[[step]]
+expect_supervisor = "nothing"

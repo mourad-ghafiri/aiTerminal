@@ -38,6 +38,7 @@ scenarios/
   ai/         the model's reply → a command or an answer, the guard, the agent tool loop
   config/     config parsing and the profile overlay
   gate/       @gate — pairing, shell commands, the guard, attaching to programs
+  jobs/       @job — a sentence becomes a schedule, and it survives a reboot
   keymap/     chords, actions, and which binding wins
   markdown/   rendering, streaming, diagrams, the pager
   plugins/    what a plugin.toml composes into, and what trust gates

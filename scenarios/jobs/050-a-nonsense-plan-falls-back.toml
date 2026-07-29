@@ -1,0 +1,18 @@
+name = "a nonsense plan falls back to the word parser"
+tags = ["jobs", "ai"]
+
+# The model is not trusted to be right. A reply that isn't a readable schedule is refused
+# outright, and the deterministic parser answers instead — a five-second "schedule" is a
+# mistake, not an instruction.
+
+[[step]]
+model_says = """{"when":{"kind":"every","every_seconds":5},"task":"hammer the disk"}"""
+
+[[step]]
+job = ["tidy the desktop in 5 minutes"]
+
+[[step]]
+expect_next = "2026-03-10 12:05"
+
+[[step]]
+expect_task = "tidy the desktop"

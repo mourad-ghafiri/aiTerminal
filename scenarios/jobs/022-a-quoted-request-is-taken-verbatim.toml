@@ -1,0 +1,17 @@
+name = "a quoted request is taken verbatim"
+tags = ["jobs"]
+
+# One argument is the request exactly as typed. A flag INSIDE the quotes is text the user
+# wrote, not an instruction to this program — it must never reach the flag scanner.
+
+[[step]]
+no_model = true
+
+[[step]]
+job = ["write docs for the --bg flag"]
+
+[[step]]
+expect_task = "write docs for the --bg flag"
+
+[[step]]
+expect_schedule = "none"

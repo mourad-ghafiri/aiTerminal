@@ -5,6 +5,7 @@ pub mod ai;
 pub mod config;
 pub mod gate;
 mod gate_step;
+pub mod jobs;
 pub mod keymap;
 pub mod markdown;
 mod plugin_step;

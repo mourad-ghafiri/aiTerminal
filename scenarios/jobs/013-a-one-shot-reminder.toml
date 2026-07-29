@@ -1,0 +1,19 @@
+name = "a one-shot reminder fires once and is done"
+tags = ["jobs", "ai"]
+
+[[step]]
+model_says = """{"when":{"kind":"once","in_seconds":1200},"task":"stretch","says":"in 20m — stretch"}"""
+
+[[step]]
+job = ["remind me to stretch in 20 minutes"]
+
+[[step]]
+expect_next = "2026-03-10 12:20"
+
+# Nothing was watching when the moment came — that is a missed job, said honestly, not a
+# run twenty minutes late.
+[[step]]
+advance = 3600
+
+[[step]]
+expect_supervisor = "missed"

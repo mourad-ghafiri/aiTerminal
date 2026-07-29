@@ -1,0 +1,26 @@
+name = "a due fleet cannot fork-bomb the machine"
+tags = ["jobs"]
+
+# Four jobs all overdue after a long sleep. The supervisor starts at most `max_concurrent`
+# of them in one pass and picks the rest up on the next.
+
+[[step]]
+no_model = true
+
+[[step]]
+job = ["--every", "1h", "--", "./a.sh"]
+
+[[step]]
+job = ["--every", "1h", "--", "./b.sh"]
+
+[[step]]
+job = ["--every", "1h", "--", "./c.sh"]
+
+[[step]]
+job = ["--every", "1h", "--", "./d.sh"]
+
+[[step]]
+advance = 7200
+
+[[step]]
+expect_supervisor_runs = 2

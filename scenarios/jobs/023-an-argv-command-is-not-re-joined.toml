@@ -1,0 +1,17 @@
+name = "a command after -- keeps its argv"
+tags = ["jobs"]
+
+# `@job -- sh -c "echo hi"` must run THAT, not `sh -c echo hi`. Several words after `--`
+# are argv and are executed directly; the display quotes them back the way they'd be typed.
+
+[[step]]
+no_model = true
+
+[[step]]
+job = ["--", "sh", "-c", "echo hi"]
+
+[[step]]
+expect_kind = "shell"
+
+[[step]]
+expect_task = "sh -c 'echo hi'"
