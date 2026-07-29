@@ -27,6 +27,8 @@ struct SigAction {
 }
 
 const SIGINT: c_int = 2;
+/// `SIGPIPE` — raised when a write lands on a pipe whose reader has gone.
+const SIGPIPE: c_int = 13;
 const SIGTERM: c_int = 15;
 /// `SIGWINCH` — the kernel raises it on a controlling-terminal resize.
 const SIGWINCH: c_int = 28;
@@ -89,6 +91,25 @@ pub fn sigint_flag() -> &'static AtomicBool {
         signal(SIGINT, on_sigint as *const () as usize);
     });
     &SIGINT_HIT
+}
+
+/// Restore the default disposition for `SIGPIPE`, so a closed pipe ends the process
+/// quietly instead of panicking.
+///
+/// The Rust runtime sets `SIGPIPE` to `SIG_IGN` before `main`. That is right for a
+/// server — a dead client should not kill it — and wrong for a command: writes to the
+/// gone pipe return `EPIPE`, and `println!` panics on a write error. So
+/// `aiTerminal ai flow | head -2` can die with a backtrace where every other Unix
+/// tool exits silently, and it does it *intermittently*, only when the reader happens
+/// to leave between two writes.
+///
+/// `SIG_DFL` is `0`, and this is the one call the standard fix needs.
+pub fn restore_sigpipe() {
+    use std::sync::Once;
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| unsafe {
+        signal(SIGPIPE, 0);
+    });
 }
 
 /// Whether `pid` is a live process (`kill(pid, 0)` succeeds). Used to reconcile

@@ -79,6 +79,10 @@ fn main() {
     // is still diagnosable.
     framework::gui::install_panic_hook();
 
+    // Behave like a command: a closed pipe ends the process quietly instead of
+    // panicking on EPIPE, so `aiTerminal … | head` is as silent as `ls | head`.
+    framework::cli::install_command_defaults();
+
     // Subcommands (`aiTerminal <cmd> …`) — manage declarative plugins/config/
     // themes/profiles, or run the offline-capable AI CLI. Each returns an exit code.
     let raw: Vec<String> = std::env::args().collect();

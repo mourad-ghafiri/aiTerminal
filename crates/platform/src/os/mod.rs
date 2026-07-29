@@ -77,6 +77,16 @@ pub fn sigint_flag() -> &'static std::sync::atomic::AtomicBool {
     &NEVER
 }
 
+/// Restore the default `SIGPIPE` disposition, so piping into `head` ends the process
+/// quietly rather than panicking on `EPIPE`. See [`macos::proc::restore_sigpipe`].
+#[cfg(target_os = "macos")]
+pub fn restore_sigpipe() {
+    macos::proc::restore_sigpipe();
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn restore_sigpipe() {}
+
 /// Whether `pid` is a live process (job-record reconciliation).
 #[cfg(target_os = "macos")]
 pub fn pid_alive(pid: u32) -> bool {
