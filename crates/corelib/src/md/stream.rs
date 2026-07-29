@@ -119,6 +119,22 @@ impl StreamRenderer {
         }
         let lines = line_spans(&self.buf); // (start, len) excluding the newline
         let first = &self.buf[lines[0].0..lines[0].0 + lines[0].1];
+        // A multi-line HTML element is one block, blank lines and all — otherwise the
+        // README-standard `<div align="center">` wrapper would be cut from its contents.
+        if let Some(name) = super::html::opens_element(first) {
+            for k in 1..lines.len() {
+                let l = &self.buf[lines[k].0..lines[k].0 + lines[k].1];
+                if super::html::closes_element(l, &name) {
+                    let end = line_end(&lines, k, self.buf.len());
+                    let seg = self.buf[..end].to_string();
+                    self.buf.drain(..end);
+                    return Some(seg);
+                }
+            }
+            if !fin {
+                return None; // still open: wait for the rest
+            }
+        }
         if let Some((ch, n)) = open_fence(first) {
             for k in 1..lines.len() {
                 let l = &self.buf[lines[k].0..lines[k].0 + lines[k].1];

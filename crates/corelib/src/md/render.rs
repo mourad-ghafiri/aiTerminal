@@ -168,10 +168,11 @@ fn render_block(b: &Block, style: &Style, width: usize, out: &mut String) {
             let mut body = String::new();
             render_blocks(blocks, style, width, &mut body);
             for line in body.trim_end_matches('\n').split('\n') {
-                let pad = width.saturating_sub(marker_display_width(line));
+                let visible = marker_display_width(line);
+                let pad = width.saturating_sub(visible);
                 let lead = match align {
-                    Align::Center => pad / 2,
-                    Align::Right => pad,
+                    Align::Center if visible > 0 => pad / 2,
+                    Align::Right if visible > 0 => pad,
                     _ => 0,
                 };
                 out.push_str(&" ".repeat(lead));
@@ -313,25 +314,36 @@ fn render_table(align: &[Align], head: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>]
         s.push('\n');
         s
     };
+    // A cell too wide for its column wraps onto further lines rather than losing its
+    // tail, so a table of prose stays readable at any width.
     let row_line = |cells: &[Vec<Inline>], bold: bool| -> String {
-        let mut s = format!("{border}│{reset}");
-        for c in 0..cols {
-            let (plain, styled) = cell(cells, c);
-            let (plain, styled) = if crate::unicode::str_width(&plain) > wcol[c] {
-                (clip(&plain, wcol[c]), clip_styled(&styled, &plain, wcol[c]))
-            } else {
-                (plain, styled)
-            };
-            let pad = wcol[c].saturating_sub(crate::unicode::str_width(&plain));
-            let styled = if bold && style.enabled { format!("\x1b[1m{styled}{reset}") } else { styled };
-            let (lp, rp) = match al(c) {
-                Align::Right => (pad, 0),
-                Align::Center => (pad / 2, pad - pad / 2),
-                _ => (0, pad),
-            };
-            s.push_str(&format!(" {}{}{} {border}│{reset}", " ".repeat(lp), styled, " ".repeat(rp)));
+        let wrapped: Vec<Vec<String>> = (0..cols)
+            .map(|c| {
+                let base = if bold { style.sgr(&["1"], None) } else { String::new() };
+                let lines = wrap(&inline_spans(cells.get(c).map(Vec::as_slice).unwrap_or(&[]), &base, style), wcol[c]);
+                if lines.is_empty() {
+                    vec![String::new()]
+                } else {
+                    lines
+                }
+            })
+            .collect();
+        let height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
+        let mut s = String::new();
+        for line in 0..height {
+            s.push_str(&format!("{border}│{reset}"));
+            for c in 0..cols {
+                let styled = wrapped[c].get(line).cloned().unwrap_or_default();
+                let pad = wcol[c].saturating_sub(marker_display_width(&styled));
+                let (lp, rp) = match al(c) {
+                    Align::Right => (pad, 0),
+                    Align::Center => (pad / 2, pad - pad / 2),
+                    _ => (0, pad),
+                };
+                s.push_str(&format!(" {}{}{} {border}│{reset}", " ".repeat(lp), styled, " ".repeat(rp)));
+            }
+            s.push('\n');
         }
-        s.push('\n');
         s
     };
     out.push_str(&rule("╭", "┬", "╮"));
@@ -408,11 +420,27 @@ fn emit_inline(inl: &Inline, base: &str, style: &Style, out: &mut Vec<Span>) {
         Inline::Link { text, href } => {
             let s = combine(base, &style.sgr(&["4"], Some(style.link)));
             let label = inline_plain(text);
-            for i in text {
-                emit_inline(i, &s, style, out);
+            // `OSC 8` makes the label itself clickable in terminals that support it;
+            // the ones that don't ignore the sequence, and still get the URL below.
+            if style.enabled && !href.is_empty() {
+                out.push(Span { text: String::new(), sgr: format!("\x1b]8;;{href}\x1b\\") });
+            }
+            // A link wrapping nothing but an image is a badge: its alt text is the label,
+            // and the destination — not the image file — is what's worth showing.
+            let badge = matches!(text.as_slice(), [Inline::Image { .. }]);
+            if let [Inline::Image { alt, .. }] = text.as_slice() {
+                let name = if alt.is_empty() { "image" } else { alt.as_str() };
+                out.push(Span { text: format!("▣ {name}"), sgr: s.clone() });
+            } else {
+                for i in text {
+                    emit_inline(i, &s, style, out);
+                }
+            }
+            if style.enabled && !href.is_empty() {
+                out.push(Span { text: String::new(), sgr: "\x1b]8;;\x1b\\".to_string() });
             }
             // Show the URL dim in parens when it differs from the visible text.
-            if href != &label && !href.is_empty() {
+            if (badge || href != &label) && !href.is_empty() {
                 out.push(Span { text: format!(" ({href})"), sgr: style.sgr(&["2"], Some(style.muted)) });
             }
         }
@@ -599,33 +627,7 @@ fn strip_sgr(s: &str) -> String {
     out
 }
 
-/// Clip plain text to `w` columns (adds a … if clipped).
-fn clip(s: &str, w: usize) -> String {
-    if crate::unicode::str_width(s) <= w {
-        return s.to_string();
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for c in s.chars() {
-        let cw = crate::unicode::char_width(c) as usize;
-        if used + cw + 1 > w {
-            break;
-        }
-        out.push(c);
-        used += cw;
-    }
-    out.push('…');
-    out
-}
 
-/// Clip a STYLED string to the same visible width as `clip(plain, w)`.
-fn clip_styled(styled: &str, plain: &str, w: usize) -> String {
-    if crate::unicode::str_width(plain) <= w {
-        return styled.to_string();
-    }
-    // Simple + safe: drop styling and clip the plain text.
-    clip(plain, w)
-}
 
 #[cfg(test)]
 mod tests {

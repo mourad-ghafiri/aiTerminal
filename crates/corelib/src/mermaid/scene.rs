@@ -200,11 +200,6 @@ impl Builder {
         self.items.push(Item::Path { points, stroke, tail, head, label: label.into(), role });
     }
 
-    /// The common case: a two-point line with an arrowhead at `b`.
-    pub fn arrow(&mut self, a: (f32, f32), b: (f32, f32), stroke: Stroke, label: impl Into<String>) {
-        self.path(vec![a, b], stroke, Cap::None, Cap::Arrow, label, Role::Edge);
-    }
-
     pub fn wedge(&mut self, cx: f32, cy: f32, r: f32, a0: f32, a1: f32, slot: u8) {
         self.grow(cx + r, cy + r);
         self.items.push(Item::Wedge { cx, cy, r, a0, a1, slot });
@@ -264,7 +259,7 @@ mod tests {
     #[test]
     fn paths_extend_the_extent() {
         let mut b = Builder::new(0.0);
-        b.arrow((0.0, 0.0), (50.0, 25.0), Stroke::Solid, "");
+        b.path(vec![(0.0, 0.0), (50.0, 25.0)], Stroke::Solid, Cap::None, Cap::Arrow, "", Role::Edge);
         let s = b.build();
         assert_eq!((s.width, s.height), (50, 25));
         assert_eq!(s.paths().count(), 1);

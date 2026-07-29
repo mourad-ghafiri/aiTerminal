@@ -92,9 +92,16 @@ pub fn parse_with(md: &str, defs: &Defs) -> Vec<Block> {
     blocks
 }
 
-/// Parse a run of inline Markdown with no document context (the HTML reader's entry).
-pub(super) fn parse_inline(s: &str) -> Vec<Inline> {
-    parse_inline_ctx(s, &Ctx::default())
+/// Parse `text` as Markdown blocks — how the HTML reader hands a container's contents
+/// back, so markdown inside a `<div>` is still markdown.
+pub(super) fn blocks_from(text: &str, depth: u32, ctx: &Ctx) -> Vec<Block> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    parse_blocks(&lines, depth, ctx)
+}
+
+/// Parse `text` as an inline run in this document's context (the HTML reader's entry).
+pub(super) fn inline_from(text: &str, ctx: &Ctx) -> Vec<Inline> {
+    parse_inline_ctx(text.trim(), ctx)
 }
 
 pub(super) fn parse_inline_ctx(s: &str, ctx: &Ctx) -> Vec<Inline> {
@@ -934,7 +941,7 @@ mod tests {
     use super::*;
 
     fn inlines(s: &str) -> Vec<Inline> {
-        parse_inline(s)
+        parse_inline_ctx(s, &Ctx::default())
     }
 
     #[test]
