@@ -1,0 +1,15 @@
+name = "a sequence diagram draws activations, notes and alternative blocks"
+tags = ["diagrams"]
+
+# A sequence diagram is more than arrows: the bar showing who is busy, the note explaining
+# a step, and the frame around an either/or branch are the parts that carry the meaning.
+
+[[step]]
+markdown = ["```mermaid", "sequenceDiagram", "  autonumber", "  actor U as You", "  participant T as Terminal", "  U->>+T: start", "  T-->>-U: code", "  Note over U,T: paste it", "  alt accepted", "    T->>U: paired", "  else refused", "    T->>U: denied", "  end", "```"]
+
+[[step]]
+expect_mermaid_nodes = ["You", "Terminal"]
+
+# Numbering, the note, both arms of the alternative, and the stick figure for `actor`.
+[[step]]
+expect_diagram_art = ["1. start", "2. code", "paste it", "alt accepted", "refused", "╱│╲"]

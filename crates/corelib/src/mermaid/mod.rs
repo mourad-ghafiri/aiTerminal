@@ -109,11 +109,51 @@ impl Edge {
     }
 }
 
-/// A sequence diagram.
-#[derive(Clone, Debug, PartialEq)]
+/// A sequence diagram: participants across the top, and a timeline of events below.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Sequence {
-    pub actors: Vec<String>,
-    pub messages: Vec<Message>,
+    pub title: String,
+    pub actors: Vec<Actor>,
+    /// Everything that happens, in source order — the layout walks this once, top to bottom.
+    pub events: Vec<Event>,
+    /// `box <title> … end` groupings of participants.
+    pub boxes: Vec<String>,
+    /// `autonumber` — prefix each message with its ordinal.
+    pub autonumber: bool,
+}
+
+/// A participant. `stick` is the `actor` keyword's human figure rather than a box.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Actor {
+    pub id: String,
+    pub name: String,
+    pub stick: bool,
+    /// The `box` this participant was declared in.
+    pub bx: Option<usize>,
+}
+
+/// One entry on the timeline.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Event {
+    Message(Message),
+    Note { pos: NotePos, from: usize, to: usize, text: String },
+    /// `loop` / `alt` / `opt` / `par` / `critical` / `break` / `rect` — a framed region.
+    BlockStart { kind: String, label: String },
+    /// `else` / `and` / `option` — a division inside the current frame.
+    BlockElse { label: String },
+    BlockEnd,
+    Activate(usize),
+    Deactivate(usize),
+    /// `destroy A` — the lifeline ends here, with an ✕.
+    Destroy(usize),
+}
+
+/// Where a note sits relative to the actors it names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotePos {
+    LeftOf,
+    RightOf,
+    Over,
 }
 
 /// A message between two actor indices.
@@ -122,7 +162,12 @@ pub struct Message {
     pub from: usize,
     pub to: usize,
     pub text: String,
-    pub dashed: bool,
+    pub stroke: Stroke,
+    pub head: Cap,
+    /// `A->>+B` activates the target as the message lands.
+    pub activate: bool,
+    /// `A->>-B` deactivates the *sender* as the message leaves.
+    pub deactivate: bool,
 }
 
 /// Lay a diagram out in character cells and draw it as Unicode art, at most `max_cols`

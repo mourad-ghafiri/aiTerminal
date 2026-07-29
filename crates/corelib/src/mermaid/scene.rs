@@ -125,13 +125,14 @@ pub struct Scene {
 }
 
 impl Scene {
-    /// The labels of every [`Item::Shape`], in layout order — what a test asserts to
-    /// prove a diagram was *understood*, independent of pixels.
+    /// The labels of the diagram's *nodes*, in layout order — what a test asserts to prove
+    /// a diagram was understood, independent of pixels. Decoration that happens to be a
+    /// shape (a note, an activation bar) carries another role and is left out.
     pub fn node_labels(&self) -> Vec<String> {
         self.items
             .iter()
             .filter_map(|i| match i {
-                Item::Shape { label, .. } => Some(label.clone()),
+                Item::Shape { label, role: Role::Node, .. } if !label.is_empty() => Some(label.clone()),
                 _ => None,
             })
             .collect()
