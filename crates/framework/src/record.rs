@@ -47,6 +47,16 @@ pub(crate) fn folder(root: &Path, id: &str) -> Option<PathBuf> {
     ok.then(|| root.join(id))
 }
 
+/// A named file under `dir/<sub>/`, or `None` when the name isn't one we wrote.
+///
+/// The same charset rule as [`folder`], for the same reason: a `@flow` node writes
+/// `nodes/<node-id>.md`, and a node id comes from a file someone edited. One check,
+/// applied wherever a name becomes a path.
+pub(crate) fn child(dir: &Path, sub: &str, name: &str, ext: &str) -> Option<PathBuf> {
+    let ok = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    ok.then(|| dir.join(sub).join(format!("{name}.{ext}")))
+}
+
 /// Every numbered `<n>.md` log in `dir/<sub>/`, oldest first.
 pub(crate) fn logs(dir: &Path, sub: &str) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir.join(sub)) else { return Vec::new() };
@@ -126,6 +136,17 @@ mod tests {
         // Everything a traversal needs is outside the charset.
         for bad in ["..", "../etc", "a/b", ".hidden", "", "a b", "a.md"] {
             assert_eq!(folder(root, bad), None, "{bad:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn a_named_file_is_held_to_the_same_rule_as_a_folder() {
+        let dir = Path::new("/tmp/records/1700000000-42");
+        assert_eq!(child(dir, "nodes", "verify", "md"), Some(dir.join("nodes").join("verify.md")));
+        assert_eq!(child(dir, "nodes", "build_web-2", "md"), Some(dir.join("nodes").join("build_web-2.md")));
+        // A node id comes out of a file someone edited, so it gets the same refusal.
+        for bad in ["..", "../etc", "a/b", ".hidden", "", "a b", "a.md"] {
+            assert_eq!(child(dir, "nodes", bad, "md"), None, "{bad:?} must be refused");
         }
     }
 
