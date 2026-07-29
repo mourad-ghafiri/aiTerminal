@@ -3,7 +3,9 @@
 # Everything is a terminal command:
 #   @ai <request>         → translate natural language to a shell command
 #   @<agent> <task>       → run the named agent and print its answer (add --bg to track as a job)
-#   @flow [<name> input]  → run a multi-step AI workflow; with no args, list them
+#   @agent [<name>]       → the agents you have: tools, step cap, and what each returns
+#   @flow <name> <input>  → run a workflow GRAPH (parallel branches, conditions, loops);
+#                         bare @flow lists them; @flow check|graph <name> proves and draws one
 #   @loop "<goal>" [--check "<cmd>"] → iterate an agent until the goal verifies;
 #                         bare @loop lists recent runs, @loop resume <id> carries on
 #   @job "<request>"      → say what to do and when; the AI reads the schedule once
@@ -33,15 +35,8 @@ command_not_found_handle() {
       "${TT_BIN:-aiTerminal}" ai --command "$*" > "${TMPDIR:-/tmp}/tt-ai-pending.$$"
       return
       ;;
-    @flow)
-      local name=$1; shift 2>/dev/null
-      if [ -z "$name" ]; then
-        "${TT_BIN:-aiTerminal}" ai flow
-      else
-        "${TT_BIN:-aiTerminal}" ai --flow "$name" "$*"
-      fi
-      return
-      ;;
+    @flow)    "${TT_BIN:-aiTerminal}" ai flow "$@"; return ;;
+    @agent)   "${TT_BIN:-aiTerminal}" ai agent "$@"; return ;;
     @loop)    "${TT_BIN:-aiTerminal}" ai loop "$@"; return ;;
     @job)     "${TT_BIN:-aiTerminal}" ai job "$@"; return ;;
     @md)      "${TT_BIN:-aiTerminal}" md "$@"; return ;;

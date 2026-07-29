@@ -54,6 +54,17 @@ propose_check = true    # with no --check, let the AI propose a real verifier co
                         # the goal (the command guard still has to allow it). Off → an
                         # unverified goal is graded by an independent reviewer agent.
 
+[flow]
+# `@flow` — a workflow declared as a GRAPH of nodes (agent runs, shell commands,
+# approvals) rather than a list of steps. Nodes that need nothing from each other run
+# at the same time, so `concurrency` is the one that changes how it feels.
+concurrency  = 4       # nodes in flight at once (--concurrency overrides it)
+timeout      = "30m"   # wall clock for a whole run (--timeout overrides it)
+node_timeout = "10m"   # how long any single node may take before it is cut off
+keep_runs    = 20      # flow run records kept on disk
+max_map      = 32      # ceiling on a `map` node's fan-out, so a list nobody bounded
+                       # cannot become a thousand agent runs
+
 # Custom keybindings — rebind any built-in action (snake_case; full list of action
 # names in docs/keybindings.md). Uncomment and add [[keybinding]] tables:
 # [[keybinding]]

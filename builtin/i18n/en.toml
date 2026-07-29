@@ -18,10 +18,20 @@ header = "background jobs ({0}):"
 none = "no jobs yet — say what to do and when:  @job \"check the logs at midnight\"  ·  a command:  @job -- ./backup.sh"
 cleared = "cleared {0} finished job(s)"
 
+[agent]
+header = "agents ({0}):"
+none = "no agents — add a .md under {0}"
+run_hint = "one in full:  @agent <name>   ·  run one:  @<name> \"<task>\""
+
 [flow]
 header = "flows ({0}):"
 none = "no flows — add a .toml under {0}"
-run_hint = "run one:  @flow <name> \"<input>\"   ·  monitor background runs:  @job"
+run_hint = "run one:  @flow <name> \"<input>\"   ·  prove it first:  @flow check <name>   ·  see it:  @flow graph <name>"
+no_runs = "no flow runs yet — start one:  @flow <name> \"<input>\""
+runs_header = "flow runs ({0}):"
+runs_hint = "one run:  @flow show <id>  ·  @flow log <id> [<node>] -f  ·  @flow resume <id>"
+cleared = "cleared {0} finished flow run(s)"
+resume_hint = "carry on where it stopped:  @flow resume {0}"
 
 [theme]
 switched = "theme '{0}' applied to profile '{1}' — a running window restyles within a second"

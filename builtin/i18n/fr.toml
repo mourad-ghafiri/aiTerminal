@@ -14,10 +14,20 @@ header = "tâches d'arrière-plan ({0}) :"
 none = "aucune tâche — dites quoi faire et quand :  @job \"vérifier les logs à minuit\"  ·  une commande :  @job -- ./backup.sh"
 cleared = "{0} tâche(s) terminée(s) supprimée(s)"
 
+[agent]
+header = "agents ({0}) :"
+none = "aucun agent — ajoutez un .md sous {0}"
+run_hint = "un en détail :  @agent <nom>   ·  en exécuter un :  @<nom> \"<tâche>\""
+
 [flow]
 header = "flux ({0}) :"
 none = "aucun flux — ajoutez un .toml sous {0}"
-run_hint = "exécuter :  @flow <nom> \"<entrée>\"   ·  suivre les tâches de fond :  @job"
+run_hint = "exécuter :  @flow <nom> \"<entrée>\"   ·  vérifier d'abord :  @flow check <nom>   ·  visualiser :  @flow graph <nom>"
+no_runs = "aucune exécution de flux — lancez-en une :  @flow <nom> \"<entrée>\""
+runs_header = "exécutions de flux ({0}) :"
+runs_hint = "une exécution :  @flow show <id>  ·  @flow log <id> [<nœud>] -f  ·  @flow resume <id>"
+cleared = "{0} exécution(s) de flux terminée(s) supprimée(s)"
+resume_hint = "reprendre là où elle s'est arrêtée :  @flow resume {0}"
 
 [theme]
 switched = "thème '{0}' appliqué au profil '{1}' — une fenêtre ouverte se restyle en une seconde"

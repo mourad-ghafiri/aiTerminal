@@ -60,5 +60,5 @@ expansion = "sudo "
 # this data into a compdef). The model is flat: top-level subcommands + flags.
 [[completion]]
 command = "aiTerminal"
-subcommands = ["plugin", "config", "theme", "profile", "ai"]
-flags = ["--command", "--agent", "--flow", "--loop", "--check", "--max", "--budget", "--bg"]
+subcommands = ["plugin", "config", "theme", "profile", "ai", "agent", "flow", "loop", "job"]
+flags = ["--command", "--agent", "--check", "--max", "--budget", "--timeout", "--concurrency", "--bg", "--dry-run"]
