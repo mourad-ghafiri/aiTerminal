@@ -569,7 +569,7 @@ body { background: var(--paper); }
       { do: "call", fn: async (t) => t.clear() },
       { do: "cmd", text: "@job audit the deps --agent reviewer --bg", speed: 11 },
       { do: "out", spans: [FG("▶ background job 1753112000-4242")] },
-      { do: "out", spans: [DIM("  monitor: @job  ·  tail -f ~/.aiTerminal/ai/jobs/…/log.md")] },
+      { do: "out", spans: [DIM("  monitor: @job  ·  @job log last -f")] },
       { do: "pause", ms: 600 },
       { do: "cmd", text: "@job", speed: 13 },
       { do: "out", spans: [FG("background jobs (3):")] },

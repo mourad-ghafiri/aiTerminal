@@ -295,20 +295,25 @@ document.addEventListener("DOMContentLoaded", () => {
     },
 
     job: {
-      caption: () => caption("<code>@job</code> — background work that survives you",
-        "<code>--bg</code> detaches fully, statuses never lie, and every job keeps a log you can <code>tail -f</code>."),
+      caption: () => caption("<code>@job</code> — say what to do, and when",
+        "The AI reads the schedule out of your sentence <em>once</em>, at creation, and writes it into the record as cron — so every run after that is plain arithmetic. Recurring jobs survive a reboot: a missed one catches up exactly once."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
-          { do: "cmd", text: "@job audit the deps --agent reviewer --bg" },
-          { do: "out", spans: [FG("▶ background job 1753112000-4242")] },
-          { do: "out", spans: [DIM("  monitor: @job  ·  tail -f ~/.aiTerminal/ai/jobs/…/log.md")] },
-          { do: "pause", ms: 1000 },
+          { do: "cmd", text: '@job "summarize the kafka logs into ~/reports/kafka.md every hour"' },
+          { do: "out", spans: [FG("⧖ every hour — summarize the kafka logs into ~/reports/kafka.md · job 1753112100-4310")] },
+          { do: "out", spans: [DIM("  fires in 1h  ·  list: @job  ·  cancel: @job cancel 1753112100-4310")] },
+          { do: "pause", ms: 900 },
+          { do: "cmd", text: "@job --every 15m -- ./sync.sh" },
+          { do: "out", spans: [FG("⧖ every 15m — ./sync.sh · job 1753112140-4318")] },
+          { do: "out", spans: [DIM("  fires in 15m  ·  no model needed to run this one")] },
+          { do: "pause", ms: 900 },
           { do: "cmd", text: "@job" },
           { do: "out", spans: [FG("background jobs (3):")] },
+          { do: "out", spans: [FG("  ⧖ 1753112100-4310 scheduled summarize the kafka logs … "), DIM("(fires in 48m)")] },
+          { do: "out", spans: [DIM("      cron 0 * * * *  ·  12 run(s)  ·  last ok")] },
           { do: "out", spans: [FG("  ▶ 1753112000-4242 running   audit the deps … "), DIM("(2m ago · 2m)")] },
           { do: "out", spans: [OK("  ✓ "), FG("1753111800-4101 done      create a CHANGELOG … "), DIM("(9m ago · 45s)")] },
-          { do: "out", spans: [MUT("  ⏹ "), FG("1753110900-3980 cancelled refactor the CLI … "), DIM("(24m ago · 12s)")] },
         ]);
       },
     },

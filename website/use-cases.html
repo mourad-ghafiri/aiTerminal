@@ -66,7 +66,7 @@
         <p><code>@loop</code> iterates until <em>your</em> test command exits 0 — the model never grades its own work.</p>
         <pre><span class="p">❯</span> <span class="ab">@loop</span><span class="c"> "fix the flaky auth tests" --check "npm test -- auth" --bg</span>
 ▶ background job 1753113020-5127
-<span class="p">❯</span> tail -f ~/.aiTerminal/ai/jobs/…/log.md</pre>
+<span class="p">❯</span> @job log last -f</pre>
       </div>
 
       <div class="uc">
@@ -233,7 +233,7 @@ api/ refreshes at the client — that's your drift.</pre>
         <p>An agent that reads the real functions writes docs that don't lie.</p>
         <pre><span class="p">❯</span> <span class="ab">@job</span><span class="c"> document the public API of src/client.rs into docs/client.md --bg</span>
 ▶ background job 1753115400-7210
-<span class="d">  monitor: @job · tail -f …/log.md</span></pre>
+<span class="d">  monitor: @job · @job log last -f</span></pre>
       </div>
 
     </div>
@@ -488,10 +488,10 @@ telegram  gate-8f2a  pid 40118  ·  Mourad
 
       <div class="uc">
         <h3><span class="em">🪵</span>Watch a job like a log file</h3>
-        <p>Every job is a folder: <code>job.toml</code> for status and exit code, <code>log.md</code> for the full streamed output. Closing the terminal never kills it.</p>
+        <p>Every job is a folder: <code>job.toml</code> for what to run, when, and how the last run went, plus <code>runs/&lt;n&gt;.md</code> — one log per occurrence. Closing the terminal never kills it.</p>
         <pre><span class="p">❯</span> <span class="ab">@job</span><span class="c"> audit the deps --agent reviewer --bg</span>
 ▶ background job 1753112000-4242
-<span class="p">❯</span> tail -f ~/.aiTerminal/ai/jobs/1753112000-4242/log.md
+<span class="p">❯</span> @job log 4242 -f
 <span class="p">❯</span> <span class="ab">@job</span><span class="c"> clear</span>   <span class="d"># prune everything finished</span></pre>
       </div>
 

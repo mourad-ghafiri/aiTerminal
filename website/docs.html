@@ -133,7 +133,7 @@ api_key  = <span class="s">"sk-…"</span>             <span class="c"># or "$MY
 │   ├── agents/  skills/  prompts/  flows/  mcp/
 │   ├── models/        <span class="c"># provider catalogs (12 ship)</span>
 │   ├── memory/        <span class="c"># global BM25-ranked markdown memories</span>
-│   ├── jobs/          <span class="c"># &lt;id&gt;/{job.toml, log.md}</span>
+│   ├── jobs/          <span class="c"># &lt;id&gt;/{job.toml, runs/&lt;n&gt;.md}</span>
 │   └── sessions/      <span class="c"># &lt;id&gt;/ per-folder AI memory (digest + memory/)</span>
 ├── logs/  cache/  shell/  crash.log</code></pre>
 
@@ -223,24 +223,36 @@ prompt = <span class="s">"Verify the change above."</span></code></pre>
     <p>Stop rules: <b>success</b> · <b>max-cap</b> · <b>stalled</b> (identical verifier output twice
       in a row — no progress, stop burning tokens) · <b>budget</b>.</p>
 
-    <h2 id="cmd-job">@job — tracked &amp; background tasks</h2>
-    <pre><code><span class="p">❯</span> @job create a CHANGELOG from the last 10 commits          <span class="c"># foreground: live + logged</span>
-<span class="p">❯</span> @job audit the deps --agent reviewer --bg                 <span class="c"># detached background run</span>
-▶ background job 1753112000-4242
-<span class="p">❯</span> @job back up the db in 2 minutes                          <span class="c"># scheduled — fires later</span>
-⧖ scheduled job 1753112100-4310 — fires in 2m
+    <h2 id="cmd-job">@job — say what to do, and when</h2>
+    <pre><code><span class="p">❯</span> @job "check the logs at midnight"
+⧖ every day at 00:00 — check the logs · job 1753112100-4310
+  <span class="c">fires in 7h · list: @job · cancel: @job cancel 1753112100-4310</span>
+<span class="p">❯</span> @job "run ./backup.sh every weekday at 6pm"               <span class="c"># a command job</span>
+<span class="p">❯</span> @job "remind me to stretch in 20 minutes"                 <span class="c"># one-shot</span>
+<span class="p">❯</span> @job "post the update every monday morning" --dry-run     <span class="c"># plan only</span>
+<span class="p">❯</span> @job --every 15m -- ./sync.sh                             <span class="c"># explicit: no model consulted</span>
 <span class="p">❯</span> @job                                                      <span class="c"># list</span>
 background jobs (3):
-  ⧖ 1753112100-4310 scheduled back up the db …  <span class="c">(fires in 2m)</span>
+  ⧖ 1753112100-4310 scheduled check the logs   <span class="c">(fires in 7h)</span>
+      <span class="c">cron 0 0 * * * · 12 run(s) · last ok</span>
   ▶ 1753112000-4242 running   audit the deps …  <span class="c">(2m ago · 2m)</span>
   <span class="g">✓</span> 1753111800-4101 done      create a CHANGELOG …  <span class="c">(9m ago · 45s)</span>
-<span class="p">❯</span> @job cancel 1753112100-4310                               <span class="c"># cancel scheduled/running</span></code></pre>
-    <p>End a task with a natural time — <code>in 2 minutes</code>, <code>after 30s</code>,
-      <code>at 17:30</code> — and it's <strong>scheduled</strong>, running later in the folder
-      where you typed it; <code>@job cancel &lt;id&gt;</code> stops it. Each job is a folder —
-      <code>job.toml</code> (status, timestamps, exit code) + <code>log.md</code> (the full
-      streamed output; <code>tail -f</code> it). Background jobs are fully detached: closing the
-      terminal never kills them. Statuses are always honest:
+<span class="p">❯</span> @job show last  ·  @job log 4310 -f  ·  @job cancel 4310</code></pre>
+    <p>Write the request the way you'd say it. The AI reads <em>when</em> out of the sentence
+      <strong>once</strong>, at creation, and writes its answer into the record as a cron
+      expression — so occurrence #47 of an hourly job costs nothing and behaves exactly like
+      #1. The interpretation is printed before you accept it, and <code>--dry-run</code> shows
+      it without scheduling anything. Explicit
+      <code>--every</code>/<code>--cron</code>/<code>--at</code>/<code>--in</code> skip the model
+      entirely, and everything after <code>--</code> is a <strong>command</strong> job that
+      needs no AI at all to run — checked by the same command guard as everything else, where
+      "ask first" is a refusal because a detached job has nobody to ask.</p>
+    <p>It survives the machine: the sleeper that waits for a fire-time dies with a reboot, so on
+      the next launch the supervisor re-arms anything still ahead and runs anything overdue
+      <strong>once</strong> — an hourly job that missed six hours runs once, not six times. Each
+      job is a folder — <code>job.toml</code> (what to run, when, and how the last run went) plus
+      <code>runs/&lt;n&gt;.md</code>, one log per occurrence, pruned and size-capped so an hourly
+      job can't fill the disk. Statuses are always honest:
       <code>scheduled · running · done · failed · cancelled · died · missed</code> — a crashed
       job's record heals on the next list, and <code>@job clear</code> prunes everything that is
       neither running nor scheduled.</p>
