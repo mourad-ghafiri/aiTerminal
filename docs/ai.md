@@ -9,11 +9,45 @@ path.
 AI is **off by default** — no vendor is assumed. Enable it by declaring a model
 (see [Models](#models--pools)).
 
+## Without writing code
+
+None of this needs a repo. If you never open a source file, five of these are still for
+you — and the table says exactly what each one needs, so nothing here fails on your
+machine for a reason you could not have known.
+
+| You want to | Type | Needs |
+| --- | --- | --- |
+| understand a long PDF, or a photo of a page | `@ai summarise @~/Downloads/lease.pdf` | a model whose entry has `enable_document` (images: `enable_vision`) — otherwise the file is **dropped** |
+| research a decision, with real sources | `@flow research "which e-bike for a hilly commute"` | `[ai] network = true`. Search is **keyless** — no extra account |
+| tidy or rename a pile of files | `@ai move every screenshot into folders by month` | a model. `@ai` **proposes** the command and preloads it for you to read |
+| read a long web page | `@researcher "what does this say — <url>"` | `[ai] network = true` |
+| draft something, saved to a file | `@writer "turn @notes.md into a brief at brief.md"` | a model |
+| hold writing under a word count | `@loop "cut intro.md under 200 words" --agent writer --check "test $(wc -w < intro.md) -lt 200"` | a model, and a command whose **exit status** decides |
+| a weekly digest, in plain English | `@job "every Monday at 9, summarise ~/Documents/inbox"` | a model to read the schedule once |
+| write and preview at the same time | `@md edit letter.md` | **nothing** — no model, no network |
+| ask your terminal from your phone | `@gate telegram start` | a bot token |
+
+Two things are worth knowing before you copy a line off this page.
+
+**`@ai` has no tools.** It answers, or it proposes one command for you to review — it
+cannot open a file, fetch a URL or read your clipboard. What it *can* see is an
+**attachment**: any `@<path>` naming a real file rides along with the question. To have
+something read a page or a folder, use an agent (`@researcher`, `@explorer`) — those have
+tools.
+
+**An attachment can be silently dropped.** A PDF only reaches a model whose catalogue
+entry declares `enable_document`, an image one with `enable_vision`. If yours does not, the
+question still goes — without the file.
+
+These commands need **no model at all**: `@md`, `@theme`, `@profile`, `@config`,
+`@plugin`, `@agent`, `@flow check`, `@flow graph`, and `@job -- <command>`.
+
 ## `@ai` — a command to run, or an answer
 
 `@ai` is **dual-mode**: the model turns your request into a single shell **command** —
 proposed at your prompt to review, edit, and run — or, for a question, a prose **answer**.
-It never runs anything itself; you stay in control.
+It never runs anything itself; you stay in control. It has **no tools** — see
+[Without writing code](#without-writing-code) for what that means in practice.
 
 The contract under the hood is deliberately tiny and **streamable**: either the whole reply
 is one `RUN: <command>` line, or it is prose. Only the undecided first few characters are held
@@ -234,6 +268,10 @@ it warns about the rest.
 None of them names a build tool, a test command or a language: `@tester` finds the
 project's own runner. That is what makes them yours rather than somebody else's.
 
+`research` is the one that is not about code at all — it answers any question, and it
+needs `[ai] network = true`. Its search is **keyless** (DuckDuckGo's HTML endpoint), so
+there is no second account to create.
+
 ### A goal on its own
 
 ```text
@@ -317,6 +355,11 @@ out is a default bound to somebody's toolchain.
 
 Loop engineering in one line: don't perfect a single prompt — design the loop the agent runs
 inside, with a **verifiable** goal and hard bounds.
+
+What it needs is a command whose **exit status** decides — nothing more. That does not have
+to be a test suite: `--check "test $(wc -w < intro.md) -lt 200"` holds a piece of writing
+under a word count, and `--agent writer` makes the thing doing the cutting a writer rather
+than a coder.
 
 ```text
 ❯ @loop "make the config tests pass"
