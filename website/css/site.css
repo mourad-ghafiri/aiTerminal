@@ -326,30 +326,105 @@ footer { border-top: 1px solid var(--border); margin-top: 70px; padding: 40px 0 
 .uc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .uc-grid .uc { margin-top: 0; }
 
-/* ---------------- responsive ---------------- */
+/* ---------------- responsive ----------------
+
+   One rule underpins all of this: **a track that cannot shrink is a page that
+   scrolls sideways**. A `1fr` grid track is `minmax(auto, 1fr)`, and `auto`
+   means "no narrower than my content" — so one long `<pre>` line silently
+   widens the whole column, and with it the page. Every track below is
+   `minmax(0, 1fr)`, and every child that holds wide content (`pre`, tables)
+   scrolls inside itself instead. The page itself never scrolls sideways.
+   -------------------------------------------------------------------------- */
+
+/* Nothing may push the document wider than the phone it is on. */
+html, body { max-width: 100%; overflow-x: clip; }
+img, video, svg, canvas { max-width: 100%; height: auto; }
+
+/* Grid/flex children default to min-width:auto; these hold wide content. */
+.docs-main, .feature-copy, .feature-demo, .card, .uc { min-width: 0; }
+
+/* The on-this-page index: a sidebar on desktop, a disclosure on a phone.
+   `<details open>` + a hidden summary means the desktop layout is untouched and
+   needs no JS; the small-screen rules below close it and reveal the summary. */
+.docs-nav-fold > summary { display: none; }
+.docs-nav-fold[open] > summary { display: none; }
+
+/* A wide table scrolls in its own box rather than stretching the page. */
+.docs-main .table-wrap { overflow-x: auto; margin: 14px 0; -webkit-overflow-scrolling: touch; }
+.docs-main .table-wrap table { margin: 0; }
+
 @media (max-width: 960px) {
-  .feature, .feature.flip { grid-template-columns: 1fr; gap: 22px; }
+  .feature, .feature.flip { grid-template-columns: minmax(0, 1fr); gap: 22px; }
   .feature.flip .feature-copy { order: 1; }
   .feature.flip .feature-demo { order: 2; }
-  .stats-inner { grid-template-columns: repeat(3, 1fr); row-gap: 20px; }
-  .cards.c3, .cards.c4 { grid-template-columns: 1fr 1fr; }
-  .docs { grid-template-columns: 1fr; }
-  .docs-nav { position: static; max-height: none; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+  .stats-inner { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 20px; }
+  .cards.c3, .cards.c4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .docs { grid-template-columns: minmax(0, 1fr); gap: 26px; }
+  .docs-nav { position: static; max-height: none; display: block;
+    padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+  /* Reveal the disclosure and let it start closed: the reader lands on the prose,
+     with the index one tap away. */
+  .docs-nav-fold > summary,
+  .docs-nav-fold[open] > summary {
+    display: block; cursor: pointer; list-style: none;
+    padding: 11px 2px; font-size: 14px; font-weight: 600; color: var(--fg);
+  }
+  .docs-nav-fold > summary::-webkit-details-marker { display: none; }
+  .docs-nav-fold > summary::after { content: " \203A"; float: right; transform: rotate(90deg); color: var(--muted); }
+  .docs-nav-fold[open] > summary::after { transform: rotate(-90deg); }
+  .docs-nav-fold[open] { padding-bottom: 6px; }
+  .docs-nav-fold > *:not(summary) { display: block; }
   .docs-nav b { width: 100%; }
-  .uc-grid { grid-template-columns: 1fr; }
-  .perf { grid-template-columns: 1fr; }
+  .docs-nav a { padding: 8px 10px; }
+  .uc-grid { grid-template-columns: minmax(0, 1fr); }
+  .perf { grid-template-columns: minmax(0, 1fr); }
 }
+
 @media (max-width: 640px) {
+  .wrap { padding: 0 18px; }
   .nav-links { display: none; position: absolute; top: 60px; left: 0; right: 0;
     background: var(--bg); border-bottom: 1px solid var(--border);
-    flex-direction: column; padding: 16px 24px; align-items: flex-start; }
+    flex-direction: column; gap: 0; padding: 4px 18px 12px; align-items: stretch; }
   .nav-links.open { display: flex; }
+  /* Full-width rows with a real tap target, not 14px links in a column. */
+  .nav-links a { padding: 11px 2px; font-size: 15.5px; border-bottom: 1px solid var(--border); }
+  .nav-links a:last-child { border-bottom: none; }
+  .nav-links .nav-cta { text-align: center; margin-top: 10px; border-bottom: none; }
   /* the links leave the flow — the switch takes over the auto margin */
   .nav-inner { gap: 12px; }
   .mode-toggle { order: 0; margin-left: auto; }
-  .nav-toggle { display: block; margin-left: 0; }
-  .cards.c3, .cards.c4 { grid-template-columns: 1fr; }
-  .stats-inner { grid-template-columns: repeat(2, 1fr); }
+  .nav-toggle { display: block; margin-left: 0; padding: 6px 4px; line-height: 1; }
+  .cards.c3, .cards.c4 { grid-template-columns: minmax(0, 1fr); }
+  .stats-inner { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  /* Type: the desktop scale is set for a 1120px measure, not a 390px one. */
+  .docs-main h1 { font-size: 27px; }
+  .docs-main h2 { font-size: 20px; margin-top: 40px; }
+  .docs-main h3 { font-size: 16px; }
+  .docs-main p, .docs-main li { font-size: 15px; }
+  .docs-main pre { padding: 13px 14px; font-size: 12px; border-radius: 10px; }
+  .docs-main table { font-size: 13px; }
+  .docs-main th, .docs-main td { padding: 7px 8px; }
+  /* `nowrap` keeps a flag like `--budget TOKENS` in one piece on a wide screen;
+     on a phone it is what makes a two-column table wider than the phone. Let it
+     wrap here, and the table fits — the `.table-wrap` scroller stays for the
+     genuinely wide ones. */
+  .docs-main td code { white-space: normal; overflow-wrap: break-word; }
+  .docs { padding: 26px 0 56px; }
+}
+
+/* Touch: a link sized for a mouse is a poor target for a thumb. Keyed on the
+   pointer, not the width, so a small desktop window keeps its compact chrome. */
+@media (hover: none) and (pointer: coarse) {
+  .docs-nav a { padding: 9px 10px; }
+  .nav-toggle, .mode-toggle { min-width: 40px; min-height: 40px; }
+}
+
+/* The narrowest phones still in use (~320px): buy back every spare pixel. */
+@media (max-width: 380px) {
+  .wrap { padding: 0 14px; }
+  .docs-main h1 { font-size: 24px; }
+  .docs-main pre { font-size: 11.5px; padding: 11px 12px; }
 }
 
 

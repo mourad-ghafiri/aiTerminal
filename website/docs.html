@@ -34,6 +34,11 @@
 <div class="wrap docs">
   <!-- ============ SIDEBAR ============ -->
   <aside class="docs-nav">
+    <!-- On a phone this index is longer than the first screen of prose, so it
+         collapses into a disclosure; on desktop the summary is hidden and the
+         list is the sticky sidebar it has always been. -->
+    <details class="docs-nav-fold" open>
+    <summary>On this page</summary>
     <b>Start</b>
     <a href="#install">Install &amp; first launch</a>
     <a href="#enable-ai">Enable AI</a>
@@ -70,7 +75,17 @@
     <a href="#logging">Logging</a>
     <a href="#architecture">Architecture</a>
     <a href="#testing">Testing</a>
+    </details>
   </aside>
+  <script>
+    /* The index is a sidebar on desktop and a disclosure on a phone. `open` is in the
+       markup so the desktop layout works with JS off; on a small screen the reader
+       should land on the prose instead, so close it there. */
+    (function () {
+      var fold = document.querySelector('.docs-nav-fold');
+      if (fold && window.matchMedia('(max-width: 960px)').matches) fold.open = false;
+    })();
+  </script>
 
   <!-- ============ CONTENT ============ -->
   <main class="docs-main">
@@ -172,14 +187,14 @@ The fix: the parser dropped the final line …
 <span class="c">✓ 8.4s · 2 tools · 12.3k in / 1.8k out</span></code></pre>
     <p>An agent is a Markdown file with TOML frontmatter — system prompt, allowed tools, step
       budget, skills. Five ship:</p>
-    <table>
+    <div class="table-wrap"><table>
       <tr><th>Agent</th><th>Role</th></tr>
       <tr><td><code>@coder</code></td><td>Senior engineer + orchestrator — explores, makes the smallest correct edit, verifies, delegates sub-agents.</td></tr>
       <tr><td><code>@explorer</code></td><td>Fast read-only scout — maps relevant code, reports tightly.</td></tr>
       <tr><td><code>@reviewer</code></td><td>Read-only review — correctness, security, tests, design.</td></tr>
       <tr><td><code>@tester</code></td><td>Writes and runs tests; reproduces a failure, then fixes it.</td></tr>
       <tr><td><code>@ai</code></td><td>General assistant — proposes a command to review/run, or answers a question.</td></tr>
-    </table>
+    </table></div>
     <p>Live chrome rides stderr, content rides stdout — so piping stays clean:
       <code>@explorer "map the auth flow" &gt; auth-map.md</code> works.</p>
 
@@ -220,7 +235,7 @@ prompt = <span class="s">"Verify the change above."</span></code></pre>
       iteration 1: guard-refused or unrunnable → exit 2 with nothing spent; already exits 0 →
       the goal was already met, zero iterations; fails → that failure seeds iteration 1, so the
       maker starts on the real error instead of a guess.</p>
-    <table>
+    <div class="table-wrap"><table>
       <tr><th>Flag</th><th>Meaning</th></tr>
       <tr><td><code>--check "&lt;cmd&gt;"</code></td><td>the verifier; killed if it hangs past <code>[loop] check_timeout</code></td></tr>
       <tr><td><code>--no-check</code></td><td>skip inference — grade with a reviewer agent</td></tr>
@@ -229,7 +244,7 @@ prompt = <span class="s">"Verify the change above."</span></code></pre>
       <tr><td><code>--timeout 30m</code></td><td>wall clock for the whole run</td></tr>
       <tr><td><code>--agent &lt;name&gt;</code></td><td>the maker (default <code>coder</code>)</td></tr>
       <tr><td><code>--bg</code> · <code>--dry-run</code></td><td>detach it · show the plan and the proven verifier, run nothing</td></tr>
-    </table>
+    </table></div>
     <p>Iterations, tokens and wall clock are three different ways to run away, so all three are
       bounded — and a flag value that can't be read is an error, never a silent default. No
       progress is <em>detected</em>: the loop remembers its last few verifier observations, so a
@@ -337,7 +352,7 @@ README.md  crates  docs
       a password, your next message is routed to its <b>stdin</b>. A long build sends progress notes
       and still reports its real exit status. And if you have a half-typed line at the prompt, a
       command from the chat <b>waits its turn</b> rather than being spliced into it.</p>
-    <table>
+    <div class="table-wrap"><table>
       <tr><th>From the chat</th><th>Does</th></tr>
       <tr><td><code>&lt;anything&gt;</code> · <code>/run &lt;cmd&gt;</code></td><td>run it in the shared shell (through the command guard)</td></tr>
       <tr><td><code>/sh &lt;cmd&gt;</code></td><td>run out-of-band — works even while a full-screen app owns the shell</td></tr>
@@ -345,7 +360,7 @@ README.md  crates  docs
       <tr><td><code>/key</code> · <code>/keys</code> · <code>/cancel</code></td><td>press a key, type text without Enter, or Ctrl-C the running command</td></tr>
       <tr><td><code>/ai &lt;prompt&gt;</code></td><td>ask this terminal's own AI, from the chat</td></tr>
       <tr><td><code>/full</code> · <code>/status</code> · <code>/help</code> · <code>/stop</code></td><td>untruncated output as a file · what's running · the menu · end the gate</td></tr>
-    </table>
+    </table></div>
     <h3>Driving a program — Claude Code, Codex, vim, a REPL</h3>
     <p>Start something interactive in the gated shell and the gate <b>attaches</b> to it. The chat
       becomes that program's screen: <b>one message that keeps updating</b> as it redraws, with
@@ -414,7 +429,7 @@ README.md  crates  docs
       — including what it does <i>not</i> protect against — before enabling it.</div>
 
     <h2 id="cmd-manage">@profile · @theme · @config · @plugin</h2>
-    <table>
+    <div class="table-wrap"><table>
       <tr><th>Command</th><th>Does</th></tr>
       <tr><td><code>@profile</code></td><td>list profiles (● marks active)</td></tr>
       <tr><td><code>@profile work</code></td><td>switch by id or name — a running window applies it within a second</td></tr>
@@ -424,17 +439,17 @@ README.md  crates  docs
       <tr><td><code>@theme export nebula</code></td><td>print the full normalized TOML (start your own from it)</td></tr>
       <tr><td><code>@config</code> / <code>@config path</code></td><td>show effective config / the file path</td></tr>
       <tr><td><code>@plugin list|install|enable|disable|info</code></td><td>manage plugins from the prompt</td></tr>
-    </table>
+    </table></div>
 
     <h2 id="exit-codes">Exit codes &amp; scripting</h2>
     <p>Every AI command tells the shell the truth, so <code>$?</code>, <code>&amp;&amp;</code> and CI compose:</p>
-    <table>
+    <div class="table-wrap"><table>
       <tr><th>Code</th><th>Meaning</th></tr>
       <tr><td><code>0</code></td><td>completed (for <code>@loop</code>: the goal verified)</td></tr>
       <tr><td><code>1</code></td><td>failed — model/transport error, step limit, tool stall; loop stalled/exhausted/out of budget</td></tr>
       <tr><td><code>2</code></td><td>setup error — unknown agent/flow, AI not configured, guard-blocked check</td></tr>
       <tr><td><code>130</code></td><td>interrupted — Ctrl+C cancelled cleanly (the in-flight request is killed mid-token)</td></tr>
-    </table>
+    </table></div>
 
     <h2 id="tabs">Tabs, splits &amp; the quick switcher</h2>
     <ul>
@@ -487,7 +502,7 @@ action = <span class="s">"zoom_pane"</span></code></pre>
     </ul>
 
     <h2 id="config">config.toml reference</h2>
-    <table>
+    <div class="table-wrap"><table>
       <tr><th>Section</th><th>Keys</th></tr>
       <tr><td><code>[appearance]</code></td><td><code>theme</code> · <code>locale</code> · <code>font_family</code> (default Menlo) · <code>font_size</code> (default 15) · <code>cursor_style</code> (block / bar / underline)</td></tr>
       <tr><td><code>[behavior]</code></td><td><code>zoom</code> · <code>tab_bar</code> = top|bottom|left|right · <code>shell</code> · <code>scrollback</code> (default 10000)</td></tr>
@@ -500,7 +515,7 @@ action = <span class="s">"zoom_pane"</span></code></pre>
       <tr><td><code>[security]</code></td><td><code>allowed_commands</code> · <code>denied_commands</code> · <code>confirm_commands</code> · <code>auto_safe_commands</code></td></tr>
       <tr><td><code>[[keybinding]]</code></td><td><code>key</code> · <code>action</code></td></tr>
       <tr><td><code>[[redact]]</code></td><td><code>pattern</code> · <code>replacement</code> · <code>scope</code> = terminal|ai|all · <code>literal</code></td></tr>
-    </table>
+    </table></div>
     <div class="callout"><b>Live reload.</b> A running window follows config edits, profile switches
       and <code>@theme</code> within a second — and <kbd>⌘,</kbd> reloads instantly.</div>
 
@@ -551,12 +566,12 @@ api_key  = <span class="s">"sk-or-v1-…"</span></code></pre>
 
     <h3>API keys — three ways</h3>
     <p>Keys belong to the model that needs them, so a mixed pool carries one key per provider.</p>
-    <table>
+    <div class="table-wrap"><table>
       <tr><th>In <code>config.toml</code></th><th>Resolves to</th></tr>
       <tr><td><code>api_key = "sk-…"</code></td><td>the key itself</td></tr>
       <tr><td><code>api_key = "$MY_KEY"</code> or <code>"${MY_KEY}"</code></td><td>that environment variable's value</td></tr>
       <tr><td><em><code>api_key</code> omitted</em></td><td>the provider's own variable — <code>$ANTHROPIC_API_KEY</code>, <code>$OPENAI_API_KEY</code>, <code>$OPENROUTER_API_KEY</code>, <code>$DEEPSEEK_API_KEY</code>, …</td></tr>
-    </table>
+    </table></div>
     <p>Expansion happens <b>at request time</b>, so exporting or rotating a key takes effect
       without touching <code>config.toml</code>. An unset variable resolves to nothing (never
       the literal <code>"$MY_KEY"</code>) and you get a hint naming the variable to set. Local
@@ -682,12 +697,12 @@ LOG_LEVEL=debug                                 <span class="c">← untouched</s
       <code>AWS_ACCESS_KEY_ID=…</code> keeps its name. Over-redacting is the safe direction.</p>
 
     <h3>Scopes</h3>
-    <table>
+    <div class="table-wrap"><table>
       <tr><th>Scope</th><th>Applied to</th></tr>
       <tr><td><code>ai</code></td><td>Everything bound for a model — the terminal context <code>@ai</code> grounds on, tool results returned to an agent, <code>@loop</code>/<code>@job</code> context, and the session-context file.</td></tr>
       <tr><td><code>terminal</code></td><td>Live PTY output as it is displayed — applied per printable run, <b>never</b> to an escape sequence, so colors and cursor moves can't be corrupted.</td></tr>
       <tr><td><code>all</code></td><td>Both. The default when a rule omits <code>scope</code>.</td></tr>
-    </table>
+    </table></div>
     <p><code>@gate</code> deliberately applies <b>both</b> scopes to anything it sends to a chat — a
       phone is off-machine either way, so the narrower reading would be the wrong one.</p>
 
@@ -695,7 +710,7 @@ LOG_LEVEL=debug                                 <span class="c">← untouched</s
     <p>They ship as the <code>redactor</code> plugin, all scoped <code>ai</code>. The mechanism is
       native; the plugin only supplies the rules, so you can edit them or
       <code>@plugin disable redactor</code> outright.</p>
-    <table>
+    <div class="table-wrap"><table>
       <tr><th>Catches</th><th>Pattern</th></tr>
       <tr><td>AWS access key ids</td><td><code>AKIA[0-9A-Z]{16}</code></td></tr>
       <tr><td>OpenAI / Anthropic keys</td><td><code>sk-[A-Za-z0-9_-]{16,}</code></td></tr>
@@ -706,7 +721,7 @@ LOG_LEVEL=debug                                 <span class="c">← untouched</s
       <tr><td>JWTs</td><td><code>eyJ….eyJ….…</code></td></tr>
       <tr><td>Sensitive <code>KEY=value</code></td><td><code>(?i)(api_key|access_key|client_secret|token|secret|password|credential|auth)\s*[:=]\s*\S+</code></td></tr>
       <tr><td>PEM private-key blocks</td><td><code>-----BEGIN … PRIVATE KEY----- … -----END …-----</code></td></tr>
-    </table>
+    </table></div>
     <div class="callout"><b>They are off your screen by default.</b> Every shipped rule is
       <code>scope = "ai"</code>, so <code>cat .env</code> still shows you your own values — only what
       <i>leaves</i> is rewritten. Add <code>scope = "terminal"</code> rules to mask them in the
