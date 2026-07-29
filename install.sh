@@ -1,0 +1,291 @@
+#!/usr/bin/env sh
+# aiTerminal installer — install, update and remove, from one command.
+#
+#   curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh
+#   curl -fsSL .../install.sh | sh -s -- update
+#   curl -fsSL .../install.sh | sh -s -- remove
+#
+# It clones (or updates) the source, makes sure Rust is present, builds the macOS app
+# with `tools/bundle-macos.sh`, and installs it to /Applications — asking first when it
+# has a terminal to ask on, and telling you exactly where things went either way.
+#
+# Nothing here needs `sudo`: if /Applications isn't writable the app is installed to
+# ~/Applications instead, which Spotlight and the Dock treat the same.
+#
+# Commands
+#   install   (default)  clone/update the source, build, install the app
+#   update               same as install — it is the one command for both
+#   remove               delete the installed app (and the build; `--purge` your settings)
+#   help                 this text
+#
+# Options
+#   --universal          build one binary with both CPU slices (needs both stdlibs)
+#   --arm64 | --x86_64   build for one architecture instead of this Mac's
+#   --no-install         build only, and print where the app is
+#   --dir <path>         install into <path> instead of /Applications
+#   --yes                never ask (already the default when there is no terminal)
+#   --purge              with `remove`: also delete ~/.aiTerminal (your settings)
+#
+# Environment
+#   AITERMINAL_SRC       where the source lives (default ~/.local/share/aiTerminal/src)
+#   AITERMINAL_REPO      the git remote to clone (default the official GitHub repo)
+#   AITERMINAL_BRANCH    the branch to track (default main)
+set -eu
+
+APP_NAME="aiTerminal"
+REPO="${AITERMINAL_REPO:-https://github.com/mourad-ghafiri/aiTerminal.git}"
+SRC="${AITERMINAL_SRC:-$HOME/.local/share/aiTerminal/src}"
+BRANCH="${AITERMINAL_BRANCH:-main}"
+
+CMD="install"
+ARCH_ARG=""
+INSTALL_DIR=""
+DO_INSTALL=1
+ASSUME_YES=0
+PURGE=0
+
+# ── output ───────────────────────────────────────────────────────────────────
+# Color only when stdout is a terminal, so piping to a file or a log stays clean.
+if [ -t 1 ]; then
+    BOLD=$(printf '\033[1m'); DIM=$(printf '\033[2m'); GREEN=$(printf '\033[32m')
+    YELLOW=$(printf '\033[33m'); RED=$(printf '\033[31m'); RESET=$(printf '\033[0m')
+else
+    BOLD=""; DIM=""; GREEN=""; YELLOW=""; RED=""; RESET=""
+fi
+
+say()  { printf '%s==>%s %s\n' "$GREEN" "$RESET" "$*"; }
+note() { printf '%s    %s%s\n' "$DIM" "$*" "$RESET"; }
+warn() { printf '%s!%s   %s\n' "$YELLOW" "$RESET" "$*" >&2; }
+die()  { printf '%serror:%s %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
+
+# The help text lives here rather than being read back out of the file: `$0` is `sh` when
+# this script arrives through a pipe, and there would be nothing to read.
+usage() {
+    cat <<'USAGE'
+aiTerminal installer — install, update and remove, from one command.
+
+  curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh
+  curl -fsSL .../install.sh | sh -s -- update
+  curl -fsSL .../install.sh | sh -s -- remove
+
+It clones (or updates) the source, makes sure Rust is present, builds the macOS app with
+tools/bundle-macos.sh, and installs it to /Applications — asking first when it has a
+terminal to ask on, and telling you exactly where things went either way. Nothing here
+needs sudo: if /Applications isn't writable the app goes to ~/Applications instead.
+
+Commands
+  install   (default)  clone/update the source, build, install the app
+  update               same as install — it is the one command for both
+  remove               delete the installed app (and the build; --purge your settings)
+  help                 this text
+
+Options
+  --universal          build one binary with both CPU slices (needs both stdlibs)
+  --arm64 | --x86_64   build for one architecture instead of this Mac's
+  --no-install         build only, and print where the app is
+  --dir <path>         install into <path> instead of /Applications
+  --yes                never ask (already the default when there is no terminal)
+  --purge              with `remove`: also delete ~/.aiTerminal (your settings)
+
+Environment
+  AITERMINAL_SRC       where the source lives (default ~/.local/share/aiTerminal/src)
+  AITERMINAL_REPO      the git remote to clone (default the official GitHub repo)
+  AITERMINAL_BRANCH    the branch to track (default main)
+USAGE
+}
+
+# Ask a yes/no question on the *terminal* — never on stdin, which is the script
+# itself when this is run as `curl | sh`. With no terminal, take the default.
+confirm() {
+    prompt="$1"
+    [ "$ASSUME_YES" -eq 1 ] && return 0
+    # `-r /dev/tty` can be true while opening it still fails (no controlling terminal —
+    # CI, a launchd job, a container), so the open itself is the test. Probe in a subshell
+    # first: a failed redirection on `exec` prints from the shell, past our own 2>/dev/null.
+    ( : </dev/tty ) 2>/dev/null || return 0
+    exec 3<>/dev/tty 2>/dev/null || return 0
+    printf '%s%s%s [Y/n] ' "$BOLD" "$prompt" "$RESET" >&3
+    read -r reply <&3 || reply=""
+    exec 3>&-
+    case "$reply" in
+        "" | y | Y | yes | YES | Yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# ── arguments ────────────────────────────────────────────────────────────────
+while [ $# -gt 0 ]; do
+    case "$1" in
+        install | update | upgrade) CMD="install" ;;
+        remove | uninstall) CMD="remove" ;;
+        help | --help | -h) usage; exit 0 ;;
+        --universal) ARCH_ARG="universal" ;;
+        --arm64) ARCH_ARG="arm64" ;;
+        --x86_64 | --intel) ARCH_ARG="x86_64" ;;
+        --no-install) DO_INSTALL=0 ;;
+        --yes | -y) ASSUME_YES=1 ;;
+        --purge) PURGE=1 ;;
+        --dir)
+            shift
+            [ $# -gt 0 ] || die "--dir needs a path"
+            INSTALL_DIR="$1"
+            ;;
+        *) die "unknown argument '$1' (try: sh install.sh help)" ;;
+    esac
+    shift
+done
+
+case "$(uname -s)" in
+    Darwin) ;;
+    *) die "$APP_NAME is macOS-only today (this host is $(uname -s))" ;;
+esac
+
+# ── where the app goes ───────────────────────────────────────────────────────
+# /Applications when we may write there, otherwise the per-user one — no sudo, ever.
+app_dir() {
+    if [ -n "$INSTALL_DIR" ]; then
+        printf '%s' "$INSTALL_DIR"
+    elif [ -w /Applications ]; then
+        printf '/Applications'
+    else
+        printf '%s/Applications' "$HOME"
+    fi
+}
+
+# Every place an installed copy could be, for update and remove — one per line, because a
+# home directory may well contain a space.
+installed_paths() {
+    { printf '/Applications\n%s/Applications\n' "$HOME"
+      [ -n "$INSTALL_DIR" ] && printf '%s\n' "$INSTALL_DIR"
+      true
+    } | while IFS= read -r d; do
+        [ -d "$d/$APP_NAME.app" ] && printf '%s/%s.app\n' "$d" "$APP_NAME"
+        true
+    done
+}
+
+# ── remove ───────────────────────────────────────────────────────────────────
+if [ "$CMD" = "remove" ]; then
+    found=0
+    apps="$(installed_paths)"
+    printf '%s\n' "$apps" | while IFS= read -r app; do
+        [ -n "$app" ] || continue
+        if confirm "Delete $app?"; then
+            rm -rf "$app"
+            say "removed $app"
+        else
+            note "kept $app"
+        fi
+    done
+    [ -n "$apps" ] && found=1
+    [ "$found" -eq 1 ] || note "no installed $APP_NAME.app found"
+
+    if [ -d "$SRC" ] && confirm "Delete the build directory $SRC?"; then
+        rm -rf "$SRC"
+        say "removed $SRC"
+    fi
+
+    settings="$HOME/.$APP_NAME"
+    if [ -d "$settings" ]; then
+        if [ "$PURGE" -eq 1 ] && confirm "Delete your settings in $settings?"; then
+            rm -rf "$settings"
+            say "removed $settings"
+        else
+            note "your settings are still in $settings (delete them too with: … | sh -s -- remove --purge)"
+        fi
+    fi
+    say "done"
+    exit 0
+fi
+
+# ── toolchain ────────────────────────────────────────────────────────────────
+ensure_git() {
+    have git && return 0
+    warn "git is missing — macOS installs it with the Command Line Tools"
+    if confirm "Run 'xcode-select --install' now?"; then
+        xcode-select --install >/dev/null 2>&1 || true
+        die "finish the Command Line Tools install, then run this again"
+    fi
+    die "git is required"
+}
+
+ensure_rust() {
+    # A previous rustup install in this same shell session isn't on PATH yet.
+    [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+    # `cargo` on PATH isn't enough: a rustup shim with no default toolchain is on PATH
+    # too, and only fails once you ask it to do something.
+    if have cargo; then
+        cargo --version >/dev/null 2>&1 && return 0
+        die "cargo is installed but has no working toolchain — run: rustup default stable"
+    fi
+    say "installing Rust (rustup, the official installer)"
+    if ! confirm "Install the Rust toolchain now?"; then
+        die "Rust is required to build $APP_NAME"
+    fi
+    curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain stable
+    [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+    have cargo || die "Rust installed but 'cargo' is still not on PATH"
+}
+
+have curl || die "curl is required"
+ensure_git
+
+# ── source ───────────────────────────────────────────────────────────────────
+# Running from inside a checkout? Build that one — it is what the caller meant.
+here="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || here="$PWD"
+if [ -f "$here/tools/bundle-macos.sh" ] && [ -f "$here/Cargo.toml" ]; then
+    SRC="$here"
+    say "building the checkout at $SRC"
+elif [ -d "$SRC/.git" ]; then
+    say "updating $SRC"
+    git -C "$SRC" fetch --quiet origin "$BRANCH"
+    # `--ff-only` never rewrites local work; it fails loudly instead.
+    if ! git -C "$SRC" merge --ff-only --quiet "origin/$BRANCH" 2>/dev/null; then
+        warn "the checkout has local changes; leaving them alone and building as-is"
+    fi
+else
+    say "cloning $REPO"
+    mkdir -p "$(dirname "$SRC")"
+    git clone --depth 1 --branch "$BRANCH" "$REPO" "$SRC"
+fi
+
+ensure_rust
+
+# ── build ────────────────────────────────────────────────────────────────────
+say "building $APP_NAME (this is a from-scratch Rust build — no dependencies to fetch)"
+( cd "$SRC" && sh tools/bundle-macos.sh $ARCH_ARG )
+
+built="$SRC/dist/$APP_NAME.app"
+[ -d "$built" ] || die "the build did not produce $built"
+
+if [ "$DO_INSTALL" -eq 0 ]; then
+    say "built: $built"
+    note "install it with: cp -R \"$built\" /Applications/"
+    exit 0
+fi
+
+# ── install ──────────────────────────────────────────────────────────────────
+dest="$(app_dir)"
+mkdir -p "$dest" 2>/dev/null || true
+[ -w "$dest" ] || die "cannot write to $dest — try again with: --dir \"\$HOME/Applications\""
+
+if [ -d "$dest/$APP_NAME.app" ]; then
+    confirm "Replace the existing $dest/$APP_NAME.app?" || { note "kept the existing app; the new build is at $built"; exit 0; }
+fi
+rm -rf "$dest/$APP_NAME.app"
+cp -R "$built" "$dest/$APP_NAME.app"
+say "installed $dest/$APP_NAME.app"
+
+# A fallback install is easy to lose track of, so say why it happened. An explicit
+# `--dir` was the caller's own choice and needs no explanation.
+if [ -z "$INSTALL_DIR" ] && [ "$dest" != "/Applications" ]; then
+    note "(/Applications wasn't writable, so it went here — drag it over if you prefer)"
+fi
+
+printf '\n%sOpen it:%s     open -a "%s"\n' "$BOLD" "$RESET" "$APP_NAME"
+# The same one-liner does both, which is the whole point of it.
+raw="$(printf '%s' "${REPO%.git}" | sed 's#https://github.com/#https://raw.githubusercontent.com/#')/$BRANCH/install.sh"
+printf '%sUpdate later:%s curl -fsSL %s | sh\n' "$BOLD" "$RESET" "$raw"
+printf '%sRemove it:%s    curl -fsSL %s | sh -s -- remove\n\n' "$BOLD" "$RESET" "$raw"

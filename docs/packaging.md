@@ -1,5 +1,9 @@
 # Packaging (macOS)
 
+For users there is one command — `install.sh` clones the source, installs Rust if needed,
+runs the bundler below, and installs the app (see [the README](../README.md#-install-macos)).
+This page is about the bundler it calls.
+
 `tools/bundle-macos.sh` builds a self-contained `aiTerminal.app`:
 
 1. `cargo build --release --target <triple>` — one binary, zero external crates.
@@ -64,3 +68,20 @@ both before a release:
 cargo test -p platform --lib objc                              # host
 cargo test -p platform --lib --target x86_64-apple-darwin objc # the other one
 ```
+
+## The installer
+
+`install.sh` at the repo root is the user-facing entry point:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh
+curl -fsSL … | sh -s -- remove          # uninstall (--purge also deletes ~/.aiTerminal)
+sh install.sh --no-install --universal  # build only, both slices
+```
+
+It is POSIX `sh`, has no dependencies of its own, and never needs `sudo`: when
+`/Applications` isn't writable it installs to `~/Applications` instead. Run from inside a
+checkout it builds *that* checkout; otherwise it clones to `~/.local/share/aiTerminal/src`
+(override with `AITERMINAL_SRC`) and fast-forwards it on every later run — which is why
+install and update are the same command. Prompts go to `/dev/tty`, never stdin, so a
+`curl | sh` run can't eat its own script; with no terminal it proceeds non-interactively.
