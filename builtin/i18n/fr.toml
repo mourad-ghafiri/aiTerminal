@@ -11,7 +11,7 @@ switched = "profil '{0}' activé — une fenêtre ouverte l'applique en une seco
 
 [job]
 header = "tâches d'arrière-plan ({0}) :"
-none = "aucune tâche — lancez-en une :  @job <tâche> [--agent <nom>] [--bg]"
+none = "aucune tâche — dites quoi faire et quand :  @job \"vérifier les logs à minuit\"  ·  une commande :  @job -- ./backup.sh"
 cleared = "{0} tâche(s) terminée(s) supprimée(s)"
 
 [flow]

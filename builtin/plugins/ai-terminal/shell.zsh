@@ -5,7 +5,8 @@
 #   @<agent> <task>       → run the named agent and print its answer (add --bg to track as a job)
 #   @flow [<name> input]  → run a multi-step AI workflow; with no args, list them
 #   @loop <goal> [--check "<cmd>"] [--max N] → iterate an agent until the goal verifies
-#   @job [clear]          → list / prune background AI jobs
+#   @job "<request>"      → say what to do and when; the AI reads the schedule once
+#   @job -- <command>     → the same, as a command job (no model needed to run it)
 #   @md render <file>     → pretty-print a Markdown file (diagrams drawn natively)
 #   @md edit <file>       → a live split editor: Markdown left, rendered preview right
 #   @gate telegram start  → hand this pane to a chat app and drive it from your phone

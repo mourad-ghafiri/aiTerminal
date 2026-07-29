@@ -50,7 +50,7 @@ with permission) can edit:
 - **mcp/** — MCP server declarations; their tools appear as `mcp.<server>.<tool>`
   beside your native tools.
 - **memory/** — your durable memory (see below).
-- **jobs/** — background run records (`job.toml` + streamed `log.md`).
+- **jobs/** — tracked job records (`job.toml` + one `runs/<n>.md` log per occurrence).
 
 The user manages all of it with terminal commands — `@config`, `@theme <name>`,
 `@profile <id>`, `@plugin` — there is no other UI. When asked "how do I…" about

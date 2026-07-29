@@ -48,7 +48,7 @@ profiles. The AI is woven into the shell itself through one idea:
 ❯ @flow review "the auth module"                          # a multi-step workflow
 ❯ @loop "make the tests pass" --check "cargo test"        # iterate until verified
 ❯ @flow implement --bg "migrate configs to TOML"          # …in the background
-❯ @job                                                    # monitor runs + logs
+❯ @job "check the logs at midnight"                       # the AI reads the schedule
 ❯ @gate telegram start                                    # drive this pane from your phone
 ❯ @profile switch work                                    # live profile switch
 ```
@@ -87,7 +87,7 @@ profiles. The AI is woven into the shell itself through one idea:
 | 🤖 `@<agent> <task>` | Run a named agent's full tool loop (read/search/edit/run, memory, MCP) and print its report. Ships with `coder`, `explorer`, `reviewer`, `tester`. |
 | 🔀 `@flow [<name>] <text>` | Run a workflow. An unknown first word just becomes input to the default explore→implement→verify pipeline; bare `@flow` lists them. |
 | 🔁 `@loop "<goal>" [--check "<cmd>"]` | An engineered agent loop: iterate until a **verifiable goal** passes (a check command, or an independent reviewer agent), with feedback between iterations and hard stop rules (max, no-progress, budget). |
-| 📊 `@job [<task>]` | Run a **tracked** task: `@job build the docs --agent tester --bg` (agent + background optional). Bare `@job` lists runs + logs; `--bg` works on any agent/flow/loop too. |
+| 📊 `@job "<request>"` | Say what to do **and when** — `@job "check the logs at midnight"`, `@job "summarize the kafka logs into ~/reports every hour"`. The AI reads the schedule out of the sentence *once*, at creation, and writes it into the record as cron; every run after that is plain arithmetic. `--` makes it a **command** job (`@job --every 15m -- ./sync.sh`) that needs no model at all, guard-checked like everything else. Recurring jobs survive a reboot — the supervisor re-arms them and catches a missed one up **once**. `@job` lists next fire · last outcome · runs; `show`/`log -f`/`cancel`/`clear` do the rest. |
 | 📄 `@md <file>` | `@md render` pretty-prints a Markdown file the way GitHub would — **all of GFM plus the HTML subset** (alerts, footnotes, `<details>`, centered blocks, HTML tables, `<kbd>`), **syntax-highlighted code**, **images drawn as pixels**, and **every mermaid diagram type** drawn natively (box art in other terminals); `@md edit` is a live split editor — Markdown left, rendered preview right, scroll by keyboard + mouse. |
 | 📱 `@gate telegram start` | Hand a tab or split to a chat app and drive your terminal from your phone. The pane becomes a shell you **share** — you keep typing while a paired chat runs commands in the same session — plus `/shot` for a screenshot of the live terminal. **Start Claude Code, Codex, `vim` or a REPL and the gate attaches**: the chat becomes that program's live screen, with buttons for whatever it is asking — detected from the terminal protocol itself, so it works for any program with no per-app code. Off by default; nothing is accepted until a chat sends the pairing code printed in your pane. |
 | 👤 `@profile [<id>]` | List profiles, switch directly (`@profile work`), `create`/`rename`/`delete`, and `edit` (opens the overlay in `$EDITOR`). A running window follows switches and edits live. |

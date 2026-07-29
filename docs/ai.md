@@ -161,49 +161,87 @@ so loops compose with shell logic and CI.
 
 See [examples/ai/loop.md](../examples/ai/loop.md) for recipes.
 
-## `@job` — tracked tasks
+## `@job` — say what to do and when
 
-`@job <task>` runs an agent task **as a recorded job** — flags optional,
-anywhere in the line:
+Write the request the way you'd say it. The AI reads *when* out of the sentence, and a
+plain scheduler owns everything after that:
 
 ```text
-❯ @job create a CHANGELOG from the last 10 commits            # coder, foreground,
-                                                              # streamed live AND logged
-❯ @job audit the deps for unused entries --agent reviewer --bg # named agent, detached
-▶ background job 1753112000-4242
-  monitor: aiTerminal ai job     ·  tail -f ~/.aiTerminal/ai/jobs/…/log.md
+❯ @job "check the logs at midnight"
+⧖ every day at 00:00 — check the logs · job 1753112100-4310
+  fires in 7h · list: @job · cancel: @job cancel 1753112100-4310
 
-❯ @job create a file report.md summarizing the repo in 2 minutes  # SCHEDULED
-⧖ scheduled job 1753112100-4310 — fires in 2m
-  list: aiTerminal ai job  ·  cancel: @job cancel 1753112100-4310
+❯ @job "summarize the latest kafka logs into ~/reports/kafka.md every hour"
+❯ @job "run ./backup.sh every weekday at 6pm"      # a COMMAND job — needs no model to run
+❯ @job "remind me to stretch in 20 minutes"        # one-shot
+❯ @job "deploy on the 1st of each month at 3am"
 
-❯ @job                        # bare = list runs + their logs
-background jobs (3):
-  ⧖ 1753112100-4310 scheduled create a file report.md …   (fires in 2m)
-  ▶ 1753112000-4242 running   audit the deps … --agent reviewer
-  ✓ 1753111800-4101 done      create a CHANGELOG …
-❯ @job cancel 1753112100-4310 # cancel a scheduled or running job
-❯ @job clear                  # prune finished jobs
+❯ @job "post the weekly update every monday morning" --dry-run
+cron 0 9 * * 1 — post the weekly update
+  first run in 5d                                  # …and nothing was scheduled
 ```
 
-**Scheduling.** End a `@job` with a natural time and it defers instead of running now:
-`in 2 minutes` / `after 30s` / `in 1 hour` / `at 17:30` / `at 5pm`. The phrase is stripped
-from the task, and the job runs later **in the folder where you typed it**. A detached
-sleeper fires it at the due time; `@job cancel <id>` stops a scheduled (or running) job.
+The model is asked **once, at creation**. Its answer — a cron expression, an interval, or a
+single moment — is written into the record, so occurrence #47 of an hourly job costs nothing
+and behaves exactly like #1. The sentence it understood is printed before you accept it, and
+`--dry-run` shows it without scheduling anything.
 
-Foreground `@job` runs play with the full live chrome *and* tee their answer
-into the job log, so everything you ran this way stays reviewable. `--bg` also
-works on any `@<agent>`, `@flow`, or `@loop` invocation.
+**The request, quoted or not.** One quoted argument is taken **verbatim** — spacing,
+newlines, and a `--bg` *inside* the quotes stays text. Loose words are joined with single
+spaces, so `@job summarize the logs --bg` also works.
 
-Each job is a folder under `~/.aiTerminal/ai/jobs/<id>/`: `job.toml` (status,
-command, timestamps, exit code) + `log.md` (the full streamed output — `tail -f` it
-to watch live).
+**When you already know the schedule**, say so and no model is consulted at all:
+
+```text
+❯ @job --every 15m -- ./sync.sh          # interval
+❯ @job --cron "0 9 * * 1-5" -- ./standup.sh
+❯ @job --at 17:30 -- ./eod.sh            # today (or tomorrow) at that clock time
+❯ @job --in 2m "draft the release notes" # an agent task, two minutes from now
+❯ @job -- "ls | wc -l"                   # ONE quoted word after -- = a shell line
+❯ @job -- sh -c "echo hi"                # several words = argv, executed as typed
+```
+
+`--` also means AI is never needed: a command job runs with no model configured. Commands
+go through the same **command guard** as everything else, and because a detached job has
+nobody to answer a prompt, "ask first" is a refusal (exit `2`, recorded in the log).
+
+**Watching them:**
+
+```text
+❯ @job                          # list: next fire, last outcome, run count
+background jobs (3):
+  ⧖ 1753112100-4310 scheduled check the logs                (fires in 7h)
+      cron 0 0 * * * · 12 run(s) · last ok
+  ▶ 1753112000-4242 running   audit the deps … --agent reviewer
+  ✓ 1753111800-4101 done      create a CHANGELOG …
+❯ @job show last                # the full record: plan, schedule, folder, next fire
+❯ @job log 4310 -f              # the newest run, followed live (id, prefix, or `last`)
+❯ @job cancel 4310              # stop all future occurrences
+❯ @job clear                    # prune finished jobs — never a live or recurring one
+```
+
+**It survives the machine.** The sleeper that waits for a fire-time is a detached process,
+so a reboot takes it with it. On the next launch (and on any `@job`) the supervisor re-arms
+anything still ahead and runs anything overdue **once** — an hourly job that missed six hours
+runs once, not six times. A one-shot whose moment passed with nothing watching is `missed`,
+honestly. `[jobs] max_concurrent` bounds how much a due fleet can start at a time.
+
+Foreground `@job` runs play with the full live chrome *and* tee their output into the run
+log. `--bg` detaches; it also works on any `@<agent>`, `@flow`, or `@loop` invocation.
+
+Each job is a folder under `~/.aiTerminal/ai/jobs/<id>/` — `job.toml` (what to run, when,
+and how the last run went) and `runs/<n>.md`, one log per occurrence. Plain TOML you can
+read, edit, or delete; deleting the folder is a valid way to cancel. Logs are pruned to
+`[jobs] keep_runs` and each is capped at `[jobs] max_log_bytes`, so an hourly job can't fill
+the disk.
 
 A job's status is always honest: `scheduled` (waiting to fire) · `running` · `done` ·
 `failed` · `cancelled` (Ctrl+C or `@job cancel`) · `died` (the process vanished — crash,
-kill, reboot) · `missed` (a scheduled job whose sleeper died before it fired). The list
-detects a dead pid and heals the record on the spot. `@job clear` prunes everything that
-is neither running nor scheduled.
+kill, reboot) · `missed` (its moment passed with nothing watching). The list detects a dead
+pid and heals the record on the spot.
+
+With **no model configured**, `@job` still reads `in 5m`, `at 17:30`, `every hour` and
+`every day at 9am` itself — the planner is an upgrade, never a dependency.
 
 ## Exit codes & scripting
 
@@ -501,6 +539,11 @@ aiTerminal ai --flow <name> "<input>"        # workflow                   (@flow
 aiTerminal ai --loop "<goal>" [--check …]    # engineered agent loop      (@loop)
                  [--max N] [--budget TOKENS] [--agent <name>]
 aiTerminal ai --bg …                         # detach any of the above    (--bg)
-aiTerminal ai job [clear]                   # job list / prune           (@job)
-aiTerminal ai flow                          # flow list                  (@flow)
+aiTerminal ai job "<request>"                # a job, scheduled by the AI  (@job)
+                 [--every 15m | --cron "…" | --at 17:30 | --in 2m]
+                 [--agent <name>] [--bg] [--dry-run]
+aiTerminal ai job -- <command>               # a command job (no model needed)
+aiTerminal ai job [log|show|cancel] <id>     # one job: output / record / stop
+aiTerminal ai job [clear]                    # job list / prune
+aiTerminal ai flow                           # flow list                  (@flow)
 ```

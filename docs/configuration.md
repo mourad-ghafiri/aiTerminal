@@ -40,6 +40,7 @@ AI works for you.
 | `[ai]` | `share_terminal_context`, `memory`, `show_reasoning` (show the model's thinking text; default off), `mode` (manual/auto), `network`, `budget` (USD cost soft-cap, advisory); then `[ai.balance] strategy` and the `[[ai.model]]` pool blocks — see [ai.md](ai.md#models--pools) |
 | `[gates]` | `enabled`, `require_pairing`, `plain_text` (run/ignore), `screenshot` (document/photo), `max_reply_messages`, `idle_timeout_minutes`; then a `[gates.<channel>]` table per gateway — see [gate.md](gate.md) |
 | `[md]` | `syntax` (highlight code fences), `image_max_rows`, `remote_images` (fetch `https://` images; off by default) — see [markdown.md](markdown.md) |
+| `[jobs]` | `max_concurrent` (jobs running at once), `keep_runs` (per-occurrence logs kept), `max_log_bytes` (cap per run log) — see [ai.md](ai.md#job--say-what-to-do-and-when) |
 | `[plugins]` | `enabled`, `disabled = ["name", …]` |
 | `[shell]` | `integration` (master switch for injected aliases/snippets/colors) |
 | `[registry]` | `dir` — where the bundled `builtin/` lives (empty = auto-resolve) |

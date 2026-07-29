@@ -5,7 +5,8 @@
 #   @<agent> <task>       → run the named agent and print its answer (add --bg to track as a job)
 #   @flow [<name> input]  → run a multi-step AI workflow; with no args, list them
 #   @loop <goal> [--check "<cmd>"] [--max N] → iterate an agent until the goal verifies
-#   @job [clear]          → list / prune background AI jobs
+#   @job "<request>"      → say what to do and when; the AI reads the schedule once
+#   @job -- <command>     → the same, as a command job (no model needed to run it)
 #   @md render|edit <file> → pretty-print a Markdown file, or live-edit it with a preview
 #   @profile [<id>]       → list / switch directly · create/rename/delete/edit ($EDITOR)
 #   @theme [<name>]       → list themes / switch the current profile\x27s theme live

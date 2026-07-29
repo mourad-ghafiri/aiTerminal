@@ -15,7 +15,7 @@ switched = "switched to profile '{0}' — a running window applies it within a s
 
 [job]
 header = "background jobs ({0}):"
-none = "no jobs yet — run one:  @job <task> [--agent <name>] [--bg]"
+none = "no jobs yet — say what to do and when:  @job \"check the logs at midnight\"  ·  a command:  @job -- ./backup.sh"
 cleared = "cleared {0} finished job(s)"
 
 [flow]
