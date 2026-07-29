@@ -262,9 +262,97 @@ fn draw_alt_placements(surface: &mut Surface, term: &Term, theme: &Theme, cache:
     }
 }
 
+/// A dashed/dotted line: the segment chopped into on/off runs.
+fn draw_dashed(surface: &mut Surface, a: (f32, f32), b: (f32, f32), thick: f32, color: Rgba8, on: f32, off: f32) {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len <= 0.001 {
+        return;
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let step = (on + off).max(1.0);
+    let mut t = 0.0;
+    while t < len {
+        let e = (t + on).min(len);
+        draw_seg(surface, (a.0 + ux * t, a.1 + uy * t), (a.0 + ux * e, a.1 + uy * e), thick, color);
+        t += step;
+    }
+}
+
+/// A hollow triangle head (UML inheritance) — the outline of [`draw_arrowhead`].
+fn draw_open_head(surface: &mut Surface, tip: (f32, f32), from: (f32, f32), size: f32, thick: f32, color: Rgba8) {
+    let (dx, dy) = (tip.0 - from.0, tip.1 - from.1);
+    let len = (dx * dx + dy * dy).sqrt().max(0.001);
+    let (ux, uy) = (dx / len, dy / len);
+    let (px, py) = (-uy, ux);
+    let base = (tip.0 - ux * size, tip.1 - uy * size);
+    let l = (base.0 + px * size * 0.5, base.1 + py * size * 0.5);
+    let r = (base.0 - px * size * 0.5, base.1 - py * size * 0.5);
+    draw_seg(surface, tip, l, thick, color);
+    draw_seg(surface, tip, r, thick, color);
+    draw_seg(surface, l, r, thick, color);
+}
+
+/// A diamond end cap (UML aggregation hollow / composition filled).
+fn draw_diamond_head(surface: &mut Surface, tip: (f32, f32), from: (f32, f32), size: f32, thick: f32, color: Rgba8, filled: bool) {
+    let (dx, dy) = (tip.0 - from.0, tip.1 - from.1);
+    let len = (dx * dx + dy * dy).sqrt().max(0.001);
+    let (ux, uy) = (dx / len, dy / len);
+    let (px, py) = (-uy, ux);
+    let mid = (tip.0 - ux * size * 0.5, tip.1 - uy * size * 0.5);
+    let back = (tip.0 - ux * size, tip.1 - uy * size);
+    let pts = [tip, (mid.0 + px * size * 0.35, mid.1 + py * size * 0.35), back, (mid.0 - px * size * 0.35, mid.1 - py * size * 0.35)];
+    if filled {
+        surface.fill_polygon(&pts, color);
+    } else {
+        for i in 0..4 {
+            draw_seg(surface, pts[i], pts[(i + 1) % 4], thick, color);
+        }
+    }
+}
+
+/// Draw one scene item's end cap at `at`, pointing away from `from`.
+#[allow(clippy::too_many_arguments)]
+fn draw_cap(surface: &mut Surface, cap: corelib::mermaid::Cap, at: (f32, f32), from: (f32, f32), size: f32, thick: f32, color: Rgba8) {
+    use corelib::mermaid::Cap;
+    match cap {
+        Cap::None => {}
+        Cap::Arrow | Cap::Open => draw_arrowhead(surface, at, from, size, color),
+        Cap::Triangle => draw_open_head(surface, at, from, size, thick, color),
+        Cap::Diamond => draw_diamond_head(surface, at, from, size, thick, color, false),
+        Cap::FilledDiamond => draw_diamond_head(surface, at, from, size, thick, color, true),
+        Cap::Circle => surface.fill_circle(at.0, at.1, size * 0.35, color),
+        Cap::Cross => {
+            let s = size * 0.35;
+            draw_seg(surface, (at.0 - s, at.1 - s), (at.0 + s, at.1 + s), thick, color);
+            draw_seg(surface, (at.0 + s, at.1 - s), (at.0 - s, at.1 + s), thick, color);
+        }
+        Cap::Tick | Cap::CrowFoot => {
+            let (dx, dy) = (at.0 - from.0, at.1 - from.1);
+            let len = (dx * dx + dy * dy).sqrt().max(0.001);
+            let (px, py) = (-dy / len * size * 0.4, dx / len * size * 0.4);
+            draw_seg(surface, (at.0 - px, at.1 - py), (at.0 + px, at.1 + py), thick, color);
+        }
+    }
+}
+
+/// The color a scene role takes in the active theme. `Slot(n)` walks the bright ANSI
+/// ramp, so categorical series (pie slices, sections) restyle with the theme.
+fn role_color(role: corelib::mermaid::Role, theme: &Theme) -> Rgba8 {
+    use corelib::mermaid::Role;
+    match role {
+        Role::Node => theme.accent,
+        Role::Edge => theme.muted,
+        Role::Label => theme.term_fg,
+        Role::Muted => theme.muted,
+        Role::Accent => theme.accent,
+        Role::Slot(n) => theme.ansi(9 + n % 6),
+    }
+}
+
 /// Draw a parsed+laid-out diagram, scaled to fit `rect`.
 fn draw_diagram(surface: &mut Surface, cache: &mut GlyphCache, px: f32, theme: &Theme, rect: Rect, source: &str, cw: f32, ch: f32) {
-    use corelib::mermaid::{layout, parse, Shape};
+    use corelib::mermaid::{layout, parse, Anchor, Item, Stroke, TextSize};
     let Some(d) = parse(source) else { return };
     let lay = layout(&d, &|s: &str| (corelib::unicode::str_width(s) as u32 * cw as u32, ch as u32));
     if lay.width == 0 || lay.height == 0 {
@@ -277,68 +365,149 @@ fn draw_diagram(surface: &mut Surface, cache: &mut GlyphCache, px: f32, theme: &
     let oy2 = rect.y + (rect.h - dh) / 2.0;
     let tp = |x: f32, y: f32| (ox2 + x * scale, oy2 + y * scale);
 
-    let edge_col = theme.muted;
     let node_fill = mix(theme.term_bg, theme.accent, 0.14);
-    let node_edge = theme.accent;
-    let lbl_px = (px * scale).clamp(7.0, px);
-    let m = cache.metrics(lbl_px);
+    let base_px = (px * scale).clamp(7.0, px);
+    let line = (1.5 * scale).clamp(1.0, 3.0);
+    let head = (9.0 * scale).clamp(5.0, 12.0);
 
-    // Edges first (under the nodes).
-    for e in &lay.edges {
-        if e.points.len() < 2 {
-            continue;
-        }
-        let a = tp(e.points[0].0, e.points[0].1);
-        let b = tp(e.points[1].0, e.points[1].1);
-        draw_seg(surface, a, b, (1.5 * scale).clamp(1.0, 3.0), edge_col);
-        if e.arrow {
-            draw_arrowhead(surface, b, a, (9.0 * scale).clamp(5.0, 12.0), edge_col);
-        }
-        if !e.label.is_empty() {
-            let midx = (a.0 + b.0) / 2.0;
-            let midy = (a.1 + b.1) / 2.0;
-            let tw = measure_text(cache, &e.label, lbl_px);
-            // Small chip behind the label so the line doesn't cross it.
-            surface.fill_rect(Rect::new(midx - tw / 2.0 - 2.0, midy - m.cell_h / 2.0, tw + 4.0, m.cell_h), theme.term_bg);
-            draw_text(surface, cache, &e.label, lbl_px, midx - tw / 2.0, midy + m.ascent / 2.0, theme.muted, midx + tw / 2.0 + 2.0, false);
-        }
-    }
-
-    // Nodes.
-    for n in &lay.nodes {
-        let (nx, ny) = tp(n.x, n.y);
-        let nw = n.w * scale;
-        let nh = n.h * scale;
-        let r = Rect::new(nx, ny, nw, nh);
-        match n.shape {
-            Shape::Diamond => {
-                let cx = nx + nw / 2.0;
-                let cy = ny + nh / 2.0;
-                let pts = [(cx, ny), (nx + nw, cy), (cx, ny + nh), (nx, cy)];
-                surface.fill_polygon(&pts, node_fill);
-                for i in 0..4 {
-                    draw_seg(surface, pts[i], pts[(i + 1) % 4], (1.5 * scale).clamp(1.0, 2.5), node_edge);
+    for item in &lay.items {
+        match item {
+            Item::Group { rect: r, title, role } => {
+                let (gx, gy) = tp(r.x, r.y);
+                let gr = Rect::new(gx, gy, r.w * scale, r.h * scale);
+                let col = role_color(*role, theme);
+                surface.fill_rounded_rect(gr, (8.0 * scale).clamp(3.0, 12.0), mix(theme.term_bg, col, 0.06));
+                surface.stroke_rounded_rect(gr, (8.0 * scale).clamp(3.0, 12.0), line, mix(theme.term_bg, col, 0.5));
+                if !title.is_empty() {
+                    let m = cache.metrics(base_px);
+                    draw_text(surface, cache, title, base_px, gr.x + 6.0, gr.y + m.ascent + 2.0, theme.muted, gr.right() - 4.0, false);
                 }
             }
-            Shape::Circle => {
-                let rad = nw.min(nh) / 2.0;
-                surface.fill_circle(nx + nw / 2.0, ny + nh / 2.0, rad, node_fill);
+            Item::Path { points, stroke, tail, head: h, label, role } => {
+                if points.len() < 2 {
+                    continue;
+                }
+                let col = role_color(*role, theme);
+                let thick = if *stroke == Stroke::Thick { line * 2.0 } else { line };
+                let pts: Vec<(f32, f32)> = points.iter().map(|&(x, y)| tp(x, y)).collect();
+                for w in pts.windows(2) {
+                    match stroke {
+                        Stroke::Dashed => draw_dashed(surface, w[0], w[1], thick, col, 6.0 * scale, 5.0 * scale),
+                        Stroke::Dotted => draw_dashed(surface, w[0], w[1], thick, col, 2.0 * scale, 4.0 * scale),
+                        _ => draw_seg(surface, w[0], w[1], thick, col),
+                    }
+                }
+                let last = pts[pts.len() - 1];
+                let prev = pts[pts.len() - 2];
+                draw_cap(surface, *h, last, prev, head, thick, col);
+                draw_cap(surface, *tail, pts[0], pts[1], head, thick, col);
+                if !label.is_empty() {
+                    // Sit on the middle of the middle segment, on a chip so the line
+                    // doesn't strike through the text.
+                    let mid = pts.len() / 2;
+                    let (a, b) = (pts[mid - 1], pts[mid]);
+                    let (mx, my) = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+                    let m = cache.metrics(base_px);
+                    let tw = measure_text(cache, label, base_px);
+                    surface.fill_rect(Rect::new(mx - tw / 2.0 - 2.0, my - m.cell_h / 2.0, tw + 4.0, m.cell_h), theme.term_bg);
+                    draw_text(surface, cache, label, base_px, mx - tw / 2.0, my + m.ascent / 2.0, theme.muted, mx + tw / 2.0 + 2.0, false);
+                }
             }
-            _ => {
-                let radius = match n.shape {
-                    Shape::Stadium | Shape::Round => nh / 2.0,
-                    _ => (6.0 * scale).clamp(3.0, 10.0),
+            Item::Shape { kind, rect: r, label, role } => {
+                let (nx, ny) = tp(r.x, r.y);
+                let (nw, nh) = (r.w * scale, r.h * scale);
+                let nr = Rect::new(nx, ny, nw, nh);
+                let edge = role_color(*role, theme);
+                let fill = if matches!(role, corelib::mermaid::Role::Slot(_)) { mix(theme.term_bg, edge, 0.3) } else { node_fill };
+                draw_node_shape(surface, *kind, nr, fill, edge, line, scale);
+                if !label.is_empty() {
+                    let m = cache.metrics(base_px);
+                    let lines: Vec<&str> = label.split('\n').collect();
+                    let total = lines.len() as f32 * m.cell_h;
+                    let mut baseline = ny + (nh - total) / 2.0 + m.ascent;
+                    for l in lines {
+                        let tw = measure_text(cache, l, base_px).min(nw - 4.0);
+                        draw_text(surface, cache, l, base_px, (nx + (nw - tw) / 2.0).max(nx + 2.0), baseline, theme.term_fg, nx + nw - 2.0, false);
+                        baseline += m.cell_h;
+                    }
+                }
+            }
+            Item::Wedge { cx, cy, r, a0, a1, slot } => {
+                let (wx, wy) = tp(*cx, *cy);
+                surface.fill_wedge(wx, wy, r * scale, *a0, *a1, role_color(corelib::mermaid::Role::Slot(*slot), theme));
+            }
+            Item::Label { text, x, y, anchor, size, role } => {
+                let lpx = match size {
+                    TextSize::Title => (base_px * 1.15).min(px),
+                    TextSize::Small => (base_px * 0.85).max(7.0),
+                    TextSize::Normal => base_px,
                 };
-                surface.fill_rounded_rect(r, radius, node_fill);
-                surface.stroke_rounded_rect(r, radius, (1.5 * scale).clamp(1.0, 2.5), node_edge);
+                let m = cache.metrics(lpx);
+                let (lx, ly) = tp(*x, *y);
+                let tw = measure_text(cache, text, lpx);
+                let sx = match anchor {
+                    Anchor::Start => lx,
+                    Anchor::Middle => lx - tw / 2.0,
+                    Anchor::End => lx - tw,
+                };
+                draw_text(surface, cache, text, lpx, sx, ly + m.ascent, role_color(*role, theme), sx + tw + 2.0, false);
+            }
+            Item::Rule { a, b, role } => draw_seg(surface, tp(a.0, a.1), tp(b.0, b.1), line, role_color(*role, theme)),
+        }
+    }
+}
+
+/// One node outline. Every mermaid shape reduces to a rounded rect, a polygon or a circle.
+fn draw_node_shape(surface: &mut Surface, kind: corelib::mermaid::Shape, r: Rect, fill: Rgba8, edge: Rgba8, line: f32, scale: f32) {
+    use corelib::mermaid::Shape;
+    let (x, y, w, h) = (r.x, r.y, r.w, r.h);
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    let slant = (w * 0.15).min(h * 0.6);
+    let poly = |surface: &mut Surface, pts: &[(f32, f32)]| {
+        surface.fill_polygon(pts, fill);
+        for i in 0..pts.len() {
+            draw_seg(surface, pts[i], pts[(i + 1) % pts.len()], line, edge);
+        }
+    };
+    match kind {
+        Shape::Diamond => poly(surface, &[(cx, y), (x + w, cy), (cx, y + h), (x, cy)]),
+        Shape::Hexagon => poly(surface, &[(x + slant, y), (x + w - slant, y), (x + w, cy), (x + w - slant, y + h), (x + slant, y + h), (x, cy)]),
+        Shape::Parallelogram => poly(surface, &[(x + slant, y), (x + w, y), (x + w - slant, y + h), (x, y + h)]),
+        Shape::ParallelogramAlt => poly(surface, &[(x, y), (x + w - slant, y), (x + w, y + h), (x + slant, y + h)]),
+        Shape::Trapezoid => poly(surface, &[(x + slant, y), (x + w - slant, y), (x + w, y + h), (x, y + h)]),
+        Shape::TrapezoidAlt => poly(surface, &[(x, y), (x + w, y), (x + w - slant, y + h), (x + slant, y + h)]),
+        Shape::Asymmetric => poly(surface, &[(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x + slant, cy)]),
+        Shape::Circle | Shape::DoubleCircle => {
+            let rad = w.min(h) / 2.0;
+            surface.fill_circle(cx, cy, rad, fill);
+            if kind == Shape::DoubleCircle {
+                surface.fill_circle(cx, cy, (rad - line * 2.0).max(1.0), fill);
             }
         }
-        // Centered label (clipped to the node).
-        if !n.label.is_empty() {
-            let tw = measure_text(cache, &n.label, lbl_px).min(nw - 4.0);
-            let tx = nx + (nw - tw) / 2.0;
-            let baseline = ny + nh / 2.0 + m.ascent / 2.0 - m.descent / 2.0;
-            draw_text(surface, cache, &n.label, lbl_px, tx.max(nx + 2.0), baseline, theme.term_fg, nx + nw - 2.0, false);
+        Shape::Actor => {
+            // A stick figure: head, body, arms, legs.
+            let head_r = (h * 0.18).max(2.0);
+            surface.fill_circle(cx, y + head_r, head_r, edge);
+            draw_seg(surface, (cx, y + head_r * 2.0), (cx, y + h * 0.65), line, edge);
+            draw_seg(surface, (cx - w * 0.18, y + h * 0.42), (cx + w * 0.18, y + h * 0.42), line, edge);
+            draw_seg(surface, (cx, y + h * 0.65), (cx - w * 0.16, y + h), line, edge);
+            draw_seg(surface, (cx, y + h * 0.65), (cx + w * 0.16, y + h), line, edge);
+        }
+        Shape::Note => {
+            surface.fill_rounded_rect(r, (3.0 * scale).clamp(2.0, 6.0), fill);
+            surface.stroke_rounded_rect(r, (3.0 * scale).clamp(2.0, 6.0), line, edge);
+        }
+        _ => {
+            let radius = match kind {
+                Shape::Stadium | Shape::Round | Shape::Cylinder => h / 2.0,
+                _ => (6.0 * scale).clamp(3.0, 10.0),
+            };
+            surface.fill_rounded_rect(r, radius, fill);
+            surface.stroke_rounded_rect(r, radius, line, edge);
+            if kind == Shape::Subroutine {
+                draw_seg(surface, (x + slant, y), (x + slant, y + h), line, edge);
+                draw_seg(surface, (x + w - slant, y), (x + w - slant, y + h), line, edge);
+            }
         }
     }
 }

@@ -1,0 +1,21 @@
+name = "a flowchart's shapes, link kinds and subgraphs all reach the picture"
+tags = ["diagrams"]
+
+# The whole flowchart vocabulary matters, not just `A --> B`: a model draws decisions as
+# diamonds, stores as cylinders, and groups related steps in a titled frame. If any of it
+# silently degraded to a plain box the diagram would still render — and quietly lie.
+
+[[step]]
+markdown = ["```mermaid", "flowchart TD", "  A[Start] --> B{Ready?}", "  B -->|yes| C([Ship])", "  B -. no .-> D[/Fix/]", "  subgraph CI[pipeline]", "    E[[test]] --> F[(store)]", "  end", "  C --> E", "```"]
+
+# Every label survives — including both spellings of link text.
+[[step]]
+expect_mermaid_nodes = ["Start", "Ready?", "Ship", "Fix", "test", "store"]
+
+[[step]]
+expect_diagram_art = ["Start", "Ready?", "yes", "no", "pipeline"]
+
+# The shapes are drawn as shapes: a diamond has slanted corners, a stadium round ones,
+# a subroutine its double sides, a cylinder its drum lid.
+[[step]]
+expect_diagram_art = ["╱", "╭", "││", "═"]

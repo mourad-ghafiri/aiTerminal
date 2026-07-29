@@ -8,4 +8,4 @@ tags = ["preview", "diagrams"]
 markdown = ["```mermaid", "flowchart LR", "  A-->B", "```"]
 
 [[step]]
-expect_preview = ["<diagram 1/4>", "<diagram 2/4>", "<diagram 3/4>", "<diagram 4/4>"]
+expect_preview = ["<diagram 1/5>", "<diagram 2/5>", "<diagram 3/5>", "<diagram 4/5>", "<diagram 5/5>"]

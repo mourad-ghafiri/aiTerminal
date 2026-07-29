@@ -711,7 +711,7 @@ fn is_open_diagram_fence(pend: &str) -> bool {
 
 /// Are we inside our OWN GUI terminal (which draws native diagrams via `OSC 1338`)? The PTY
 /// exports `TERM_PROGRAM = <brand>` to its children.
-fn is_native_terminal() -> bool {
+pub(crate) fn is_native_terminal() -> bool {
     std::env::var("TERM_PROGRAM").ok().as_deref() == Some(corelib::brand::NAME)
 }
 
@@ -722,7 +722,7 @@ pub(crate) fn diagram_rows(source: &str) -> usize {
     corelib::mermaid::parse(source)
         .map(|d| {
             let l = corelib::mermaid::layout(&d, &|s: &str| (corelib::unicode::str_width(s) as u32 * 8, 16));
-            l.height.div_ceil(18).clamp(3, 40) as usize
+            l.height.div_ceil(18).clamp(3, 120) as usize
         })
         .unwrap_or(3)
 }
@@ -735,7 +735,52 @@ fn diagram_output(source: &str) -> String {
         let rows = diagram_rows(source);
         return format!("\x1b]1338;{rows};{}\x07", corelib::codec::base64_encode(source.as_bytes()));
     }
-    diagram_fallback_box(source)
+    diagram_text(source)
+}
+
+/// A diagram for terminals that can't draw pixels: the real picture in Unicode box art,
+/// or — only when it can't be read or won't fit the width — the source in a box. The user
+/// never has to look at diagram syntax if we can avoid it.
+fn diagram_text(source: &str) -> String {
+    let width = md_width();
+    match corelib::mermaid::art(source, width) {
+        Some(rows) if !rows.is_empty() => {
+            let mut out = String::new();
+            for r in rows {
+                out.push_str(&r);
+                out.push('\n');
+            }
+            out
+        }
+        _ => diagram_fallback_box(source),
+    }
+}
+
+/// A diagram's drawn rows for a preview `width` columns wide, without styling — the art
+/// when it can be drawn, else the boxed source. Shared by the `@md` pager and editor so a
+/// diagram occupies exactly the rows it paints.
+pub(crate) fn diagram_lines(source: &str, width: usize) -> Vec<String> {
+    if let Some(rows) = corelib::mermaid::art(source, width) {
+        return rows;
+    }
+    let w = source.lines().map(corelib::unicode::str_width).max().unwrap_or(0).clamp(7, width.saturating_sub(2).max(7));
+    let mut out = vec![format!("╭─ diagram {}╮", "─".repeat(w.saturating_sub(9)))];
+    for line in source.lines() {
+        let pad = w.saturating_sub(corelib::unicode::str_width(line));
+        out.push(format!("│ {line}{} │", " ".repeat(pad)));
+    }
+    out.push(format!("╰{}╯", "─".repeat(w + 2)));
+    out
+}
+
+/// How many rows a diagram takes in a preview `width` columns wide: the native placement's
+/// reserved rows inside our own GUI, the drawn art's own height anywhere else.
+pub(crate) fn diagram_rows_in(source: &str, width: usize) -> usize {
+    if is_native_terminal() {
+        diagram_rows(source)
+    } else {
+        diagram_lines(source, width).len()
+    }
 }
 
 /// A plain boxed rendering of a diagram's source for terminals that can't draw it.
@@ -834,7 +879,7 @@ fn md_render(path: Option<&String>) -> i32 {
                     let _ = out.write_all(t.as_bytes());
                 }
                 corelib::md::Chunk::Diagram(src) => {
-                    let d = if tty { diagram_output(&src) } else { diagram_fallback_box(&src) };
+                    let d = if tty { diagram_output(&src) } else { diagram_text(&src) };
                     let _ = out.write_all(d.as_bytes());
                 }
             }
@@ -3692,13 +3737,23 @@ mod tests {
     }
 
     #[test]
-    fn diagram_output_falls_back_to_a_box_off_our_terminal() {
-        // Not our GUI terminal (TERM_PROGRAM unset) → a clean fallback box, no jargon, no OSC.
+    fn diagram_draws_as_text_art_off_our_terminal() {
+        // Not our GUI terminal (TERM_PROGRAM unset) → the picture in box art, never the
+        // syntax, and never a native OSC the other terminal couldn't read.
         std::env::remove_var("TERM_PROGRAM");
-        let out = super::diagram_output("flowchart TD\n A --> B");
-        assert!(out.contains("diagram") && out.contains('╭'), "fallback box: {out:?}");
+        let out = super::diagram_output("flowchart TD\n A[Start] --> B[End]");
+        assert!(out.contains("Start") && out.contains("End"), "the labels are drawn: {out:?}");
+        assert!(out.contains('▼'), "an arrowhead is drawn: {out:?}");
+        assert!(!out.contains("-->"), "no diagram syntax reaches the user: {out:?}");
         assert!(!out.contains("\x1b]1338"), "no native OSC off our terminal");
-        assert!(out.contains("A --> B"));
+    }
+
+    #[test]
+    fn an_unreadable_diagram_still_falls_back_to_a_box() {
+        std::env::remove_var("TERM_PROGRAM");
+        let out = super::diagram_output("this is not a diagram at all");
+        assert!(out.contains("diagram") && out.contains('╭'), "fallback box: {out:?}");
+        assert!(out.contains("this is not a diagram at all"));
     }
 
     #[test]

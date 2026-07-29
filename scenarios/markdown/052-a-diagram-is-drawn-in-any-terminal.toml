@@ -1,0 +1,16 @@
+name = "a diagram is drawn as a picture, not as syntax, in a plain terminal"
+tags = ["diagrams"]
+
+# The promise is that the user never sees diagram syntax. Inside the app the picture is
+# drawn with pixels; everywhere else — a pipe, tmux, another emulator, CI — it has to be
+# drawn out of characters instead. Same layout, different ink.
+
+[[step]]
+markdown = ["```mermaid", "flowchart TD", "  A[Start] --> B{Ready?}", "  B -->|yes| C([Ship])", "```"]
+
+[[step]]
+expect_diagram_art = ["Start", "Ready?", "Ship", "yes", "▼"]
+
+# The labels are drawn inside real boxes, and the arrow is a line — not an ASCII `-->`.
+[[step]]
+expect_diagram_art = ["┌", "╱", "╰"]

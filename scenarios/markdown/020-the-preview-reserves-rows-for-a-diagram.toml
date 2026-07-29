@@ -10,6 +10,6 @@ markdown = ["# Plan", "", "```mermaid", "flowchart LR", "  A-->B-->C", "```"]
 [[step]]
 expect_contains = ["Plan"]
 
-# heading + its rule + a blank + the diagram's reserved rows
+# heading + its rule + a blank + the rows the drawn diagram actually occupies
 [[step]]
-expect_preview_rows = 7
+expect_preview_rows = 8

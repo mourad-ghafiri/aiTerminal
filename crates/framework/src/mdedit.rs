@@ -166,9 +166,33 @@ pub(crate) enum PRow {
     Diagram { source: String, rows: usize, offset: usize },
 }
 
+/// How a diagram fills the rows it reserves: drawn natively over them by our own GUI, or
+/// painted as text art everywhere else. Threaded through explicitly rather than read from
+/// the environment at each call, so the row model and the painter can never disagree.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DiagramPaint {
+    Native,
+    Art,
+}
+
+impl DiagramPaint {
+    pub(crate) fn detect() -> Self {
+        if crate::cli::is_native_terminal() {
+            DiagramPaint::Native
+        } else {
+            DiagramPaint::Art
+        }
+    }
+}
+
 /// Render the whole document to preview rows at `width`, splitting diagrams out so they can be
 /// drawn natively and scrolled by exact row.
 pub(crate) fn build_preview(text: &str, width: usize, style: corelib::md::Style) -> Vec<PRow> {
+    build_preview_with(text, width, style, DiagramPaint::detect())
+}
+
+/// [`build_preview`] with the diagram paint mode pinned — the form tests and scenarios use.
+pub(crate) fn build_preview_with(text: &str, width: usize, style: corelib::md::Style, paint: DiagramPaint) -> Vec<PRow> {
     let mut sr = corelib::md::StreamRenderer::new(style, width.max(4), &[DIAGRAM_LANG]);
     let mut rows = Vec::new();
     let take = |chunks: Vec<corelib::md::Chunk>, rows: &mut Vec<PRow>| {
@@ -181,7 +205,10 @@ pub(crate) fn build_preview(text: &str, width: usize, style: corelib::md::Style)
                     rows.push(PRow::Text(String::new())); // one blank line between blocks
                 }
                 corelib::md::Chunk::Diagram(src) => {
-                    let n = crate::cli::diagram_rows(&src);
+                    let n = match paint {
+                        DiagramPaint::Native => crate::cli::diagram_rows(&src),
+                        DiagramPaint::Art => crate::cli::diagram_lines(&src, width.max(4)).len(),
+                    };
                     for offset in 0..n {
                         rows.push(PRow::Diagram { source: src.clone(), rows: n, offset });
                     }
@@ -453,6 +480,7 @@ struct Editor {
     preview_top: usize,
     preview_left: usize,
     quit: bool,
+    paint: DiagramPaint,
 }
 
 impl Editor {
@@ -468,6 +496,7 @@ impl Editor {
             preview_top: 0,
             preview_left: 0,
             quit: false,
+            paint: DiagramPaint::detect(),
         }
     }
 
@@ -652,7 +681,7 @@ impl Editor {
             out.push_str(&format!("{}│{}", mut_, rst));
         }
         // Body right half: the live preview (text + native diagrams), shared with the pager.
-        draw_preview_region(&mut out, preview, self.preview_top, self.preview_left, l.preview_x, l.preview_w, 2, l.body_h);
+        draw_preview_region(&mut out, preview, self.preview_top, self.preview_left, l.preview_x, l.preview_w, 2, l.body_h, self.paint);
 
         // Help line (reverse video).
         let help = match self.mode {
@@ -685,13 +714,24 @@ impl Editor {
 /// identically. Uses absolute cursor positioning per row, so the caller can draw other columns
 /// independently.
 #[allow(clippy::too_many_arguments)]
-fn draw_preview_region(out: &mut String, preview: &[PRow], top: usize, left: usize, col0: usize, width: usize, row0: usize, body_h: usize) {
+fn draw_preview_region(out: &mut String, preview: &[PRow], top: usize, left: usize, col0: usize, width: usize, row0: usize, body_h: usize, paint: DiagramPaint) {
+    // Off our own GUI there is nothing to draw the diagram natively, so each reserved row
+    // paints the matching row of the text art instead of being left blank.
+    let native = paint == DiagramPaint::Native;
     for r in 0..body_h {
         out.push_str(&format!("\x1b[{};{}H", row0 + r, col0 + 1));
         match preview.get(top + r) {
             Some(PRow::Text(line)) => out.push_str(&hslice_ansi(line, left, width)),
+            Some(PRow::Diagram { source, offset, .. }) if !native => {
+                let art = crate::cli::diagram_lines(source, width);
+                let line = art.get(*offset).cloned().unwrap_or_default();
+                out.push_str(&hslice_ansi(&line, left, width));
+            }
             _ => out.push_str(&" ".repeat(width)), // diagram rows draw natively on top
         }
+    }
+    if !native {
+        return;
     }
     let mut i = 0;
     while i < preview.len() {
@@ -857,11 +897,12 @@ pub(crate) struct Pager {
     pub(crate) top: usize,
     pub(crate) left: usize,
     pub(crate) quit: bool,
+    pub(crate) paint: DiagramPaint,
 }
 
 impl Pager {
     pub(crate) fn new(path: &str) -> Self {
-        Pager { path: path.to_string(), top: 0, left: 0, quit: false }
+        Pager { path: path.to_string(), top: 0, left: 0, quit: false, paint: DiagramPaint::detect() }
     }
 
     pub(crate) fn on_key(&mut self, key: Key, body_h: usize, len: usize) {
@@ -904,7 +945,7 @@ impl Pager {
         let right = format!("line {}\u{2013}{} of {} · {}% ", self.top + 1, last, preview.len(), pct);
         out.push_str(&bar(&left, &right, cols));
         // Body: full-width preview (shared with the editor).
-        draw_preview_region(&mut out, preview, self.top, self.left, 0, cols, 2, body_h);
+        draw_preview_region(&mut out, preview, self.top, self.left, 0, cols, 2, body_h, self.paint);
         // Help bar.
         let help = "  \u{2191}\u{2193}/j k scroll · Space/b page · g/G top/bottom · \u{2190}\u{2192} pan · wheel · q quit";
         out.push_str(&format!("\x1b[{};1H", rows));
@@ -1059,7 +1100,7 @@ mod tests {
     #[test]
     fn preview_model_reserves_rows_for_diagrams() {
         let doc = "# Title\n\n```mermaid\nflowchart TD\n A-->B\n```\n";
-        let rows = build_preview(doc, 60, plain_style());
+        let rows = build_preview_with(doc, 60, plain_style(), DiagramPaint::Art);
         let diagram_rows = rows.iter().filter(|r| matches!(r, PRow::Diagram { .. })).count();
         assert!(diagram_rows >= 3, "a diagram reserves several rows: {diagram_rows}");
         assert!(rows.iter().any(|r| matches!(r, PRow::Text(t) if t.contains("Title"))));
@@ -1119,12 +1160,26 @@ mod tests {
     #[test]
     fn pager_frame_positions_a_diagram_at_its_row() {
         let doc = "para one\n\n```mermaid\nflowchart TD\n A-->B\n```\n";
-        let preview = build_preview(doc, 40, plain_style());
+        let preview = build_preview_with(doc, 40, plain_style(), DiagramPaint::Native);
         let mut pg = Pager::new("x.md");
+        pg.paint = DiagramPaint::Native;
         let frame = pg.frame(&preview, (40, 24));
         // The diagram is emitted as an OSC 1338 confined to the full width.
         assert!(frame.contains("\x1b]1338;"), "native diagram placement emitted");
         assert!(frame.contains(";40\x07"), "confined to the pager width");
+    }
+
+    #[test]
+    fn pager_paints_diagram_art_off_our_terminal() {
+        // Anywhere but our GUI the reserved rows carry the drawn picture, never a native
+        // escape the host can't read and never blank space.
+        let doc = "para one\n\n```mermaid\nflowchart TD\n A[Start]-->B[End]\n```\n";
+        let preview = build_preview_with(doc, 40, plain_style(), DiagramPaint::Art);
+        let mut pg = Pager::new("x.md");
+        pg.paint = DiagramPaint::Art;
+        let frame = pg.frame(&preview, (40, 24));
+        assert!(!frame.contains("\x1b]1338;"), "no native placement off our terminal");
+        assert!(frame.contains("Start") && frame.contains("End"), "the picture is painted: {frame:?}");
     }
 
     #[test]

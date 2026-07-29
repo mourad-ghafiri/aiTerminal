@@ -9,7 +9,7 @@ use corelib::md::{self, Style};
 use corelib::wire::Toml;
 
 use super::super::world::{self, World};
-use crate::mdedit::{build_preview, parse_key, PRow, Pager};
+use crate::mdedit::{build_preview_with, parse_key, DiagramPaint, PRow, Pager};
 
 pub struct MarkdownWorld {
     /// The document under test.
@@ -142,6 +142,9 @@ impl World for MarkdownWorld {
         if let Some(want) = world::list(step, "expect_mermaid_nodes") {
             return self.expect_mermaid_nodes(&want);
         }
+        if let Some(want) = world::list(step, "expect_diagram_art") {
+            return self.expect_diagram_art(&want);
+        }
 
         Err(world::unknown_verb(step))
     }
@@ -151,7 +154,8 @@ impl MarkdownWorld {
     fn render(&mut self) -> Result<(), String> {
         let out = md::render(&md::parse(&self.source), &self.style, self.width);
         self.rows = out.lines().map(str::to_string).collect();
-        self.preview = build_preview(&self.source, self.width, self.style.clone());
+        // Pinned to the drawn-art model: a scenario asserts what a plain terminal shows.
+        self.preview = build_preview_with(&self.source, self.width, self.style.clone(), DiagramPaint::Art);
         Ok(())
     }
 
@@ -165,14 +169,41 @@ impl MarkdownWorld {
     }
 
     fn expect_mermaid_nodes(&self, want: &[String]) -> Result<(), String> {
-        let src = self.diagrams.first().cloned().unwrap_or_else(|| self.source.clone());
+        let src = self.diagram_source();
         let Some(diagram) = corelib::mermaid::parse(&src) else {
             return Err(format!("this is not a diagram mermaid can read: {}", world::show(&src)));
         };
         // The product's own measure, so the geometry a scenario sees is the real one.
-        let layout = corelib::mermaid::layout(&diagram, &|s| (corelib::unicode::str_width(s) as u32 * 8, 16));
-        let got: Vec<String> = layout.nodes.iter().map(|n| n.label.clone()).collect();
-        world::expect_lines(&got, want, "the diagram's nodes")
+        let scene = corelib::mermaid::layout(&diagram, &|s| (corelib::unicode::str_width(s) as u32 * 8, 16));
+        world::expect_lines(&scene.node_labels(), want, "the diagram's nodes")
+    }
+
+    /// The drawn picture, as any non-GPU terminal shows it — so a scenario can assert
+    /// what a user actually sees rather than a geometry number.
+    fn expect_diagram_art(&self, want: &[String]) -> Result<(), String> {
+        let src = self.diagram_source();
+        let Some(rows) = corelib::mermaid::art(&src, self.width.max(20)) else {
+            return Err(format!("this diagram cannot be drawn at {} columns: {}", self.width, world::show(&src)));
+        };
+        world::expect_contains(&rows.join("\n"), want, "the drawn diagram")
+    }
+
+    /// The diagram under test: the one caught while streaming, else the first one in the
+    /// document (pulled out by the real renderer, fences and all), else the raw text.
+    fn diagram_source(&self) -> String {
+        if let Some(d) = self.diagrams.first() {
+            return d.clone();
+        }
+        let mut sr = md::StreamRenderer::new(self.style.clone(), self.width, &["mermaid"]);
+        let mut chunks = sr.push(&self.source);
+        chunks.extend(sr.finish());
+        chunks
+            .into_iter()
+            .find_map(|c| match c {
+                md::Chunk::Diagram(src) => Some(src.trim().to_string()),
+                md::Chunk::Text(_) => None,
+            })
+            .unwrap_or_else(|| self.source.clone())
     }
 }
 
