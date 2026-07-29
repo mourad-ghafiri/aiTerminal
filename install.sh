@@ -241,8 +241,9 @@ if [ -f "$here/tools/bundle-macos.sh" ] && [ -f "$here/Cargo.toml" ]; then
 elif [ -d "$SRC/.git" ]; then
     say "updating $SRC"
     git -C "$SRC" fetch --quiet origin "$BRANCH"
-    # `--ff-only` never rewrites local work; it fails loudly instead.
-    if ! git -C "$SRC" merge --ff-only --quiet "origin/$BRANCH" 2>/dev/null; then
+    # Merge FETCH_HEAD, not the tracking ref: a shallow clone may not keep one. `--ff-only`
+    # never rewrites local work — it fails, and we build what is there.
+    if ! git -C "$SRC" merge --ff-only --quiet FETCH_HEAD 2>/dev/null; then
         warn "the checkout has local changes; leaving them alone and building as-is"
     fi
 else
