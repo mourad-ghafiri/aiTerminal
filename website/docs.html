@@ -45,8 +45,7 @@
     <a href="#layout">The ~/.aiTerminal folder</a>
     <b>Commands</b>
     <a href="#cmd-ai">@ai</a>
-    <a href="#cmd-agent">@&lt;agent&gt;</a>
-    <a href="#cmd-agent">@agent</a>
+    <a href="#cmd-agent">@&lt;agent&gt; · @agent</a>
     <a href="#cmd-flow">@flow</a>
     <a href="#cmd-loop">@loop</a>
     <a href="#cmd-job">@job</a>
@@ -178,11 +177,13 @@ The most common causes are cache invalidation and copying node_modules…</code>
         and recalled memory; reasoning stays hidden behind the spinner.</li>
     </ul>
 
-    <h2 id="cmd-agent">@&lt;agent&gt; — full agentic runs</h2>
-    <pre><code><span class="p">❯</span> @coder "fix the failing parser test"
+    <h2 id="cmd-agent">@&lt;agent&gt; · @agent — the specialists</h2>
+    <pre><code><span class="p">❯</span> @agent                     <span class="c"># everything you have</span>
+<span class="p">❯</span> @agent researcher          <span class="c"># one in full: tools, skills, what it returns</span>
+<span class="p">❯</span> @coder "fix the failing parser test"
 <span class="a">✦ @coder · claude-opus-4-8</span>
 <span class="c">∴ thinking…</span>
-<span class="c">  ⚙ fs.search {"q":"parse_flow"} · 18ms · 2.1KB</span>
+<span class="c">  ⚙ fs.search {"q":"parse_line"} · 18ms · 2.1KB</span>
 <span class="c">  ⚙ fs.edit {"path":"src/…"} · 6ms · 412B</span>
 The fix: the parser dropped the final line …
 <span class="c">✓ 8.4s · 2 tools · 12.3k in / 1.8k out</span></code></pre>
@@ -616,6 +617,10 @@ action = <span class="s">"zoom_pane"</span></code></pre>
       <tr><td><code>[ai]</code></td><td><code>share_terminal_context</code> · <code>memory</code> · <code>show_reasoning</code> (show thinking text; default off) · <code>mode</code> = manual|auto · <code>network</code> · <code>budget</code> (USD cost soft-cap) — then <code>[ai.balance] strategy</code> + the <code>[[ai.model]]</code> blocks, last</td></tr>
       <tr><td><code>[[ai.model]]</code></td><td><code>provider</code> · <code>id</code> · <code>api_key</code> · <code>weight</code> · <code>temperature</code> · <code>top_p</code> · <code>top_k</code> · <code>max_tokens</code> · <code>thinking</code></td></tr>
       <tr><td><code>[gates]</code></td><td><code>enabled</code> · <code>require_pairing</code> · <code>plain_text</code> = run|ignore · <code>screenshot</code> = document|photo · <code>max_reply_messages</code> · <code>idle_timeout_minutes</code> — then a <code>[gates.&lt;channel&gt;]</code> table (<code>token</code> · <code>allow</code>), last</td></tr>
+      <tr><td><code>[jobs]</code></td><td><code>max_concurrent</code> · <code>keep_runs</code> · <code>max_log_bytes</code></td></tr>
+      <tr><td><code>[loop]</code></td><td><code>max</code> · <code>timeout</code> · <code>check_timeout</code> · <code>keep_runs</code> · <code>propose_check</code> (let the AI infer a verifier command)</td></tr>
+      <tr><td><code>[flow]</code></td><td><code>concurrency</code> (nodes in flight at once) · <code>timeout</code> · <code>node_timeout</code> · <code>keep_runs</code> · <code>max_map</code> (the ceiling on a fan-out)</td></tr>
+      <tr><td><code>[md]</code></td><td><code>syntax</code> · <code>image_max_rows</code> · <code>remote_images</code></td></tr>
       <tr><td><code>[plugins]</code></td><td><code>enabled</code> · <code>disabled = [...]</code></td></tr>
       <tr><td><code>[shell]</code></td><td><code>integration</code></td></tr>
       <tr><td><code>[logging]</code></td><td><code>level</code> = off|error|warn|info|debug|trace · <code>retention_days</code> (default 7)</td></tr>
@@ -718,12 +723,17 @@ strategy = <span class="s">"weighted"</span>       <span class="c"># weighted (d
       retries on a hard error.</p>
 
     <h2 id="agents">Agents, skills &amp; prompts</h2>
-    <p>All plain files under <code>ai/</code>: agents are Markdown + frontmatter (tools, max_steps,
-      skills); 8 skills (<code>code-review concise debugging git orchestration refactoring
-      security-review testing</code>) splice into prompts; 3 prompt templates ship. The global
-      <code>ai/aiTerminal.md</code> is the system-prompt base for <em>every</em> run — edit it to
-      change the persona. Project-local <code>ai/</code> folders shadow the global set, so a repo
-      can ship its own agents.</p>
+    <p>All plain files under <code>ai/</code>. <b>8 agents</b> are Markdown + frontmatter (tools,
+      <code>max_steps</code>, skills) — run <code>@agent</code> to see them, <code>@agent
+      &lt;name&gt;</code> for one in full. <b>8 skills</b> (<code>code-review concise debugging git
+      orchestration refactoring security-review testing</code>) splice into prompts; 3 prompt
+      templates ship. The global <code>ai/aiTerminal.md</code> is the system-prompt base for
+      <em>every</em> run — edit it to change the persona. Project-local <code>ai/</code> folders
+      shadow the global set, so a repo can ship its own agents and flows.</p>
+    <p>Every agent's frontmatter is checked at build time: a tool it declares must exist in the
+      capability registry, a skill or prompt it names must be installed, and its
+      <code>max_steps</code> must be sane. A misspelled tool used to reach the model with a
+      generic description and fail three minutes into a run.</p>
 
     <h2 id="attachments">Attachments</h2>
     <p>Any <code>@&lt;path&gt;</code> token that names a real file becomes an attachment — in
