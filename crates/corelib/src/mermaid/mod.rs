@@ -28,6 +28,84 @@ pub(crate) const MAX_ITEMS: usize = 2000;
 pub enum Diagram {
     Flow(Flow),
     Sequence(Sequence),
+    /// Every other box-and-arrow language: class, state, ER, requirement, C4,
+    /// architecture, block and mindmap all reduce to nodes, edges and frames.
+    Graph(GraphDiagram),
+    /// The lane languages: timeline, user journey and kanban are all columns of cards.
+    Columns(Columns),
+}
+
+/// Which language a [`GraphDiagram`] came from. The layout is shared; the kind only
+/// decides a few presentation details (a class box's compartments, an ER key column).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphKind {
+    Class,
+    State,
+    Er,
+    Requirement,
+    C4,
+    Architecture,
+    Block,
+    Mindmap,
+    Git,
+}
+
+/// Nodes, edges and frames — the shared shape of the box-and-arrow diagram types.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GraphDiagram {
+    pub kind: GraphKind,
+    pub dir: Dir,
+    pub title: String,
+    pub nodes: Vec<GNode>,
+    pub edges: Vec<Edge>,
+    pub groups: Vec<Group>,
+}
+
+impl GraphDiagram {
+    pub fn new(kind: GraphKind, dir: Dir) -> Self {
+        GraphDiagram { kind, dir, title: String::new(), nodes: Vec::new(), edges: Vec::new(), groups: Vec::new() }
+    }
+}
+
+/// A node that may carry compartment lines under its name — class members, ER attributes,
+/// a C4 element's description.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GNode {
+    pub id: String,
+    pub label: String,
+    pub shape: Shape,
+    pub rows: Vec<String>,
+    pub group: Option<usize>,
+}
+
+impl GNode {
+    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
+        GNode { id: id.into(), label: label.into(), shape: Shape::Rect, rows: Vec::new(), group: None }
+    }
+}
+
+/// Columns of stacked cards: a timeline's periods, a journey's sections, a kanban's lists.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Columns {
+    pub title: String,
+    pub lanes: Vec<Lane>,
+    /// Journey scores render as a trailing badge on each card.
+    pub scored: bool,
+}
+
+/// One column and its cards.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Lane {
+    pub title: String,
+    pub cards: Vec<Card>,
+}
+
+/// One card: its text, an optional score, and optional trailing detail (a journey's actors).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Card {
+    pub text: String,
+    pub score: Option<i32>,
+    pub detail: String,
 }
 
 /// A flowchart: a direction + shaped nodes + directed edges + nested subgraphs.

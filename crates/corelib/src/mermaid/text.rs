@@ -42,7 +42,7 @@ pub fn render(scene: &Scene, max_cols: usize) -> Option<Vec<String>> {
                     edge_labels.push((label.clone(), spot));
                 }
             }
-            Item::Rule { a, b, .. } => c.hline(a.0.round() as isize, b.0.round() as isize, a.1.round() as isize),
+            Item::Rule { a, b, .. } => c.hline(cell(a.0), cell(b.0), cell(a.1)),
             _ => {}
         }
     }
@@ -245,6 +245,12 @@ impl Canvas {
         if shape == Shape::Actor {
             return self.actor((x0, y0, x1, y1), label);
         }
+        // A wordless circle is a marker (a state machine's start or stop), and a marker
+        // reads better as a dot than as an empty ring.
+        if label.is_empty() && matches!(shape, Shape::Circle | Shape::DoubleCircle) {
+            let ch = if shape == Shape::Circle { '●' } else { '◉' };
+            return self.put((x0 + x1) / 2, (y0 + y1) / 2, ch);
+        }
         let g = glyphs(shape);
         self.hline(x0, x1, y0);
         self.hline(x0, x1, y1);
@@ -380,6 +386,8 @@ impl Canvas {
             }
         }
         for (sx, sy) in candidates {
+            // Keep the run on the canvas: a label pushed off the edge would be cut in half.
+            let sx = sx.clamp(0, (self.w as isize - w).max(0));
             if (0..w).all(|i| matches!(self.idx(sx + i, sy), Some(k) if self.over[k] == '\0' && self.mask[k] == 0)) {
                 return self.text(sx, sy, &text);
             }

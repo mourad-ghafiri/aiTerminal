@@ -23,6 +23,9 @@ pub(crate) struct Graph {
     pub sizes: Vec<(f32, f32)>,
     /// The innermost container each node belongs to, if any.
     pub group: Vec<Option<usize>>,
+    /// A fixed cross-axis slot, for the diagrams whose rows *are* the meaning — a git
+    /// graph's branches. `None` lets the ordering pass decide.
+    pub lane: Vec<Option<usize>>,
     /// `(from, to, minimum rank span)`.
     pub edges: Vec<(usize, usize, usize)>,
 }
@@ -30,7 +33,7 @@ pub(crate) struct Graph {
 impl Graph {
     pub fn new(sizes: Vec<(f32, f32)>) -> Self {
         let n = sizes.len();
-        Graph { sizes, group: vec![None; n], edges: Vec::new() }
+        Graph { sizes, group: vec![None; n], lane: vec![None; n], edges: Vec::new() }
     }
     fn len(&self) -> usize {
         self.sizes.len()
@@ -189,14 +192,38 @@ pub(crate) fn place(g: &Graph, ranks: &[Vec<usize>], dir: Dir, m: &Metrics) -> V
     let widest = ranks.iter().map(|r| total(r)).fold(0.0_f32, f32::max);
 
     let mut out = vec![Rect::new(0.0, 0.0, 0.0, 0.0); n];
+    // Pinned lanes: every node in lane `l` shares one cross position, whatever rank it is
+    // in, so the lanes read as continuous rows.
+    let lanes = g.lane.iter().any(Option::is_some).then(|| {
+        let count = g.lane.iter().flatten().copied().max().unwrap_or(0) + 1;
+        let mut size = vec![0.0_f32; count];
+        for i in 0..n {
+            let l = g.lane[i].unwrap_or(0);
+            size[l] = size[l].max(cross_size(i));
+        }
+        let mut at = vec![0.0_f32; count];
+        let mut acc = m.margin;
+        for l in 0..count {
+            at[l] = acc;
+            acc += size[l] + m.node_gap;
+        }
+        (at, size)
+    });
     for (r, nodes) in ranks.iter().enumerate() {
         let mut cross = m.margin + (widest - total(nodes)) / 2.0;
         for &i in nodes {
             let (w, h) = g.sizes[i];
+            let c = match &lanes {
+                Some((at, size)) => {
+                    let l = g.lane[i].unwrap_or(0);
+                    at[l] + (size[l] - cross_size(i)) / 2.0
+                }
+                None => cross,
+            };
             out[i] = if horiz {
-                Rect::new(rank_pos[r] + (thick[r] - w) / 2.0, cross, w, h)
+                Rect::new(rank_pos[r] + (thick[r] - w) / 2.0, c, w, h)
             } else {
-                Rect::new(cross, rank_pos[r] + (thick[r] - h) / 2.0, w, h)
+                Rect::new(c, rank_pos[r] + (thick[r] - h) / 2.0, w, h)
             };
             cross += cross_size(i) + m.node_gap;
         }

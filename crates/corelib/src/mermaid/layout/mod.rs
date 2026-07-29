@@ -6,7 +6,9 @@
 //! different rasterizers: the GPU renderer measures in pixels (`8×16`-ish), the text
 //! renderer measures in character cells (`1×1`), and both get proportionate geometry.
 
+mod columns;
 mod flow;
+mod graph;
 pub(crate) mod layered;
 mod sequence;
 
@@ -82,6 +84,8 @@ pub fn layout(d: &Diagram, measure: Measure) -> Scene {
     match d {
         Diagram::Flow(f) => flow::layout(f, &m, measure),
         Diagram::Sequence(s) => sequence::layout(s, &m, measure),
+        Diagram::Graph(g) => graph::layout(g, &m, measure),
+        Diagram::Columns(c) => columns::layout(c, &m, measure),
     }
 }
 

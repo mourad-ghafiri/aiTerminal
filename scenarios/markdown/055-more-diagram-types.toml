@@ -1,0 +1,29 @@
+name = "class, state, ER and journey diagrams all draw"
+tags = ["diagrams"]
+
+# A model reaches for whichever diagram fits the idea. Every type it can emit has to
+# arrive as a picture — anything we can't read would show the user raw syntax instead.
+
+[[step]]
+markdown = ["```mermaid", "classDiagram", "  class Pty {", "    +int fd", "    +read()", "  }", "  Terminal *-- Pty", "```"]
+
+[[step]]
+expect_diagram_art = ["Pty", "+int fd", "+read()", "Terminal", "◆"]
+
+[[step]]
+markdown = ["```mermaid", "stateDiagram-v2", "  [*] --> Idle", "  Idle --> Running : start", "  Running --> [*]", "```"]
+
+[[step]]
+expect_diagram_art = ["Idle", "Running", "start", "●"]
+
+[[step]]
+markdown = ["```mermaid", "erDiagram", "  CUSTOMER ||--o{ ORDER : places", "```"]
+
+[[step]]
+expect_diagram_art = ["CUSTOMER", "ORDER", "places"]
+
+[[step]]
+markdown = ["```mermaid", "journey", "  title A day", "  section Morning", "    Write code: 5: Me", "```"]
+
+[[step]]
+expect_diagram_art = ["A day", "Morning", "Write code", "●●●●●"]
