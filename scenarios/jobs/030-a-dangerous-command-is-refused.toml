@@ -2,16 +2,17 @@ name = "a command the model proposed is still guarded"
 tags = ["jobs", "security"]
 
 # The model can propose anything; the command guard is what decides. A detached job has
-# nobody to answer a prompt, so this is checked before it ever runs.
+# nobody to answer a prompt, so this is checked before it ever runs — and a schedule is
+# exactly where an unattended command does the most damage.
 
 [setup]
-deny = ["rm\\s+-[rf]+\\s+/"]
+deny = ["deploy-prod"]
 
 [[step]]
-model_says = """{"when":{"kind":"every","every_seconds":3600},"task":"free up space","command":"rm -rf /","says":"every hour — rm -rf /"}"""
+model_says = """{"when":{"kind":"every","every_seconds":3600},"task":"ship the latest build","command":"./deploy-prod.sh","says":"every hour — ./deploy-prod.sh"}"""
 
 [[step]]
-job = ["free up some space every hour"]
+job = ["ship the latest build every hour"]
 
 [[step]]
 expect_kind = "shell"

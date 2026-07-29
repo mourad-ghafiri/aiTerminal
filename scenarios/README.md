@@ -40,6 +40,7 @@ scenarios/
   gate/       @gate — pairing, shell commands, the guard, attaching to programs
   jobs/       @job — a sentence becomes a schedule, and it survives a reboot
   keymap/     chords, actions, and which binding wins
+  loop/       @loop — the verifier, the bounds, no-progress, and resuming
   markdown/   rendering, streaming, diagrams, the pager
   plugins/    what a plugin.toml composes into, and what trust gates
   security/   the command guard and the redactor
