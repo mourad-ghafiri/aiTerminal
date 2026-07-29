@@ -157,7 +157,11 @@ pub fn starts_with_word(s: &str, w: &str) -> bool {
 /// `s` with a leading `w` removed (case-insensitive, whole word), or `None`.
 pub fn strip_word<'a>(s: &'a str, w: &str) -> Option<&'a str> {
     let t = s.trim_start();
-    if t.len() < w.len() || !t[..w.len()].eq_ignore_ascii_case(w) {
+    // `get` rather than a slice: a label may begin with any character somebody typed,
+    // and `w.len()` is a byte count — cutting a multi-byte character in half is a
+    // panic, on data that came from a file.
+    let Some(head) = t.get(..w.len()) else { return None };
+    if !head.eq_ignore_ascii_case(w) {
         return None;
     }
     let rest = &t[w.len()..];
@@ -177,6 +181,21 @@ pub fn is_style_directive(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_word_test_never_cuts_a_character_in_half() {
+        // `w.len()` is a byte count, so a label starting with a multi-byte character
+        // used to panic here — and labels come from files people write.
+        assert_eq!(strip_word("\u{2713} done", "graph"), None);
+        assert_eq!(strip_word("\u{2192}", "flowchart"), None);
+        assert_eq!(strip_word("\u{e9}", "x"), None);
+        assert!(!starts_with_word("\u{2713} 1.0s one", "graph"));
+        // And the ordinary cases still work.
+        assert_eq!(strip_word("graph LR", "graph"), Some("LR"));
+        assert_eq!(strip_word("  GRAPH TD", "graph"), Some("TD"));
+        assert_eq!(strip_word("graphene", "graph"), None, "whole words only");
+        assert_eq!(strip_word("graph", "graph"), Some(""));
+    }
 
     fn texts(src: &str) -> Vec<String> {
         statements(src).into_iter().map(|s| s.text).collect()
