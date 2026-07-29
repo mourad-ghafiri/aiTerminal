@@ -118,6 +118,7 @@ impl GuiApp {
             active_profile,
             profile_chip,
             last_profile_check: 0,
+            last_jobs_check: 0,
             config_stamp: config_stamp_now,
             workspace_dirty: false,
             last_workspace_save: 0,
@@ -198,6 +199,24 @@ impl GuiApp {
         self.config = new;
         self.relayout();
         self.dirty.set();
+    }
+
+    /// Keep scheduled jobs alive (throttled to ~30 s, and once at launch because the stamp
+    /// starts at zero).
+    ///
+    /// A scheduled job waits in a detached sleeper process; a reboot, a crash or a closed lid
+    /// takes those sleepers with it, and without this the job would sit `scheduled` forever.
+    /// `reconcile` re-arms anything with a future fire time and runs — **once**, not once per
+    /// missed period — anything already overdue. It touches the disk and may spawn, so it runs
+    /// off the frame thread; the record is the lock, so a second pass while one is in flight is
+    /// harmless.
+    pub(in crate::gui) fn follow_jobs(&mut self) {
+        let now = unix_now();
+        if now.saturating_sub(self.last_jobs_check) < 30 {
+            return;
+        }
+        self.last_jobs_check = now;
+        std::thread::spawn(crate::jobs::reconcile);
     }
 
     /// Follow external changes live (throttled to ~1 s):

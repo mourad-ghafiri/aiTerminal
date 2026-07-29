@@ -462,6 +462,8 @@ pub struct GuiApp {
     profile_chip: (String, String),
     /// Last unix-time the active-profile pointer / config files were polled (throttle).
     last_profile_check: u64,
+    /// Last unix-time the job supervisor ran (throttle) — see `follow_jobs`.
+    last_jobs_check: u64,
     /// Mtime stamp of the effective config files (global + active overlay) at the
     /// last apply — a moved stamp means `@theme` / a hand edit landed; reload live.
     config_stamp: u64,

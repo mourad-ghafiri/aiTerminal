@@ -40,6 +40,8 @@ impl GuiApp {
             // Follow external changes live (throttled poll): a profile switch, or a
             // config edit (`@theme`, `@profile`, a hand-edited TOML).
             self.follow_external_changes();
+            // Re-arm scheduled jobs and run anything the machine slept through.
+            self.follow_jobs();
         }
         self.maybe_autosave_workspace();
         // A program (or the lineedit plugin answering ⌘C) staged clipboard text

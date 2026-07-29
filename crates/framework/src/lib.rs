@@ -26,6 +26,7 @@ pub mod config;
 pub mod gate;
 pub mod gui;
 pub mod i18n;
+pub mod jobs;
 pub mod keymap;
 pub mod mdedit;
 pub mod plugin;

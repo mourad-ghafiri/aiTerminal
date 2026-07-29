@@ -17,6 +17,7 @@ mod mcp;
 pub mod memory;
 mod model;
 mod orchestrate;
+pub(crate) mod plan;
 pub mod pool;
 pub mod provider;
 mod reply;

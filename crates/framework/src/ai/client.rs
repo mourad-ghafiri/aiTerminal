@@ -110,6 +110,18 @@ impl<T: Transport> Client<T> {
         self.ask_streaming_on(&self.candidates(), prompt, context, on_part)
     }
 
+    /// One non-streaming call with a caller-built request — for the small structured asks
+    /// (the job planner) that need their own system prompt and no live chrome. Uses the
+    /// pool's first candidate and returns the whole reply text.
+    pub fn complete(&self, req: &ChatRequest) -> Result<String, String> {
+        let model = self.candidates().into_iter().next().ok_or("no model candidates")?;
+        let mut req = req.clone();
+        req.model = model.id.clone();
+        let rx = self.run(&model, req);
+        let mut sink = |_: bool, _: &str| {};
+        stream_with_usage(&rx, &mut sink).map(|(text, _, _)| text)
+    }
+
     /// The candidate list for a whole run — the pool's [`order`](AiSettings::order):
     /// one strategy pick, then the rest as a failover chain. Computed ONCE by
     /// `run_agent` and reused every turn, so the model stays fixed across a run.

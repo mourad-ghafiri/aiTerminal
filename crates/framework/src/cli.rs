@@ -73,7 +73,7 @@ pub fn ai(args: &[String]) -> i32 {
         opts.agent = agent.unwrap_or_else(|| "coder".into());
         let code = run_loop_cli(&prompt, opts);
         if let Some(id) = job_record {
-            jobs::finish(&id, code);
+            crate::jobs::finish(&id, code);
         }
         return code;
     }
@@ -81,7 +81,7 @@ pub fn ai(args: &[String]) -> i32 {
     let code = ai_run(as_command, agent, flow, &prompt);
     // A detached child carries `--job-record <id>`: stamp the job's outcome.
     if let Some(id) = job_record {
-        jobs::finish(&id, code);
+        crate::jobs::finish(&id, code);
     }
     code
 }
@@ -1876,7 +1876,7 @@ fn ai_flow_cmd(args: &[String]) -> i32 {
     };
     let code = ai_run(false, None, Some(name), &input);
     if let Some(id) = record {
-        jobs::finish(&id, code);
+        crate::jobs::finish(&id, code);
     }
     code
 }
@@ -2275,8 +2275,9 @@ fn run_loop_cli(goal: &str, opts: LoopOpts) -> i32 {
 
 // ===== background jobs (run + track + monitor from the terminal) =============
 
-/// `--bg`: relaunch this invocation detached with stdout+stderr redirected to the
-/// job's log, record it under `ai/jobs/<id>/`, and print how to monitor it.
+/// Detach the CURRENT invocation as a tracked job: the child re-runs this exact argv with
+/// its output in the job's log, and stamps the record when it exits. Shared by
+/// `@ai --bg`, `@flow --bg` and `@loop --bg`; `@job` has its own record-driven path.
 fn spawn_background(args: &[String]) -> i32 {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -2285,36 +2286,48 @@ fn spawn_background(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let id = jobs::new_id();
-    let Some(dir) = jobs::dir(&id) else {
-        eprintln!("aiTerminal: bad job id");
+    let id = crate::jobs::new_id();
+    // The child re-runs `ai` without `--bg`, plus the record marker it stamps on exit.
+    let mut child_args: Vec<String> = vec!["ai".into()];
+    child_args.extend(args.iter().filter(|a| a.as_str() != "--bg").cloned());
+    child_args.push("--job-record".into());
+    child_args.push(id.clone());
+    let record = crate::jobs::Job {
+        id: id.clone(),
+        status: "running".into(),
+        cmd: args.iter().filter(|a| a.as_str() != "--bg").cloned().collect::<Vec<_>>().join(" "),
+        says: String::new(),
+        // What actually runs, recorded honestly — `@job show` prints the real command.
+        task: crate::jobs::Task::Shell(crate::jobs::Cmd::Argv(
+            std::iter::once(exe.display().to_string()).chain(child_args.iter().cloned()).collect(),
+        )),
+        cwd: cwd_string(),
+        started: crate::jobs::now(),
+        finished: None,
+        exit: None,
+        pid: 0,
+        schedule: None,
+        next_at: None,
+        runs: 0,
+        last_exit: None,
+    };
+    let Some((log_path, log)) = crate::jobs::open_run_log(&id, keep_runs()) else {
+        eprintln!("aiTerminal: can't create the job log");
         return 1;
     };
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("aiTerminal: can't create the job dir: {e}");
-        return 1;
-    }
-    let log_path = dir.join("log.md");
-    let log = match std::fs::File::create(&log_path) {
+    let err = match log.try_clone() {
         Ok(f) => f,
         Err(e) => {
             eprintln!("aiTerminal: can't create the job log: {e}");
             return 1;
         }
     };
-    let err = log.try_clone().unwrap_or_else(|_| std::fs::File::create(dir.join("log.md")).unwrap());
-    // The child re-runs `ai` without `--bg`, plus the record marker it stamps on exit.
-    let mut child_args: Vec<String> = vec!["ai".into()];
-    child_args.extend(args.iter().filter(|a| a.as_str() != "--bg").cloned());
-    child_args.push("--job-record".into());
-    child_args.push(id.clone());
     // Detach into its OWN SESSION so closing this terminal never SIGHUPs the job.
-    let spawned = platform::os::spawn_detached(&exe, &child_args, log, err);
-    match spawned {
+    match platform::os::spawn_detached(&exe, &child_args, log, err) {
         Ok(child_pid) => {
-            jobs::record_start(&id, args, child_pid);
+            crate::jobs::write(&id, &crate::jobs::Job { pid: child_pid, ..record });
             println!("\u{25B6} background job {id}");
-            println!("  monitor: aiTerminal ai job     ·  tail -f {}", log_path.display());
+            println!("  monitor: aiTerminal ai job     \u{b7}  tail -f {}", log_path.display());
             0
         }
         Err(e) => {
@@ -2324,27 +2337,41 @@ fn spawn_background(args: &[String]) -> i32 {
     }
 }
 
-/// Current unix time (seconds).
-fn unix_now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+/// This process's working directory as a string (the folder a job belongs to).
+fn cwd_string() -> String {
+    std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default()
 }
 
-/// Parse a natural delay / clock-time phrase out of a `@job` prompt and return the absolute
-/// unix fire-time plus the prompt with that phrase removed — so `@job … in 2 minutes`
-/// schedules and the agent sees a clean task. Recognizes "in|after <n> sec|min|hour|day(s)"
-/// (or a fused `30s`/`2min`) and "at HH[:MM][am/pm]". No match → `(None, prompt)` (run now).
-fn parse_schedule(prompt: &str, now: u64) -> (Option<u64>, String) {
+fn keep_runs() -> usize {
+    crate::config::Config::load().jobs_keep_runs
+}
+
+/// Current unix time (seconds).
+fn unix_now() -> u64 {
+    crate::jobs::now()
+}
+
+/// Parse a natural delay / clock phrase out of a request and return the schedule plus the
+/// request with that phrase removed — the **fallback** when the AI planner is unavailable,
+/// and the reader for the explicit `--in` / `--at` / `--every` flags. Recognizes
+/// "in|after <n> sec|min|hour|day(s)" (or a fused `30s`/`2min`), "at HH[:MM][am/pm]", and
+/// "every <n> <unit>" / "every hour|day". No match → `(None, request)` (run now).
+fn parse_schedule(prompt: &str, now: u64) -> (Option<crate::jobs::Schedule>, String) {
     let words: Vec<&str> = prompt.split_whitespace().collect();
     for i in 0..words.len() {
         let kw = words[i].to_ascii_lowercase();
-        if kw == "in" || kw == "after" {
+        if kw == "every" {
+            if let Some((secs, used)) = parse_period(&words[i + 1..]) {
+                return (Some(crate::jobs::Schedule::Every(secs)), join_excluding(&words, i, i + 1 + used));
+            }
+        } else if kw == "in" || kw == "after" {
             if let Some((secs, used)) = parse_delay(&words[i + 1..]) {
-                return (Some(now + secs), join_excluding(&words, i, i + 1 + used));
+                return (Some(crate::jobs::Schedule::Once(now + secs)), join_excluding(&words, i, i + 1 + used));
             }
         } else if kw == "at" {
             if let Some(word) = words.get(i + 1) {
                 if let Some(fire) = parse_clock_at(word, now) {
-                    return (Some(fire), join_excluding(&words, i, i + 2));
+                    return (Some(crate::jobs::Schedule::Once(fire)), join_excluding(&words, i, i + 2));
                 }
             }
         }
@@ -2422,168 +2449,6 @@ fn join_excluding(words: &[&str], start: usize, end: usize) -> String {
     words.iter().enumerate().filter(|(i, _)| *i < start || *i >= end).map(|(_, w)| *w).collect::<Vec<_>>().join(" ")
 }
 
-/// What an `ai job …` invocation asks for. Pure parse, so the intuitive grammar
-/// (`@job <task> --agent x --bg`, flags anywhere) is unit-testable.
-#[derive(Debug, PartialEq)]
-enum JobCmd {
-    List,
-    Clear,
-    Cancel(String),
-    Run { prompt: String, agent: String, bg: bool, record: Option<String>, run_at: Option<u64> },
-}
-
-fn parse_job_args(args: &[String]) -> JobCmd {
-    match args.first().map(String::as_str) {
-        None => return JobCmd::List,
-        Some("clear") if args.len() == 1 => return JobCmd::Clear,
-        Some("cancel") => return JobCmd::Cancel(args.get(1).cloned().unwrap_or_default()),
-        _ => {}
-    }
-    let mut agent = "coder".to_string();
-    let mut bg = false;
-    let mut record = None;
-    let mut run_at = None;
-    let mut words: Vec<&str> = Vec::new();
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--agent" => {
-                if let Some(n) = it.next() {
-                    agent = n.clone();
-                }
-            }
-            "--bg" => bg = true,
-            "--job-record" => record = it.next().cloned(),
-            "--run-at" => run_at = it.next().and_then(|s| s.parse().ok()),
-            w => words.push(w),
-        }
-    }
-    JobCmd::Run { prompt: words.join(" "), agent, bg, record, run_at }
-}
-
-/// `@job` — the tracked-task surface. `@job` lists, `@job clear` prunes, and
-/// `@job <task> [--agent <name>] [--bg]` RUNS the task as a recorded job:
-/// foreground runs stream live while their answer also lands in the job's log;
-/// `--bg` detaches exactly like any run. `args` includes the leading "job" word.
-fn ai_job_cmd(args: &[String]) -> i32 {
-    match parse_job_args(&args[1..]) {
-        JobCmd::List => ai_jobs(&[]),
-        JobCmd::Clear => ai_jobs(&["clear".to_string()]),
-        JobCmd::Cancel(id) => jobs::cancel(&id),
-        JobCmd::Run { prompt, agent, bg, record, run_at } => {
-            if prompt.trim().is_empty() {
-                eprintln!("usage: @job <task> [--agent <name>] [--bg]  ·  @job [clear]  ·  @job cancel <id>");
-                return 2;
-            }
-            // A detached CHILD carrying a fire-time: wait until then, then run.
-            if let (Some(id), Some(at)) = (record.as_ref(), run_at) {
-                return run_scheduled_child(id, &agent, &prompt, at);
-            }
-            // The USER's initial call: a natural "in 2 minutes" / "at 5pm" defers the job.
-            if record.is_none() {
-                let (at, cleaned) = parse_schedule(&prompt, unix_now());
-                if let Some(at) = at {
-                    return spawn_scheduled(&cleaned, &agent, at);
-                }
-            }
-            if bg {
-                // Re-enter detached: the child comes back through this path
-                // (minus --bg, plus --job-record) with its output in the log.
-                return spawn_background(args);
-            }
-            // Foreground, but TRACKED: record the job, tee the streamed answer
-            // into its log, and stamp the outcome.
-            let (id, log) = match record {
-                Some(id) => (id, None), // a detached child logs via stdio redirection
-                None => {
-                    let id = jobs::new_id();
-                    let log = jobs::dir(&id)
-                        .and_then(|d| std::fs::create_dir_all(&d).ok().map(|_| d))
-                        .and_then(|d| std::fs::File::create(d.join("log.md")).ok());
-                    jobs::record_start(&id, &args[1..], std::process::id());
-                    (id, log)
-                }
-            };
-            let code = run_prompt_as_agent(&agent, &prompt, log);
-            jobs::finish(&id, code);
-            code
-        }
-    }
-}
-
-/// Schedule a job to fire at `run_at`: record it as `scheduled` and detach a child that
-/// sleeps until the fire-time, then runs (reusing this same `@job` path via `--run-at`).
-/// The detached child inherits the current working directory, so the job runs in the folder
-/// where `@job` was typed.
-fn spawn_scheduled(prompt: &str, agent: &str, run_at: u64) -> i32 {
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("aiTerminal: can't resolve the binary path: {e}");
-            return 1;
-        }
-    };
-    let id = jobs::new_id();
-    let Some(dir) = jobs::dir(&id) else {
-        eprintln!("aiTerminal: bad job id");
-        return 1;
-    };
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("aiTerminal: can't create the job dir: {e}");
-        return 1;
-    }
-    let log_path = dir.join("log.md");
-    let Ok(log) = std::fs::File::create(&log_path) else {
-        eprintln!("aiTerminal: can't create the job log");
-        return 1;
-    };
-    let err = log.try_clone().unwrap_or_else(|_| std::fs::File::create(&log_path).unwrap());
-    let child_args: Vec<String> = vec![
-        "ai".into(),
-        "job".into(),
-        prompt.into(),
-        "--agent".into(),
-        agent.into(),
-        "--job-record".into(),
-        id.clone(),
-        "--run-at".into(),
-        run_at.to_string(),
-    ];
-    match platform::os::spawn_detached(&exe, &child_args, log, err) {
-        Ok(child_pid) => {
-            jobs::record_scheduled(&id, prompt, child_pid, run_at);
-            let wait = run_at.saturating_sub(unix_now());
-            eprintln!("{}\u{29D6} scheduled job {id} — fires in {}{}", accent(), jobs::human_age(wait), reset());
-            eprintln!("  list: aiTerminal ai job  ·  cancel: @job cancel {id}");
-            0
-        }
-        Err(e) => {
-            eprintln!("aiTerminal: failed to schedule the job: {e}");
-            1
-        }
-    }
-}
-
-/// The detached scheduled child: wait until `run_at` (polling so a cancel is noticed
-/// promptly), then flip the record to `running` and execute the task.
-fn run_scheduled_child(id: &str, agent: &str, prompt: &str, run_at: u64) -> i32 {
-    loop {
-        let now = unix_now();
-        if now >= run_at {
-            break;
-        }
-        // Cancelled out from under us (`@job cancel`)? Stop without running.
-        if jobs::status_of(id).as_deref() != Some("scheduled") {
-            return 130;
-        }
-        std::thread::sleep(std::time::Duration::from_secs((run_at - now).min(2)));
-    }
-    jobs::mark_running(id);
-    let code = run_prompt_as_agent(agent, prompt, None);
-    jobs::finish(id, code);
-    code
-}
-
 /// Run `prompt` through `agent` with the full live chrome; when `log` is set the
 /// streamed answer is ALSO written there (the foreground-tracked job's record).
 fn run_prompt_as_agent(agent: &str, prompt: &str, log: Option<std::fs::File>) -> i32 {
@@ -2614,262 +2479,597 @@ fn run_prompt_as_agent(agent: &str, prompt: &str, log: Option<std::fs::File>) ->
     code
 }
 
-/// `aiTerminal ai job [clear]` — list background jobs (newest first), or prune
-/// the finished ones.
+
+// ===== @job ==================================================================
+
+/// What an `ai job …` invocation asks for. A pure parse, so the grammar people actually
+/// type — a quoted request, loose prose, flags anywhere, `--` for a command — is
+/// unit-testable without touching disk or a model.
+#[derive(Debug, PartialEq)]
+pub(crate) enum JobCmd {
+    List,
+    Clear,
+    Help,
+    Cancel(String),
+    Log { id: String, follow: bool },
+    Show(String),
+    /// Create a job from a request.
+    Run(Box<RunSpec>),
+    /// The detached child: execute one occurrence of an existing record, after an
+    /// optional sleep until its fire-time.
+    Occurrence { id: String, at: Option<u64> },
+}
+
+/// A request to turn into a job.
+#[derive(Debug, PartialEq, Default)]
+pub(crate) struct RunSpec {
+    /// Exactly what the user asked for — kept verbatim for the planner and for display.
+    pub(crate) request: String,
+    /// Set when `--`/`--shell` made the command explicit; otherwise the planner decides.
+    pub(crate) cmd: Option<crate::jobs::Cmd>,
+    pub(crate) agent: Option<String>,
+    /// Set by the explicit `--every`/`--at`/`--in` flags — these bypass the planner.
+    pub(crate) schedule: Option<crate::jobs::Schedule>,
+    bg: bool,
+    dry_run: bool,
+}
+
+/// Read `ai job …` argv.
+///
+/// The request itself is taken **verbatim when it is a single argument** — so a quoted
+/// `@job "write docs for the --bg flag"` keeps its flag-looking words, its spacing and its
+/// newlines — and joined with single spaces when it arrives as loose words. After `--`,
+/// several words are a command to execute directly (quoting preserved) and one quoted word
+/// is a shell line.
+pub(crate) fn parse_job_args(args: &[String]) -> JobCmd {
+    match args.first().map(String::as_str) {
+        None => return JobCmd::List,
+        Some("clear") if args.len() == 1 => return JobCmd::Clear,
+        Some("help") | Some("--help") | Some("-h") => return JobCmd::Help,
+        Some("cancel") | Some("stop") => return JobCmd::Cancel(args.get(1).cloned().unwrap_or_default()),
+        Some("show") => return JobCmd::Show(args.get(1).cloned().unwrap_or_default()),
+        Some("log") | Some("logs") => {
+            let follow = args.iter().any(|a| a == "-f" || a == "--follow");
+            let id = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| "last".into());
+            return JobCmd::Log { id, follow };
+        }
+        _ => {}
+    }
+    let mut spec = RunSpec::default();
+    let mut words: Vec<String> = Vec::new();
+    let (mut record, mut at) = (None, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            // Everything after `--` is the command, exactly as the shell handed it over.
+            "--" => {
+                let rest: Vec<String> = it.by_ref().cloned().collect();
+                spec.cmd = Some(match rest.as_slice() {
+                    [one] => crate::jobs::Cmd::Line(one.clone()),
+                    many => crate::jobs::Cmd::Argv(many.to_vec()),
+                });
+                break;
+            }
+            "--shell" => spec.cmd = it.next().cloned().map(crate::jobs::Cmd::Line),
+            "--agent" => spec.agent = it.next().cloned(),
+            "--every" => spec.schedule = it.next().and_then(|s| every_flag(s)),
+            "--cron" => spec.schedule = it.next().and_then(|s| crate::jobs::Cron::parse(s)).map(crate::jobs::Schedule::Cron),
+            "--at" => spec.schedule = it.next().and_then(|s| parse_clock_at(s, unix_now())).map(crate::jobs::Schedule::Once),
+            "--in" => spec.schedule = it.next().and_then(|s| parse_delay(&[s.as_str()]).map(|(secs, _)| crate::jobs::Schedule::Once(unix_now() + secs))),
+            "--bg" => spec.bg = true,
+            "--dry-run" | "--plan" => spec.dry_run = true,
+            "--run" => record = it.next().cloned(),
+            "--run-at" | "--at-unix" => at = it.next().and_then(|s| s.parse().ok()),
+            // Kept for records written by an older version, whose children carry these.
+            "--job-record" => record = it.next().cloned(),
+            w => words.push(w.to_string()),
+        }
+    }
+    if let Some(id) = record {
+        return JobCmd::Occurrence { id, at };
+    }
+    // One argument is the request as typed; several are a sentence to rejoin.
+    spec.request = match words.as_slice() {
+        [one] => one.clone(),
+        many => many.join(" "),
+    };
+    JobCmd::Run(Box::new(spec))
+}
+
+/// `--every 15m` / `--every hour` / `--every 2 hours` → an interval schedule.
+fn every_flag(spec: &str) -> Option<crate::jobs::Schedule> {
+    let words: Vec<&str> = spec.split_whitespace().collect();
+    parse_period(&words).map(|(secs, _)| crate::jobs::Schedule::Every(secs))
+}
+
+/// A period after `every`: a counted delay (`15 minutes`, `30m`) **or** a bare unit,
+/// because "every hour" means every one hour.
+fn parse_period(rest: &[&str]) -> Option<(u64, usize)> {
+    parse_delay(rest).or_else(|| rest.first().and_then(|w| unit_secs(w, 1)).map(|s| (s, 1)))
+}
+
+/// `@job` — the tracked-task surface. Bare lists; `clear` prunes; `cancel|log|show` operate
+/// on one job; anything else is a request to turn into a job. `args` includes the leading
+/// "job" word.
+fn ai_job_cmd(args: &[String]) -> i32 {
+    match parse_job_args(&args[1..]) {
+        JobCmd::List => ai_jobs(&[]),
+        JobCmd::Clear => ai_jobs(&["clear".to_string()]),
+        JobCmd::Help => {
+            println!("{}", job_usage());
+            0
+        }
+        JobCmd::Cancel(id) => match crate::jobs::cancel(&id) {
+            Ok(msg) => {
+                println!("{msg}");
+                0
+            }
+            Err(e) => {
+                eprintln!("aiTerminal: {e}");
+                2
+            }
+        },
+        JobCmd::Log { id, follow } => job_log(&id, follow),
+        JobCmd::Show(id) => job_show(&id),
+        JobCmd::Occurrence { id, at } => run_occurrence_child(&id, at),
+        JobCmd::Run(spec) => {
+            if spec.request.trim().is_empty() && spec.cmd.is_none() {
+                eprintln!("{}", job_usage());
+                return 2;
+            }
+            create_job(*spec)
+        }
+    }
+}
+
+fn job_usage() -> String {
+    [
+        "usage: @job \"<request>\"            what to do, and when — the AI reads it",
+        "       @job -- <command>            run a command instead of an agent task",
+        "       @job … --bg                  detach it",
+        "       @job … --every 15m | --cron \"0 9 * * 1-5\" | --at 17:30 | --in 2m",
+        "       @job … --dry-run             show the plan without scheduling it",
+        "       @job                         list jobs",
+        "       @job log|show|cancel <id>    a job's output, details, or stop it",
+        "       @job clear                   prune finished jobs",
+    ]
+    .join("\n")
+}
+
+/// Turn a request into a record, then run it now or leave it armed for its first fire.
+fn create_job(spec: RunSpec) -> i32 {
+    let now = unix_now();
+    let (schedule, task, says) = resolve_spec(&spec, now, &crate::ai::plan::read_request);
+
+    let next_at = schedule.as_ref().and_then(|s| s.next_after(now));
+    if spec.dry_run {
+        println!("{}{says}{}", accent(), reset());
+        if let Some(at) = next_at {
+            println!("  first run in {}", crate::jobs::human_age(at.saturating_sub(now)));
+        }
+        return 0;
+    }
+
+    let id = crate::jobs::new_id();
+    let scheduled = next_at.is_some();
+    let record = crate::jobs::Job {
+        id: id.clone(),
+        status: if scheduled { "scheduled".into() } else { "running".into() },
+        cmd: if spec.request.trim().is_empty() { task_line(&task) } else { spec.request.clone() },
+        says,
+        task,
+        cwd: cwd_string(),
+        started: now,
+        finished: None,
+        exit: None,
+        pid: 0,
+        schedule,
+        next_at,
+        runs: 0,
+        last_exit: None,
+    };
+    crate::jobs::write(&id, &record);
+
+    // Waiting for its first fire: arm a sleeper and hand the prompt back.
+    if let Some(at) = next_at {
+        if !crate::jobs::arm(&id, at) {
+            eprintln!("aiTerminal: failed to schedule the job");
+            return 1;
+        }
+        eprintln!("{}\u{29D6} {} \u{b7} job {id}{}", accent(), record.says, reset());
+        eprintln!("  fires in {} \u{b7} list: @job \u{b7} cancel: @job cancel {id}", crate::jobs::human_age(at.saturating_sub(now)));
+        return 0;
+    }
+    // Run it now: detached, or right here with the live chrome.
+    if spec.bg {
+        return match crate::jobs::spawn_occurrence(&id, None) {
+            Some(_) => {
+                println!("\u{25B6} background job {id}");
+                println!("  monitor: @job \u{b7} @job log {id} -f");
+                0
+            }
+            None => {
+                eprintln!("aiTerminal: failed to launch the background job");
+                1
+            }
+        };
+    }
+    execute_occurrence(&id, true)
+}
+
+/// Turn a request into *when to run* and *what to run*, in that order of authority:
+/// explicit flags, then the planner, then the deterministic word parser.
+///
+/// The planner is passed in rather than called directly so this precedence can be tested
+/// (and driven by a scripted model) without a network — and so `@job` keeps working when
+/// `planner` returns `None`, which is exactly what "no model configured" looks like.
+pub(crate) fn resolve_spec(
+    spec: &RunSpec,
+    now: u64,
+    planner: &dyn Fn(&str, u64) -> Option<crate::ai::plan::Plan>,
+) -> (Option<crate::jobs::Schedule>, crate::jobs::Task, String) {
+    // Explicit flags are unambiguous, so they win outright and no model is consulted.
+    match (spec.schedule.clone(), spec.cmd.clone()) {
+        (sched, Some(cmd)) => {
+            let says = describe(&sched, &cmd.display());
+            (sched, crate::jobs::Task::Shell(cmd), says)
+        }
+        (Some(sched), None) => {
+            let says = describe(&Some(sched.clone()), &spec.request);
+            (Some(sched), agent_task(spec, &spec.request), says)
+        }
+        // Nothing explicit: let the planner read the sentence, and fall back to the
+        // word parser when there is no model (or it answers with nonsense).
+        (None, None) => match planner(&spec.request, now) {
+            Some(plan) => {
+                let task = match plan.cmd {
+                    Some(cmd) => crate::jobs::Task::Shell(cmd),
+                    None => agent_task(spec, &plan.task),
+                };
+                (plan.schedule, task, plan.says)
+            }
+            None => {
+                let (sched, cleaned) = parse_schedule(&spec.request, now);
+                let says = describe(&sched, &cleaned);
+                (sched, agent_task(spec, &cleaned), says)
+            }
+        },
+    }
+}
+
+/// The agent task for a request, honoring an explicit `--agent`.
+fn agent_task(spec: &RunSpec, text: &str) -> crate::jobs::Task {
+    crate::jobs::Task::Agent { text: text.to_string(), agent: spec.agent.clone().unwrap_or_else(|| "coder".into()) }
+}
+
+/// A one-line sentence for a plan the planner didn't describe itself.
+fn describe(schedule: &Option<crate::jobs::Schedule>, what: &str) -> String {
+    match schedule {
+        Some(s) => format!("{} \u{2014} {what}", s.describe()),
+        None => format!("now \u{2014} {what}"),
+    }
+}
+
+/// The task as a single display line (used when the request itself was empty).
+fn task_line(task: &crate::jobs::Task) -> String {
+    match task {
+        crate::jobs::Task::Agent { text, .. } => text.clone(),
+        crate::jobs::Task::Shell(cmd) => cmd.display(),
+    }
+}
+
+/// The detached child: optionally sleep until the fire-time (noticing a cancel while it
+/// waits), then run exactly one occurrence.
+fn run_occurrence_child(id: &str, at: Option<u64>) -> i32 {
+    if let Some(at) = at {
+        loop {
+            let now = unix_now();
+            if now >= at {
+                break;
+            }
+            // Cancelled out from under us? Stop without running.
+            match crate::jobs::read(id) {
+                Some(j) if j.status == "scheduled" => {}
+                _ => return 130,
+            }
+            std::thread::sleep(std::time::Duration::from_secs((at - now).min(2)));
+        }
+    }
+    execute_occurrence(id, false)
+}
+
+/// Run one occurrence of a recorded job: open its log, stamp `running`, execute, stamp the
+/// outcome (which also advances a repeating schedule to its next fire).
+fn execute_occurrence(id: &str, foreground: bool) -> i32 {
+    let Some(job) = crate::jobs::read(id) else {
+        eprintln!("aiTerminal: no such job '{id}'");
+        return 2;
+    };
+    let log = crate::jobs::open_run_log(id, keep_runs());
+    crate::jobs::mark_running(id, std::process::id());
+    let code = match &job.task {
+        crate::jobs::Task::Agent { text, agent } => run_prompt_as_agent(agent, text, log.map(|(_, f)| f)),
+        crate::jobs::Task::Shell(cmd) => run_shell_job(cmd, &job.cwd, log.map(|(_, f)| f), foreground),
+    };
+    crate::jobs::finish(id, code);
+    code
+}
+
+/// Why a job's command must not run, or `None` when it may.
+///
+/// A job has nobody to answer a prompt, so "ask first" is a refusal here — which is also the
+/// check that matters most for a command the *model* proposed.
+pub(crate) fn guard_refusal(policy: &crate::security::Policy, line: &str) -> Option<String> {
+    match policy.check_command(line) {
+        crate::security::Verdict::Allow => None,
+        crate::security::Verdict::Deny { reason } => Some(format!("blocked by the command guard: {reason}")),
+        crate::security::Verdict::Confirm { reason } => {
+            Some(format!("needs confirmation ({reason}) \u{2014} a job can't ask, so it was not run"))
+        }
+    }
+}
+
+/// Run a job's command: guard-checked, in the job's folder, output streamed to its log
+/// (and to this terminal when the job is in the foreground).
+fn run_shell_job(cmd: &crate::jobs::Cmd, cwd: &str, log: Option<std::fs::File>, foreground: bool) -> i32 {
+    use std::io::Write;
+    let line = cmd.display();
+    let cfg = crate::config::Config::load();
+    let registry = crate::plugin::load_registry(&cfg);
+    let policy = crate::security::build_policy(&cfg, &registry);
+    let refusal = guard_refusal(&policy, &line);
+    let mut sink = Sink { log, echo: foreground, written: 0, cap: cfg.jobs_max_log_bytes };
+    if let Some(reason) = refusal {
+        sink.write_line(&format!("aiTerminal: {reason}"));
+        // The sink already echoed it when this job is in the foreground; a detached one has
+        // only its log, so say it on stderr too.
+        if !foreground {
+            eprintln!("aiTerminal: {reason}");
+        }
+        return 2;
+    }
+    sink.write_line(&format!("$ {line}"));
+
+    let mut command = match cmd {
+        crate::jobs::Cmd::Line(l) => {
+            let mut c = std::process::Command::new("/bin/sh");
+            c.arg("-c").arg(l);
+            c
+        }
+        crate::jobs::Cmd::Argv(argv) => {
+            let mut c = std::process::Command::new(&argv[0]);
+            c.args(&argv[1..]);
+            c
+        }
+    };
+    if !cwd.is_empty() && std::path::Path::new(cwd).is_dir() {
+        command.current_dir(cwd);
+    }
+    let mut child = match command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let msg = format!("aiTerminal: {line}: {e}");
+            sink.write_line(&msg);
+            eprintln!("{msg}");
+            return 127;
+        }
+    };
+    // Drain both pipes on threads so a chatty command can't dead-lock on a full pipe.
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    for stream in [child.stdout.take().map(Pipe::Out), child.stderr.take().map(Pipe::Err)].into_iter().flatten() {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = [0u8; 8192];
+            let mut reader: Box<dyn Read + Send> = match stream {
+                Pipe::Out(o) => Box::new(o),
+                Pipe::Err(e) => Box::new(e),
+            };
+            while let Ok(n) = reader.read(&mut buf) {
+                if n == 0 || tx.send(String::from_utf8_lossy(&buf[..n]).into_owned()).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    drop(tx);
+    for chunk in rx {
+        sink.write(&chunk);
+    }
+    let status = child.wait();
+    let code = match status {
+        Ok(st) => st.code().unwrap_or(130),
+        Err(e) => {
+            sink.write_line(&format!("aiTerminal: {e}"));
+            1
+        }
+    };
+    sink.write_line(&format!("\n[exit {code}]"));
+    let _ = std::io::stdout().flush();
+    code
+}
+
+/// Which pipe a drained chunk came from (both go to the same place).
+enum Pipe {
+    Out(std::process::ChildStdout),
+    Err(std::process::ChildStderr),
+}
+
+/// Where a shell job's output goes: the run log (size-capped) and, in the foreground, the
+/// terminal. A job that prints forever costs a bounded log instead of the disk.
+struct Sink {
+    log: Option<std::fs::File>,
+    echo: bool,
+    written: u64,
+    cap: u64,
+}
+
+impl Sink {
+    fn write(&mut self, text: &str) {
+        use std::io::Write;
+        if self.echo {
+            print!("{text}");
+            let _ = std::io::stdout().flush();
+        }
+        let Some(log) = self.log.as_mut() else { return };
+        if self.written >= self.cap {
+            return;
+        }
+        let room = (self.cap - self.written) as usize;
+        let slice = if text.len() > room { &text[..text.floor_char_boundary(room)] } else { text };
+        if log.write_all(slice.as_bytes()).is_ok() {
+            self.written += slice.len() as u64;
+            if self.written >= self.cap {
+                let _ = log.write_all(b"\n[log truncated]\n");
+            }
+        }
+    }
+
+    fn write_line(&mut self, text: &str) {
+        self.write(text);
+        self.write("\n");
+    }
+}
+
+/// `@job log <id> [-f]` — print the newest run's log, optionally following it.
+fn job_log(id: &str, follow: bool) -> i32 {
+    let id = match crate::jobs::resolve(id) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("aiTerminal: {e}");
+            return 2;
+        }
+    };
+    let Some(job) = crate::jobs::read(&id) else { return 2 };
+    let Some(path) = job.latest_log() else {
+        println!("job {id} has not produced any output yet");
+        return 0;
+    };
+    use std::io::{Read, Seek, Write};
+    let Ok(mut f) = std::fs::File::open(&path) else {
+        eprintln!("aiTerminal: can't read {}", path.display());
+        return 1;
+    };
+    let mut text = String::new();
+    let _ = f.read_to_string(&mut text);
+    print!("{text}");
+    let _ = std::io::stdout().flush();
+    if !follow {
+        return 0;
+    }
+    // Follow: poll for growth while the job is still live, so `-f` ends by itself.
+    let mut at = f.stream_position().unwrap_or(0);
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if meta.len() > at {
+                let _ = f.seek(std::io::SeekFrom::Start(at));
+                let mut more = String::new();
+                let _ = f.read_to_string(&mut more);
+                print!("{more}");
+                let _ = std::io::stdout().flush();
+                at = meta.len();
+            }
+        }
+        match crate::jobs::read(&id) {
+            Some(j) if j.status == "running" => {}
+            _ => return 0,
+        }
+    }
+}
+
+/// `@job show <id>` — everything the record knows, in the order a person asks it.
+fn job_show(id: &str) -> i32 {
+    let id = match crate::jobs::resolve(id) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("aiTerminal: {e}");
+            return 2;
+        }
+    };
+    let Some(job) = crate::jobs::read(&id) else { return 2 };
+    let now = unix_now();
+    let (dim, r) = (muted(), reset());
+    println!("{} {} {}", job.status_glyph(), job.id, job.status);
+    println!("  {dim}request{r}  {}", job.cmd);
+    if !job.says.is_empty() {
+        println!("  {dim}plan{r}     {}", job.says);
+    }
+    match &job.task {
+        crate::jobs::Task::Agent { agent, text } => {
+            println!("  {dim}task{r}     agent {agent}: {text}");
+        }
+        crate::jobs::Task::Shell(cmd) => println!("  {dim}command{r}  {}", cmd.display()),
+    }
+    if !job.cwd.is_empty() {
+        println!("  {dim}folder{r}   {}", job.cwd);
+    }
+    if let Some(s) = &job.schedule {
+        println!("  {dim}schedule{r} {}", s.describe());
+    }
+    if let Some(at) = job.next_at.filter(|_| job.status == "scheduled") {
+        println!("  {dim}next{r}     in {}", crate::jobs::human_age(at.saturating_sub(now)));
+    }
+    if job.runs > 0 {
+        let last = job.last_exit.map(|c| if c == 0 { "ok".to_string() } else { format!("exit {c}") }).unwrap_or_default();
+        println!("  {dim}runs{r}     {} \u{b7} last {last}", job.runs);
+    }
+    if let Some(p) = job.latest_log() {
+        println!("  {dim}log{r}      {}", p.display());
+    }
+    0
+}
+
+/// `aiTerminal ai job [clear]` — list jobs (newest first), or prune the finished ones.
 fn ai_jobs(args: &[String]) -> i32 {
     crate::config::Config::ensure_default();
     crate::i18n::install(crate::config::Config::load().i18n_catalog());
     if args.first().map(String::as_str) == Some("clear") {
-        let n = jobs::clear_finished();
+        let n = crate::jobs::clear_finished();
         println!("{}", crate::i18n::translate("job.cleared", &[n.to_string()]));
         return 0;
     }
-    let list = jobs::list();
+    // Listing is also when a CLI-only user's due work gets picked up.
+    crate::jobs::reconcile();
+    let list = crate::jobs::list();
     if list.is_empty() {
         println!("{}", crate::i18n::translate("job.none", &[]));
         return 0;
     }
     println!("{}", crate::i18n::translate("job.header", &[list.len().to_string()]));
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let now = unix_now();
     let (dim, r) = (muted(), reset());
     for j in &list {
-        // One glanceable line per job: glyph · id · status · command (truncated) · timing;
-        // the log path rides a dim second line so the row stays scannable.
-        let cmd: String = if j.cmd.chars().count() > 44 {
+        // One glanceable line per job: glyph · id · status · what it is · timing.
+        let what = if j.cmd.chars().count() > 44 {
             format!("{}\u{2026}", j.cmd.chars().take(43).collect::<String>())
         } else {
             j.cmd.clone()
         };
-        println!("  {} {:<10} {:<9} {}  {dim}({}){r}", j.status_glyph(), j.id, j.status, cmd, j.timing(now));
-        println!("      {dim}log: {}{r}", j.log.display());
+        println!("  {} {:<12} {:<9} {}  {dim}({}){r}", j.status_glyph(), j.id, j.status, what, j.timing(now));
+        // A repeating job's second line is its schedule and how the last run went.
+        let mut notes: Vec<String> = Vec::new();
+        if let Some(s) = &j.schedule {
+            if s.repeats() {
+                notes.push(s.describe());
+            }
+        }
+        if j.runs > 0 {
+            notes.push(format!("{} run(s)", j.runs));
+            if let Some(c) = j.last_exit {
+                notes.push(if c == 0 { "last ok".into() } else { format!("last exit {c}") });
+            }
+        }
+        if !notes.is_empty() {
+            println!("      {dim}{}{r}", notes.join(" \u{b7} "));
+        }
     }
     0
-}
-
-/// The on-disk job records behind `--bg` / `ai jobs`: `ai/jobs/<id>/{job.toml,log.md}`.
-mod jobs {
-    pub(super) struct Job {
-        pub id: String,
-        pub status: String,
-        pub cmd: String,
-        pub started: u64,
-        pub finished: Option<u64>,
-        pub run_at: Option<u64>,
-        pub log: std::path::PathBuf,
-    }
-
-    impl Job {
-        /// A glanceable timing note: a `scheduled` job shows when it fires; others show
-        /// when they started and how long they ran (or have been running).
-        pub fn timing(&self, now: u64) -> String {
-            if self.status == "scheduled" {
-                if let Some(at) = self.run_at {
-                    return if at > now {
-                        format!("fires in {}", human_age(at - now))
-                    } else {
-                        "due".to_string()
-                    };
-                }
-            }
-            let ago = human_age(now.saturating_sub(self.started));
-            let dur = human_age(self.finished.unwrap_or(now).saturating_sub(self.started));
-            format!("{ago} ago \u{b7} {dur}")
-        }
-    }
-
-    /// `95` → `1m`, `4000` → `1h` — coarse, glanceable durations.
-    pub(super) fn human_age(secs: u64) -> String {
-        if secs >= 3600 {
-            format!("{}h", secs / 3600)
-        } else if secs >= 60 {
-            format!("{}m", secs / 60)
-        } else {
-            format!("{secs}s")
-        }
-    }
-
-    impl Job {
-        pub fn status_glyph(&self) -> &'static str {
-            match self.status.as_str() {
-                "running" => "\u{25B6}",
-                "done" => "\u{2713}",
-                "scheduled" => "\u{29D6}", // ⧖ waiting to fire
-                "cancelled" => "\u{23f9}",
-                "missed" => "\u{26A0}", // ⚠ its scheduler died before it fired
-                _ => "\u{2717}", // failed / died
-            }
-        }
-    }
-
-    fn now() -> u64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-    }
-
-    /// A fresh, sortable job id: `<unix-secs>-<pid>`.
-    pub(super) fn new_id() -> String {
-        format!("{}-{}", now(), std::process::id())
-    }
-
-    /// The job's folder (id is charset-checked so it can't escape the jobs dir).
-    pub(super) fn dir(id: &str) -> Option<std::path::PathBuf> {
-        let ok = !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
-        ok.then(|| crate::config::Config::jobs_dir().join(id))
-    }
-
-    /// Write the initial `job.toml` (status `running`).
-    pub(super) fn record_start(id: &str, args: &[String], pid: u32) {
-        let Some(dir) = dir(id) else { return };
-        let cmd = args.iter().filter(|a| a.as_str() != "--bg").cloned().collect::<Vec<_>>().join(" ");
-        let doc = corelib::wire::Toml::Table(vec![
-            ("cmd".into(), corelib::wire::Toml::Str(cmd)),
-            ("status".into(), corelib::wire::Toml::Str("running".into())),
-            ("started".into(), corelib::wire::Toml::Int(now() as i64)),
-            ("pid".into(), corelib::wire::Toml::Int(pid as i64)),
-        ]);
-        let _ = std::fs::write(dir.join("job.toml"), doc.to_string());
-    }
-
-    /// Write a `scheduled` record: the sleeper's pid, the fire-time, and the cwd it will
-    /// run in (persisted so the list can show it and a later run lands in the right folder).
-    pub(super) fn record_scheduled(id: &str, cmd: &str, pid: u32, run_at: u64) {
-        let Some(dir) = dir(id) else { return };
-        let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default();
-        let doc = corelib::wire::Toml::Table(vec![
-            ("cmd".into(), corelib::wire::Toml::Str(cmd.into())),
-            ("status".into(), corelib::wire::Toml::Str("scheduled".into())),
-            ("started".into(), corelib::wire::Toml::Int(now() as i64)),
-            ("pid".into(), corelib::wire::Toml::Int(pid as i64)),
-            ("run_at".into(), corelib::wire::Toml::Int(run_at as i64)),
-            ("cwd".into(), corelib::wire::Toml::Str(cwd)),
-        ]);
-        let _ = std::fs::write(dir.join("job.toml"), doc.to_string());
-    }
-
-    /// Flip a scheduled record to `running` when its fire-time arrives (no `finished` stamp).
-    pub(super) fn mark_running(id: &str) {
-        set_status(id, "running", None);
-    }
-
-    /// The current status string of a job record, if any (used by the sleeper to notice a cancel).
-    pub(super) fn status_of(id: &str) -> Option<String> {
-        let dir = dir(id)?;
-        let text = std::fs::read_to_string(dir.join("job.toml")).ok()?;
-        let doc = corelib::wire::Toml::parse(&text).ok()?;
-        doc.get("status").and_then(|v| v.as_str()).map(str::to_string)
-    }
-
-    /// Cancel a scheduled or running job: SIGTERM its process and mark it `cancelled`.
-    pub(super) fn cancel(id: &str) -> i32 {
-        let Some(dir) = dir(id) else {
-            eprintln!("aiTerminal: bad job id");
-            return 2;
-        };
-        let Ok(text) = std::fs::read_to_string(dir.join("job.toml")) else {
-            eprintln!("aiTerminal: no such job '{id}'");
-            return 2;
-        };
-        let Ok(doc) = corelib::wire::Toml::parse(&text) else { return 2 };
-        let status = doc.get("status").and_then(|v| v.as_str()).unwrap_or("?");
-        if !matches!(status, "scheduled" | "running") {
-            println!("job {id} is already {status}");
-            return 0;
-        }
-        let pid = doc.get("pid").and_then(|v| v.as_int()).unwrap_or(0).max(0) as u32;
-        if pid > 0 {
-            platform::os::terminate(pid);
-        }
-        set_status(id, "cancelled", Some(130));
-        println!("\u{23f9} cancelled job {id}");
-        0
-    }
-
-    /// Stamp a job's outcome. Exit 130 (interrupt) records as `cancelled`.
-    pub(super) fn finish(id: &str, code: i32) {
-        set_status(id, if code == 0 { "done" } else if code == 130 { "cancelled" } else { "failed" }, Some(code));
-    }
-
-    /// Rewrite a job record's status (keeping cmd/started/pid, and run_at/cwd when present).
-    /// A terminal status stamps `finished`; a transition to `running` does not.
-    pub(super) fn set_status(id: &str, status: &str, code: Option<i32>) {
-        let Some(dir) = dir(id) else { return };
-        let path = dir.join("job.toml");
-        let Ok(text) = std::fs::read_to_string(&path) else { return };
-        let Ok(doc) = corelib::wire::Toml::parse(&text) else { return };
-        let get = |k: &str| doc.get(k).cloned();
-        let mut pairs = vec![
-            ("cmd".into(), get("cmd").unwrap_or(corelib::wire::Toml::Str(String::new()))),
-            ("status".into(), corelib::wire::Toml::Str(status.into())),
-            ("started".into(), get("started").unwrap_or(corelib::wire::Toml::Int(0))),
-            ("pid".into(), get("pid").unwrap_or(corelib::wire::Toml::Int(0))),
-        ];
-        if let Some(v) = get("run_at") {
-            pairs.push(("run_at".into(), v));
-        }
-        if let Some(v) = get("cwd") {
-            pairs.push(("cwd".into(), v));
-        }
-        // Only a finished/terminal state carries a `finished` stamp; `running` is in-flight.
-        if status != "running" && status != "scheduled" {
-            pairs.push(("finished".into(), corelib::wire::Toml::Int(now() as i64)));
-        }
-        if let Some(c) = code {
-            pairs.push(("exit".into(), corelib::wire::Toml::Int(c as i64)));
-        }
-        let _ = std::fs::write(path, corelib::wire::Toml::Table(pairs).to_string());
-    }
-
-    /// Every recorded job, newest first — RECONCILED: a "running" record whose
-    /// pid is no longer alive (crash, SIGKILL, reboot) is healed to `died` on
-    /// the spot, so the list never lies and `clear` can prune it.
-    pub(super) fn list() -> Vec<Job> {
-        let mut out = Vec::new();
-        let Ok(entries) = std::fs::read_dir(crate::config::Config::jobs_dir()) else { return out };
-        for e in entries.flatten() {
-            let dir = e.path();
-            let Some(id) = e.file_name().to_str().map(str::to_string) else { continue };
-            let Ok(text) = std::fs::read_to_string(dir.join("job.toml")) else { continue };
-            let Ok(doc) = corelib::wire::Toml::parse(&text) else { continue };
-            let mut status = doc.get("status").and_then(|v| v.as_str()).unwrap_or("?").to_string();
-            // Reconcile: a `running` or `scheduled` record whose owner/sleeper pid is gone
-            // (crash, kill, reboot) is healed so the list never lies — a dead running job is
-            // `died`, a dead scheduled job will never fire so it is `missed`.
-            if status == "running" || status == "scheduled" {
-                let pid = doc.get("pid").and_then(|v| v.as_int()).unwrap_or(0).max(0) as u32;
-                if !platform::os::pid_alive(pid) {
-                    let healed = if status == "scheduled" { "missed" } else { "died" };
-                    set_status(&id, healed, None);
-                    status = healed.into();
-                }
-            }
-            out.push(Job {
-                id,
-                status,
-                cmd: doc.get("cmd").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                started: doc.get("started").and_then(|v| v.as_int()).unwrap_or(0).max(0) as u64,
-                finished: doc.get("finished").and_then(|v| v.as_int()).map(|n| n.max(0) as u64),
-                run_at: doc.get("run_at").and_then(|v| v.as_int()).map(|n| n.max(0) as u64),
-                log: dir.join("log.md"),
-            });
-        }
-        out.sort_by(|a, b| b.started.cmp(&a.started).then(b.id.cmp(&a.id)));
-        out
-    }
-
-    /// Remove every job in a terminal state; keeps in-flight `running` and pending
-    /// `scheduled` jobs. Returns how many were pruned.
-    pub(super) fn clear_finished() -> usize {
-        let mut n = 0;
-        for j in list() {
-            if !matches!(j.status.as_str(), "running" | "scheduled") {
-                if let Some(d) = dir(&j.id) {
-                    if std::fs::remove_dir_all(d).is_ok() {
-                        n += 1;
-                    }
-                }
-            }
-        }
-        n
-    }
 }
 
 // ===== profiles ==============================================================
@@ -3810,38 +4010,45 @@ mod tests {
     fn job_grammar_parses_the_intuitive_form() {
         use super::JobCmd;
         let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(super::parse_job_args(&a(&[])), JobCmd::List);
-        assert_eq!(super::parse_job_args(&a(&["clear"])), JobCmd::Clear);
-        // The exact requested shape: free text with optional flags anywhere.
-        let run = super::parse_job_args(&a(&["create", "a", "file", "called", "hamid.txt", "in", "one", "minute", "--bg", "--agent", "tester"]));
-        assert_eq!(run, JobCmd::Run { prompt: "create a file called hamid.txt in one minute".into(), agent: "tester".into(), bg: true, record: None, run_at: None });
-        // Defaults: coder, foreground.
-        let run = super::parse_job_args(&a(&["build", "the", "docs"]));
-        assert_eq!(run, JobCmd::Run { prompt: "build the docs".into(), agent: "coder".into(), bg: false, record: None, run_at: None });
-        // The detached child carries its record id through.
-        let run = super::parse_job_args(&a(&["x", "--job-record", "123-9"]));
-        assert!(matches!(run, JobCmd::Run { record: Some(ref id), .. } if id == "123-9"));
-        // `@job cancel <id>`.
-        assert_eq!(super::parse_job_args(&a(&["cancel", "42-7"])), JobCmd::Cancel("42-7".into()));
-        // An explicit `--run-at` is carried verbatim (the detached scheduled child).
-        let run = super::parse_job_args(&a(&["do", "it", "--run-at", "1000", "--job-record", "id"]));
-        assert!(matches!(run, JobCmd::Run { run_at: Some(1000), .. }));
+        let run = |args: &[&str]| match super::parse_job_args(&a(args)) {
+            JobCmd::Run(spec) => *spec,
+            other => panic!("expected a run, got {other:?}"),
+        };
+        // The shape people type: free text with optional flags anywhere on the line.
+        let spec = run(&["create", "a", "file", "called", "hamid.txt", "in", "one", "minute", "--bg", "--agent", "tester"]);
+        assert_eq!(spec.request, "create a file called hamid.txt in one minute");
+        assert_eq!(spec.agent.as_deref(), Some("tester"));
+        assert!(spec.bg);
+        // Defaults: no agent named (the planner or `coder`), foreground, no schedule flag.
+        let spec = run(&["build", "the", "docs"]);
+        assert_eq!(spec.request, "build the docs");
+        assert_eq!(spec.agent, None);
+        assert!(!spec.bg && spec.schedule.is_none() && !spec.dry_run);
+        // `--dry-run` asks for the plan without creating anything.
+        assert!(run(&["check the logs at midnight", "--dry-run"]).dry_run);
     }
 
     #[test]
     fn parse_schedule_reads_natural_time() {
-        // "in N unit" fires N later, with the phrase stripped from the prompt.
+        use crate::jobs::Schedule;
+        // The fallback parser (used when no model is configured, and by --in/--at/--every):
+        // "in N unit" fires N later, with the phrase stripped from the request.
         let (at, cleaned) = super::parse_schedule("create a file named hamid in 2 minutes", 1_000);
-        assert_eq!(at, Some(1_120));
+        assert_eq!(at, Some(Schedule::Once(1_120)));
         assert_eq!(cleaned, "create a file named hamid");
         // Fused unit + "after".
-        assert_eq!(super::parse_schedule("build after 30s", 0).0, Some(30));
-        assert_eq!(super::parse_schedule("build in 1 hour", 0).0, Some(3600));
+        assert_eq!(super::parse_schedule("build after 30s", 0).0, Some(Schedule::Once(30)));
+        assert_eq!(super::parse_schedule("build in 1 hour", 0).0, Some(Schedule::Once(3600)));
+        // "every …" repeats, and the words leave the task behind.
+        let (every, cleaned) = super::parse_schedule("summarize the kafka logs every hour", 0);
+        assert_eq!(every, Some(Schedule::Every(3600)));
+        assert_eq!(cleaned, "summarize the kafka logs");
+        assert_eq!(super::parse_schedule("sync every 15 minutes", 0).0, Some(Schedule::Every(900)));
         // A middle phrase is removed too.
         let (at, cleaned) = super::parse_schedule("ping the server in 5 minutes please", 0);
-        assert_eq!(at, Some(300));
+        assert_eq!(at, Some(Schedule::Once(300)));
         assert_eq!(cleaned, "ping the server please");
-        // No schedule → run now, prompt untouched.
+        // No schedule → run now, request untouched.
         assert_eq!(super::parse_schedule("just do it now", 0), (None, "just do it now".to_string()));
         // "in" as ordinary prose (not a delay) does not misfire.
         assert_eq!(super::parse_schedule("look in the src folder", 0).0, None);
@@ -3881,10 +4088,78 @@ mod tests {
     }
 
     #[test]
-    fn job_ids_are_contained() {
-        assert!(super::jobs::dir("1234-99").is_some());
-        assert!(super::jobs::dir("../etc").is_none(), "traversal rejected");
-        assert!(super::jobs::dir("").is_none());
+    fn a_quoted_request_arrives_verbatim_and_loose_words_rejoin() {
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let run = |args: &[&str]| match super::parse_job_args(&a(args)) {
+            super::JobCmd::Run(spec) => *spec,
+            other => panic!("expected a run, got {other:?}"),
+        };
+        // One argument is the request exactly as typed — spacing, newlines and all.
+        let spec = run(&["summarize  the   logs\nthen stop"]);
+        assert_eq!(spec.request, "summarize  the   logs\nthen stop");
+        // Loose words become a sentence.
+        assert_eq!(run(&["summarize", "the", "logs"]).request, "summarize the logs");
+        // A flag INSIDE the quoted request is text, not a flag.
+        let spec = run(&["write docs for the --bg flag"]);
+        assert_eq!(spec.request, "write docs for the --bg flag");
+        assert!(!spec.bg, "the --bg inside the quotes never reached the parser");
+        // …while a real flag beside it is one.
+        assert!(run(&["summarize the logs", "--bg"]).bg);
+    }
+
+    #[test]
+    fn a_command_after_the_separator_keeps_its_shape() {
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let cmd = |args: &[&str]| match super::parse_job_args(&a(args)) {
+            super::JobCmd::Run(spec) => spec.cmd.expect("a command"),
+            other => panic!("expected a run, got {other:?}"),
+        };
+        // Several words are argv — re-joining them would run `sh -c echo hi`.
+        assert_eq!(
+            cmd(&["--", "sh", "-c", "echo hi"]),
+            crate::jobs::Cmd::Argv(vec!["sh".into(), "-c".into(), "echo hi".into()])
+        );
+        // One quoted word is a shell line, because pipes need a shell.
+        assert_eq!(cmd(&["--", "ls | wc -l"]), crate::jobs::Cmd::Line("ls | wc -l".into()));
+        assert_eq!(cmd(&["--shell", "ls | wc -l"]), crate::jobs::Cmd::Line("ls | wc -l".into()));
+        // Flags before `--` still apply; after it, everything is the command.
+        let spec = match super::parse_job_args(&a(&["--bg", "--", "./x.sh", "--bg"])) {
+            super::JobCmd::Run(spec) => *spec,
+            other => panic!("{other:?}"),
+        };
+        assert!(spec.bg);
+        assert_eq!(spec.cmd, Some(crate::jobs::Cmd::Argv(vec!["./x.sh".into(), "--bg".into()])));
+    }
+
+    #[test]
+    fn the_job_subcommands_are_recognized() {
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(super::parse_job_args(&[]), super::JobCmd::List);
+        assert_eq!(super::parse_job_args(&a(&["clear"])), super::JobCmd::Clear);
+        assert_eq!(super::parse_job_args(&a(&["cancel", "12-3"])), super::JobCmd::Cancel("12-3".into()));
+        assert_eq!(super::parse_job_args(&a(&["show", "12-3"])), super::JobCmd::Show("12-3".into()));
+        assert_eq!(super::parse_job_args(&a(&["log", "12-3", "-f"])), super::JobCmd::Log { id: "12-3".into(), follow: true });
+        // `@job log` with no id follows the newest.
+        assert_eq!(super::parse_job_args(&a(&["log"])), super::JobCmd::Log { id: "last".into(), follow: false });
+        // The child form the scheduler spawns.
+        assert_eq!(
+            super::parse_job_args(&a(&["--run", "9-9", "--run-at", "1700000000"])),
+            super::JobCmd::Occurrence { id: "9-9".into(), at: Some(1_700_000_000) }
+        );
+    }
+
+    #[test]
+    fn explicit_schedule_flags_are_read_without_a_model() {
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let sched = |args: &[&str]| match super::parse_job_args(&a(args)) {
+            super::JobCmd::Run(spec) => spec.schedule,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(sched(&["x", "--every", "15m"]), Some(crate::jobs::Schedule::Every(900)));
+        assert_eq!(sched(&["x", "--every", "2 hours"]), Some(crate::jobs::Schedule::Every(7200)));
+        assert!(matches!(sched(&["x", "--cron", "0 9 * * 1-5"]), Some(crate::jobs::Schedule::Cron(_))));
+        assert!(matches!(sched(&["x", "--in", "30s"]), Some(crate::jobs::Schedule::Once(_))));
+        assert_eq!(sched(&["x"]), None, "no flags → the planner decides");
     }
 
     // ── production-harness guarantees: exit codes, jobs, discovery ───────────
@@ -3921,78 +4196,6 @@ mod tests {
             panic!("the verifier must not run on a cancelled iteration")
         }).outcome;
         assert_eq!(outcome, super::LoopOutcome::Cancelled);
-    }
-
-    #[test]
-    fn job_records_heal_dead_pids_and_clear_prunes_them() {
-        let (_h, _home) = crate::test_home::lock_home("cli-job-liveness");
-        crate::config::Config::ensure_default();
-        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        // A record whose pid is long gone (pid 999999 is far above macOS's default
-        // pid ceiling) must heal from `running` to `died` on the next list.
-        let dead_id = "1000-1";
-        std::fs::create_dir_all(super::jobs::dir(dead_id).unwrap()).unwrap();
-        super::jobs::record_start(dead_id, &a(&["ghost", "work"]), 999_999);
-        // A record pointing at THIS process stays running.
-        let live_id = "2000-2";
-        std::fs::create_dir_all(super::jobs::dir(live_id).unwrap()).unwrap();
-        super::jobs::record_start(live_id, &a(&["real", "work"]), std::process::id());
-        let jobs = super::jobs::list();
-        let by_id = |id: &str| jobs.iter().find(|j| j.id == id).unwrap();
-        assert_eq!(by_id(dead_id).status, "died", "zombie healed on list");
-        assert_eq!(by_id(live_id).status, "running", "a live pid is untouched");
-        // The healing is persisted (a second list re-reads the healed record)…
-        assert_eq!(super::jobs::list().iter().find(|j| j.id == dead_id).unwrap().status, "died");
-        // …and `clear` prunes the healed zombie while keeping the live job.
-        assert_eq!(super::jobs::clear_finished(), 1);
-        let left = super::jobs::list();
-        assert_eq!(left.len(), 1);
-        assert_eq!(left[0].id, live_id);
-    }
-
-    #[test]
-    fn job_finish_stamps_the_outcome_status() {
-        let (_h, _home) = crate::test_home::lock_home("cli-job-finish");
-        crate::config::Config::ensure_default();
-        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        for (id, code, want) in [("3000-1", 0, "done"), ("3000-2", 1, "failed"), ("3000-3", 130, "cancelled")] {
-            std::fs::create_dir_all(super::jobs::dir(id).unwrap()).unwrap();
-            super::jobs::record_start(id, &a(&["w"]), std::process::id());
-            super::jobs::finish(id, code);
-            assert_eq!(super::jobs::list().iter().find(|j| j.id == id).unwrap().status, want, "exit {code}");
-        }
-        let jobs = super::jobs::list();
-        let by_id = |id: &str| jobs.iter().find(|j| j.id == id).unwrap();
-        assert_eq!(by_id("3000-3").status_glyph(), "\u{23f9}");
-        assert!(by_id("3000-1").finished.is_some(), "finish stamps the end time");
-    }
-
-    #[test]
-    fn job_timing_reads_at_a_glance() {
-        assert_eq!(super::jobs::human_age(45), "45s");
-        assert_eq!(super::jobs::human_age(95), "1m");
-        assert_eq!(super::jobs::human_age(4000), "1h");
-        let j = super::jobs::Job {
-            id: "x".into(),
-            status: "done".into(),
-            cmd: String::new(),
-            started: 1000,
-            finished: Some(1045),
-            run_at: None,
-            log: std::path::PathBuf::new(),
-        };
-        assert_eq!(j.timing(1180), "3m ago \u{b7} 45s");
-        // A scheduled job shows when it fires instead of run duration.
-        let s = super::jobs::Job {
-            id: "y".into(),
-            status: "scheduled".into(),
-            cmd: String::new(),
-            started: 1000,
-            finished: None,
-            run_at: Some(1300),
-            log: std::path::PathBuf::new(),
-        };
-        assert_eq!(s.timing(1180), "fires in 2m");
     }
 
     #[test]

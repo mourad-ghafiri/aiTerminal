@@ -90,6 +90,13 @@ pub struct Config {
     pub md_image_max_rows: usize,
     /// `[md] syntax` — highlight fenced code blocks. On by default.
     pub md_syntax: bool,
+    /// `[jobs] max_concurrent` — how many tracked jobs may run at once, so a fleet of
+    /// scheduled work can never fork-bomb the machine.
+    pub jobs_max_concurrent: usize,
+    /// `[jobs] keep_runs` — how many per-occurrence logs a job keeps.
+    pub jobs_keep_runs: usize,
+    /// `[jobs] max_log_bytes` — the cap on a single run's log.
+    pub jobs_max_log_bytes: u64,
     /// The primary-model pool: each `[[ai.model]]` table contributes one candidate
     /// (id + optional provider qualifier + weight + per-model overrides). Empty →
     /// the catalog's default model as a single-entry pool.
@@ -195,6 +202,9 @@ impl Default for Config {
             zoom: 1.0,
             tab_bar: "top".into(),
             shell: String::new(),
+            jobs_max_concurrent: 4,
+            jobs_keep_runs: 20,
+            jobs_max_log_bytes: 1 << 20,
             md_remote_images: false,
             md_image_max_rows: 20,
             md_syntax: true,
@@ -417,7 +427,7 @@ impl Config {
         Self::ai_dir().join("flows")
     }
 
-    /// Background AI job records (`ai/jobs/<id>/{job.toml,log.md}`) — written by
+    /// Tracked job records (`ai/jobs/<id>/{job.toml,runs/<n>.md}`) — written by
     /// `aiTerminal ai --bg …`, listed by `aiTerminal ai jobs`.
     pub fn jobs_dir() -> PathBuf {
         Self::ai_dir().join("jobs")
@@ -708,6 +718,17 @@ impl Config {
             }
             if let Some(v) = md.get("syntax").and_then(|v| v.as_bool()) {
                 c.md_syntax = v;
+            }
+        }
+        if let Some(j) = doc.get("jobs") {
+            if let Some(v) = j.get("max_concurrent").and_then(|v| v.as_int()) {
+                c.jobs_max_concurrent = v.clamp(1, 64) as usize;
+            }
+            if let Some(v) = j.get("keep_runs").and_then(|v| v.as_int()) {
+                c.jobs_keep_runs = v.clamp(1, 500) as usize;
+            }
+            if let Some(v) = j.get("max_log_bytes").and_then(|v| v.as_int()) {
+                c.jobs_max_log_bytes = v.clamp(4096, 1 << 30) as u64;
             }
         }
         if let Some(ai) = doc.get("ai") {

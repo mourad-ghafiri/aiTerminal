@@ -37,6 +37,13 @@ remote_images  = false     # fetch https:// images (badges, screenshots) when re
                            # Off by default: displaying a document should never reach the
                            # network on its own. Local image files always draw.
 
+[jobs]
+# Tracked background work (`@job`). A recurring job keeps one log per occurrence.
+max_concurrent = 4         # how many jobs may run at once, so a fleet of due work can
+                           # never fork-bomb the machine
+keep_runs      = 20        # per-occurrence logs a job keeps (older ones are pruned)
+max_log_bytes  = 1048576   # cap on a single run's log, so an hourly job can't fill the disk
+
 # Custom keybindings — rebind any built-in action (snake_case; full list of action
 # names in docs/keybindings.md). Uncomment and add [[keybinding]] tables:
 # [[keybinding]]
