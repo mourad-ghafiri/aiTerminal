@@ -257,9 +257,13 @@ fn render_code(lang: &str, text: &str, style: &Style, width: usize, out: &mut St
     let border = style.sgr(&[], Some(style.muted));
     let reset = style.reset();
     let label = if lang.is_empty() { String::new() } else { format!(" {lang} ") };
-    let top_fill = "─".repeat(inner_w.saturating_sub(crate::unicode::str_width(&label)));
+    // The body is `│ …inner_w… │`, so a rule spans inner_w + 2 to meet both borders.
+    let rule_w = inner_w + 2;
+    let top_fill = "─".repeat(rule_w.saturating_sub(crate::unicode::str_width(&label)));
     out.push_str(&format!("{border}╭{label}{top_fill}╮{reset}\n"));
+    let mut hl = super::code::Highlighter::new(lang);
     for line in text.split('\n') {
+        // Clip to the box, then color the runs that survive.
         let mut shown = String::new();
         let mut w = 0;
         for c in line.chars() {
@@ -271,10 +275,43 @@ fn render_code(lang: &str, text: &str, style: &Style, width: usize, out: &mut St
             w += cw;
         }
         let padding = " ".repeat(inner_w.saturating_sub(w));
-        let codecol = style.sgr(&[], Some(style.code));
-        out.push_str(&format!("{border}│{reset} {codecol}{shown}{reset}{padding} {border}│{reset}\n"));
+        let body = if hl.plain() || !style.enabled {
+            format!("{}{shown}{reset}", style.sgr(&[], Some(style.code)))
+        } else {
+            hl.line(&shown)
+                .into_iter()
+                .map(|(kind, run)| format!("{}{run}{reset}", style.sgr(kind_attrs(kind), Some(kind_color(kind, style)))))
+                .collect()
+        };
+        out.push_str(&format!("{border}│{reset} {body}{padding} {border}│{reset}\n"));
     }
-    out.push_str(&format!("{border}╰{}╯{reset}\n", "─".repeat(inner_w)));
+    out.push_str(&format!("{border}╰{}╯{reset}\n", "─".repeat(rule_w)));
+}
+
+/// The theme color a token kind takes — so highlighting restyles with `@theme` like
+/// everything else.
+fn kind_color(kind: super::code::Kind, style: &Style) -> Rgba8 {
+    use super::code::Kind;
+    match kind {
+        Kind::Plain => style.code,
+        Kind::Comment => style.muted,
+        Kind::Str => style.success,
+        Kind::Number => style.warn,
+        Kind::Keyword => style.accent,
+        Kind::Type => style.link,
+        Kind::Added => style.success,
+        Kind::Removed => style.error,
+    }
+}
+
+/// Comments read better dim; a keyword reads better bold.
+fn kind_attrs(kind: super::code::Kind) -> &'static [&'static str] {
+    use super::code::Kind;
+    match kind {
+        Kind::Comment => &["2"],
+        Kind::Keyword => &["1"],
+        _ => &[],
+    }
 }
 
 fn render_table(align: &[Align], head: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>], style: &Style, width: usize, out: &mut String) {

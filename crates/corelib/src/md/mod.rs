@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 mod ast;
+mod code;
 mod entity;
 mod html;
 mod parse;
