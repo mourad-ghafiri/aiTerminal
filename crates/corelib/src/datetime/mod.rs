@@ -162,6 +162,40 @@ pub fn relative(secs: i64, now: i64) -> String {
     }
 }
 
+/// A duration written the way people write one: `30m`, `90s`, `2h`, `1h30m`, `7d`, or a bare
+/// number of seconds. Whitespace is ignored, so `1h 30m` reads too.
+///
+/// Total and strict: an unknown unit, a trailing number with no unit after a unit, or an empty
+/// string is `None` — a caller can refuse a misspelled bound instead of quietly running with a
+/// default it never asked for.
+pub fn duration(text: &str) -> Option<u64> {
+    let t: String = text.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase();
+    if t.is_empty() {
+        return None;
+    }
+    if let Ok(secs) = t.parse::<u64>() {
+        return Some(secs); // a bare number is seconds
+    }
+    let mut total: u64 = 0;
+    let mut n: Option<u64> = None;
+    for c in t.chars() {
+        if let Some(d) = c.to_digit(10) {
+            n = Some(n.unwrap_or(0).checked_mul(10)?.checked_add(d as u64)?);
+            continue;
+        }
+        let unit = match c {
+            's' => 1,
+            'm' => 60,
+            'h' => 3600,
+            'd' => 86_400,
+            _ => return None,
+        };
+        total = total.checked_add(n.take()?.checked_mul(unit)?)?;
+    }
+    // A leftover number means a unit is missing (`1h30`), which is a typo, not a duration.
+    n.is_none().then_some(total)
+}
+
 /// Runs of digits in `text`, as integers (the simple parser's tokenizer).
 fn split_numbers(text: &str) -> Vec<i64> {
     let mut out = Vec::new();
@@ -244,5 +278,21 @@ mod tests {
         assert_eq!(relative(1000, 1000 + 180), "3 minutes ago");
         assert_eq!(relative(1000, 1000 + 7200), "2 hours ago");
         assert_eq!(relative(1000 + 86400 * 2, 1000), "in 2 days");
+    }
+
+    #[test]
+    fn durations_read_the_way_people_write_them() {
+        assert_eq!(duration("30m"), Some(1800));
+        assert_eq!(duration("90s"), Some(90));
+        assert_eq!(duration("2h"), Some(7200));
+        assert_eq!(duration("7d"), Some(604_800));
+        assert_eq!(duration("1h30m"), Some(5400));
+        assert_eq!(duration("1h 30m"), Some(5400), "spaces are noise");
+        assert_eq!(duration("1800"), Some(1800), "a bare number is seconds");
+        assert_eq!(duration("2H"), Some(7200), "case is noise");
+        // A misspelled bound must be refusable, never silently a default.
+        for bad in ["", "  ", "30x", "abc", "1h30", "m", "-5"] {
+            assert_eq!(duration(bad), None, "{bad:?} must not parse");
+        }
     }
 }
