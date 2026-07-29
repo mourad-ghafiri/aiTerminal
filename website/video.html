@@ -561,7 +561,7 @@ body { background: var(--paper); }
 
     /* ---- 04 · @loop — the trust move: the model never grades itself ---- */
     chapter("04 · loops", "<code>@loop</code> — it stops when <em>your check passes</em>",
-      "Give it a goal and the command that grades it. It iterates, feeds the failure back, and never marks its own homework.");
+      "Give it a goal and the command that grades it. It iterates, feeds the failure back, and never marks its own homework. The check is any command with an exit status \u2014 which is why the second one here is about prose, not tests.");
     await run(w, [
       { do: "cmd", text: "@loop \"make the tests pass\" --check \"cargo test\"", speed: 10 },
       { do: "out", spans: [FG("▶ iteration 1/5")] },
@@ -569,6 +569,16 @@ body { background: var(--paper); }
       { do: "out", spans: [DIM("  check: exit=1 · assertion failed: default theme")], ms: 380 },
       { do: "out", spans: [FG("▶ iteration 2/5")] },
       { do: "tool", name: "fs.edit", args: '{"path":"src/config.rs"}', ms: 5, size: "188B", wait: 200 },
+      { do: "out", spans: [DIM("  check: exit=0")], ms: 300 },
+      { do: "out", spans: [OK("✓ goal reached after 2 iteration(s)")] },
+      { do: "pause", ms: 1500 },
+      { do: "cmd", text: "@loop \"cut intro.md under 200 words\" --agent writer --check \"test $(wc -w < intro.md) -lt 200\"", speed: 9 },
+      { do: "out", spans: [DIM("  verifier: test $(wc -w < intro.md) -lt 200")] },
+      { do: "out", spans: [FG("▶ iteration 1/5")] },
+      { do: "tool", name: "fs.edit", args: '{"path":"intro.md"}', ms: 5, size: "1.2KB", wait: 200 },
+      { do: "out", spans: [DIM("  check: exit=1")], ms: 340 },
+      { do: "out", spans: [FG("▶ iteration 2/5")] },
+      { do: "tool", name: "fs.edit", args: '{"path":"intro.md"}', ms: 4, size: "640B", wait: 200 },
       { do: "out", spans: [DIM("  check: exit=0")], ms: 300 },
       { do: "out", spans: [OK("✓ goal reached after 2 iteration(s)")] },
       { do: "pause", ms: 2100 },

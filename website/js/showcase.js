@@ -238,55 +238,92 @@ document.addEventListener("DOMContentLoaded", () => {
 
     agent: {
       caption: () => caption("<code>@agent</code> — eight specialists at your prompt",
-        "<code>@agent</code> lists what you have; <code>@agent &lt;name&gt;</code> shows one in full — its tools, its step cap, and what it returns. Run any of them with <code>@&lt;name&gt;</code>: live reasoning, tool traces, streaming answer, token footer. Each is an editable Markdown file, so the roster is yours to change."),
+        "<code>@agent</code> lists what you have, <code>@agent &lt;name&gt;</code> shows one in full, and <code>@&lt;name&gt;</code> runs it. They are not all for writing code: <b>researcher</b> searches the web and reads the pages (keyless — no extra account, just <code>[ai] network = true</code>), <b>writer</b> drafts and saves the file, <b>planner</b> turns a goal into a plan. Each is an editable Markdown file."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
           { do: "cmd", text: "@agent" },
           { do: "out", spans: [FG("agents (8):")] },
-          { do: "out", spans: [FG("  ai         "), DIM("19 tools ·  6 steps  General assistant — a command to review, or an answer")], ms: 70 },
-          { do: "out", spans: [FG("  coder      "), DIM("24 tools · 24 steps  Senior engineer — the smallest correct edit, verified")], ms: 70 },
-          { do: "out", spans: [FG("  explorer   "), DIM(" 7 tools · 12 steps  Read-only scout — maps the code and reports tightly")], ms: 70 },
-          { do: "out", spans: [FG("  planner    "), DIM(" 7 tools · 10 steps  Turns a goal into a plan with a concrete done-when")], ms: 70 },
-          { do: "out", spans: [FG("  researcher "), DIM("12 tools · 16 steps  Finds sources, reads them, reports what they say")], ms: 70 },
-          { do: "out", spans: [FG("  reviewer   "), DIM(" 7 tools · 12 steps  Read-only review — correctness, security, design")], ms: 70 },
-          { do: "out", spans: [FG("  tester     "), DIM("13 tools · 18 steps  Runs the project's own tests, reports what happened")], ms: 70 },
-          { do: "out", spans: [FG("  writer     "), DIM("10 tools · 14 steps  Docs and reports — and saves the file")], ms: 70 },
-          { do: "pause", ms: 900 },
+          { do: "out", spans: [FG("  ai         "), DIM("19 tools ·  6 steps  General assistant — a command to review, or an answer")], ms: 60 },
+          { do: "out", spans: [FG("  coder      "), DIM("24 tools · 24 steps  Senior engineer — the smallest correct edit, verified")], ms: 60 },
+          { do: "out", spans: [FG("  explorer   "), DIM(" 7 tools · 12 steps  Read-only scout — maps the code and reports tightly")], ms: 60 },
+          { do: "out", spans: [FG("  planner    "), DIM(" 7 tools · 10 steps  Turns a goal into a plan with a concrete done-when")], ms: 60 },
+          { do: "out", spans: [FG("  researcher "), DIM("12 tools · 16 steps  Finds sources, reads them, reports what they say")], ms: 60 },
+          { do: "out", spans: [FG("  reviewer   "), DIM(" 7 tools · 12 steps  Read-only review — correctness, security, design")], ms: 60 },
+          { do: "out", spans: [FG("  tester     "), DIM("13 tools · 18 steps  Runs the project's own tests, reports what happened")], ms: 60 },
+          { do: "out", spans: [FG("  writer     "), DIM("10 tools · 14 steps  Docs and reports — and saves the file")], ms: 60 },
+          { do: "pause", ms: 1000 },
+
+          /* everyday: nothing here is about code */
+          { do: "cmd", text: "@researcher \"which cordless drills do reviewers actually rate, and why\"" },
+          { do: "out", spans: [ACC("✦ @researcher"), MUT(" · claude-opus-4-8")] },
+          { do: "tool", name: "web.search", args: '{"query":"cordless drill reviews 2026"}', ms: 340, size: "3.4KB" },
+          { do: "tool", name: "web.read", args: '{"url":"https://…/tool-reviews"}', ms: 1180, size: "18KB" },
+          { do: "tool", name: "web.read", args: '{"url":"https://…/teardown"}', ms: 940, size: "11KB" },
+          { do: "stream", spans: [FG("Three names recur, for two different reasons — and one of them is a rebrand. Sources and dates below; I could not confirm the torque figure anywhere.")], speed: 10 },
+          { do: "footer", text: "14.2s · 3 tools · 9.1k in / 1.4k out" },
+          { do: "pause", ms: 1100 },
+
+          { do: "cmd", text: "@writer \"turn @notes.md into a one-page brief at brief.md\"" },
+          { do: "out", spans: [ACC("✦ @writer"), MUT(" · claude-opus-4-8")] },
+          { do: "tool", name: "fs.read", args: '{"path":"notes.md"}', ms: 4, size: "3.9KB" },
+          { do: "tool", name: "fs.write", args: '{"path":"brief.md"}', ms: 6, size: "2.1KB" },
+          { do: "stream", spans: [FG("Wrote brief.md — one page, the decision first. Two claims I could not check are marked.")], speed: 10 },
+          { do: "pause", ms: 1100 },
+
+          /* and the same harness on code */
           { do: "cmd", text: "@coder \"fix the failing parser test\"" },
           { do: "out", spans: [ACC("✦ @coder"), MUT(" · claude-opus-4-8")] },
-          { do: "spin", label: "thinking…", ms: 1100 },
+          { do: "spin", label: "thinking…", ms: 900 },
           { do: "think", text: "The test expects a trailing newline — the parser drops it on the last line…" },
+          { do: "tool", name: "todo.set", args: '{"items":["find it","fix it","re-run"]}', ms: 3, size: "88B" },
           { do: "tool", name: "fs.search", args: '{"q":"parse_line"}', ms: 18, size: "2.1KB" },
           { do: "tool", name: "fs.edit", args: '{"path":"src/parser.rs"}', ms: 6, size: "412B" },
           { do: "tool", name: "sys.run", args: '{"cmd":"cargo test parser"}', ms: 2100, size: "1.4KB" },
           { do: "stream", spans: [FG("The fix: the parser dropped the final line — added the flush in "), ACC2("parse_line()"), FG(".")], speed: 11 },
-          { do: "footer", text: "8.4s · 3 tools · 12.3k in / 1.8k out" },
+          { do: "footer", text: "8.4s · 4 tools · 12.3k in / 1.8k out" },
         ]);
       },
     },
 
     flow: {
       caption: () => caption("<code>@flow</code> — a <em>graph</em> of agents",
-        "Nodes that need nothing from each other run at the same time, a condition routes on the edge, and one edge points backwards so a failing check loops through a fixer — bounded. Nothing runs until the graph is proved: a dangling edge or an uninstalled agent is caught for free. A bare goal is routed to a flow by the model, which says which and why before spending anything."),
+        "Nodes that need nothing from each other run at the same time, a condition routes on the edge, and one edge points backwards so a failing check loops through a fixer — bounded. Nothing runs until the graph is proved. Five ship: <b>build · fix · review</b> for code, and <b>research</b> for any question at all. A bare goal is routed by the model, which says which flow and why before spending anything."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
+
+          /* everyday first: a question, not a repo */
+          { do: "cmd", text: "@flow \"which e-bike should I buy for a hilly commute\"" },
+          { do: "out", spans: [ACC("▸ research"), MUT(" — the goal asks for sources and a comparison, not a code change")] },
+          { do: "out", spans: [ACC("▸ research · which e-bike should I buy for a hilly commute")] },
+          { do: "out", spans: [OK("  ✓"), FG(" plan     "), DIM("@planner      3.1s   1.2k   → 5 sub-questions")], ms: 300 },
+          { do: "out", spans: [ACC("  ⠻"), FG(" gather   "), DIM("@researcher ×n        × 5 items   ⚙ web.search")], ms: 900 },
+          { do: "out", spans: [OK("  ✓"), FG(" gather   "), DIM("@researcher  22.4s  18.9k   × 5 items")], ms: 300 },
+          { do: "out", spans: [OK("  ✓"), FG(" compare  "), DIM("@researcher   8.2s   6.4k")], ms: 240 },
+          { do: "out", spans: [OK("  ✓"), FG(" report   "), DIM("@writer       6.7s   3.1k")], ms: 240 },
+          { do: "out", spans: [DIM("  4/4 done · 29.6k tokens · 40.4s")] },
+          { do: "stream", spans: [FG("Two real contenders, and the reason is the motor, not the battery. Where the sources disagree is called out; one spec I could not confirm.")], speed: 10 },
+          { do: "pause", ms: 1200 },
+
+          /* then the same engine on code */
           { do: "cmd", text: "@flow \"add a --json flag to the export command\"" },
           { do: "out", spans: [ACC("▸ build"), MUT(" — it asks for working code, tested")] },
           { do: "out", spans: [ACC("▸ build · add a --json flag to the export command")] },
-          { do: "out", spans: [OK("  ✓"), FG(" plan        "), DIM("@planner      4.2s   3.1k")], ms: 260 },
+          { do: "out", spans: [OK("  ✓"), FG(" plan        "), DIM("@planner      4.2s   3.1k")], ms: 240 },
           { do: "out", spans: [OK("  ✓"), FG(" explore     "), DIM("@explorer     8.1s   9.4k")], ms: 200 },
           { do: "out", spans: [OK("  ✓"), FG(" conventions "), DIM("@explorer     7.6s   8.8k   ← both scouts, at once")], ms: 200 },
-          { do: "out", spans: [ACC("  ⠻"), FG(" apply       "), DIM("@coder       12.3s          ⚙ fs.edit src/cli.rs")], ms: 900 },
-          { do: "out", spans: [OK("  ✓"), FG(" apply       "), DIM("@coder       12.3s   6.2k")], ms: 220 },
-          { do: "out", spans: [ERR("  ✗"), FG(" verify      "), DIM("@tester       9.8s   4.1k   VERDICT: FAIL")], ms: 320 },
-          { do: "out", spans: [OK("  ✓"), FG(" fix         "), DIM("@coder        7.2s   3.3k")], ms: 260 },
-          { do: "out", spans: [OK("  ✓"), FG(" verify      "), DIM("@tester       9.1s   4.0k   ×2  VERDICT: PASS")], ms: 260 },
+          { do: "out", spans: [ACC("  ⠻"), FG(" apply       "), DIM("@coder       12.3s          ⚙ fs.edit src/cli.rs")], ms: 800 },
+          { do: "out", spans: [OK("  ✓"), FG(" apply       "), DIM("@coder       12.3s   6.2k")], ms: 200 },
+          { do: "out", spans: [ERR("  ✗"), FG(" verify      "), DIM("@tester       9.8s   4.1k   VERDICT: FAIL")], ms: 300 },
+          { do: "out", spans: [OK("  ✓"), FG(" fix         "), DIM("@coder        7.2s   3.3k")], ms: 240 },
+          { do: "out", spans: [OK("  ✓"), FG(" verify      "), DIM("@tester       9.1s   4.0k   ×2  VERDICT: PASS")], ms: 240 },
           { do: "out", spans: [OK("  ✓"), FG(" review      "), DIM("@reviewer     6.4s   5.1k")], ms: 200 },
           { do: "out", spans: [OK("  ✓"), FG(" summary     "), DIM("@writer       3.9s   1.9k")], ms: 200 },
           { do: "out", spans: [DIM("  8/8 done · 46.3k tokens · 1m04s")] },
-          { do: "pause", ms: 700 },
+          { do: "pause", ms: 1000 },
+
+          /* free, and needs no model at all */
           { do: "cmd", text: "@flow graph build" },
           { do: "out", spans: [DIM("        ┌───────────────┐")] },
           { do: "out", spans: [DIM("        │ plan @planner │")] },
@@ -307,13 +344,14 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "out", spans: [DIM(" ┌────┴─────┐   ┌──────────┴───────┐")] },
           { do: "out", spans: [DIM(" │ fix      │╌╌╌│ review @reviewer │")] },
           { do: "out", spans: [DIM(" └──────────┘   └──────────────────┘")] },
+          { do: "out", spans: [MUT("  ← @flow graph and @flow check need no model and spend nothing")] },
         ]);
       },
     },
 
     loop: {
       caption: () => caption("<code>@loop</code> — until it's <em>actually</em> done",
-        "The AI proposes a real check command from your goal, the guard adjudicates it, and it is proven <em>before</em> the first token is spent — already green costs nothing."),
+        "Give it a goal and a command whose exit status decides — <code>--check</code>. Give none and the AI proposes one <b>once</b>, the guard adjudicates it, and it is proven <em>before</em> the first token is spent; already green costs nothing. The check does not have to be a test suite: anything with an exit status works, which is why the second example is about prose."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
@@ -327,30 +365,56 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "tool", name: "fs.edit", args: '{"path":"src/config.rs"}', ms: 5, size: "188B" },
           { do: "out", spans: [DIM("  check: exit=0")], ms: 400 },
           { do: "out", spans: [OK("✓ goal reached after 2 iteration(s)")] },
+          { do: "pause", ms: 1200 },
+
+          /* the same machine, no code in sight — `wc` and `test` are all it takes */
+          { do: "cmd", text: "@loop \"cut the intro in intro.md under 200 words without losing the point\" --agent writer --check \"test $(wc -w < intro.md) -lt 200\"" },
+          { do: "out", spans: [FG("🔁 loop 'writer' — up to 5 iteration(s)")] },
+          { do: "out", spans: [DIM("  verifier: test $(wc -w < intro.md) -lt 200")] },
+          { do: "out", spans: [FG("▶ iteration 1/5")] },
+          { do: "tool", name: "fs.edit", args: '{"path":"intro.md"}', ms: 5, size: "1.2KB" },
+          { do: "out", spans: [DIM("  check: exit=1")], ms: 420 },
+          { do: "out", spans: [FG("▶ iteration 2/5")] },
+          { do: "tool", name: "fs.edit", args: '{"path":"intro.md"}', ms: 4, size: "640B" },
+          { do: "out", spans: [DIM("  check: exit=0")], ms: 380 },
+          { do: "out", spans: [OK("✓ goal reached after 2 iteration(s)")] },
+          { do: "out", spans: [MUT("  ← the goal was prose; the check was still a command that exits 0")] },
         ]);
       },
     },
 
     job: {
       caption: () => caption("<code>@job</code> — say what to do, and when",
-        "The AI reads the schedule out of your sentence <em>once</em>, at creation, and writes it into the record as cron — so every run after that is plain arithmetic. Recurring jobs survive a reboot: a missed one catches up exactly once."),
+        "The AI reads the schedule out of your sentence <em>once</em>, at creation, and writes it into the record as cron — so every run after that is plain arithmetic. Recurring jobs survive a reboot: a missed one catches up exactly once. And a job that runs a <em>command</em> (<code>@job -- …</code>) needs no model at all."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
+
+          /* plain English, no repo anywhere near it */
+          { do: "cmd", text: '@job "every Monday at 9, summarise what landed in ~/Documents/inbox into ~/Documents/weekly.md"' },
+          { do: "out", spans: [FG("⧖ every Monday at 09:00 — summarise what landed in ~/Documents/inbox … · job 1753112060-4302")] },
+          { do: "out", spans: [DIM("  cron 0 9 * * 1  ·  fires in 3d  ·  list: @job  ·  cancel: @job cancel 1753112060-4302")] },
+          { do: "pause", ms: 900 },
+
           { do: "cmd", text: '@job "summarize the kafka logs into ~/reports/kafka.md every hour"' },
           { do: "out", spans: [FG("⧖ every hour — summarize the kafka logs into ~/reports/kafka.md · job 1753112100-4310")] },
-          { do: "out", spans: [DIM("  fires in 1h  ·  list: @job  ·  cancel: @job cancel 1753112100-4310")] },
+          { do: "out", spans: [DIM("  fires in 1h  ·  cron 0 * * * *")] },
           { do: "pause", ms: 900 },
+
           { do: "cmd", text: "@job --every 15m -- ./sync.sh" },
           { do: "out", spans: [FG("⧖ every 15m — ./sync.sh · job 1753112140-4318")] },
           { do: "out", spans: [DIM("  fires in 15m  ·  no model needed to run this one")] },
           { do: "pause", ms: 900 },
+
           { do: "cmd", text: "@job" },
-          { do: "out", spans: [FG("background jobs (3):")] },
+          { do: "out", spans: [FG("background jobs (4):")] },
+          { do: "out", spans: [FG("  ⧖ 1753112060-4302 scheduled summarise what landed in ~/Documents… "), DIM("(fires in 3d)")] },
+          { do: "out", spans: [DIM("      cron 0 9 * * 1  ·  4 run(s)  ·  last ok")] },
           { do: "out", spans: [FG("  ⧖ 1753112100-4310 scheduled summarize the kafka logs … "), DIM("(fires in 48m)")] },
           { do: "out", spans: [DIM("      cron 0 * * * *  ·  12 run(s)  ·  last ok")] },
           { do: "out", spans: [FG("  ▶ 1753112000-4242 running   audit the deps … "), DIM("(2m ago · 2m)")] },
           { do: "out", spans: [OK("  ✓ "), FG("1753111800-4101 done      create a CHANGELOG … "), DIM("(9m ago · 45s)")] },
+          { do: "out", spans: [MUT("  ← @job log <id> -f follows one like a log file")] },
         ]);
       },
     },

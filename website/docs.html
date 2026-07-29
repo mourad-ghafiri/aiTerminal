@@ -43,6 +43,7 @@
     <a href="#install">Install &amp; first launch</a>
     <a href="#enable-ai">Enable AI</a>
     <a href="#layout">The ~/.aiTerminal folder</a>
+    <a href="#no-code">Without writing code</a>
     <b>Commands</b>
     <a href="#cmd-ai">@ai</a>
     <a href="#cmd-agent">@&lt;agent&gt; · @agent</a>
@@ -152,6 +153,34 @@ api_key  = <span class="s">"sk-…"</span>             <span class="c"># or "$MY
 │   └── sessions/      <span class="c"># &lt;id&gt;/ per-folder AI memory (digest + memory/)</span>
 ├── logs/  cache/  shell/  crash.log</code></pre>
 
+    <h2 id="no-code">Without writing code</h2>
+    <p>None of this needs a repo. If you never open a source file, most of it is still for you —
+      and the table says exactly what each one needs, so nothing here fails on your machine for a
+      reason you could not have known.</p>
+    <div class="table-wrap"><table>
+      <tr><th>You want to</th><th>Type</th><th>Needs</th></tr>
+      <tr><td>understand a long PDF, or a photo of a page</td><td><code>@ai summarise @~/Downloads/lease.pdf</code></td><td>a model whose entry declares <code>enable_document</code> (images: <code>enable_vision</code>) — otherwise the file is <b>dropped</b></td></tr>
+      <tr><td>research a decision, with real sources</td><td><code>@flow research "which e-bike for a hilly commute"</code></td><td><code>[ai] network = true</code>. Search is <b>keyless</b> — no extra account</td></tr>
+      <tr><td>tidy or rename a pile of files</td><td><code>@ai move every screenshot into folders by month</code></td><td>a model. <code>@ai</code> <b>proposes</b> the command and preloads it for you to read</td></tr>
+      <tr><td>read a long web page</td><td><code>@researcher "what does this say — &lt;url&gt;"</code></td><td><code>[ai] network = true</code></td></tr>
+      <tr><td>draft something, saved to a file</td><td><code>@writer "turn @notes.md into a brief at brief.md"</code></td><td>a model</td></tr>
+      <tr><td>hold writing under a word count</td><td><code>@loop "cut intro.md under 200 words" --agent writer --check "test $(wc -w &lt; intro.md) -lt 200"</code></td><td>a model, and a command whose <b>exit status</b> decides</td></tr>
+      <tr><td>a weekly digest, in plain English</td><td><code>@job "every Monday at 9, summarise ~/Documents/inbox"</code></td><td>a model to read the schedule once</td></tr>
+      <tr><td>write and preview at the same time</td><td><code>@md edit letter.md</code></td><td><b>nothing</b> — no model, no network</td></tr>
+      <tr><td>ask your terminal from your phone</td><td><code>@gate telegram start</code></td><td>a bot token</td></tr>
+    </table></div>
+    <div class="callout"><b>Two things before you copy a line off this page.</b>
+      <code>@ai</code> <b>has no tools</b> — it answers, or proposes one command for you to review.
+      It cannot open a file, fetch a URL or read your clipboard. What it can see is an
+      <b>attachment</b>: any <code>@&lt;path&gt;</code> naming a real file rides along with the
+      question. To have something read a page or a folder, use an agent
+      (<code>@researcher</code>, <code>@explorer</code>) — those have tools. And an attachment can
+      be <b>silently dropped</b>: a PDF only reaches a model that declares
+      <code>enable_document</code>; if yours does not, the question still goes, without the file.</div>
+    <p>These need <b>no model at all</b>: <code>@md</code> · <code>@theme</code> ·
+      <code>@profile</code> · <code>@config</code> · <code>@plugin</code> · <code>@agent</code> ·
+      <code>@flow check</code> · <code>@flow graph</code> · <code>@job -- &lt;command&gt;</code>.</p>
+
     <h2 id="cmd-ai">@ai — a command to run, or an answer</h2>
     <pre><code><span class="p">❯</span> @ai list files
 du -sh .                             <span class="c"># the proposed command</span>
@@ -219,7 +248,9 @@ The fix: the parser dropped the final line …
 <span class="p">❯</span> @flow resume last                <span class="c"># run only what did not finish</span></code></pre>
     <p>Five flows ship, and none of them names a build tool, a test command or a language —
       <code>@tester</code> finds the project's own runner, which is what makes them yours rather
-      than somebody else's.</p>
+      than somebody else's. <code>research</code> is the one that is not about code at all: it
+      answers any question, needs <code>[ai] network = true</code>, and its search is
+      <b>keyless</b> — there is no second account to create.</p>
     <div class="table-wrap"><table>
       <tr><th>Flow</th><th>What it does</th></tr>
       <tr><td><code>build</code></td><td>plan → map the code and its conventions <b>in parallel</b> → implement → test → fix until green → review → summarise</td></tr>

@@ -36,7 +36,7 @@
 <!-- ================= HEAD ================= -->
 <section class="page-head">
   <div class="wrap">
-    <span class="tag accent">60 real workflows, real prompts</span>
+    <span class="tag accent">76 real workflows, real prompts</span>
     <h1>What people actually <em>do with it.</em></h1>
     <p class="sub">Every one of these runs at a normal shell prompt — no context switch, no
       copy-paste. The AI sees your (redacted) session, the guard reviews every command, and
@@ -651,7 +651,7 @@ action = "split_down"</pre>
         <pre><span class="p">❯</span> <span class="ab">@theme</span><span class="c"> export midnight</span> > ~/.aiTerminal/themes/mine.toml
 <span class="p">❯</span> vim ~/.aiTerminal/themes/mine.toml   <span class="d"># change accent, done</span>
 <span class="p">❯</span> <span class="ab">@theme</span><span class="c"> mine</span>
-theme 'mine' applied — running shells restyle too</pre>
+theme 'mine' applied to profile 'default' — a running window restyles within a second</pre>
       </div>
 
       <div class="uc">
@@ -681,6 +681,131 @@ api/handlers/. Register it in ROUTES, add a table test…</pre>
   <div class="reveal" style="text-align:center;margin:70px 0 30px">
     <a class="btn dark" href="index.html#install"><span>Get aiTerminal →</span></a>
   </div>
+  <!-- ═══════════ IF YOU DON'T WRITE CODE ═══════════ -->
+  <div class="uc-cat reveal">
+    <span class="tag">07 · if you don't write code</span>
+    <h2>None of this needs a repo</h2>
+    <p class="lead">A terminal is just a place to type. Everything below works on a folder of
+      documents, a question you have, or a file somebody sent you — and every one of them is a
+      command you can copy and run today. Where something needs more than a model key, it says so.</p>
+    <div class="uc-grid">
+
+      <div class="uc">
+        <h3><span class="em">📄</span>Read the long PDF for me</h3>
+        <p>Any <code>@&lt;path&gt;</code> that names a real file rides along with your question. PDFs and images go as-is; text files are inlined.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> summarise @~/Downloads/tenancy-agreement.pdf — what am I agreeing to, in 10 bullets</span>
+<span class="d">✦ claude-opus-4-8 · 1 document</span>
+1. Twelve-month fixed term, then rolling monthly …
+<span class="d">needs a model with document support, or the file is skipped (images: vision)</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🛒</span>Research a decision, with real sources</h3>
+        <p>The <code>research</code> flow splits your question into parts, looks each one up <em>in parallel</em>, then reports what the sources say — and where they disagree.</p>
+        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> "which e-bike for a hilly commute under €2000"</span>
+<span class="a">▸ research</span> <span class="d">— asks for sources and a comparison</span>
+  <span class="g">✓</span> plan     <span class="d">@planner      → 5 sub-questions</span>
+  <span class="g">✓</span> gather   <span class="d">@researcher   × 5, at once</span>
+  <span class="g">✓</span> report   <span class="d">@writer</span>
+<span class="d">search is keyless — no extra account, just [ai] network = true</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🧺</span>Tidy this folder — but let me look first</h3>
+        <p><code>@ai</code> proposes one command and <b>preloads it for review</b>. You read it, edit it, press Enter — or don't. Nothing runs behind your back.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> move every screenshot on my Desktop into ~/Pictures/Screenshots, in folders by month</span>
+<span class="p">❯</span> <span class="d">press Enter to run (or edit)</span>
+<span class="p">❯</span> <span class="c">for f in ~/Desktop/Screen*.png; do d=~/Pictures/Screenshots/$(date -r "$f" +%Y-%m); mkdir -p "$d"; mv "$f" "$d"/; done</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🗂</span>Rename a pile of photos sensibly</h3>
+        <p>Same review-first path. Ask in your own words; read the command before it touches anything.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> rename the photos in ~/Pictures/trip to trip-01.jpg, trip-02.jpg … in date order</span>
+<span class="p">❯</span> <span class="d">press Enter to run (or edit)</span>
+<span class="p">❯</span> <span class="c">i=1; ls -tr ~/Pictures/trip/*.jpg | while read f; do mv "$f" "$(dirname "$f")/trip-$(printf %02d $i).jpg"; i=$((i+1)); done</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🧾</span>Make this export readable</h3>
+        <p>A <code>.csv</code>, <code>.txt</code> or <code>.md</code> attachment is inlined straight into the question — no tool call, no setup.</p>
+        <pre><span class="p">❯</span> <span class="ab">@ai</span><span class="c"> turn @sales-q3.csv into a markdown table and tell me the three biggest movers</span>
+| region | q2 | q3 | change |
+|---|---|---|---|
+| north  | 41 | 58 | +41% |
+<span class="d">Biggest movers: north, then iberia; apac fell 12% …</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📰</span>Read a long page without the browser</h3>
+        <p><code>@researcher</code> can fetch and read. (<code>@ai</code> cannot — it has no tools; it answers or proposes a command.)</p>
+        <pre><span class="p">❯</span> <span class="ab">@researcher</span><span class="c"> "what does this actually say — https://example.org/policy-update"</span>
+<span class="d">  ⚙ web.read {"url":"https://example.org/policy-update"} · 1.1s · 22KB</span>
+Three changes matter to you, one takes effect in March …
+<span class="d">every claim carries its source; what it couldn't confirm is listed</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">✍️</span>Draft it, and save the file</h3>
+        <p><code>@writer</code> writes to disk rather than printing at you — and marks anything it could not verify instead of smoothing over it.</p>
+        <pre><span class="p">❯</span> <span class="ab">@writer</span><span class="c"> "turn @notes.md into a one-page brief at brief.md"</span>
+<span class="d">  ⚙ fs.read {"path":"notes.md"} · 4ms · 3.9KB</span>
+<span class="d">  ⚙ fs.write {"path":"brief.md"} · 6ms · 2.1KB</span>
+Wrote brief.md — the decision first. Two claims marked unverified.</pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">✂️</span>Hold it under the word count</h3>
+        <p><code>@loop</code> needs a command whose exit status decides — and that does not have to be a test suite. <code>wc</code> and <code>test</code> are enough.</p>
+        <pre><span class="p">❯</span> <span class="ab">@loop</span><span class="c"> "cut the intro in intro.md under 200 words without losing the point" \
+     --agent writer --check "test $(wc -w &lt; intro.md) -lt 200"</span>
+▶ iteration 1/5 … <span class="d">check: exit=1</span>
+▶ iteration 2/5 … <span class="d">check: exit=0</span>
+<span class="g">✓ goal reached after 2 iteration(s)</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🗓</span>A weekly digest, in plain English</h3>
+        <p>Say when in your own words. The AI reads the schedule <em>once</em> and stores it as cron — every run after that is arithmetic, and a missed one catches up.</p>
+        <pre><span class="p">❯</span> <span class="ab">@job</span><span class="c"> "every Monday at 9, summarise what landed in ~/Documents/inbox into weekly.md"</span>
+⧖ every Monday at 09:00 — summarise what landed … · job 1753112060-4302
+<span class="d">  cron 0 9 * * 1  ·  fires in 3d  ·  cancel: @job cancel 1753112060-4302</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📖</span>Write and see it at the same time</h3>
+        <p><code>@md edit</code> is a split: your Markdown on the left, the rendered page on the right — diagrams and tables drawn in the terminal. No model, no network.</p>
+        <pre><span class="p">❯</span> <span class="ab">@md</span><span class="c"> edit letter.md</span>
+<span class="d">┌─ letter.md ────────┬─ preview ──────────┐
+│ # Dear board       │ Dear board         │
+│ - point one        │  • point one       │
+└────────────────────┴────────────────────┘</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📱</span>Ask it from the bus stop</h3>
+        <p>Pair a chat app to <em>this</em> pane and type at it from your phone. The same guard applies, and your secrets are redacted before anything leaves.</p>
+        <pre><span class="p">❯</span> <span class="ab">@gate</span><span class="c"> telegram start</span>
+<span class="d">  ⬤ telegram gate live · @your_term_bot</span>
+<span class="d">  pair from the chat: </span>/pair 418-207<span class="d">   (nothing runs until you do)</span>
+<span class="d">then, from the bus stop:  "did the weekly digest run?"</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🎨</span>Make it yours in one command</h3>
+        <p>19 themes, live — the whole window restyles within a second. No settings window anywhere in this product.</p>
+        <pre><span class="p">❯</span> <span class="ab">@theme</span>
+themes in ~/.aiTerminal/themes (19):
+<span class="d">  ○ alpine   ○ coral   ○ cosmic-orange   ○ deep-purple   ○ gold   ○ graphite</span>
+<span class="d">  ○ lavender   ○ light-gold   </span>● midnight<span class="d">   ○ mist-blue   ○ nebula   ○ pink</span>
+<span class="d">  ○ product-red   ○ sage   ○ sky-blue   ○ solar-flare   ○ starlight   ○ sunset   ○ titanium</span>
+<span class="p">❯</span> <span class="ab">@theme</span><span class="c"> sunset</span>
+theme 'sunset' applied to profile 'default' — a running window restyles within a second</pre>
+      </div>
+
+    </div>
+  </div>
+
 </main>
 
 <!-- ================= FOOTER ================= -->
