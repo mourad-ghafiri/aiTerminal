@@ -53,6 +53,21 @@
     <div class="uc-grid">
 
       <div class="uc">
+        <h3><span class="em">🧑‍🔬</span>Pick the right specialist</h3>
+        <p><code>@agent</code> is the roster: eight of them, each with its tools, its step cap and what it returns. Run any one with <code>@&lt;name&gt;</code>. They are Markdown files, so the list is yours to change.</p>
+        <pre><span class="p">❯</span> <span class="ab">@agent</span>
+agents (8):
+  ai          <span class="d">19 tools ·  6 steps  General assistant — a command to review, or an answer</span>
+  coder       <span class="d">24 tools · 24 steps  Senior engineer — the smallest correct edit, verified</span>
+  explorer    <span class="d"> 7 tools · 12 steps  Read-only scout — maps the code and reports tightly</span>
+  planner     <span class="d"> 7 tools · 10 steps  Turns a goal into a plan with a concrete done-when</span>
+  researcher  <span class="d">12 tools · 16 steps  Finds sources, reads them, reports what they say</span>
+  reviewer    <span class="d"> 7 tools · 12 steps  Read-only review — correctness, security, design</span>
+  tester      <span class="d">13 tools · 18 steps  Runs the project's own tests, reports what happened</span>
+  writer      <span class="d">10 tools · 14 steps  Docs and reports — and saves the file</span></pre>
+      </div>
+
+      <div class="uc">
         <h3><span class="em">🚢</span>Ship a small feature, end to end</h3>
         <p>The <code>build</code> graph plans it, maps the code <em>and</em> your conventions in parallel, edits, runs <em>your</em> tests — and if they fail, loops back through a fixer up to three times before giving up.</p>
         <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> build "add a --json flag to the export command"</span>

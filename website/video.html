@@ -294,7 +294,7 @@ body { background: var(--paper); }
       You type <b>@</b>-commands at the prompt you already have.</p>
     <div class="vcmds">
       <span class="vcmd rise" style="--d:.55s"><b>@ai</b> …</span>
-      <span class="vcmd rise" style="--d:.63s"><b>@coder</b> …</span>
+      <span class="vcmd rise" style="--d:.63s"><b>@agent</b> …</span>
       <span class="vcmd rise" style="--d:.71s"><b>@flow</b> …</span>
       <span class="vcmd rise" style="--d:.79s"><b>@loop</b> …</span>
       <span class="vcmd rise" style="--d:.87s"><b>@job</b></span>
@@ -514,18 +514,28 @@ body { background: var(--paper); }
       { do: "pause", ms: 2200 },
     ]);
 
-    /* ---- 02 · @coder — delegate the whole task ---- */
-    chapter("02 · agents", "<code>@coder</code> — hand over the <em>whole task</em>",
-      "Live reasoning, timed tool calls, a streamed answer, a token footer — the whole loop, in your scrollback. Agents share a BM25 memory of your project; MCP servers plug in the same way.");
+    /* ---- 02 · @agent — eight specialists, one of them at a time ---- */
+    chapter("02 · agents", "<code>@agent</code> — eight <em>specialists</em>",
+      "Planner, explorer, researcher, coder, tester, reviewer, writer — and the assistant. <code>@agent</code> lists them, <code>@agent &lt;name&gt;</code> shows one in full, <code>@&lt;name&gt;</code> runs it. Each is an editable Markdown file, and each states what it returns, because a workflow chains on that text.");
     await run(w, [
+      { do: "cmd", text: "@agent", speed: 14 },
+      { do: "out", spans: [FG("agents (8):")] },
+      { do: "out", spans: [FG("  planner    "), DIM(" 7 tools · 10 steps  Turns a goal into a plan with a done-when")] },
+      { do: "out", spans: [FG("  explorer   "), DIM(" 7 tools · 12 steps  Read-only scout — maps the code")] },
+      { do: "out", spans: [FG("  researcher "), DIM("12 tools · 16 steps  Finds sources and reads them")] },
+      { do: "out", spans: [FG("  coder      "), DIM("24 tools · 24 steps  The smallest correct edit, verified")] },
+      { do: "out", spans: [FG("  tester     "), DIM("13 tools · 18 steps  Runs the project's own tests")] },
+      { do: "out", spans: [FG("  reviewer   "), DIM(" 7 tools · 12 steps  Read-only review")] },
+      { do: "out", spans: [FG("  writer     "), DIM("10 tools · 14 steps  Docs and reports — and saves the file")] },
+      { do: "pause", ms: 1400 },
       { do: "cmd", text: "@coder \"fix the failing parser test\"", speed: 12 },
       { do: "out", spans: [ACC("✦ @coder"), MUT(" · claude-opus-4-8")] },
       { do: "spin", label: "thinking…", ms: 850 },
       { do: "think", text: "The test expects a trailing newline — the parser drops it on the last line…" },
-      { do: "tool", name: "fs.search", args: '{"q":"parse_flow"}', ms: 18, size: "2.1KB", wait: 220 },
+      { do: "tool", name: "fs.search", args: '{"q":"parse_line"}', ms: 18, size: "2.1KB", wait: 220 },
       { do: "tool", name: "fs.edit", args: '{"path":"src/parser.rs"}', ms: 6, size: "412B", wait: 220 },
       { do: "tool", name: "sys.run", args: '{"cmd":"cargo test parser"}', ms: 2100, size: "1.4KB", wait: 260 },
-      { do: "stream", spans: [FG("Fixed — the parser dropped the final line; added the flush in "), ACC2("parse_flow()"), FG(".")], speed: 8 },
+      { do: "stream", spans: [FG("Fixed — the parser dropped the final line; added the flush in "), ACC2("parse_line()"), FG(".")], speed: 8 },
       { do: "footer", text: "8.4s · 3 tools · 12.3k in / 1.8k out" },
       { do: "pause", ms: 2000 },
     ]);
