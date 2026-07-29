@@ -7,8 +7,9 @@ using the same from-scratch Markdown + diagram engines that render `@ai` answers
 
 Pretty-prints a Markdown file straight into the pane: headings, **bold**/*italic*, `inline code`,
 links, bullet/numbered/task lists, block quotes, boxed fenced code, and aligned tables — wrapped to
-the **full width of the split**. Diagrams are **drawn natively** as pixels inline (flowcharts and
-sequence diagrams); in other terminals or when piped they fall back to a clean labelled box, and
+the **full width of the split**. Diagrams are **drawn natively** as pixels inline — every mermaid
+diagram type, from flowcharts and sequence diagrams to class, state, ER, gantt, pie and mindmaps;
+in other terminals or when piped the same layout is drawn in **Unicode box art**, and
 piped output is plain Markdown so `@md render notes.md | less` stays clean.
 
 ```
@@ -70,9 +71,11 @@ long code lines are always reachable.
 
 Inside aiTerminal the preview's diagrams render as real pixels and the mouse works throughout
 (aiTerminal reports mouse events to full-screen programs, so `vim`/`less` get the mouse too). In a
-third-party terminal the mouse is handled by that terminal and diagrams show as boxes.
+third-party terminal the mouse is handled by that terminal and diagrams are drawn in box art.
 
 **Resizing** the terminal reflows the pager and the editor's live preview immediately (both
 re-render at the new width). Note that plain `@ai` answers and short inline `@md render` output live
 in the scrollback and — like any terminal output — keep the width they were printed at; new content
 after a resize adapts, and rendering never corrupts across a resize.
+
+See [diagrams.md](diagrams.md) for every diagram type that can be drawn.

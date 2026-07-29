@@ -10,6 +10,7 @@ every setting is a TOML file — there is no settings UI.
 | [features.md](features.md) | The terminal itself: tabs, splits, switcher, selection, ⌘-click, status bar, profiles. |
 | [ai.md](ai.md) | The whole AI surface: `@ai` / agents / flows / loops / background jobs, memory, MCP, models & pools, the tool catalog. |
 | [md.md](md.md) | `@md render` / `@md edit` — read & live-edit Markdown files (native diagrams, split preview, keyboard + mouse scroll). |
+| [diagrams.md](diagrams.md) | Every mermaid diagram type — what is supported, how it is drawn in the app and in any other terminal. |
 | [gate.md](gate.md) | `@gate` — hand a split to Telegram and drive your terminal from your phone (shared shell, screenshots, pairing). |
 | [configuration.md](configuration.md) | `config.toml` reference, the `~/.aiTerminal/` layout, profiles, i18n. |
 | [keybindings.md](keybindings.md) | Default chords, the action list, custom keymaps. |

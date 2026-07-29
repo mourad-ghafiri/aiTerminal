@@ -285,9 +285,13 @@ each iteration and a footer with the iteration count:
   machine protocol never reaches the display in any dialect (`@tool`, `<tool_call>`,
   `[TOOL_CALLS]`, `<|python_tag|>`, fenced) — the parser is model-agnostic.
 - **Diagrams** — when a visual clarifies an idea, the AI includes one and it's **drawn natively
-  in the pane** (flowcharts + sequence diagrams): parsed and laid out by `corelib::mermaid`,
-  rasterized by the `gfx` engine, and composited over reserved grid rows (via a private
-  `OSC 1338` placement in the terminal engine). Piped/other terminals get a clean fallback box.
+  in the pane** — **every mermaid diagram type**: flowcharts, sequence, class, state, ER,
+  gantt, pie, journey, timeline, mindmap, kanban, git graphs, quadrant, requirement, C4,
+  xychart, sankey, block, packet, radar, treemap and architecture. Parsed and laid out by
+  `corelib::mermaid`, rasterized by the `gfx` engine, and composited over reserved grid rows
+  (via a private `OSC 1338` placement in the terminal engine). **Piped or third-party
+  terminals draw the same picture in Unicode box art** — only a diagram we genuinely cannot
+  read falls back to a boxed source.
   The AI is prompted as a concise teacher and never exposes any formatting/diagram syntax.
 - **Thinking** is hidden by default — you see only the animated `∴ thinking…`
   indicator, then tools and the answer. Set `[ai] show_reasoning = true` to stream the

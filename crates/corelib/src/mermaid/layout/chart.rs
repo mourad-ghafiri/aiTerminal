@@ -69,7 +69,8 @@ fn pie(c: &Chart, m: &Metrics, measure: Measure) -> Scene {
     let width = 2.0 * r + 4.0 * m.ew + legend_w + 2.0 * m.margin;
     let top = title(&mut sb, c, m, width);
     let (cx, cy) = (m.margin + r, top + r);
-    let mut angle = 0.0_f32;
+    // Slices start at twelve o'clock, the way every pie chart is read.
+    let mut angle = -std::f32::consts::FRAC_PI_2;
     for (i, v) in values.iter().enumerate() {
         let sweep = (v / total) as f32 * std::f32::consts::TAU;
         sb.wedge(cx, cy, r, angle, angle + sweep, i as u8);
