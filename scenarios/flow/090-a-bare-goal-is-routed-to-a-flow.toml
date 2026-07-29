@@ -1,0 +1,29 @@
+name = "a goal with no flow name is routed by the model, and the choice is stated"
+tags = ["flow", "routing"]
+
+# A flow name can never contain a space, so one quoted argument that does is
+# unambiguously a goal. Which graph it wants is a real question, and the honest way to
+# answer it is to ask — once, before anything runs, and say so out loud.
+
+[[step]]
+flows_installed = ["build: implement and test a change", "research: answer a question with sources"]
+
+[[step]]
+model_routes = "{\"flow\":\"research\",\"why\":\"the goal asks for sources and a comparison, not a code change\"}"
+
+[[step]]
+goal = "Research LLM memory techniques"
+
+[[step]]
+expect_routed_to = "research"
+
+# The same shape of goal, routed the other way — the router reads what the goal asks
+# for, not the words it happens to use.
+[[step]]
+model_routes = "{\"flow\":\"build\",\"why\":\"it wants working code\"}"
+
+[[step]]
+goal = "Build a SaaS landing page end to end"
+
+[[step]]
+expect_routed_to = "build"

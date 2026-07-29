@@ -31,6 +31,7 @@ use world::{Factory, World};
 const REGISTRY: &[(&str, Factory)] = &[
     ("ai", worlds::ai::build),
     ("config", worlds::config::build),
+    ("flow", worlds::flow::build),
     ("gate", worlds::gate::build),
     ("jobs", worlds::jobs::build),
     ("keymap", worlds::keymap::build),
@@ -116,7 +117,12 @@ mod tests {
 
     #[test]
     fn ai_scenarios() {
-        check("ai", 23);
+        check("ai", 21);
+    }
+
+    #[test]
+    fn flow_scenarios() {
+        check("flow", 21);
     }
 
     #[test]

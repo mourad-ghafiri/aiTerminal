@@ -1,0 +1,48 @@
+name = "a failed node stops its own branch and nothing else"
+tags = ["flow", "robustness"]
+
+# A chain throws away everything when one step dies. A graph keeps the work the
+# failure had nothing to do with — which is the whole argument for resuming later.
+
+[[step]]
+flow = """
+[[node]]
+id     = "docs"
+agent  = "explorer"
+prompt = "Read the docs"
+
+[[node]]
+id     = "summary"
+agent  = "reviewer"
+needs  = ["docs"]
+prompt = "Summarise {{docs.output}}"
+
+[[node]]
+id     = "build"
+agent  = "coder"
+prompt = "Build it"
+
+[[node]]
+id     = "package"
+agent  = "coder"
+needs  = ["build"]
+prompt = "Package {{build.output}}"
+"""
+
+[[step]]
+node_fails = ["build"]
+
+[[step]]
+run = true
+
+[[step]]
+expect_states = ["docs=done", "summary=done", "build=failed", "package=blocked"]
+
+# The half that had nothing to do with the failure finished, and its work is kept.
+[[step]]
+expect_ran = ["build", "docs", "package", "summary"]
+
+# And it is real work, not a node that merely reported "done": the summary was
+# handed what the docs node actually produced.
+[[step]]
+expect_asked = ["summary: Summarise docs did its work"]

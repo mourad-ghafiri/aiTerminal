@@ -1,0 +1,37 @@
+name = "the graph is drawn in the terminal, with each kind of node its own shape"
+tags = ["flow", "render"]
+
+# A graph is harder to read than a chain — so the tool shows you the shape, rather
+# than asking you to hold it in your head.
+
+[[step]]
+flow = """
+[[node]]
+id     = "map"
+agent  = "explorer"
+prompt = "Map it"
+
+[[node]]
+id    = "verify"
+run   = "cargo test"
+needs = ["map"]
+
+[[node]]
+id     = "fix"
+agent  = "coder"
+needs  = ["verify"]
+when   = "verify.failed"
+prompt = "Fix it"
+goto   = "verify"
+max    = 3
+
+[[node]]
+id     = "ok"
+kind   = "approve"
+needs  = ["verify"]
+when   = "verify.passed"
+prompt = "Ship it?"
+"""
+
+[[step]]
+expect_graph_contains = ["map @explorer", "verify $ cargo test", "fix @coder", "ok?", "failed", "passed"]

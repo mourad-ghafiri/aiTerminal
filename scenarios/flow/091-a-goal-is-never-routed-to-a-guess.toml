@@ -1,0 +1,27 @@
+name = "a goal the model cannot place is an error, never a flow chosen by default"
+tags = ["flow", "routing", "errors"]
+
+[[step]]
+flows_installed = ["build: implement and test a change", "research: answer a question with sources"]
+
+# A model that invents a plausible-sounding flow gets nothing: running the wrong graph
+# costs more than asking, and a not-found error for a name nobody typed is worse still.
+[[step]]
+model_routes = "{\"flow\":\"deploy\",\"why\":\"sounds about right\"}"
+
+[[step]]
+goal = "ship this to production"
+
+[[step]]
+expect_not_routed = ["did not name a flow"]
+
+# "None of these fit" is a good answer, and it stays an answer rather than becoming a
+# fallback to somebody's favourite flow.
+[[step]]
+model_routes = "{\"flow\":null,\"why\":\"none of these fit\"}"
+
+[[step]]
+goal = "order me a coffee"
+
+[[step]]
+expect_not_routed = ["did not name a flow"]

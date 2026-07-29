@@ -1,0 +1,48 @@
+name = "a node with a condition is governed by that condition, not by its other needs"
+tags = ["flow", "conditions"]
+
+# One rule, and it is the whole story: `needs` decides the ORDER, `when` decides whether
+# a node runs. So a node that carries a condition always gets to evaluate it.
+#
+# That is what makes a fixer reachable — it needs the thing that broke, and must not be
+# stopped by the very breakage it exists to handle. The same rule has a sharper edge:
+# a node conditioned on ONE of its needs runs even when ANOTHER of them failed. That is
+# deliberate. If you meant "and the other one too", the condition says so.
+
+[[step]]
+flow = """
+[[node]]
+id     = "a"
+agent  = "tester"
+prompt = "one"
+
+[[node]]
+id     = "b"
+agent  = "tester"
+prompt = "two"
+
+[[node]]
+id     = "watchful"
+agent  = "reviewer"
+needs  = ["a", "b"]
+when   = "a.passed"
+prompt = "Report on {{a.output}} — b said {{b.output}}"
+
+[[node]]
+id     = "careful"
+agent  = "reviewer"
+needs  = ["a", "b"]
+when   = "a.passed and b.passed"
+prompt = "Only when both are good"
+"""
+
+[[step]]
+node_fails = ["b"]
+
+[[step]]
+run = true
+
+# `watchful` asked only about `a`, so it runs and can see what `b` said.
+# `careful` asked about both, so it stands down. Neither is blocked behind its back.
+[[step]]
+expect_states = ["a=done", "b=failed", "watchful=done", "careful=skipped"]

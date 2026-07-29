@@ -17,7 +17,7 @@ use platform::transport::ScriptedTransport;
 
 use super::super::world::{self, World};
 use crate::ai::{
-    self, AgentSpec, Client, CommandReply, NoopObserver, OrchestrationStep, ReplySink, RunOutcome, ToolRunner, ToolSpec,
+    self, AgentSpec, Client, CommandReply, NoopObserver, ReplySink, RunOutcome, ToolRunner, ToolSpec,
 };
 use crate::security::Policy;
 
@@ -129,9 +129,6 @@ impl World for AiWorld {
         }
         if let Some(task) = world::text(step, "agent") {
             return self.agent(&task);
-        }
-        if let Some(steps) = world::list(step, "flow") {
-            return self.flow(&steps, world::flag(step, "chain").unwrap_or(true));
         }
 
         // ── what must be true ────────────────────────────────────────────────
@@ -262,32 +259,6 @@ impl AiWorld {
                 RunOutcome::Error(e) => Some(e.clone()),
                 _ => None,
             },
-            tokens: (run.input_tokens, run.output_tokens),
-            ..Outcome::default()
-        };
-        Ok(())
-    }
-
-    /// `flow = ["label: prompt", …]` — a multi-step sequence, chained by default so each
-    /// step sees the previous answers.
-    fn flow(&mut self, steps: &[String], chain: bool) -> Result<(), String> {
-        let mut plan = Vec::new();
-        for s in steps {
-            let (label, prompt) = s.split_once(':').ok_or_else(|| format!("flow step {s:?} needs `label: prompt`"))?;
-            plan.push(OrchestrationStep {
-                label: label.trim().to_string(),
-                agent: AgentSpec { system: String::new(), tools: self.tools.clone(), max_steps: self.max_steps },
-                prompt: prompt.trim().to_string(),
-            });
-        }
-        let mut runner = ScriptedRunner { results: self.tool_results.clone(), calls: Vec::new() };
-        let client = self.client();
-        let run = ai::run_orchestration(&client, &plan, "", chain, &mut runner, &mut NoopObserver);
-
-        self.last = Outcome {
-            answer: run.final_answer,
-            step_answers: run.steps.iter().map(|s| format!("{}={}", s.label, s.answer.trim())).collect(),
-            tool_calls: runner.calls,
             tokens: (run.input_tokens, run.output_tokens),
             ..Outcome::default()
         };

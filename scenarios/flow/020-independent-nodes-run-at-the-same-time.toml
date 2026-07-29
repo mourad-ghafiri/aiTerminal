@@ -1,0 +1,59 @@
+name = "nodes that need nothing from each other run at the same time"
+tags = ["flow", "parallel"]
+
+# The whole reason to declare a graph instead of a chain: three reviews that need
+# only the map are three reviews for one review's wall clock, and the node that
+# needs all three waits for all three.
+
+[[step]]
+flow = """
+[[node]]
+id     = "map"
+agent  = "explorer"
+prompt = "Map it"
+
+[[node]]
+id     = "correctness"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "Correctness of {{map.output}}"
+
+[[node]]
+id     = "security"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "Security of {{map.output}}"
+
+[[node]]
+id     = "design"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "Design of {{map.output}}"
+
+[[node]]
+id     = "report"
+agent  = "reviewer"
+needs  = ["correctness", "security", "design"]
+final  = true
+prompt = "Merge: {{correctness.output}} / {{security.output}} / {{design.output}}"
+"""
+
+[[step]]
+node_says = ["map: the map", "correctness: looks right", "security: no leaks", "design: tidy", "report: all three agree"]
+
+[[step]]
+run = true
+
+[[step]]
+expect_parallel = 3
+
+[[step]]
+expect_states = ["map=done", "correctness=done", "security=done", "design=done", "report=done"]
+
+# Each reviewer was given the map, and the merge was given all three by name — no
+# growing blob of everything that happened to run earlier.
+[[step]]
+expect_asked = ["security: Security of the map", "report: Merge: looks right / no leaks / tidy"]
+
+[[step]]
+expect_answer = "all three agree"

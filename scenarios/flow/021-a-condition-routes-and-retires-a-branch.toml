@@ -1,0 +1,50 @@
+name = "a condition decides which branch runs, and retires the other"
+tags = ["flow", "conditions"]
+
+# Routing lives on the edge as data this tool parses — not as an instruction a model
+# interprets and reinterprets differently next time.
+
+[[step]]
+flow = """
+[[node]]
+id    = "verify"
+run   = "cargo test"
+"""
+
+[[step]]
+flow = """
+[[node]]
+id  = "verify"
+run = "cargo test"
+
+[[node]]
+id     = "fix"
+agent  = "coder"
+needs  = ["verify"]
+when   = "verify.failed"
+prompt = "Fix: {{verify.output}}"
+
+[[node]]
+id     = "ship"
+agent  = "reviewer"
+needs  = ["verify"]
+when   = "verify.passed"
+prompt = "Write the release note"
+"""
+
+[[step]]
+node_fails = ["verify"]
+
+[[step]]
+node_says = ["verify: 2 tests failed", "fix: widened the parser"]
+
+[[step]]
+run = true
+
+# The fixer ran BECAUSE the tests failed — the shape that is unreachable if a failed
+# dependency settles its dependents behind their backs.
+[[step]]
+expect_states = ["verify=failed", "fix=done", "ship=skipped"]
+
+[[step]]
+expect_asked = ["fix: Fix: 2 tests failed"]

@@ -1,0 +1,24 @@
+name = "a node cannot read a result that is not ordered ahead of it"
+tags = ["flow", "verify", "errors"]
+
+# The invalid join. With no dependency between them, what `report` reads depends on
+# which thread finished first — that is a race, so it is an error with the fix named.
+
+[[step]]
+flow = """
+[[node]]
+id     = "audit"
+agent  = "reviewer"
+prompt = "Look at it"
+
+[[node]]
+id     = "report"
+agent  = "reviewer"
+prompt = "Write up {{audit.output}}"
+"""
+
+[[step]]
+check = true
+
+[[step]]
+expect_errors = ["'audit' does not run before it", "add it to `needs`"]

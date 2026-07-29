@@ -1,0 +1,23 @@
+name = "an old [[step]] file is refused, and the graph it should have been is printed"
+tags = ["flow", "errors"]
+
+# No compatibility code runs — and nobody is left guessing either.
+
+[[step]]
+bad_flow = """
+description = "Explore then review"
+chain = true
+
+[[step]]
+label  = "map"
+agent  = "explorer"
+prompt = "Map the code for: {{input}}"
+
+[[step]]
+label  = "review"
+agent  = "reviewer"
+prompt = "Review it"
+"""
+
+[[step]]
+expect_errors = ["old [[step]] format", "id     = \"map\"", "needs  = [\"map\"]", "{{map.output}}"]

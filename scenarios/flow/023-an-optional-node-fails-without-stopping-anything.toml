@@ -1,0 +1,32 @@
+name = "an optional node's failure neither blocks its dependents nor fails the run"
+tags = ["flow", "robustness"]
+
+[[step]]
+flow = """
+[[node]]
+id       = "lint"
+run      = "eslint ."
+optional = true
+
+[[node]]
+id     = "report"
+agent  = "reviewer"
+needs  = ["lint"]
+final  = true
+prompt = "Note anything the linter said: {{lint.output}}"
+"""
+
+[[step]]
+node_fails = ["lint"]
+
+[[step]]
+node_says = ["lint: 3 style complaints", "report: mentioned the lint output"]
+
+[[step]]
+run = true
+
+[[step]]
+expect_states = ["lint=done", "report=done"]
+
+[[step]]
+expect_asked = ["report: Note anything the linter said: 3 style complaints"]

@@ -1,0 +1,26 @@
+name = "a map node with an empty list is skipped, not run once with nothing"
+tags = ["flow", "map"]
+
+[[step]]
+flow = """
+[[node]]
+id  = "changed"
+run = "git diff --name-only HEAD"
+
+[[node]]
+id     = "each"
+agent  = "reviewer"
+needs  = ["changed"]
+over   = "{{changed.output}}"
+as     = "file"
+prompt = "Review {{file}}"
+"""
+
+[[step]]
+node_says = ["changed: "]
+
+[[step]]
+run = true
+
+[[step]]
+expect_states = ["changed=done", "each=skipped"]

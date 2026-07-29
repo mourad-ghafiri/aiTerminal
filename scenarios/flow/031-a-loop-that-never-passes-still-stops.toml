@@ -1,0 +1,35 @@
+name = "a loop that never succeeds stops at its bound instead of running forever"
+tags = ["flow", "loops", "bounds"]
+
+[setup]
+concurrency = 1
+
+[[step]]
+flow = """
+[[node]]
+id  = "verify"
+run = "cargo test"
+
+[[node]]
+id     = "fix"
+agent  = "coder"
+needs  = ["verify"]
+when   = "verify.failed"
+prompt = "Fix it"
+goto   = "verify"
+max    = 2
+"""
+
+[[step]]
+node_fails = ["verify"]
+
+[[step]]
+run = true
+
+# The original run plus two turns of the loop, and then it is over — a bill you can
+# work out before you start it.
+[[step]]
+expect_attempts = ["fix=3", "verify=3"]
+
+[[step]]
+expect_states = ["verify=failed", "fix=done"]

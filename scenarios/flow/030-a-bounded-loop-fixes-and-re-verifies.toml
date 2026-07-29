@@ -1,0 +1,52 @@
+name = "a backward edge re-runs the tests after a fix, a bounded number of times"
+tags = ["flow", "loops"]
+
+# "Run the tests, fix, run them again" cannot be written as a chain at all. Here it
+# is one `goto` with a `max`, so it is declared, bounded, and visible in the drawing.
+
+[setup]
+concurrency = 1
+
+[[step]]
+flow = """
+[[node]]
+id  = "verify"
+run = "cargo test"
+
+[[node]]
+id     = "fix"
+agent  = "coder"
+needs  = ["verify"]
+when   = "verify.failed"
+prompt = "Fix: {{verify.output}}"
+goto   = "verify"
+max    = 5
+
+[[node]]
+id     = "summary"
+agent  = "reviewer"
+needs  = ["verify"]
+when   = "verify.passed"
+final  = true
+prompt = "Report the green build"
+"""
+
+# Failing twice, then passing.
+[[step]]
+node_fails_until = ["verify: 2"]
+
+[[step]]
+node_says = ["summary: green"]
+
+[[step]]
+run = true
+
+[[step]]
+expect_attempts = ["fix=2", "summary=1", "verify=3"]
+
+# It passed in the end, so the fixer stood down and the summary ran.
+[[step]]
+expect_states = ["verify=done", "fix=skipped", "summary=done"]
+
+[[step]]
+expect_answer = "green"

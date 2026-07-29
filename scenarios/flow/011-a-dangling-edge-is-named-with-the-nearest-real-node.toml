@@ -1,0 +1,22 @@
+name = "an edge that points nowhere is refused, and the nearest real node is offered"
+tags = ["flow", "verify", "errors"]
+
+[[step]]
+flow = """
+[[node]]
+id     = "verify"
+agent  = "tester"
+prompt = "Test it"
+
+[[node]]
+id     = "fix"
+agent  = "coder"
+needs  = ["verfiy"]
+prompt = "Fix it"
+"""
+
+[[step]]
+check = true
+
+[[step]]
+expect_errors = ["needs 'verfiy', which does not exist", "did you mean 'verify'?"]

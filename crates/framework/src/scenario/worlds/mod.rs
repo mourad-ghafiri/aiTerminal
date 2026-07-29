@@ -3,6 +3,7 @@
 
 pub mod ai;
 pub mod config;
+pub mod flow;
 pub mod gate;
 mod gate_step;
 pub mod jobs;

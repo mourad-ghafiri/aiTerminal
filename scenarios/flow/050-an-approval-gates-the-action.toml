@@ -1,0 +1,55 @@
+name = "an approval gates the action, and a refusal retires what it was gating"
+tags = ["flow", "approve"]
+
+# Human in the loop, gating the ACTION rather than the investigation: the diff is
+# produced either way, and only the commit waits on an answer.
+
+[setup]
+confirm = ["git push"]
+
+[[step]]
+flow = """
+[[node]]
+id  = "diff"
+run = "git --no-pager diff --stat"
+
+[[node]]
+id     = "ok"
+kind   = "approve"
+needs  = ["diff"]
+show   = "{{diff.output}}"
+prompt = "Commit this?"
+
+[[node]]
+id    = "commit"
+run   = "git commit -am wip"
+needs = ["ok"]
+when  = "ok.approved"
+final = true
+"""
+
+[[step]]
+node_says = ["diff: 2 files changed", "commit: committed"]
+
+[[step]]
+approve = ["ok: yes"]
+
+[[step]]
+run = true
+
+# The person saw the diff, not a summary of it.
+[[step]]
+expect_asked = ["ok: 2 files changed"]
+
+[[step]]
+expect_states = ["diff=done", "ok=done", "commit=done"]
+
+# And when the answer is no, the thing it was gating simply does not happen.
+[[step]]
+approve = ["ok: no"]
+
+[[step]]
+run = true
+
+[[step]]
+expect_states = ["diff=done", "ok=failed", "commit=skipped"]

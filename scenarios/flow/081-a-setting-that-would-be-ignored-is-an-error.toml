@@ -1,0 +1,29 @@
+name = "a setting that does nothing on this kind of node is refused, not ignored"
+tags = ["flow", "errors"]
+
+# A `prompt` on a command node is not a harmless extra — it is somebody who believes
+# their prompt is in effect. Silently ignoring it is how a file comes to say one
+# thing while the tool does another.
+
+[[step]]
+bad_flow = """
+[[node]]
+id     = "verify"
+run    = "cargo test"
+prompt = "please be thorough"
+"""
+
+[[step]]
+expect_errors = ["`prompt` does nothing on a run node"]
+
+[[step]]
+bad_flow = """
+[[node]]
+id     = "map"
+agent  = "explorer"
+prompt = "Map it"
+whne   = "other.passed"
+"""
+
+[[step]]
+expect_errors = ["unknown key `whne`"]

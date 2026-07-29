@@ -1,0 +1,46 @@
+name = "a command node the guard refuses stops the flow before anything runs"
+tags = ["flow", "verify", "security"]
+
+# A flow's command nodes are adjudicated by the same guard as everything else, and
+# they are adjudicated NOW — so a refused command costs nothing instead of being
+# discovered after two agent runs have already edited the repository.
+
+[setup]
+deny    = ["deploy-prod"]
+confirm = ["git push"]
+
+[[step]]
+flow = """
+[[node]]
+id  = "build"
+run = "make build"
+
+[[node]]
+id    = "ship"
+run   = "./deploy-prod.sh"
+needs = ["build"]
+"""
+
+[[step]]
+check = true
+
+[[step]]
+expect_errors = ["the guard refuses"]
+
+# A confirm-tier command is different: it runs, it just cannot run unattended. That
+# is something to be told, not something to be stopped for.
+[[step]]
+flow = """
+[[node]]
+id  = "tag"
+run = "git push --tags"
+"""
+
+[[step]]
+check = true
+
+[[step]]
+expect_ok = true
+
+[[step]]
+expect_warnings = ["needs confirmation", "nobody to ask"]

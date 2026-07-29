@@ -1,0 +1,46 @@
+name = "a run in a pipe or a background job stays legible and attributed"
+tags = ["flow", "ui"]
+
+# On a terminal the run is a board that repaints in place. A pipe, a `--bg` job log and
+# CI have no cursor to move, so the same state machine prints one line per event —
+# every one of them saying which node it belongs to, which is the thing a plain stream
+# of interleaved output could never do.
+
+[[step]]
+flow = """
+[[node]]
+id     = "map"
+agent  = "explorer"
+prompt = "Map it"
+
+[[node]]
+id     = "left"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "Look at {{map.output}}"
+
+[[node]]
+id     = "right"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "Look at {{map.output}}"
+
+[[node]]
+id     = "join"
+agent  = "reviewer"
+needs  = ["left", "right"]
+final  = true
+prompt = "Merge {{left.output}} and {{right.output}}"
+"""
+
+[[step]]
+node_fails = ["right"]
+
+[[step]]
+run = true
+
+# Every node accounted for, by name: the two that ran together, the one that failed,
+# and the one that could not follow it. `join` carries no condition of its own, so the
+# ordinary rule applies — a failed dependency stops it.
+[[step]]
+expect_board_lines = ["[map] done", "[left] done", "[right] failed", "[join] blocked"]

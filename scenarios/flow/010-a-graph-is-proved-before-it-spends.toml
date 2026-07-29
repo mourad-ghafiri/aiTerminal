@@ -1,0 +1,32 @@
+name = "a graph is proved runnable before a single token is spent"
+tags = ["flow", "verify"]
+
+# The old flow validated as it went: an unknown agent in step 4 was discovered after
+# steps 1-3 had been paid for. Everything knowable without a model is known first.
+
+[[step]]
+flow = """
+[[node]]
+id     = "map"
+agent  = "explorer"
+prompt = "Map the code for: {{input}}"
+
+[[node]]
+id     = "build"
+agent  = "coder"
+needs  = ["map"]
+prompt = "Do it, following:\\n{{map.output}}"
+
+[[node]]
+id     = "report"
+agent  = "reviewer"
+needs  = ["build"]
+final  = true
+prompt = "Summarise {{build.output}}"
+"""
+
+[[step]]
+check = true
+
+[[step]]
+expect_ok = true

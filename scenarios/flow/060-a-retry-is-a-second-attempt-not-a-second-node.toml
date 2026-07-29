@@ -1,0 +1,32 @@
+name = "a flaky node is retried, and the record says how many attempts it took"
+tags = ["flow", "robustness"]
+
+[setup]
+concurrency = 1
+
+[[step]]
+flow = """
+[[node]]
+id     = "fetch"
+run    = "curl -sf https://example.invalid/data"
+retry  = 2
+
+[[node]]
+id     = "use"
+agent  = "coder"
+needs  = ["fetch"]
+prompt = "Use {{fetch.output}}"
+"""
+
+# It fails once, then works — exactly what a retry is for.
+[[step]]
+node_fails_until = ["fetch: 1"]
+
+[[step]]
+run = true
+
+[[step]]
+expect_attempts = ["fetch=2", "use=1"]
+
+[[step]]
+expect_states = ["fetch=done", "use=done"]

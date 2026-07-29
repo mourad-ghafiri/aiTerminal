@@ -1,0 +1,43 @@
+name = "a map node runs once per item of a list another node produced"
+tags = ["flow", "map"]
+
+# The list does not exist until the flow runs, so the fan-out cannot be written by
+# hand. `over` takes it from an upstream node and `as` names each item.
+
+[[step]]
+flow = """
+[[node]]
+id  = "changed"
+run = "git diff --name-only HEAD"
+
+[[node]]
+id     = "each"
+agent  = "reviewer"
+needs  = ["changed"]
+over   = "{{changed.output}}"
+as     = "file"
+prompt = "Review only this file: {{file}}"
+
+[[node]]
+id     = "report"
+agent  = "reviewer"
+needs  = ["each"]
+final  = true
+prompt = "Merge: {{each.output}}"
+"""
+
+[[step]]
+node_says = ["changed: src/parser.rs<LF>src/lexer.rs<LF>src/main.rs", "each: reviewed", "report: three files, one finding"]
+
+[[step]]
+run = true
+
+# One prompt per file, each naming only its own file.
+[[step]]
+expect_asked = ["each: Review only this file: src/parser.rs | Review only this file: src/lexer.rs | Review only this file: src/main.rs"]
+
+[[step]]
+expect_states = ["changed=done", "each=done", "report=done"]
+
+[[step]]
+expect_answer = "three files, one finding"
