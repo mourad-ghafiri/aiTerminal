@@ -33,6 +33,97 @@ pub enum Diagram {
     Graph(GraphDiagram),
     /// The lane languages: timeline, user journey and kanban are all columns of cards.
     Columns(Columns),
+    /// The data languages: pie, xychart, quadrant, gantt, sankey, radar, treemap, packet.
+    Chart(Chart),
+}
+
+/// Which chart a [`Chart`] is. They share one struct because they share one question —
+/// what are the numbers — and differ only in which fields carry them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChartKind {
+    Pie,
+    Xy,
+    Quadrant,
+    Gantt,
+    Sankey,
+    Radar,
+    Treemap,
+    Packet,
+    Info,
+}
+
+/// A chart: a title, some axes, and numbers in whichever shape the language uses.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Chart {
+    pub kind: ChartKind,
+    pub title: String,
+    pub x_title: String,
+    pub y_title: String,
+    /// Category labels: an x axis's ticks, a radar's spokes, a pie's slice names.
+    pub categories: Vec<String>,
+    pub series: Vec<Series>,
+    /// Scatter points, for the quadrant chart.
+    pub points: Vec<Point>,
+    /// Quadrant captions, clockwise from the top right.
+    pub quadrants: [String; 4],
+    pub tasks: Vec<Task>,
+    /// Sankey flows: `(from, to, value)`.
+    pub flows: Vec<(String, String, f64)>,
+    /// Free rows — a packet's fields, an info card's lines.
+    pub rows: Vec<(String, String)>,
+}
+
+impl Chart {
+    pub fn new(kind: ChartKind) -> Self {
+        Chart {
+            kind,
+            title: String::new(),
+            x_title: String::new(),
+            y_title: String::new(),
+            categories: Vec::new(),
+            series: Vec::new(),
+            points: Vec::new(),
+            quadrants: [String::new(), String::new(), String::new(), String::new()],
+            tasks: Vec::new(),
+            flows: Vec::new(),
+            rows: Vec::new(),
+        }
+    }
+
+    /// The largest value anywhere in the series (0 when there is no data).
+    pub fn max_value(&self) -> f64 {
+        self.series.iter().flat_map(|s| s.values.iter()).fold(0.0_f64, |a, &b| a.max(b))
+    }
+}
+
+/// One named run of numbers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Series {
+    pub name: String,
+    pub line: bool,
+    pub values: Vec<f64>,
+}
+
+/// A named point in a two-axis chart.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Point {
+    pub name: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// One gantt bar: where it starts, how long it runs, and how it is drawn.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Task {
+    pub section: String,
+    pub name: String,
+    /// Unix seconds — absolute, so the layout only has to scale.
+    pub start: i64,
+    pub end: i64,
+    pub milestone: bool,
+    pub done: bool,
+    pub active: bool,
+    pub critical: bool,
 }
 
 /// Which language a [`GraphDiagram`] came from. The layout is shared; the kind only

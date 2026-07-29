@@ -28,6 +28,9 @@ pub enum Shape {
     Note,
     /// A sequence-diagram actor drawn as a stick figure rather than a box.
     Actor,
+    /// A solid bar — a chart's ink, where the *length* is the message. Drawn filled
+    /// rather than outlined, so it survives at one row tall.
+    Bar,
 }
 
 impl Shape {

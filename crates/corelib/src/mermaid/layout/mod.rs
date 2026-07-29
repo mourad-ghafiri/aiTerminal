@@ -6,6 +6,7 @@
 //! different rasterizers: the GPU renderer measures in pixels (`8×16`-ish), the text
 //! renderer measures in character cells (`1×1`), and both get proportionate geometry.
 
+mod chart;
 mod columns;
 mod flow;
 mod graph;
@@ -51,6 +52,13 @@ impl Metrics {
         }
     }
 
+    /// True when the host measures in character cells rather than pixels — the signal
+    /// that sub-cell geometry (a pie's wedges, a radar's polygon) has to become something
+    /// a character grid can actually show.
+    pub fn cells(&self) -> bool {
+        self.ew <= 2.0 && self.eh <= 2.0
+    }
+
     /// The extent of a (possibly multi-line) label.
     pub fn text_size(&self, label: &str, measure: Measure) -> (f32, f32) {
         let mut w = 0.0_f32;
@@ -86,6 +94,7 @@ pub fn layout(d: &Diagram, measure: Measure) -> Scene {
         Diagram::Sequence(s) => sequence::layout(s, &m, measure),
         Diagram::Graph(g) => graph::layout(g, &m, measure),
         Diagram::Columns(c) => columns::layout(c, &m, measure),
+        Diagram::Chart(c) => chart::layout(c, &m, measure),
     }
 }
 

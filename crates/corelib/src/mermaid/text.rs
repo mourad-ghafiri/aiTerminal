@@ -31,7 +31,7 @@ pub fn render(scene: &Scene, max_cols: usize) -> Option<Vec<String>> {
     // renderer uses, so both rasterizers agree on what covers what.
     for it in &scene.items {
         if let Item::Group { rect, title, .. } = it {
-            c.group(cells(rect), title);
+            c.group(cells(rect, false), title);
         }
     }
     let mut edge_labels = Vec::new();
@@ -48,7 +48,7 @@ pub fn render(scene: &Scene, max_cols: usize) -> Option<Vec<String>> {
     }
     for it in &scene.items {
         if let Item::Shape { kind, rect, label, .. } = it {
-            c.node(*kind, cells(rect), label);
+            c.node(*kind, cells(rect, *kind == Shape::Bar), label);
         }
     }
     // Edge labels last: they hunt for a free cell, and only the finished picture knows
@@ -75,12 +75,14 @@ fn cell(v: f32) -> isize {
     (v - 0.25).round() as isize
 }
 
-/// A rect in whole cells: inclusive `(x0, y0, x1, y1)`.
-fn cells(r: &crate::types::Rect) -> (isize, isize, isize, isize) {
+/// A rect in whole cells: inclusive `(x0, y0, x1, y1)`. Outlined shapes are forced to at
+/// least 2×2 so they have room for a border; a solid bar is not.
+fn cells(r: &crate::types::Rect, solid: bool) -> (isize, isize, isize, isize) {
     let x0 = r.x.round() as isize;
     let y0 = r.y.round() as isize;
-    let x1 = (r.right().round() as isize - 1).max(x0 + 1);
-    let y1 = (r.bottom().round() as isize - 1).max(y0 + 1);
+    let least = if solid { 0 } else { 1 };
+    let x1 = (r.right().round() as isize - 1).max(x0 + least);
+    let y1 = (r.bottom().round() as isize - 1).max(y0 + least);
     (x0, y0, x1, y1)
 }
 
@@ -125,6 +127,7 @@ fn glyphs(shape: Shape) -> Glyphs {
         Shape::Trapezoid => Glyphs { tl: '╱', tr: '╲', ..Glyphs::plain() },
         Shape::TrapezoidAlt => Glyphs { bl: '╲', br: '╱', ..Glyphs::plain() },
         Shape::Note => Glyphs { top: '┄', bottom: '┄', left: '┆', right: '┆', ..Glyphs::plain() },
+        Shape::Bar => Glyphs::plain(),
     }
 }
 
@@ -244,6 +247,15 @@ impl Canvas {
     fn node(&mut self, shape: Shape, (x0, y0, x1, y1): (isize, isize, isize, isize), label: &str) {
         if shape == Shape::Actor {
             return self.actor((x0, y0, x1, y1), label);
+        }
+        // A bar is solid ink: every cell filled, no border, no label inside it.
+        if shape == Shape::Bar {
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    self.put(x, y, '█');
+                }
+            }
+            return;
         }
         // A wordless circle is a marker (a state machine's start or stop), and a marker
         // reads better as a dot than as an empty ring.

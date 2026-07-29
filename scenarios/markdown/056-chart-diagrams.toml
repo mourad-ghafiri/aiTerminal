@@ -1,0 +1,24 @@
+name = "pie, gantt and xy charts draw their numbers"
+tags = ["diagrams"]
+
+# A chart's whole point is the proportion. In the app it is drawn with wedges and filled
+# bars; in a plain terminal the same numbers become labelled bars — never raw syntax, and
+# never a wedge faked out of characters.
+
+[[step]]
+markdown = ["```mermaid", "pie title Time", "  \"Coding\" : 75", "  \"Meetings\" : 25", "```"]
+
+[[step]]
+expect_diagram_art = ["Time", "Coding", "75%", "Meetings", "25%", "█"]
+
+[[step]]
+markdown = ["```mermaid", "gantt", "  title Plan", "  dateFormat YYYY-MM-DD", "  section Build", "  Draft :a1, 2024-01-01, 10d", "  Review :after a1, 5d", "```"]
+
+[[step]]
+expect_diagram_art = ["Plan", "Build", "Draft", "Review", "2024-01-01"]
+
+[[step]]
+markdown = ["```mermaid", "xychart-beta", "  title \"Commits\"", "  x-axis [mon, tue]", "  bar [5, 12]", "```"]
+
+[[step]]
+expect_diagram_art = ["Commits", "mon", "tue"]

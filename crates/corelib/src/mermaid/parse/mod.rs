@@ -5,6 +5,7 @@
 //! failing the diagram, and sizes are bounded by `MAX_ITEMS`. Text that isn't a diagram at
 //! all returns `None`, which is what lets the host fall back to showing the source.
 
+mod chart;
 mod class;
 mod columns;
 mod common;
@@ -42,6 +43,15 @@ pub fn parse(src: &str) -> Option<Diagram> {
         "timeline" => Some(Diagram::Columns(columns::timeline(head, body))),
         "journey" => Some(Diagram::Columns(columns::journey(head, body))),
         "kanban" => Some(Diagram::Columns(columns::kanban(head, body))),
+        "pie" => Some(Diagram::Chart(chart::pie(head, body))),
+        "xychart" => Some(Diagram::Chart(chart::xy(head, body))),
+        "quadrantchart" | "quadrant" => Some(Diagram::Chart(chart::quadrant(head, body))),
+        "gantt" => Some(Diagram::Chart(chart::gantt(head, body))),
+        "sankey" => Some(Diagram::Chart(chart::sankey(head, body))),
+        "radar" => Some(Diagram::Chart(chart::radar(head, body))),
+        "treemap" => Some(Diagram::Chart(chart::treemap(head, body))),
+        "packet" => Some(Diagram::Chart(chart::packet(head, body))),
+        "info" => Some(Diagram::Chart(chart::info(head, body))),
         // Every C4 flavour (`C4Context`, `C4Container`, …) shares one grammar.
         k if k.starts_with("c4") => Some(Diagram::Graph(structured::c4(head, body))),
         _ => None,

@@ -493,6 +493,7 @@ fn draw_node_shape(surface: &mut Surface, kind: corelib::mermaid::Shape, r: Rect
             draw_seg(surface, (cx, y + h * 0.65), (cx - w * 0.16, y + h), line, edge);
             draw_seg(surface, (cx, y + h * 0.65), (cx + w * 0.16, y + h), line, edge);
         }
+        Shape::Bar => surface.fill_rect(r, edge),
         Shape::Note => {
             surface.fill_rounded_rect(r, (3.0 * scale).clamp(2.0, 6.0), fill);
             surface.stroke_rounded_rect(r, (3.0 * scale).clamp(2.0, 6.0), line, edge);
