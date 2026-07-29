@@ -67,9 +67,10 @@ The rules that keep an idle terminal at ~0% CPU and every input bounded:
 | Module | Role |
 | --- | --- |
 | `gui` | The window: tabs/splits of PTY panes, input routing, tab switcher, status bar, ⌘-click links, per-profile state persistence (layout + pane content + window size), live follow of profile switches and config edits. No AI code — the window is a pure terminal. |
-| `ai` | The engine: streaming `Client` over a `Transport` seam, the agent loop (`run_agent` + `ToolRunner`/`AgentObserver`), flows (`run_orchestration`), the `aiTerminal.md` instruction base, BM25 memory, MCP hub, model catalog + weighted pools (vision/document/thinking caps), redaction-aware context capture. Fully offline-testable (`MockTransport`/`ScriptedTransport`). |
+| `ai` | The engine: streaming `Client` over a `Transport` seam, the agent loop (`run_agent` + `ToolRunner`/`AgentObserver`), the `aiTerminal.md` instruction base, BM25 memory, MCP hub, model catalog + weighted pools (vision/document/thinking caps), redaction-aware context capture. Fully offline-testable (`MockTransport`/`ScriptedTransport`). |
 | `caps` | The native tool catalog agents call (fs/sys/web/memory/data/todo/task/…): a registry of `NativeObject`s, pure over `CapCtx` (policy + data dirs + the write sandbox = the invocation directory). |
 | `cli` | The headless subcommands: `ai` (Q&A / command / agent / flow / loop / job), `profile`, `plugin`, `config`, `theme`. This is what the `@`-commands invoke. |
+| `flow` | The `@flow` graph: the model + parser, the `when` language, the static verifier that proves a graph before it spends, and the diagram it draws. |
 | `plugin` | Declarative plugins: manifest parsing, the registry (aliases/abbr/completions/segments/security rules/snippets), the store. |
 | `security` | The command guard (allow/confirm/deny, regex over the in-house `re` engine) + scoped redaction. Deny wins. |
 | `config` | `~/.aiTerminal/config.toml` load/bootstrap/seeding + the profile overlay layering. |
@@ -111,7 +112,7 @@ list of what is *not* covered. The policy, in short:
 
 - **AI is always mocked.** Every model interaction runs against
   `MockTransport`/`ScriptedTransport` with canned SSE fixtures — the client,
-  the agent loop, flows (`run_orchestration`), and the `@loop` engine
+  the agent loop, the `@flow` graph scheduler, and the `@loop` engine
   (`drive_loop` is transport-generic precisely so tests can script the maker's
   answers and the verifier's verdicts). API keys in tests are dummy values;
   `CurlTransport` is constructed only at runtime.

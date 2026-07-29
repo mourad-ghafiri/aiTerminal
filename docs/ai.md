@@ -53,7 +53,29 @@ doesn't parse to a command is shown as an answer, never preloaded — no misfire
 ```text
 ❯ @explorer "how does the theme resolution work?"
 ❯ @coder "add a --verbose flag to the plugin subcommand"
+❯ @agent                    # every agent you have
+❯ @agent researcher         # one in full: tools, skills, what it returns
 ```
+
+Eight ship, and each is a file you can edit:
+
+| Agent | For |
+| --- | --- |
+| `ai` | the general assistant behind `@ai` |
+| `planner` | turns a goal into a small plan with a concrete "done when" |
+| `explorer` | read-only scout — maps the code and reports back tightly |
+| `researcher` | finds sources, reads them, and reports what they say, with links |
+| `coder` | the smallest correct edit, following the project's own conventions |
+| `tester` | finds and runs the project's own tests, and reports what happened |
+| `reviewer` | read-only review — correctness, security, tests, design |
+| `writer` | documentation and reports, saved to the file rather than printed |
+
+**Every agent ends by stating what it returns.** That is not a style rule: a flow node
+chains on that text, so `{{explore.output}}` is only as good as the agent's discipline.
+`@agent <name>` shows the contract without opening the file. `tester` and `reviewer` go
+further and promise a final `VERDICT: PASS` / `VERDICT: FAIL` line — an agent that
+*reports* a failure has still finished its run successfully, so that line is how a
+workflow tells the difference.
 
 An **agent** is a Markdown file with TOML frontmatter:
 
@@ -96,38 +118,200 @@ An agent holding the `task.run` tool can fan work out:
 Sub-agents run **in parallel**, are **safe-tools-only** (read/search — never write,
 exec, or further delegation), and their reports fold back into the parent's loop.
 
-## `@flow` — multi-step workflows
+## `@flow` — a workflow declared as a graph
 
-A **flow** is a TOML file of agent steps; each step is a full agent run and (with
-`chain = true`) sees the previous steps' answers.
+A **flow** is a TOML file of `[[node]]` entries. Each node is one unit of work — an
+agent run, a shell command, or a pause for you — and `needs` names what must finish
+first. That is the whole idea: a graph, not a line.
 
 ```toml
-# ~/.aiTerminal/ai/flows/review.toml
-description = "Explore the relevant code, then review it"
-chain = true
+# ~/.aiTerminal/ai/flows/ship.toml
+description = "Explore → implement → verify → fix until green"
+input       = "required"
 
-[[step]]
-label  = "map"
+[bounds]
+timeout = "30m"   budget = 400000   concurrency = 4
+
+[[node]]
+id     = "map"
 agent  = "explorer"
-prompt = "Map the code relevant to: {{input}}"
+prompt = "Map the code for: {{input}}"
 
-[[step]]
-label  = "review"
-agent  = "reviewer"
-prompt = "Using the map above, review: {{input}}"
+[[node]]
+id     = "build"
+agent  = "coder"
+needs  = ["map"]
+prompt = "Implement it, following:\n{{map.output}}"
+
+[[node]]
+id    = "verify"
+run   = "cargo test"          # a command node — zero tokens
+needs = ["build"]
+
+[[node]]
+id     = "fix"
+agent  = "coder"
+needs  = ["verify"]
+when   = "verify.failed"      # a conditional edge
+prompt = "Fix:\n{{verify.output}}"
+goto   = "verify"             # a bounded retry loop
+max    = 3
 ```
+
+Four things a chain could not do, and this can:
+
+- **Nodes that need nothing from each other run at the same time.** Three reviews
+  cost one review's wall clock. `[bounds] concurrency` caps how many are in flight.
+- **`when` puts the decision on the edge**, as data this tool parses — not as an
+  instruction a model interprets, differently, next time.
+- **A `run` node costs no tokens.** It is a command through the same guard as
+  everything else, and its exit status is a fact the graph branches on. The model is
+  spent only where judgement is needed.
+- **`goto` points one edge backwards**, bounded by `max` — so "test, fix, test again"
+  is a flow rather than something you sit and supervise.
+
+### The vocabulary
+
+| On a node | Means |
+| --- | --- |
+| `id` | its name — how other nodes refer to it (required) |
+| `agent` + `prompt` | a full agent run |
+| `run` | a shell command, through the guard, costing nothing |
+| `kind = "approve"` + `show` | stop and ask you |
+| `needs = ["a","b"]` | run after these — the edges of the graph |
+| `when = "a.failed"` | only run if this holds |
+| `goto = "a"` · `max = 3` | after this node, run `a` again — bounded |
+| `over` + `as` | fan out: one run per item of a list, in parallel |
+| `retry = 1` · `timeout = "10m"` · `max_steps = 20` | this node's own bounds |
+| `solo = true` | never run alongside another node |
+| `optional = true` | a failure here blocks nothing and fails nothing |
+| `final = true` | this node's answer is the flow's answer |
+
+**Conditions** are deliberately not a programming language:
 
 ```text
-❯ @flow                          # no args — list available flows
-❯ @flow review the PTY layer     # first word names a flow → run it with the rest
-❯ @flow add retry logic to fetch # unknown first word → the whole line becomes
-                                 # input to the DEFAULT pipeline (implement:
-                                 # explore → implement → verify)
+a.passed · a.failed · a.skipped · a.ran · a.approved
+a.exit == 1            (also != < >)
+a.output contains "0 failed"   ·   a.output matches /(\d+) failed/
+not X · X and Y · X or Y · ( … )
 ```
 
-`{{input}}` in a step prompt is replaced by the input text. Bundled flows:
-`review` (explore → review) and `implement` (explore → implement → verify — also
-the default for free text).
+**References** — `{{input}}` · `{{<node>.output}}` · `{{<node>.exit}}` · `{{flow.name}}`
+· the item name inside an `over` node. There is no implicit "everything so far" blob:
+a node sees exactly what it asks for.
+
+### Nothing runs until the graph is proved
+
+`@flow check` costs nothing and needs no model. It refuses a dangling `needs`, a
+reference to a node that does not run first, a condition that names a node that does
+not exist, an agent that is not installed, and a command the guard would refuse — and
+it warns about the rest.
+
+```text
+❯ @flow                          # the installed flows
+❯ @flow check [<name>]           # verify one, or all of them
+❯ @flow graph <name>             # draw the graph in the terminal
+❯ @flow build "add a --json flag to the export command"
+❯ @flow build --bg "…"           # detached, tracked as a job
+❯ @flow review "this branch" --dry-run --concurrency 2
+❯ @flow runs                     # past runs
+❯ @flow show <id>                # the graph again, with what each node cost
+❯ @flow log <id> [<node>] [-f]   # what a node actually said
+❯ @flow resume <id>              # run only what did not complete
+❯ @flow clear                    # prune finished runs
+```
+
+### Five flows ship
+
+| Flow | What it does |
+| --- | --- |
+| `build` | plan → map the code and its conventions **in parallel** → implement → test → fix until green → review → summarise |
+| `fix` | reproduce the failure **first** → find its cause → patch → prove it is gone |
+| `review` | map once, then **three reviewers at the same time** (correctness, security, design) → one merged verdict |
+| `research` | break the question into sub-questions → research each **in parallel** → compare → report, with sources |
+| `document` | read the real code → write the file → check every claim against the source → revise until it holds |
+
+None of them names a build tool, a test command or a language: `@tester` finds the
+project's own runner. That is what makes them yours rather than somebody else's.
+
+### A goal on its own
+
+```text
+❯ @flow "Research LLM memory techniques"
+▸ research — the goal asks for sources and a comparison, not a code change
+```
+
+A flow name can never contain a space, so **one quoted argument that does is a goal**,
+never a mistyped name. The model reads it against the installed flows' descriptions and
+names one; the choice and its reason print **before the first node runs**, and
+`--dry-run` shows them for nothing. If no flow fits, that is an error listing them —
+never a flow chosen by falling back to a favourite.
+
+Loose words are still a name: `@flow revieew the parser` is an error suggesting
+`review`, not a graph run over your repository.
+
+`@flow graph` and `@flow show` draw the real thing — the same native diagram renderer
+`@md` uses, so a flow is something you look at rather than hold in your head:
+
+```text
+❯ @flow graph review
+
+                             ┌───────────────┐
+                             │ map @explorer │
+                             └───────────────┘
+                                     │
+             ┌───────────────────────┴──┬───────────────────────┐
+             ▼                          ▼                       ▼
+ ┌───────────┴───────────┐   ┌──────────┴─────────┐   ┌─────────┴────────┐
+ │ correctness @reviewer │   │ security @reviewer │   │ design @reviewer │
+ └───────────────────────┘   └────────────────────┘   └──────────────────┘
+             │                          │                       │
+             └───────────────────────┬──┴───────────────────────┘
+                                     ▼
+                            ┌────────┴─────────┐
+                            │ report @reviewer │
+                            └──────────────────┘
+```
+
+### Every node is written down, so a run can be picked back up
+
+Each node's result lands in `ai/flow-runs/<id>/` the moment it happens. **`@flow
+resume` replays the finished nodes from disk and runs only what did not complete** —
+a six-node flow that died at node five costs one node to finish, not six. A failed
+node stops its own branch and nothing else, so the independent work is kept rather
+than thrown away.
+
+An `approve` node asks on a terminal; detached, it parks the run as `waiting` and
+`@flow resume` picks it up with somebody there — it never deadlocks a background job.
+
+### Watching it run
+
+A chain can narrate itself; a graph cannot. Four nodes start together and finish in
+whatever order they finish, so a stream of start/done lines hides the most useful thing
+about the run. Every node gets **one line that stays where it is**, repainted in place:
+
+```text
+▸ build · add a --json flag to the export command
+  ✓ plan         @planner        4.2s   3.1k
+  ✓ explore      @explorer       8.1s   9.4k
+  ✓ conventions  @explorer       7.6s   8.8k
+  ⠻ apply        @coder         12.3s          ⚙ fs.edit src/cli.rs · 12ms · 1.4KB
+  ○ verify       @tester
+  ○ fix          @coder                        when verify.output contains "VERDICT…
+  ○ review       @reviewer
+  ○ summary      @writer
+  3/8 done · 1 running · 21.3k tokens · 24.6s
+```
+
+A waiting node shows the condition it is waiting on, a running one shows the tool it is
+in right now, and a retry is the same line with `×2` rather than a second line. Off a
+terminal — `--bg`, a pipe, CI — the same state machine prints `[node] event` lines
+instead: nothing is overwritten, and the attribution a plain stream could never give is
+still there.
+
+`examples/ai/flow.toml` is a commented tour of every field, including `run` and
+`approve` nodes, which the bundled five deliberately leave out — a default that shells
+out is a default bound to somebody's toolchain.
 
 ## `@loop` — iterate until it verifies
 
@@ -337,15 +521,17 @@ The fix: the parser dropped the …    ← the answer, streaming
 ✓ 8.4s · 2 tools · 12.3k in / 1.8k out · ~$0.014
 ```
 
-A **`@flow`** shows each step announce itself and a compact recap; a **`@loop`** shows
-each iteration and a footer with the iteration count:
+A **`@flow`** shows a live board — one line per node, repainted in place (see
+[Watching it run](#watching-it-run)); a **`@loop`** shows each iteration and a footer
+with the iteration count:
 
 ```text
-❯ @flow add a --json flag to the export command
-▶ flow 'implement' — 3 step(s)
-▶ 1/3 explore  …  ▶ 2/3 implement  …  ▶ 3/3 verify  …
-✓ explore · ✓ implement · ✓ verify
-✓ 58s · 11 tools · 32k in / 4.1k out · ~$0.21
+❯ @flow build "add a --json flag to the export command"
+▸ build · add a --json flag to the export command
+  ✓ plan       @planner    4.2s  3.1k
+  ⠻ apply      @coder     12.3s        ⚙ fs.edit src/cli.rs · 12ms · 1.4KB
+  ○ verify     @tester
+  1/8 done · 1 running · 12.5k tokens · 24.6s
 ```
 
 - **Answers** render as styled **Markdown** in **realtime** — headings, **bold**/*italic*, `inline
@@ -573,7 +759,6 @@ hold a curated subset (below) — write your own `ai/agents/<name>.md` to grant 
 aiTerminal ai "<prompt>"                     # prose Q&A
 aiTerminal ai --command "<request>"          # dual-mode: a guarded command OR prose  (@ai)
 aiTerminal ai --agent <name> "<task>"        # agent run                  (@<agent>)
-aiTerminal ai --flow <name> "<input>"        # workflow                   (@flow)
 aiTerminal ai --bg …                         # detach any of the above    (--bg)
 aiTerminal ai loop "<goal>"                  # iterate to a verified goal (@loop)
                  [--check "<cmd>" | --no-check] [--agent <name>]
@@ -586,5 +771,15 @@ aiTerminal ai job "<request>"                # a job, scheduled by the AI  (@job
 aiTerminal ai job -- <command>               # a command job (no model needed)
 aiTerminal ai job [log|show|cancel] <id>     # one job: output / record / stop
 aiTerminal ai job [clear]                    # job list / prune
-aiTerminal ai flow                           # flow list                  (@flow)
+aiTerminal ai agent [<name>]                 # the agents you have        (@agent)
+aiTerminal ai flow <name> "<input>"          # run a workflow graph       (@flow)
+aiTerminal ai flow "<goal>"                  # …or let the model route the goal
+                 [--timeout 30m] [--budget TOKENS] [--concurrency N]
+                 [--bg] [--dry-run]
+aiTerminal ai flow check [<name>]            # verify a flow (or all) — no model needed
+aiTerminal ai flow graph <name>              # draw the graph
+aiTerminal ai flow runs                      # past runs
+aiTerminal ai flow [show|resume] <id>        # one run: the record / carry on
+aiTerminal ai flow log <id> [<node>] [-f]    # a node's output
+aiTerminal ai flow [clear]                   # flow list / prune runs
 ```

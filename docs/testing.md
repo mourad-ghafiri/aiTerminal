@@ -111,7 +111,8 @@ coverage cannot silently shrink.
 | Folder | # | What a journey drives |
 | --- | --- | --- |
 | `gate/` | 35 | pairing, remote commands, the guard, attaching to interactive CLIs |
-| `ai/` | 23 | model reply → command or answer, the guard, the agent tool loop, flows |
+| `ai/` | 21 | model reply → command or answer, the guard, the agent tool loop |
+| `flow/` | 21 | the graph: verification before it spends, parallel branches, conditions, bounded loops, fan-out, approvals, retries, routing a bare goal, and what a run looks like in a pipe |
 | `terminal/` | 22 | the VT engine — grid, colour, wide glyphs, scrollback, DEC modes |
 | `markdown/` | 20 | rendering, streaming, diagrams, the pager |
 | `config/` | 16 | config parsing and the profile overlay |

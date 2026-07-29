@@ -45,9 +45,9 @@ profiles. The AI is woven into the shell itself through one idea:
 ❯ du -a src | sort -rn | head -5
 
 ❯ @coder "add a --json flag to the export command"        # a full agentic run
-❯ @flow review "the auth module"                          # a multi-step workflow
+❯ @flow review "the auth module"                          # 3 reviewers, in parallel
 ❯ @loop "make the tests pass"                             # iterate until verified
-❯ @flow implement --bg "migrate configs to TOML"          # …in the background
+❯ @flow build --bg "migrate configs to TOML"              # …in the background
 ❯ @job "check the logs at midnight"                       # the AI reads the schedule
 ❯ @gate telegram start                                    # drive this pane from your phone
 ❯ @profile switch work                                    # live profile switch
@@ -75,7 +75,7 @@ profiles. The AI is woven into the shell itself through one idea:
   (tabs, splits, per-pane cwd/zoom, styled scrollback). `@profile switch work`
   from any shell; the window follows live.
 - 🛡️ **AI with guardrails** — provider-agnostic streaming engine, weighted
-  multi-model pools, agents/skills/prompts as Markdown, flows as TOML, BM25
+  multi-model pools, agents/skills/prompts as Markdown, flow graphs as TOML, BM25
   memory, MCP, sub-agents — behind a command guard (allow/deny/confirm) and
   secret redaction on every egress path. AI is **off** until you declare a model.
 
@@ -85,7 +85,8 @@ profiles. The AI is woven into the shell itself through one idea:
 | --- | --- |
 | 🪄 `@ai <request>` | Natural language → one shell command, checked by the command guard, preloaded for review (or auto-run per `[ai] mode`). |
 | 🤖 `@<agent> <task>` | Run a named agent's full tool loop (read/search/edit/run, memory, MCP) and print its report. Ships with `coder`, `explorer`, `reviewer`, `tester`. |
-| 🔀 `@flow [<name>] <text>` | Run a workflow. An unknown first word just becomes input to the default explore→implement→verify pipeline; bare `@flow` lists them. |
+| 🔀 `@flow <name> "<input>"` | Run a workflow **graph**: independent nodes run at the same time, `when` routes on the edge, a `run` node costs no tokens, and `goto` retries a bounded number of times. Five ship — `build`, `fix`, `review`, `research`, `document` — and a bare `@flow "<goal>"` is routed to one by the model, which prints its choice before spending anything. `@flow check` proves a graph before it runs; `@flow graph` draws it; `@flow resume` runs only what did not finish. |
+| 🧑‍🔬 `@agent [<name>]` | The eight agents you have — planner, explorer, researcher, coder, tester, reviewer, writer and the assistant — with their tools, step caps and what each returns. Every one is an editable Markdown file. |
 | 🔁 `@loop "<goal>"` | Iterate an agent until the goal **verifies**. `--check "<cmd>"` is a binary stop condition; with none, the AI proposes a real one from the goal (guard-adjudicated — a "verifier" that deploys is refused) and it is **proven before the first token is spent**: already green costs nothing, unrunnable is caught up front, and a failure seeds iteration 1. Bounded on iterations, tokens *and* wall clock; repeats and oscillations both count as no progress and buy exactly one materially-different retry. Every iteration is recorded, so `@loop show/log/resume` pick it back up. |
 | 📊 `@job "<request>"` | Say what to do **and when** — `@job "check the logs at midnight"`, `@job "summarize the kafka logs into ~/reports every hour"`. The AI reads the schedule out of the sentence *once*, at creation, and writes it into the record as cron; every run after that is plain arithmetic. `--` makes it a **command** job (`@job --every 15m -- ./sync.sh`) that needs no model at all, guard-checked like everything else. Recurring jobs survive a reboot — the supervisor re-arms them and catches a missed one up **once**. `@job` lists next fire · last outcome · runs; `show`/`log -f`/`cancel`/`clear` do the rest. |
 | 📄 `@md <file>` | `@md render` pretty-prints a Markdown file the way GitHub would — **all of GFM plus the HTML subset** (alerts, footnotes, `<details>`, centered blocks, HTML tables, `<kbd>`), **syntax-highlighted code**, **images drawn as pixels**, and **every mermaid diagram type** drawn natively (box art in other terminals); `@md edit` is a live split editor — Markdown left, rendered preview right, scroll by keyboard + mouse. |
@@ -185,7 +186,7 @@ until you declare a model — see the `[ai]` section in the config, or
   DeepSeek, Ollama, … — models are data files), weighted multi-model pools, a
   live harness experience (spinner, streamed thinking, timed tool trace,
   token/elapsed footers), vision/PDF/text attachments (`@path` in any prompt),
-  agents/skills/prompts as Markdown files, flows as TOML, BM25 memory, MCP
+  agents/skills/prompts as Markdown files, flow graphs as TOML, BM25 memory, MCP
   servers, sub-agent delegation (`task.run`), and a command guard + secret
   redaction on every egress path.
 - 👤 **Profiles**: each profile owns a `config.toml` overlay + its saved tabs/splits.
