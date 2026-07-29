@@ -44,6 +44,16 @@ max_concurrent = 4         # how many jobs may run at once, so a fleet of due wo
 keep_runs      = 20        # per-occurrence logs a job keeps (older ones are pruned)
 max_log_bytes  = 1048576   # cap on a single run's log, so an hourly job can't fill the disk
 
+[loop]
+# `@loop` — iterating an agent until a verifiable goal passes.
+max           = 5       # default iteration cap (--max overrides it)
+timeout       = "30m"   # default wall clock for a whole run (--timeout overrides it)
+check_timeout = "10m"   # how long one verifier command may take before it is killed
+keep_runs     = 20      # loop records kept on disk
+propose_check = true    # with no --check, let the AI propose a real verifier command from
+                        # the goal (the command guard still has to allow it). Off → an
+                        # unverified goal is graded by an independent reviewer agent.
+
 # Custom keybindings — rebind any built-in action (snake_case; full list of action
 # names in docs/keybindings.md). Uncomment and add [[keybinding]] tables:
 # [[keybinding]]

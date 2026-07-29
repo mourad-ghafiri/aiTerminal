@@ -4,7 +4,8 @@
 #   @ai <request>         → translate natural language to a shell command
 #   @<agent> <task>       → run the named agent and print its answer (add --bg to track as a job)
 #   @flow [<name> input]  → run a multi-step AI workflow; with no args, list them
-#   @loop <goal> [--check "<cmd>"] [--max N] → iterate an agent until the goal verifies
+#   @loop "<goal>" [--check "<cmd>"] → iterate an agent until the goal verifies;
+#                         bare @loop lists recent runs, @loop resume <id> carries on
 #   @job "<request>"      → say what to do and when; the AI reads the schedule once
 #   @job -- <command>     → the same, as a command job (no model needed to run it)
 #   @md render|edit <file> → pretty-print a Markdown file, or live-edit it with a preview
@@ -41,11 +42,7 @@ command_not_found_handle() {
       fi
       return
       ;;
-    @loop)
-      [ -n "$*" ] || { echo 'usage: @loop "<goal>" [--check "<cmd>"] [--max N] [--budget TOKENS] [--agent <name>] [--bg]' >&2; return 2; }
-      "${TT_BIN:-aiTerminal}" ai --loop "$@"
-      return
-      ;;
+    @loop)    "${TT_BIN:-aiTerminal}" ai loop "$@"; return ;;
     @job)     "${TT_BIN:-aiTerminal}" ai job "$@"; return ;;
     @md)      "${TT_BIN:-aiTerminal}" md "$@"; return ;;
     @gate)    "${TT_BIN:-aiTerminal}" gate "$@"; return ;;

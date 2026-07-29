@@ -28,14 +28,13 @@ pub fn ai(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("job") => return ai_job_cmd(args),
         Some("flow") => return ai_flow_cmd(args),
+        Some("loop") => return ai_loop_cmd(args),
         _ => {}
     }
 
     let mut as_command = false;
     let mut agent: Option<String> = None;
     let mut flow: Option<String> = None;
-    let mut looped = false;
-    let mut opts = LoopOpts::default();
     let mut bg = false;
     let mut job_record: Option<String> = None;
     let mut parts: Vec<&str> = Vec::new();
@@ -46,10 +45,6 @@ pub fn ai(args: &[String]) -> i32 {
             "--fast" => {} // reserved; Q&A already uses the pool, command uses the fast model
             "--agent" => agent = it.next().cloned(),
             "--flow" => flow = it.next().cloned(),
-            "--loop" => looped = true,
-            "--check" => opts.check = it.next().cloned(),
-            "--max" => opts.max = it.next().and_then(|s| s.parse().ok()).unwrap_or(opts.max),
-            "--budget" => opts.budget = it.next().and_then(|s| s.parse().ok()),
             "--bg" => bg = true,
             "--job-record" => job_record = it.next().cloned(),
             other => parts.push(other),
@@ -57,9 +52,9 @@ pub fn ai(args: &[String]) -> i32 {
     }
     let prompt = parts.join(" ");
     if prompt.trim().is_empty() && flow.is_none() {
-        eprintln!("usage: aiTerminal ai [--command | --agent <name> | --flow <name> | --loop] [--bg] \"<prompt>\"");
-        eprintln!("       aiTerminal ai --loop \"<goal>\" [--check \"<cmd>\"] [--max N] [--budget TOKENS] [--agent <name>]");
-        eprintln!("       aiTerminal ai job [clear] | flow");
+        eprintln!("usage: aiTerminal ai [--command | --agent <name> | --flow <name>] [--bg] \"<prompt>\"");
+        eprintln!("       aiTerminal ai loop \"<goal>\" [--check \"<cmd>\"] [--max N] [--timeout 30m]");
+        eprintln!("       aiTerminal ai job [clear] | flow | loop");
         return 2;
     }
 
@@ -67,15 +62,6 @@ pub fn ai(args: &[String]) -> i32 {
     // and return immediately with the job id (monitor with `ai jobs` / `tail -f`).
     if bg {
         return spawn_background(args);
-    }
-
-    if looped {
-        opts.agent = agent.unwrap_or_else(|| "coder".into());
-        let code = run_loop_cli(&prompt, opts);
-        if let Some(id) = job_record {
-            crate::jobs::finish(&id, code);
-        }
-        return code;
     }
 
     let code = ai_run(as_command, agent, flow, &prompt);
@@ -1913,52 +1899,46 @@ fn ai_flows() -> i32 {
 
 // ===== @loop — an engineered agent loop (iterate until a verifiable goal) =====
 //
-// Loop engineering in one sentence: don't perfect a single prompt — design the
-// loop the agent runs inside. The pieces this implementation supplies:
+// Loop engineering in one sentence: don't perfect a single prompt — design the loop the agent
+// runs inside. Seven pieces make that real here:
 //
-//   1. A VERIFIABLE GOAL.  `--check "<cmd>"` is a deterministic verifier (exit 0
-//      = done). Without one, the maker/checker split kicks in: a SEPARATE
-//      reviewer agent grades each iteration ("the model that wrote the code is
-//      too nice grading its own homework").
-//   2. STRUCTURED FEEDBACK.  The verifier's failure output (tail-capped) is fed
-//      into the next iteration, so the agent works the failure, not the memory
-//      of it.
-//   3. STOP RULES.  Success (verifier passes) · `--max N` iteration cap ·
-//      no-progress detection (identical verifier output twice in a row = stalled)
-//      · an optional `--budget` token ceiling. Never an open-ended run.
-//   4. GUARDRAILS.  The check command passes the command guard (deny blocks it;
-//      confirm-tier is refused in this non-interactive path); the agent's tools
-//      stay gated as in any run.
-//   5. EXTERNAL STATE.  Run with `--bg` and the loop is a tracked job
-//      (`@job` + a streamed log) like any workflow.
-
-/// Options for `--loop` (parsed alongside the main `ai` flags).
-struct LoopOpts {
-    /// Deterministic verifier command; exit 0 = goal reached.
-    check: Option<String>,
-    /// Iteration cap (clamped 1..=25).
-    max: u32,
-    /// Optional total-token ceiling across all iterations.
-    budget: Option<u64>,
-    /// The maker agent (default `coder`).
-    agent: String,
-}
-
-impl Default for LoopOpts {
-    fn default() -> Self {
-        LoopOpts { check: None, max: 5, budget: None, agent: "coder".into() }
-    }
-}
+//   1. A VERIFIABLE GOAL.  `--check "<cmd>"` is a binary stop condition: exit 0 = done, no
+//      judgment involved. When nobody supplies one, the model is asked for one ONCE
+//      (`ai/verify.rs`) — because the alternative, a model grading its own work, is the
+//      single most-cited way agent loops fail. Only if that yields nothing does the
+//      maker/checker split take over: a SEPARATE reviewer agent grades each iteration.
+//   2. PROVEN BEFORE IT COSTS ANYTHING.  The check runs once BEFORE iteration 1. Guard-denied
+//      or unrunnable → a setup error with nothing spent. Already passing → the goal was
+//      already met. Otherwise its failure output seeds iteration 1, so the maker's first
+//      attempt starts on the real error instead of a guess.
+//   3. STRUCTURED FEEDBACK.  The verifier's output (tail-capped) feeds the next iteration,
+//      alongside a compact line per past attempt — enough to avoid a dead end, small enough
+//      that a failed transcript never poisons the next try.
+//   4. STOP RULES.  Success · `--max N` · `--budget TOKENS` · `--timeout 30m` · no-progress.
+//      Iterations, tokens and wall clock are three independent ways to run away, so all three
+//      are bounded. No-progress remembers the last few verifier observations, so a loop that
+//      oscillates between two bad states is caught, not just one that repeats itself.
+//   5. ONE ESCALATION.  The first no-progress verdict does not end the run: the maker gets
+//      one more iteration, told what has already been tried and asked for a materially
+//      different approach. A second one ends it.
+//   6. GUARDRAILS.  The check command passes the command guard (deny blocks it; confirm-tier
+//      is refused in this non-interactive path); the agent's tools stay gated as in any run.
+//   7. STATE THAT SURVIVES.  Every iteration is written to `ai/loops/<id>/`, so a run can be
+//      read (`@loop log`), inspected (`@loop show`) and continued (`@loop resume`) with what
+//      is left of each bound. `--bg` still makes the whole loop a tracked job.
 
 /// One iteration's verification outcome.
 #[derive(Debug)]
-struct Verdict {
+pub(crate) struct Verdict {
     passed: bool,
     /// Feedback fed into the next iteration (failure output / reviewer notes).
     feedback: String,
-    /// A signature of the verifier's observation — two identical consecutive
-    /// signatures mean the loop is not making progress (stalled).
+    /// A signature of the verifier's observation. The loop remembers the last few: seeing one
+    /// again means no progress, whether it repeated or oscillated back to it.
     signature: u64,
+    /// The check command's exit status, when there was a command. `127`/`126` mean the
+    /// verifier itself is broken — a distinction that matters before the loop starts.
+    code: Option<i32>,
 }
 
 /// FNV-1a over a string — the no-progress signature.
@@ -1984,7 +1964,7 @@ fn tail(s: &str, max: usize) -> &str {
 
 /// The maker prompt for iteration `k`: the goal, plus the previous iteration's
 /// verifier feedback (the loop's structured feedback channel).
-fn loop_prompt(goal: &str, k: u32, max: u32, check: Option<&str>, feedback: &str) -> String {
+fn loop_prompt(goal: &str, k: u32, max: u32, check: Option<&str>, feedback: &str, tried: &[String], shift: bool) -> String {
     let mut p = format!("## Goal (iteration {k} of at most {max})\n{goal}\n");
     if let Some(c) = check {
         p.push_str(&format!("\nThe goal is DONE when this command exits 0: `{c}`\n"));
@@ -1996,8 +1976,29 @@ fn loop_prompt(goal: &str, k: u32, max: u32, check: Option<&str>, feedback: &str
         ));
         p.push_str("Work the failures above. Do not redo work that already passed.\n");
     }
+    // The attempt log. Two lines of "this was already tried and did not work" is what stops
+    // iteration 4 from rediscovering iteration 2's dead end.
+    if !tried.is_empty() {
+        p.push_str("\n## Already attempted (do not repeat these)\n");
+        for line in tried.iter().rev().take(LOG_LINES).rev() {
+            p.push_str(&format!("- {line}\n"));
+        }
+    }
+    if shift {
+        p.push_str(
+            "\n## The last approach is not working\n\
+             The verifier has returned to a state it has already been in, so continuing to \
+             refine the current approach will not converge. Take a MATERIALLY DIFFERENT one: \
+             re-read the relevant code, question an assumption the previous attempts shared, \
+             and say in one line what you are doing differently before you do it.\n",
+        );
+    }
     p
 }
+
+/// How many past attempts ride along in the prompt — recent ones carry the signal, and the
+/// whole log would just be transcript by another name.
+const LOG_LINES: usize = 6;
 
 /// Whether a reviewer's grade passes: the LAST `VERDICT:` line wins (the reviewer
 /// may quote the format while explaining itself before concluding).
@@ -2012,8 +2013,6 @@ fn reviewer_passed(answer: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The default wall-clock cap on the @loop verifier command.
-const CHECK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(600);
 /// Per-stream rolling-tail cap for `--check` output (the verdict reads the tail).
 const CHECK_TAIL: usize = 64 * 1024;
 /// How many `@<path>` attachments one prompt may carry (memory peaks at
@@ -2072,7 +2071,7 @@ fn run_check(cmd: &str, policy: &crate::security::Policy, deadline: std::time::D
     text.push_str(&err_h.join().unwrap_or_default());
     let passed = status.success();
     let observed = format!("exit={:?}\n{}", status.code(), tail(&text, 4000));
-    Ok(Verdict { passed, feedback: observed.clone(), signature: fnv1a(&observed) })
+    Ok(Verdict { passed, feedback: observed.clone(), signature: fnv1a(&observed), code: status.code() })
 }
 
 /// The checker-agent verifier (no `--check` given): a SEPARATE reviewer agent
@@ -2089,24 +2088,44 @@ fn run_reviewer(sub: &SubAgentCtx, ctx: crate::caps::CapCtx, goal: &str, work: &
     );
     let answer = run_sub_agent(sub, ctx, 1, "reviewer", &prompt);
     let passed = reviewer_passed(&answer);
-    Verdict { signature: fnv1a(&answer), feedback: answer, passed }
+    Verdict { signature: fnv1a(&answer), feedback: answer, passed, code: None }
 }
 
-/// Why an engineered loop stopped.
+/// Why an engineered loop stopped. Every one of these is a *bound* doing its job, except
+/// `Error` — and each maps to an exit code and a record status, so a script and a person read
+/// the same truth.
 #[derive(Debug, PartialEq)]
 enum LoopOutcome {
     /// The verifier passed on iteration N.
     Done(u32),
-    /// Identical verifier observation twice in a row — no progress.
+    /// The verifier returned to an observation it had already produced — and the one
+    /// strategy-shift escalation had already been spent.
     Stalled,
     /// The iteration cap was reached without passing.
     Exhausted,
     /// The token budget ran out.
     Budget,
+    /// The wall clock ran out.
+    Timeout,
     /// The verifier itself failed (e.g. the check command was guard-blocked).
     Error(String),
     /// The user interrupted (Ctrl+C).
     Cancelled,
+}
+
+impl LoopOutcome {
+    /// The record status this outcome writes.
+    fn status(&self) -> &'static str {
+        match self {
+            LoopOutcome::Done(_) => "done",
+            LoopOutcome::Stalled => "stalled",
+            LoopOutcome::Exhausted => "exhausted",
+            LoopOutcome::Budget => "budget",
+            LoopOutcome::Timeout => "timeout",
+            LoopOutcome::Error(_) => "error",
+            LoopOutcome::Cancelled => "cancelled",
+        }
+    }
 }
 
 /// A loop run's outcome plus the telemetry the footer shows: iterations, summed
@@ -2131,27 +2150,42 @@ fn drive_loop<T: crate::ai::Transport>(
     runner: &mut dyn crate::ai::ToolRunner,
     observer: &mut dyn crate::ai::AgentObserver,
     goal: &str,
-    max: u32,
-    budget: Option<u64>,
+    state: &mut LoopState,
     check_label: Option<&str>,
     mut verify: impl FnMut(&str) -> Result<Verdict, String>,
 ) -> LoopRun {
-    let mut feedback = String::new();
-    let mut last_sig: Option<u64> = None;
-    let mut spent: u64 = 0;
     let mut st = LoopRun { outcome: LoopOutcome::Exhausted, iters: 0, tin: 0, tout: 0, tools: 0 };
-    for k in 1..=max {
-        st.iters = k;
-        eprintln!("\u{25B6} {}", crate::i18n::translate("loop.iteration", &[k.to_string(), max.to_string()]));
-        let prompt = loop_prompt(goal, k, max, check_label, &feedback);
+    // `seen` is the no-progress memory. Consecutive repeats are the obvious case; a loop that
+    // flips between two bad states (A→B→A→B) is the same failure wearing a disguise, and a
+    // "was the last one identical?" test never catches it.
+    let mut seen: Vec<u64> = state.seen.clone();
+    let mut spent: u64 = 0;
+    let first = state.done + 1;
+    let last = state.done + state.left.max;
+    for k in first..=last {
+        // Time is a bound in its own right: iterations and tokens both say nothing about an
+        // agent that is simply slow. Checked before the count moves, so a run that stops here
+        // reports the iterations it actually ran.
+        if state.out_of_time() {
+            return LoopRun { outcome: LoopOutcome::Timeout, ..st };
+        }
+        st.iters = k - state.done;
+        eprintln!("\u{25B6} {}", crate::i18n::translate("loop.iteration", &[k.to_string(), last.to_string()]));
+        let prompt = loop_prompt(goal, k, last, check_label, &state.feedback, &state.tried, state.shifting);
         let run = crate::ai::run_agent(client, maker, &prompt, "", runner, observer);
         st.tin += run.input_tokens as u64;
         st.tout += run.output_tokens as u64;
         st.tools += run.steps.len();
         spent += (run.input_tokens + run.output_tokens) as u64;
+        state.shifting = false;
         // An errored/cancelled iteration is NOT work — never hand it to the
         // verifier as if it were; stop the loop with the real cause.
         match &run.outcome {
+            crate::ai::RunOutcome::Cancelled if state.out_of_time() => {
+                // The watchdog cancels through the same token Ctrl+C uses; the deadline says
+                // which one it really was.
+                return LoopRun { outcome: LoopOutcome::Timeout, ..st };
+            }
             crate::ai::RunOutcome::Cancelled => return LoopRun { outcome: LoopOutcome::Cancelled, ..st },
             crate::ai::RunOutcome::Error(e) => return LoopRun { outcome: LoopOutcome::Error(e.clone()), ..st },
             _ => {}
@@ -2161,16 +2195,28 @@ fn drive_loop<T: crate::ai::Transport>(
             Ok(v) => v,
             Err(e) => return LoopRun { outcome: LoopOutcome::Error(e), ..st },
         };
+        state.note(k, &run.answer, &verdict.feedback);
         if verdict.passed {
             return LoopRun { outcome: LoopOutcome::Done(k), ..st };
         }
-        // Stop rules: no progress (same observation twice), then budget, then cap.
-        if last_sig == Some(verdict.signature) {
-            return LoopRun { outcome: LoopOutcome::Stalled, ..st };
+        if seen.contains(&verdict.signature) {
+            // No progress. Spend the one escalation — a *different* approach, told what has
+            // already been tried — before calling it stalled. If that lands here again, the
+            // loop really is stuck and more iterations only cost money.
+            if state.escalated {
+                return LoopRun { outcome: LoopOutcome::Stalled, ..st };
+            }
+            state.escalated = true;
+            state.shifting = true;
+            eprintln!("\u{21BB} {}", crate::i18n::translate("loop.shift", &[]));
         }
-        last_sig = Some(verdict.signature);
-        feedback = verdict.feedback;
-        if let Some(b) = budget {
+        seen.push(verdict.signature);
+        if seen.len() > SIGNATURE_MEMORY {
+            seen.remove(0);
+        }
+        state.seen = seen.clone();
+        state.feedback = verdict.feedback;
+        if let Some(b) = state.left.budget {
             if spent >= b {
                 return LoopRun { outcome: LoopOutcome::Budget, ..st };
             }
@@ -2179,17 +2225,108 @@ fn drive_loop<T: crate::ai::Transport>(
     st
 }
 
-/// `aiTerminal ai --loop "<goal>" [--check …] [--max N] [--budget N] [--agent …]`
-/// — iterate the maker agent until the verifier passes or a stop rule fires.
-/// Exit codes: 0 = goal reached; 1 = stalled/exhausted/budget; 2 = setup error.
-fn run_loop_cli(goal: &str, opts: LoopOpts) -> i32 {
-    // `@<path>` attachments work in loops too (images/PDFs + inlined text files).
-    let (goal, media, file_ctx) = collect_attachments(goal);
-    let goal = match file_ctx.is_empty() {
-        true => goal,
-        false => format!("{goal}\n{file_ctx}"),
-    };
-    let goal = goal.as_str();
+/// How many past verifier observations count as "have I been here before?".
+const SIGNATURE_MEMORY: usize = 4;
+
+/// A verdict from a scripted observation: `PASS` passed, anything else is what the verifier
+/// saw. The scenario seam — the loop's rules are about observations, not about processes.
+#[cfg(test)]
+pub(crate) fn scripted_verdict(observed: &str) -> Verdict {
+    Verdict {
+        passed: observed.trim().eq_ignore_ascii_case("PASS"),
+        feedback: observed.to_string(),
+        signature: fnv1a(observed),
+        code: None,
+    }
+}
+
+/// What one scenario-driven loop produced.
+#[cfg(test)]
+pub(crate) struct TestRun {
+    /// The record status this outcome writes (`done`, `stalled`, `timeout`, …).
+    pub(crate) stopped: String,
+    pub(crate) iters: u32,
+    pub(crate) tin: u64,
+    pub(crate) tout: u64,
+    pub(crate) tools: usize,
+}
+
+/// Run [`drive_loop`] with no observer and no tools — everything a scenario needs, and
+/// nothing it would have to construct itself.
+#[cfg(test)]
+pub(crate) fn drive_loop_for_test<T: crate::ai::Transport>(
+    client: &crate::ai::Client<T>,
+    maker: &crate::ai::AgentSpec,
+    state: &mut LoopState,
+    goal: &str,
+    check_label: Option<&str>,
+    verify: impl FnMut(&str) -> Result<Verdict, String>,
+) -> TestRun {
+    struct NoTools;
+    impl crate::ai::ToolRunner for NoTools {
+        fn run(&mut self, _: &str, _: &str) -> Result<String, String> {
+            Err("no tools in this scenario".into())
+        }
+    }
+    let run = drive_loop(client, maker, &mut NoTools, &mut crate::ai::NoopObserver, goal, state, check_label, verify);
+    TestRun { stopped: run.outcome.status().into(), iters: run.iters, tin: run.tin, tout: run.tout, tools: run.tools }
+}
+
+/// What carries across iterations — and, when the record is written, across runs.
+///
+/// This is the loop's state file in memory: where it got to, what the verifier last said, and
+/// a compact line per attempt. Carrying notes instead of a transcript is deliberate — a long
+/// failed transcript poisons the next attempt, a two-line summary of it does not.
+#[derive(Debug, Default)]
+pub(crate) struct LoopState {
+    /// Iterations already completed (non-zero only on a resume).
+    pub(crate) done: u32,
+    /// What is still allowed: iterations, tokens, and the wall clock.
+    pub(crate) left: crate::loops::Bounds,
+    /// The verifier's last observation — what the next iteration works on.
+    pub(crate) feedback: String,
+    /// One line per attempt, oldest first.
+    pub(crate) tried: Vec<String>,
+    /// Past observation signatures (the no-progress memory).
+    pub(crate) seen: Vec<u64>,
+    /// The single strategy-shift escalation has been spent.
+    pub(crate) escalated: bool,
+    /// The next iteration is the strategy shift.
+    pub(crate) shifting: bool,
+    /// When the whole run must stop, as an `Instant` deadline.
+    pub(crate) deadline: Option<std::time::Instant>,
+}
+
+impl LoopState {
+    fn out_of_time(&self) -> bool {
+        self.deadline.is_some_and(|d| std::time::Instant::now() >= d)
+    }
+
+    /// Record one attempt: a single line naming what was done and what came back.
+    fn note(&mut self, k: u32, answer: &str, observed: &str) {
+        let did = first_line(answer, 90);
+        let got = first_line(observed, 70);
+        self.tried.push(format!("{k}: {did} \u{2192} {got}"));
+    }
+}
+
+/// The first meaningful line of a block, clipped — enough to recognise an attempt, small
+/// enough that a dozen of them still fit in a prompt.
+fn first_line(text: &str, max: usize) -> String {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("(nothing)");
+    if line.chars().count() <= max {
+        return line.to_string();
+    }
+    line.chars().take(max.saturating_sub(1)).collect::<String>() + "\u{2026}"
+}
+
+/// `ai loop "<goal>" …` — iterate the maker agent until the verifier passes or a bound fires.
+///
+/// With `resume`, everything comes from that record instead: the goal, the verifier, the
+/// bounds, and how much of each is left.
+///
+/// Exit codes: 0 = goal reached · 1 = a bound stopped it · 2 = setup error · 130 = interrupted.
+fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
     let cfg = crate::config::Config::load();
     crate::i18n::install(cfg.i18n_catalog());
     let settings = cfg.ai_settings();
@@ -2197,15 +2334,116 @@ fn run_loop_cli(goal: &str, opts: LoopOpts) -> i32 {
         eprintln!("aiTerminal: {}", crate::ai::setup_hint(&settings));
         return 2;
     }
-    let max = opts.max.clamp(1, 25);
+    let prior = match &resume {
+        Some(id) => match crate::loops::read(id) {
+            Some(run) => Some(run),
+            None => {
+                eprintln!("aiTerminal: loop {id} has no record to resume");
+                return 2;
+            }
+        },
+        None => None,
+    };
+    // `@<path>` attachments work in loops too (images/PDFs + inlined text files).
+    let (goal, media, file_ctx) = collect_attachments(prior.as_ref().map_or(spec.goal.as_str(), |p| p.goal.as_str()));
+    let goal = match file_ctx.is_empty() {
+        true => goal,
+        false => format!("{goal}\n{file_ctx}"),
+    };
+    let goal = goal.as_str();
+
     let registry = crate::plugin::load_registry(&cfg);
     let policy = std::sync::Arc::new(crate::security::build_policy(&cfg, &registry));
     let workspace = std::env::current_dir().ok();
     let session = crate::ai::Session::for_cwd();
-    let Some(mut maker) = build_agent_spec(&opts.agent) else {
-        eprintln!("aiTerminal: no agent '{}' — {}", opts.agent, available_agents_hint());
+    let agent_name = prior.as_ref().map_or_else(
+        || spec.agent.clone().unwrap_or_else(|| "coder".into()),
+        |p| p.agent.clone(),
+    );
+    let Some(mut maker) = build_agent_spec(&agent_name) else {
+        eprintln!("aiTerminal: no agent '{agent_name}' — {}", available_agents_hint());
         return 2;
     };
+
+    // The bounds: a resume gets what its record has left, a fresh run gets the flags over the
+    // `[loop]` defaults. All three are always set — a loop with no ceiling is not a loop.
+    let bounds = match &prior {
+        // A resume starts from what the record has left, but a bound named on the command
+        // line replaces it: `@loop resume last --budget 200000` means "here is more rope".
+        Some(p) => {
+            let left = p.remaining();
+            crate::loops::Bounds {
+                max: spec.max.unwrap_or(left.max).clamp(0, 25),
+                budget: spec.budget.or(left.budget),
+                timeout: spec.timeout.unwrap_or(left.timeout),
+            }
+        }
+        None => crate::loops::Bounds {
+            max: spec.max.unwrap_or(cfg.loop_max).clamp(1, 25),
+            budget: spec.budget,
+            timeout: spec.timeout.unwrap_or(cfg.loop_timeout),
+        },
+    };
+    if bounds.max == 0 {
+        eprintln!("aiTerminal: loop {} has no iterations left — start a new one", resume.unwrap_or_default());
+        return 2;
+    }
+
+    // The verifier, decided ONCE: an explicit `--check` wins, then the AI's proposal (which
+    // the guard still adjudicates), and the reviewer agent backs both up.
+    let check_deadline = std::time::Duration::from_secs(cfg.loop_check_timeout);
+    let verifier = match &prior {
+        Some(p) => p.verifier.clone(),
+        None => choose_verifier(&spec, &cfg, goal, &policy),
+    };
+    eprintln!(
+        "{}\u{1F501} {}{}",
+        accent(),
+        crate::i18n::translate("loop.start", &[agent_name.clone(), bounds.max.to_string()]),
+        reset()
+    );
+    eprintln!("  {}{}{}", muted(), crate::i18n::translate("loop.verifier", &[verifier.describe()]), reset());
+
+    // Pre-flight: prove the verifier before spending anything on the maker. A check that the
+    // guard refuses, or that cannot run at all, is a setup error — not something to discover
+    // after paying for a full agent turn. And a check that already passes means there is
+    // nothing to do.
+    let mut seed = String::new();
+    if let Some(cmd) = verifier.command() {
+        match run_check(cmd, &policy, check_deadline) {
+            Err(e) => {
+                eprintln!("aiTerminal: {e}");
+                return 2;
+            }
+            Ok(v) if v.passed => {
+                eprintln!("\u{2713} {}", crate::i18n::translate("loop.already", &[]));
+                return 0;
+            }
+            // 127 = not found, 126 = not executable. That is not "the goal is unmet", it is a
+            // verifier that can never pass — and a loop whose stop condition is impossible
+            // will spend its whole budget proving it.
+            Ok(v) if matches!(v.code, Some(126) | Some(127)) => {
+                eprintln!("aiTerminal: the check command `{cmd}` could not be run \u{2014} exit {}", v.code.unwrap_or(0));
+                return 2;
+            }
+            // It fails, as expected — so iteration 1 starts from the real error instead of
+            // guessing at it.
+            Ok(v) => seed = v.feedback,
+        }
+    }
+    if spec.dry_run {
+        println!("{}{goal}{}", accent(), reset());
+        println!("  verifier  {}", verifier.describe());
+        println!("  maker     @{agent_name}");
+        let budget = bounds.budget.map(|b| format!(" \u{b7} {b} tokens")).unwrap_or_default();
+        println!(
+            "  bounds    {} iteration(s) \u{b7} {}{budget}",
+            bounds.max,
+            crate::loops::human_age(bounds.timeout)
+        );
+        return 0;
+    }
+
     // Give the maker this folder's remembered context (recent-run digest + folder-first
     // memory recall on the goal), redacted, folded into its system prompt — so the loop
     // starts knowing the project. `drive_loop`'s per-turn `context` stays empty (unchanged).
@@ -2217,6 +2455,10 @@ fn run_loop_cli(goal: &str, opts: LoopOpts) -> i32 {
     }
     let cancel = crate::ai::CancelToken::new();
     let _sigint = wire_sigint(cancel.clone());
+    // The wall clock, enforced the same way Ctrl+C is: an in-flight model turn stops at the
+    // deadline instead of the loop only noticing once the turn finally returns.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(bounds.timeout);
+    let _watchdog = wire_deadline(cancel.clone(), bounds.timeout);
     let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default()).with_images(media).with_cancel(cancel);
     let mut runner = build_runner(&cfg, &settings, workspace, policy.clone(), true);
     if let Some(hub) = &runner.mcp {
@@ -2225,21 +2467,64 @@ fn run_loop_cli(goal: &str, opts: LoopOpts) -> i32 {
         }
     }
 
-    eprintln!("\u{1F501} {}", crate::i18n::translate("loop.start", &[opts.agent.clone(), max.to_string()]));
+    // The record exists from the first moment, so a crash, a Ctrl+C or a closed lid still
+    // leaves something to read and resume.
+    let id = resume.clone().unwrap_or_else(crate::loops::new_id);
+    let mut record = prior.clone().unwrap_or_else(|| crate::loops::Run {
+        id: id.clone(),
+        goal: goal.to_string(),
+        agent: agent_name.clone(),
+        status: "running".into(),
+        verifier: verifier.clone(),
+        bounds,
+        cwd: cwd_string(),
+        started: crate::loops::now(),
+        finished: None,
+        pid: std::process::id(),
+        progress: crate::loops::Progress::default(),
+    });
+    record.status = "running".into();
+    record.pid = std::process::id();
+    record.finished = None;
+    crate::loops::write(&id, &record);
+
+    let mut state = LoopState {
+        done: record.progress.iterations,
+        left: bounds,
+        // A resume continues from what the verifier last said; a fresh run from the
+        // pre-flight failure.
+        feedback: if resume.is_some() { record.progress.feedback.clone() } else { seed },
+        tried: record.progress.tried.clone(),
+        seen: Vec::new(),
+        escalated: record.progress.escalated,
+        shifting: false,
+        deadline: Some(deadline),
+    };
+
     let started = std::time::Instant::now();
-    // The verifier: the deterministic check wins; else the independent reviewer.
-    let check = opts.check.clone();
     let sub = runner.sub.clone();
     let cap_ctx = runner.ctx.clone();
-    let verify = |answer: &str| match &check {
-        Some(cmd) => run_check(cmd, &cap_ctx.policy, CHECK_DEADLINE),
-        None => Ok(run_reviewer(&sub, cap_ctx.clone(), goal, answer)),
+    let keep = cfg.loop_keep_runs;
+    let log_id = id.clone();
+    let mut n = state.done;
+    let verifier_cmd = verifier.command().map(str::to_string);
+    let verify = |answer: &str| {
+        let verdict = match &verifier_cmd {
+            Some(cmd) => run_check(cmd, &cap_ctx.policy, check_deadline)?,
+            None => run_reviewer(&sub, cap_ctx.clone(), goal, answer),
+        };
+        // Write the iteration down as it happens — a run that is killed mid-flight still
+        // leaves every completed iteration on disk.
+        n += 1;
+        crate::loops::write_iteration(&log_id, keep, n, answer, &verdict.feedback);
+        Ok(verdict)
     };
     let mut obs = CliObserver::new(std::io::stdout());
-    let run = drive_loop(&client, &maker, &mut runner, &mut obs, goal, max, opts.budget, opts.check.as_deref(), verify);
+    let run = drive_loop(&client, &maker, &mut runner, &mut obs, goal, &mut state, verifier.command(), verify);
     let _ = { use std::io::Write; std::io::stdout().write_all(b"\n") };
+
     let (dim, r) = (muted(), reset());
-    let (code, glyph, digest) = match run.outcome {
+    let (code, glyph, digest) = match &run.outcome {
         LoopOutcome::Done(k) => {
             eprintln!("\u{2713} {}", crate::i18n::translate("loop.done", &[k.to_string()]));
             (0, "\u{2713}", format!("goal reached in {k} iteration(s)"))
@@ -2251,6 +2536,10 @@ fn run_loop_cli(goal: &str, opts: LoopOpts) -> i32 {
         LoopOutcome::Budget => {
             eprintln!("\u{26D4} {}", crate::i18n::translate("loop.budget", &[]));
             (1, "\u{26a0}", "hit the token budget".into())
+        }
+        LoopOutcome::Timeout => {
+            eprintln!("\u{26D4} {}", crate::i18n::translate("loop.timeout", &[]));
+            (1, "\u{26a0}", "ran out of time".into())
         }
         LoopOutcome::Exhausted => {
             eprintln!("\u{26D4} {}", crate::i18n::translate("loop.exhausted", &[]));
@@ -2265,12 +2554,82 @@ fn run_loop_cli(goal: &str, opts: LoopOpts) -> i32 {
             (130, "\u{23f9}", "interrupted".into())
         }
     };
+
+    record.status = run.outcome.status().into();
+    record.finished = Some(crate::loops::now());
+    record.pid = 0;
+    record.progress = crate::loops::Progress {
+        iterations: state.done + run.iters,
+        input_tokens: record.progress.input_tokens + run.tin,
+        output_tokens: record.progress.output_tokens + run.tout,
+        tools: record.progress.tools + run.tools,
+        feedback: state.feedback.clone(),
+        tried: state.tried.clone(),
+        escalated: state.escalated,
+    };
+    crate::loops::write(&id, &record);
+    crate::loops::prune(cfg.loop_keep_runs);
+
     // The same footer as agent/flow, with iterations in place of a lone elapsed count.
     let cost = Some(client.model().cost(run.tin, run.tout));
     let footer = run_footer_with(glyph, started.elapsed(), run.tools, run.tin, run.tout, cost, cfg.ai_budget);
     eprintln!("{dim}{footer} \u{b7} {} iteration{}{r}", run.iters, if run.iters == 1 { "" } else { "s" });
+    if code != 0 {
+        eprintln!("{dim}  {}{r}", crate::i18n::translate("loop.resume_hint", &[id.clone()]));
+    }
     record_session_run(session.as_ref(), "@loop", goal, &digest);
     code
+}
+
+/// Which verifier this run uses. An explicit `--check` is the user's word and is taken as
+/// given; otherwise — unless they said `--no-check` or turned it off in config — the AI reads
+/// the goal once and proposes a command, which the guard still has to allow.
+fn choose_verifier(
+    spec: &LoopSpec,
+    cfg: &crate::config::Config,
+    goal: &str,
+    policy: &crate::security::Policy,
+) -> crate::loops::Verifier {
+    if let Some(cmd) = &spec.check {
+        return crate::loops::Verifier::Check { command: cmd.clone(), source: crate::loops::Source::Explicit };
+    }
+    if spec.no_check || !cfg.loop_propose_check {
+        return crate::loops::Verifier::Reviewer;
+    }
+    match crate::ai::verify::propose(goal) {
+        // A verifier is supposed to OBSERVE. Anything the guard stops — a deploy, a push —
+        // is a command that would change the world to measure it, so it is refused and the
+        // reviewer takes over.
+        Some(cmd) if guard_refusal(policy, &cmd).is_none() => {
+            crate::loops::Verifier::Check { command: cmd, source: crate::loops::Source::Proposed }
+        }
+        Some(cmd) => {
+            eprintln!("{}  the proposed verifier `{cmd}` is not allowed here{}", muted(), reset());
+            crate::loops::Verifier::Reviewer
+        }
+        None => crate::loops::Verifier::Reviewer,
+    }
+}
+
+/// Trip `token` once `secs` have passed — the wall-clock bound, wired through the same
+/// cancellation the user's Ctrl+C uses so an in-flight turn stops promptly. The watcher exits
+/// when the returned handle drops.
+fn wire_deadline(token: crate::ai::CancelToken, secs: u64) -> SigintWatch {
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let done = done.clone();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        std::thread::spawn(move || {
+            while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                if std::time::Instant::now() >= deadline {
+                    token.cancel();
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        });
+    }
+    SigintWatch { done }
 }
 
 // ===== background jobs (run + track + monitor from the terminal) =============
@@ -2620,6 +2979,313 @@ fn ai_job_cmd(args: &[String]) -> i32 {
             create_job(*spec)
         }
     }
+}
+
+// ===== @loop — the surface ===================================================
+
+/// What an `ai loop …` invocation asks for. A pure parse returning a `Result`, because the
+/// whole point is that a bound you asked for and a bound you got are the same thing: a
+/// misspelled value is an error here, never a silent default.
+#[derive(Debug, PartialEq)]
+pub(crate) enum LoopCmd {
+    List,
+    Clear,
+    Help,
+    Show(String),
+    Log { id: String, follow: bool },
+    /// Continue a recorded run, optionally with fresh bounds — resuming a run that its
+    /// budget stopped is pointless if you cannot raise the budget.
+    Resume { id: String, spec: Box<LoopSpec> },
+    Run(Box<LoopSpec>),
+}
+
+/// A loop to run.
+#[derive(Debug, PartialEq, Default)]
+pub(crate) struct LoopSpec {
+    /// The goal, exactly as typed.
+    pub(crate) goal: String,
+    /// `--check` — the deterministic verifier.
+    pub(crate) check: Option<String>,
+    /// `--no-check` — refuse to infer one; grade with the reviewer agent.
+    pub(crate) no_check: bool,
+    pub(crate) agent: Option<String>,
+    /// Bounds left unset fall back to `[loop]` config.
+    pub(crate) max: Option<u32>,
+    pub(crate) budget: Option<u64>,
+    pub(crate) timeout: Option<u64>,
+    pub(crate) bg: bool,
+    pub(crate) dry_run: bool,
+    /// Set on the detached child so it can stamp its job record on exit.
+    pub(crate) job_record: Option<String>,
+}
+
+/// The value after a flag. Missing — or another flag — is an error: `--budget --bg` means the
+/// user believes they set a budget, and running without one would be a lie.
+fn flag_value<'a>(it: &mut impl Iterator<Item = &'a String>, flag: &str) -> Result<String, String> {
+    match it.next() {
+        Some(v) if !v.starts_with("--") => Ok(v.clone()),
+        _ => Err(format!("{flag} needs a value")),
+    }
+}
+
+/// Read `ai loop …` argv.
+///
+/// The goal is taken **verbatim when it is a single argument** — so `@loop "raise --max to 10"`
+/// keeps its flag-looking words — and joined with single spaces when it arrives as loose words.
+pub(crate) fn parse_loop_args(args: &[String]) -> Result<LoopCmd, String> {
+    let one = |i: usize| args.get(i).cloned().unwrap_or_else(|| "last".into());
+    match args.first().map(String::as_str) {
+        None => return Ok(LoopCmd::List),
+        Some("list") if args.len() == 1 => return Ok(LoopCmd::List),
+        Some("clear") if args.len() == 1 => return Ok(LoopCmd::Clear),
+        Some("help") | Some("--help") | Some("-h") => return Ok(LoopCmd::Help),
+        Some("show") => return Ok(LoopCmd::Show(one(1))),
+        Some("resume") | Some("continue") => {
+            let id = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| "last".into());
+            // Everything else is bounds for the continuation.
+            let rest: Vec<String> = args[1..].iter().filter(|a| **a != id).cloned().collect();
+            let spec = match parse_loop_args(&[vec!["_".to_string()], rest].concat())? {
+                LoopCmd::Run(spec) => spec,
+                _ => Box::new(LoopSpec::default()),
+            };
+            return Ok(LoopCmd::Resume { id, spec });
+        }
+        Some("log") | Some("logs") => {
+            let follow = args.iter().any(|a| a == "-f" || a == "--follow");
+            let id = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| "last".into());
+            return Ok(LoopCmd::Log { id, follow });
+        }
+        _ => {}
+    }
+    let mut spec = LoopSpec::default();
+    let mut words: Vec<String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--check" => spec.check = Some(flag_value(&mut it, "--check")?),
+            "--no-check" => spec.no_check = true,
+            "--agent" => spec.agent = Some(flag_value(&mut it, "--agent")?),
+            "--max" => {
+                let v = flag_value(&mut it, "--max")?;
+                let n: u32 = v.parse().map_err(|_| format!("--max needs a whole number, got {v:?}"))?;
+                spec.max = Some(n.clamp(1, 25));
+            }
+            "--budget" => {
+                let v = flag_value(&mut it, "--budget")?;
+                spec.budget = Some(v.parse().map_err(|_| format!("--budget needs a token count, got {v:?}"))?);
+            }
+            "--timeout" => {
+                let v = flag_value(&mut it, "--timeout")?;
+                let secs = corelib::datetime::duration(&v)
+                    .ok_or_else(|| format!("--timeout needs a duration like 30m or 90s, got {v:?}"))?;
+                spec.timeout = Some(secs.max(30));
+            }
+            "--bg" => spec.bg = true,
+            "--dry-run" | "--plan" => spec.dry_run = true,
+            "--job-record" => spec.job_record = Some(flag_value(&mut it, "--job-record")?),
+            w => words.push(w.to_string()),
+        }
+    }
+    if spec.check.is_some() && spec.no_check {
+        return Err("--check and --no-check ask for opposite things".into());
+    }
+    // One argument is the goal as typed; several are a sentence to rejoin.
+    spec.goal = match words.as_slice() {
+        [only] => only.clone(),
+        many => many.join(" "),
+    };
+    if spec.goal.trim().is_empty() {
+        return Err("a loop needs a goal".into());
+    }
+    Ok(LoopCmd::Run(Box::new(spec)))
+}
+
+fn loop_usage() -> String {
+    [
+        "usage: @loop \"<goal>\"                 iterate until the goal verifies",
+        "       @loop … --check \"<cmd>\"        the verifier: exit 0 = done",
+        "       @loop … --no-check             grade with a reviewer agent instead",
+        "       @loop … --agent <name>         the maker (default coder)",
+        "       @loop … --max N --budget TOKENS --timeout 30m",
+        "       @loop … --bg | --dry-run       detach it | show the plan only",
+        "       @loop                          list recent runs",
+        "       @loop show|log|resume <id>     details | output | carry on",
+        "       @loop clear                    prune finished runs",
+    ]
+    .join("\n")
+}
+
+/// `ai loop …` — the whole surface. Bare lists; `clear` prunes; `show`/`log`/`resume` operate
+/// on one run; anything else is a goal to iterate on. `args` includes the leading "loop" word.
+fn ai_loop_cmd(args: &[String]) -> i32 {
+    let cmd = match parse_loop_args(&args[1..]) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            eprintln!("aiTerminal: {e}");
+            eprintln!("{}", loop_usage());
+            return 2;
+        }
+    };
+    match cmd {
+        LoopCmd::List => loop_list(),
+        LoopCmd::Clear => {
+            crate::config::Config::ensure_default();
+            crate::i18n::install(crate::config::Config::load().i18n_catalog());
+            println!("{}", crate::i18n::translate("loop.cleared", &[crate::loops::clear_finished().to_string()]));
+            0
+        }
+        LoopCmd::Help => {
+            println!("{}", loop_usage());
+            0
+        }
+        LoopCmd::Show(id) => loop_show(&id),
+        LoopCmd::Log { id, follow } => loop_log(&id, follow),
+        LoopCmd::Resume { id, spec } => match crate::loops::resolve(&id) {
+            Ok(id) => run_loop_cli(*spec, Some(id)),
+            Err(e) => {
+                eprintln!("aiTerminal: {e}");
+                2
+            }
+        },
+        LoopCmd::Run(spec) => {
+            if spec.bg {
+                return spawn_background(args);
+            }
+            let record = spec.job_record.clone();
+            let code = run_loop_cli(*spec, None);
+            if let Some(id) = record {
+                crate::jobs::finish(&id, code);
+            }
+            code
+        }
+    }
+}
+
+/// `@loop` — the recent runs, newest first.
+fn loop_list() -> i32 {
+    crate::config::Config::ensure_default();
+    let cfg = crate::config::Config::load();
+    crate::i18n::install(cfg.i18n_catalog());
+    let runs = crate::loops::list();
+    if runs.is_empty() {
+        println!("{}", crate::i18n::translate("loop.none", &[]));
+        return 0;
+    }
+    let now = crate::loops::now();
+    let (dim, r) = (muted(), reset());
+    println!("{}", crate::i18n::translate("loop.header", &[runs.len().to_string()]));
+    for run in runs {
+        let goal = clip_tail(&run.goal, 46);
+        let age = crate::loops::human_age(now.saturating_sub(run.finished.unwrap_or(run.started)));
+        println!("  {} {} {:<9} {goal}  {dim}({age} ago){r}", run.status_glyph(), run.id, run.status);
+        let p = &run.progress;
+        let iters = format!("{}/{} iteration(s)", p.iterations, run.bounds.max);
+        println!("      {dim}{} \u{b7} {iters}{r}", run.verifier.describe());
+    }
+    println!("\n{}", crate::i18n::translate("loop.run_hint", &[]));
+    0
+}
+
+/// One run's full record.
+fn loop_show(id: &str) -> i32 {
+    let id = match crate::loops::resolve(id) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("aiTerminal: {e}");
+            return 2;
+        }
+    };
+    let Some(run) = crate::loops::read(&id) else { return 2 };
+    let (dim, r) = (muted(), reset());
+    println!("{} {} {}", run.status_glyph(), run.id, run.status);
+    println!("  {dim}goal{r}      {}", run.goal);
+    println!("  {dim}verifier{r}  {}", run.verifier.describe());
+    println!("  {dim}maker{r}     @{}", run.agent);
+    if !run.cwd.is_empty() {
+        println!("  {dim}folder{r}    {}", run.cwd);
+    }
+    let budget = run.bounds.budget.map(|b| format!(" \u{b7} {b} tokens")).unwrap_or_default();
+    println!(
+        "  {dim}bounds{r}    {} iteration(s) \u{b7} {}{budget}",
+        run.bounds.max,
+        crate::loops::human_age(run.bounds.timeout)
+    );
+    let p = &run.progress;
+    println!(
+        "  {dim}spent{r}     {} iteration(s) \u{b7} {} tool call(s) \u{b7} {} in / {} out",
+        p.iterations, p.tools, p.input_tokens, p.output_tokens
+    );
+    // Each line already starts with its iteration number, so it needs no second one.
+    for line in &p.tried {
+        println!("  {dim}tried{r}     {line}");
+    }
+    if p.escalated {
+        println!("  {dim}escalated{r} a different approach was already asked for");
+    }
+    if let Some(path) = run.latest_log() {
+        println!("  {dim}log{r}       {}", path.display());
+    }
+    0
+}
+
+/// One run's newest iteration, optionally followed while it is still live.
+fn loop_log(id: &str, follow: bool) -> i32 {
+    let id = match crate::loops::resolve(id) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("aiTerminal: {e}");
+            return 2;
+        }
+    };
+    let Some(run) = crate::loops::read(&id) else { return 2 };
+    let Some(path) = run.latest_log() else {
+        println!("loop {id} has not finished an iteration yet");
+        return 0;
+    };
+    let alive = || matches!(crate::loops::read(&id), Some(r) if r.is_live());
+    tail_log(&path, follow, &alive)
+}
+
+/// Print a log, then (with `follow`) keep printing what is appended while `live` holds.
+fn tail_log(path: &std::path::Path, follow: bool, live: &dyn Fn() -> bool) -> i32 {
+    use std::io::{Read, Seek, Write};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        eprintln!("aiTerminal: can't read {}", path.display());
+        return 1;
+    };
+    let mut text = String::new();
+    let _ = f.read_to_string(&mut text);
+    print!("{text}");
+    let _ = std::io::stdout().flush();
+    if !follow {
+        return 0;
+    }
+    let mut at = f.stream_position().unwrap_or(0);
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        if let Ok(meta) = std::fs::metadata(path) {
+            if meta.len() > at {
+                let _ = f.seek(std::io::SeekFrom::Start(at));
+                let mut more = String::new();
+                let _ = f.read_to_string(&mut more);
+                print!("{more}");
+                let _ = std::io::stdout().flush();
+                at = meta.len();
+            }
+        }
+        if !live() {
+            return 0;
+        }
+    }
+}
+
+/// Clip a single line to `max` display columns, ellipsising the middle-end.
+fn clip_tail(s: &str, max: usize) -> String {
+    let one_line: String = s.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
+    if one_line.chars().count() <= max {
+        return one_line;
+    }
+    one_line.chars().take(max.saturating_sub(1)).collect::<String>() + "\u{2026}"
 }
 
 fn job_usage() -> String {
@@ -3542,13 +4208,27 @@ mod tests {
 
     #[test]
     fn loop_prompt_carries_goal_check_and_feedback() {
-        let p = loop_prompt("make tests pass", 3, 8, Some("cargo test"), "assertion failed: left == right");
+        let p = loop_prompt("make tests pass", 3, 8, Some("cargo test"), "assertion failed: left == right", &[], false);
         assert!(p.contains("iteration 3 of at most 8"));
         assert!(p.contains("exits 0: `cargo test`"));
         assert!(p.contains("assertion failed"), "verifier feedback is fed forward");
-        // First iteration: no feedback section.
-        let first = loop_prompt("goal", 1, 5, None, "");
+        // First iteration: no feedback section, nothing tried yet, no escalation.
+        let first = loop_prompt("goal", 1, 5, None, "", &[], false);
         assert!(!first.contains("Verifier feedback"));
+        assert!(!first.contains("Already attempted"));
+        assert!(!first.contains("MATERIALLY DIFFERENT"));
+    }
+
+    #[test]
+    fn loop_prompt_carries_the_attempt_log_and_the_strategy_shift() {
+        let tried: Vec<String> = (1..=9).map(|i| format!("{i}: tried thing {i} \u{2192} still failing")).collect();
+        let p = loop_prompt("goal", 10, 12, None, "same failure", &tried, true);
+        // The log rides along, but only the recent tail of it — the rest would be transcript.
+        assert!(p.contains("Already attempted"));
+        assert!(p.contains("tried thing 9"), "the newest attempt is there");
+        assert!(!p.contains("tried thing 1 "), "the oldest attempts are dropped");
+        // The escalation says, in the prompt, that refining the same approach will not work.
+        assert!(p.contains("MATERIALLY DIFFERENT"));
     }
 
     #[test]
@@ -3638,14 +4318,34 @@ mod tests {
     }
 
     fn verdict(passed: bool, feedback: &str) -> super::Verdict {
-        super::Verdict { passed, feedback: feedback.into(), signature: fnv1a(feedback) }
+        super::Verdict { passed, feedback: feedback.into(), signature: fnv1a(feedback), code: None }
+    }
+
+    /// Fresh loop state with the given bounds and no history.
+    fn state(max: u32, budget: Option<u64>) -> super::LoopState {
+        super::LoopState {
+            left: crate::loops::Bounds { max, budget, timeout: 3600 },
+            deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs(3600)),
+            ..Default::default()
+        }
+    }
+
+    /// Drive a loop over a scripted verifier, returning the outcome and the final state.
+    fn drive(
+        answers: &[&str],
+        st: &mut super::LoopState,
+        verify: impl FnMut(&str) -> Result<super::Verdict, String>,
+    ) -> super::LoopOutcome {
+        let client = scripted(answers);
+        super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", st, None, verify).outcome
     }
 
     #[test]
     fn loop_passes_when_the_verifier_passes_and_feeds_feedback_forward() {
         let client = scripted(&["attempt one", "attempt two"]);
         let mut iterations = 0;
-        let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "fix it", 5, None, Some("cargo test"), |answer| {
+        let mut st = state(5, None);
+        let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "fix it", &mut st, Some("cargo test"), |answer| {
             iterations += 1;
             // The maker's scripted answers arrive in order — the loop really ran.
             match iterations {
@@ -3661,29 +4361,47 @@ mod tests {
         }).outcome;
         assert_eq!(outcome, super::LoopOutcome::Done(2));
         assert_eq!(iterations, 2, "stopped exactly when the verifier passed");
+        assert_eq!(st.tried.len(), 2, "both attempts are written into the state");
+        assert!(st.tried[0].starts_with("1: attempt one"), "{:?}", st.tried);
     }
 
     #[test]
-    fn loop_stalls_on_identical_verifier_observations() {
-        // Same failure output twice in a row = no progress → stop, don't burn tokens.
-        let client = scripted(&["a", "b", "c"]);
+    fn loop_escalates_once_on_no_progress_then_stalls() {
+        // The same failure forever. The FIRST repeat buys one strategy shift; the next
+        // one ends the run — a stuck loop must not be able to spend the whole cap.
+        let mut st = state(10, None);
         let mut n = 0;
-        let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", 10, None, None, |_| {
+        let outcome = drive(&["a", "b", "c", "d"], &mut st, |_| {
             n += 1;
             Ok(verdict(false, "exit=1 same failure"))
-        }).outcome;
+        });
         assert_eq!(outcome, super::LoopOutcome::Stalled);
-        assert_eq!(n, 2, "detected on the second identical observation");
+        assert_eq!(n, 3, "iteration 2 repeats → escalate; iteration 3 repeats → stop");
+        assert!(st.escalated, "the one escalation was spent");
+    }
+
+    #[test]
+    fn loop_catches_an_oscillation_not_just_a_repeat() {
+        // A → B → A. Nothing is ever identical to the PREVIOUS observation, so a
+        // "same as last time?" test would run to the cap; this is still no progress.
+        let mut st = state(10, None);
+        let mut n = 0;
+        let outcome = drive(&["a", "b", "c", "d", "e", "f"], &mut st, |_| {
+            n += 1;
+            Ok(verdict(false, if n % 2 == 1 { "failure A" } else { "failure B" }))
+        });
+        assert_eq!(outcome, super::LoopOutcome::Stalled);
+        assert!(n < 6, "stopped well before the cap, after {n} iterations");
     }
 
     #[test]
     fn loop_exhausts_at_the_iteration_cap() {
-        let client = scripted(&["a", "b", "c"]);
+        let mut st = state(3, None);
         let mut n = 0;
-        let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", 3, None, None, |_| {
+        let outcome = drive(&["a", "b", "c"], &mut st, |_| {
             n += 1;
             Ok(verdict(false, &format!("different failure {n}"))) // always progressing
-        }).outcome;
+        });
         assert_eq!(outcome, super::LoopOutcome::Exhausted);
         assert_eq!(n, 3, "ran exactly --max iterations");
     }
@@ -3692,21 +4410,103 @@ mod tests {
     fn loop_stops_at_the_token_budget() {
         // Each scripted turn reports 10 in + 4 out tokens; budget 1 → stop after
         // the first (still-failing) iteration.
-        let client = scripted(&["a", "b"]);
-        let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", 10, Some(1), None, |_| {
-            Ok(verdict(false, "still failing"))
-        }).outcome;
+        let mut st = state(10, Some(1));
+        let outcome = drive(&["a", "b"], &mut st, |_| Ok(verdict(false, "still failing")));
         assert_eq!(outcome, super::LoopOutcome::Budget);
     }
 
     #[test]
+    fn loop_stops_when_the_clock_runs_out() {
+        // A deadline already in the past: the run stops before starting an iteration, so a
+        // slow agent can't outlive its wall clock however few iterations it has used.
+        let mut st = super::LoopState {
+            left: crate::loops::Bounds { max: 10, budget: None, timeout: 1 },
+            deadline: Some(std::time::Instant::now()),
+            ..Default::default()
+        };
+        let outcome = drive(&["a"], &mut st, |_| Ok(verdict(false, "x")));
+        assert_eq!(outcome, super::LoopOutcome::Timeout);
+    }
+
+    #[test]
     fn loop_surfaces_a_verifier_error() {
-        // A guard-blocked check command aborts the loop as a setup error.
-        let client = scripted(&["a"]);
-        let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", 5, None, None, |_| {
-            Err("check command blocked by guard: rm".into())
-        }).outcome;
-        assert_eq!(outcome, super::LoopOutcome::Error("check command blocked by guard: rm".into()));
+        // A check command the guard refuses aborts the loop as a setup error.
+        let mut st = state(5, None);
+        let outcome = drive(&["a"], &mut st, |_| Err("check command blocked by guard: deploy-prod".into()));
+        assert_eq!(outcome, super::LoopOutcome::Error("check command blocked by guard: deploy-prod".into()));
+    }
+
+    #[test]
+    fn a_resumed_loop_continues_where_it_stopped() {
+        // Two iterations already done, three of five left: numbering carries on and the run
+        // reports only the NEW iterations, so a resume never re-bills the old ones.
+        let mut st = super::LoopState {
+            done: 2,
+            left: crate::loops::Bounds { max: 3, budget: None, timeout: 3600 },
+            feedback: "exit=1 the old failure".into(),
+            tried: vec!["1: first".into(), "2: second".into()],
+            deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs(3600)),
+            ..Default::default()
+        };
+        let mut seen = Vec::new();
+        let client = scripted(&["third", "fourth", "fifth"]);
+        let run = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", &mut st, None, |a| {
+            seen.push(a.to_string());
+            Ok(verdict(false, &format!("failure {}", seen.len())))
+        });
+        assert_eq!(run.outcome, super::LoopOutcome::Exhausted);
+        assert_eq!(run.iters, 3, "three NEW iterations, not five");
+        assert_eq!(st.tried.len(), 5, "the attempt log grew from two to five");
+        assert!(st.tried[2].starts_with("3: third"), "numbering continues: {:?}", st.tried);
+    }
+
+    #[test]
+    fn loop_flags_are_read_strictly_or_refused() {
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let spec = |args: &[&str]| match super::parse_loop_args(&a(args)) {
+            Ok(super::LoopCmd::Run(spec)) => *spec,
+            other => panic!("{other:?}"),
+        };
+        // A goal, taken verbatim when it is one argument — flag-looking words inside stay text.
+        let s = spec(&["raise --max to 10"]);
+        assert_eq!(s.goal, "raise --max to 10");
+        assert_eq!(s.max, None);
+        // Loose words rejoin into a sentence.
+        assert_eq!(spec(&["make", "the", "tests", "pass"]).goal, "make the tests pass");
+        // Bounds are read.
+        let s = spec(&["goal", "--max", "8", "--budget", "50000", "--timeout", "30m"]);
+        assert_eq!((s.max, s.budget, s.timeout), (Some(8), Some(50_000), Some(1800)));
+        // A value that cannot be read is an ERROR — never a silent default, because a bound
+        // you asked for and did not get is worse than no bound at all.
+        for bad in [
+            vec!["goal", "--budget", "abc"],
+            vec!["goal", "--max", "lots"],
+            vec!["goal", "--timeout", "soon"],
+            vec!["goal", "--budget"],          // no value at all
+            vec!["goal", "--check"],           // …would have silently self-graded
+            vec!["goal", "--check", "--bg"],   // the next flag is not a value
+            vec!["--max", "3"],                // no goal
+            vec!["goal", "--check", "x", "--no-check"], // contradictory
+        ] {
+            assert!(super::parse_loop_args(&a(&bad)).is_err(), "{bad:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn loop_subcommands_parse() {
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let p = |xs: &[&str]| super::parse_loop_args(&a(xs)).unwrap();
+        assert_eq!(p(&[]), super::LoopCmd::List);
+        assert_eq!(p(&["clear"]), super::LoopCmd::Clear);
+        assert_eq!(p(&["show", "4310"]), super::LoopCmd::Show("4310".into()));
+        let super::LoopCmd::Resume { id, spec } = p(&["resume", "last", "--budget", "200000"]) else {
+            panic!("resume should parse")
+        };
+        assert_eq!(id, "last");
+        assert_eq!(spec.budget, Some(200_000), "a resume can be given more rope");
+        assert_eq!(p(&["log", "-f"]), super::LoopCmd::Log { id: "last".into(), follow: true });
+        // A bare id defaults to the newest run, so `@loop show` alone means "the last one".
+        assert_eq!(p(&["show"]), super::LoopCmd::Show("last".into()));
     }
 
     #[test]
@@ -4179,7 +4979,8 @@ mod tests {
         // An empty script → the maker run errors. The verifier must NEVER see that
         // non-answer as if it were work — it panics if called.
         let client = crate::ai::Client::new(keyed_settings(), crate::ai::ScriptedTransport::new(vec![]));
-        let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", 5, None, None, |_| {
+        let mut st = state(5, None);
+        let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", &mut st, None, |_| {
             panic!("the verifier must not run on an errored iteration")
         }).outcome;
         assert!(matches!(outcome, super::LoopOutcome::Error(_)), "{outcome:?}");
@@ -4192,7 +4993,8 @@ mod tests {
         let cancel = crate::ai::CancelToken::new();
         cancel.cancel();
         let client = crate::ai::Client::new(keyed_settings(), crate::ai::ScriptedTransport::new(vec![])).with_cancel(cancel);
-        let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", 5, None, None, |_| {
+        let mut st = state(5, None);
+        let outcome = super::drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", &mut st, None, |_| {
             panic!("the verifier must not run on a cancelled iteration")
         }).outcome;
         assert_eq!(outcome, super::LoopOutcome::Cancelled);

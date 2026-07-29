@@ -140,7 +140,7 @@ pub(crate) fn decode(reply: &str, request: &str, now: u64) -> Option<Plan> {
 
 /// The first balanced `{ … }` in a reply — models like to wrap JSON in a fence or a
 /// sentence, and the object is the only part that matters.
-fn extract_object(reply: &str) -> Option<String> {
+pub(crate) fn extract_object(reply: &str) -> Option<String> {
     let bytes = reply.as_bytes();
     let start = reply.find('{')?;
     let mut depth = 0i32;

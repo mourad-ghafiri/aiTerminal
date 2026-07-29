@@ -18,6 +18,7 @@ pub mod memory;
 mod model;
 mod orchestrate;
 pub(crate) mod plan;
+pub(crate) mod verify;
 pub mod pool;
 pub mod provider;
 mod reply;

@@ -97,6 +97,18 @@ pub struct Config {
     pub jobs_keep_runs: usize,
     /// `[jobs] max_log_bytes` — the cap on a single run's log.
     pub jobs_max_log_bytes: u64,
+    /// `[loop] max` — the default iteration cap for `@loop`.
+    pub loop_max: u32,
+    /// `[loop] timeout` — the default wall clock for a whole loop, in seconds. Iterations,
+    /// tokens and time are three independent bounds; a loop needs all three.
+    pub loop_timeout: u64,
+    /// `[loop] check_timeout` — how long one verifier command may take before it is killed.
+    pub loop_check_timeout: u64,
+    /// `[loop] keep_runs` — how many loop records are kept.
+    pub loop_keep_runs: usize,
+    /// `[loop] propose_check` — let the AI read the goal and propose a real verifier command
+    /// when none was given. Off → an unverified goal falls to the reviewer agent.
+    pub loop_propose_check: bool,
     /// The primary-model pool: each `[[ai.model]]` table contributes one candidate
     /// (id + optional provider qualifier + weight + per-model overrides). Empty →
     /// the catalog's default model as a single-entry pool.
@@ -205,6 +217,11 @@ impl Default for Config {
             jobs_max_concurrent: 4,
             jobs_keep_runs: 20,
             jobs_max_log_bytes: 1 << 20,
+            loop_max: 5,
+            loop_timeout: 30 * 60,
+            loop_check_timeout: 10 * 60,
+            loop_keep_runs: 20,
+            loop_propose_check: true,
             md_remote_images: false,
             md_image_max_rows: 20,
             md_syntax: true,
@@ -431,6 +448,12 @@ impl Config {
     /// `aiTerminal ai --bg …`, listed by `aiTerminal ai jobs`.
     pub fn jobs_dir() -> PathBuf {
         Self::ai_dir().join("jobs")
+    }
+
+    /// `@loop` run records (`ai/loops/<id>/{loop.toml,iterations/<n>.md}`) — what the loop
+    /// was asked to do, what each iteration produced, and enough state to resume it.
+    pub fn loops_dir() -> PathBuf {
+        Self::ai_dir().join("loops")
     }
 
     /// Per-folder AI sessions (`ai/sessions/<id>/{meta.toml,session.md,memory/}`) — a
@@ -729,6 +752,25 @@ impl Config {
             }
             if let Some(v) = j.get("max_log_bytes").and_then(|v| v.as_int()) {
                 c.jobs_max_log_bytes = v.clamp(4096, 1 << 30) as u64;
+            }
+        }
+        if let Some(l) = doc.get("loop") {
+            if let Some(v) = l.get("max").and_then(|v| v.as_int()) {
+                c.loop_max = v.clamp(1, 25) as u32;
+            }
+            // Durations are written the way people write them (`30m`); an unreadable one
+            // keeps the default rather than silently becoming zero (= no bound at all).
+            if let Some(v) = l.get("timeout").and_then(|v| v.as_str()).and_then(corelib::datetime::duration) {
+                c.loop_timeout = v.clamp(30, 24 * 3600);
+            }
+            if let Some(v) = l.get("check_timeout").and_then(|v| v.as_str()).and_then(corelib::datetime::duration) {
+                c.loop_check_timeout = v.clamp(5, 3600);
+            }
+            if let Some(v) = l.get("keep_runs").and_then(|v| v.as_int()) {
+                c.loop_keep_runs = v.clamp(1, 500) as usize;
+            }
+            if let Some(v) = l.get("propose_check").and_then(|v| v.as_bool()) {
+                c.loop_propose_check = v;
             }
         }
         if let Some(ai) = doc.get("ai") {
