@@ -1029,3 +1029,25 @@ footer { padding: 34px 0 46px; color: var(--muted); font-size: 13.5px; border-to
 :root[data-theme="light"] .uc pre .p,
 :root[data-theme="light"] .uc pre .ab { color: #4DA3FF; }
 :root[data-theme="light"] .uc pre .c { color: #7CD4FD; }
+
+
+/* ── the install command ──────────────────────────────────────────────────────
+   One copyable line, used in the hero and in the download band. */
+.install {
+  display: flex; align-items: center; gap: 10px;
+  max-width: 640px; margin: 26px 0 0;
+  padding: 12px 14px; border: 1px solid var(--hair); border-radius: 12px;
+  background: var(--surface); font-family: var(--mono); font-size: 13.5px;
+  text-align: left;
+}
+.install code { flex: 1; overflow-x: auto; white-space: pre; color: var(--ink); background: none; padding: 0; }
+.install code .p { color: var(--muted); }
+.install button {
+  flex: none; cursor: pointer; font: inherit; font-size: 12px;
+  padding: 5px 10px; border-radius: 8px; border: 1px solid var(--hair);
+  background: transparent; color: var(--muted); transition: color .15s, border-color .15s;
+}
+.install button:hover { color: var(--ink); border-color: var(--muted); }
+.install button.copied { color: var(--ink); border-color: var(--ink); }
+.install-note { margin-top: 10px; color: var(--muted); font-size: 13px; }
+.install-note code { font-family: var(--mono); font-size: 12.5px; }

@@ -79,7 +79,23 @@
       is a TOML file — there is no settings UI. This page is the complete reference.</p>
 
     <h2 id="install">Install &amp; first launch</h2>
-    <p>Grab a build from <a href="https://github.com/mourad-ghafiri/aiTerminal/releases" target="_blank" rel="noopener">GitHub Releases</a> (macOS 12+; Linux and Windows builds land with the next phases) — or build from source:</p>
+    <p>One command installs aiTerminal on macOS 12+ — it clones the source, installs Rust if you
+      don't have it, builds the app and puts <code>aiTerminal.app</code> in <code>/Applications</code>:</p>
+    <pre><code><span class="p">❯</span> curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh</code></pre>
+    <p>The <b>same command updates</b> it later. To uninstall, add <code>-s -- remove</code>
+      (your settings in <code>~/.aiTerminal</code> are kept unless you add <code>--purge</code>):</p>
+    <pre><code><span class="c"># update</span>
+curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh
+
+<span class="c"># uninstall (add --purge to delete your settings too)</span>
+curl -fsSL https://raw.githubusercontent.com/mourad-ghafiri/aiTerminal/main/install.sh | sh -s -- remove</code></pre>
+    <p>Prefer a prebuilt app? Grab a build for your Mac (Linux and Windows land with the next phases) —
+      <a href="https://github.com/mourad-ghafiri/aiTerminal/releases/latest/download/aiTerminal-macos-arm64.zip"><b>Apple Silicon (arm64)</b></a> ·
+      <a href="https://github.com/mourad-ghafiri/aiTerminal/releases/latest/download/aiTerminal-macos-x86_64.zip"><b>Intel (x86_64)</b></a> ·
+      <a href="https://github.com/mourad-ghafiri/aiTerminal/releases/latest/download/aiTerminal-macos-universal.zip"><b>Universal</b></a>,
+      or all of them on the <a href="https://github.com/mourad-ghafiri/aiTerminal/releases" target="_blank" rel="noopener">releases page</a>.
+      Apple menu → <em>About This Mac</em> tells you which: <em>Chip</em> = Apple Silicon, <em>Processor</em> = Intel.
+      Or build from source:</p>
     <pre><code><span class="c"># zero external crates — this is the whole build</span>
 git clone https://github.com/mourad-ghafiri/aiTerminal.git
 cd aiTerminal
@@ -87,9 +103,12 @@ cargo build --release
 ./target/release/aiTerminal</code></pre>
     <p>Prefer a real macOS app? One script bundles a self-contained
       <code>aiTerminal.app</code> (binary + the <code>builtin/</code> data + icon):</p>
-    <pre><code>./tools/bundle-macos.sh          <span class="c"># → dist/aiTerminal.app (+ a distributable .zip)</span>
+    <pre><code>./tools/bundle-macos.sh          <span class="c"># this Mac's architecture → dist/aiTerminal.app (+ a .zip)</span>
 open dist/aiTerminal.app         <span class="c"># run it — or install it:</span>
-cp -R dist/aiTerminal.app /Applications/</code></pre>
+cp -R dist/aiTerminal.app /Applications/
+
+<span class="c"># the release set: dist/aiTerminal-macos-{arm64,x86_64,universal}.zip</span>
+./tools/bundle-macos.sh all      <span class="c"># needs: rustup target add aarch64-apple-darwin x86_64-apple-darwin</span></code></pre>
     <p>First launch seeds <code>~/.aiTerminal/</code> with the default config, 19 themes, 31 plugins,
       keymaps, agents, flows and skills — every one an editable file. Nothing is ever overwritten
       after that: your edits win.</p>
@@ -245,7 +264,11 @@ background jobs (3):
 │ ^S save  ^W focus  ^Q quit  · scroll ↑↓ ←→ · wheel            │
 └─────────────────────────────────┴─────────────────────────────┘</code></pre>
     <p><code>@md render &lt;file&gt;</code> prints styled Markdown to the pane at the split's full
-      width, with diagrams drawn as real pixels inline (a clean boxed fallback in other terminals /
+      width — GitHub-flavored Markdown plus the HTML subset (alerts, footnotes, <code>&lt;details&gt;</code>,
+      centered blocks, HTML tables), syntax-highlighted code, images drawn as pixels, and every
+      mermaid diagram type — flowchart, sequence, class, state, ER, gantt, pie,
+      journey, mindmap, git graph and the rest — drawn as real pixels inline (the same picture in
+      Unicode box art in other terminals /
       when piped). A <b>long file opens a scrollable pager</b> (<code>↑↓</code>/<code>Space</code>/
       <code>g</code>/<code>G</code>, mouse wheel, <code>q</code> to quit) that starts at the top and
       <b>reflows on resize</b> — no more scrolling past the end.
