@@ -46,6 +46,7 @@
     <b>Commands</b>
     <a href="#cmd-ai">@ai</a>
     <a href="#cmd-agent">@&lt;agent&gt;</a>
+    <a href="#cmd-agent">@agent</a>
     <a href="#cmd-flow">@flow</a>
     <a href="#cmd-loop">@loop</a>
     <a href="#cmd-job">@job</a>
@@ -186,36 +187,142 @@ The most common causes are cache invalidation and copying node_modules…</code>
 The fix: the parser dropped the final line …
 <span class="c">✓ 8.4s · 2 tools · 12.3k in / 1.8k out</span></code></pre>
     <p>An agent is a Markdown file with TOML frontmatter — system prompt, allowed tools, step
-      budget, skills. Five ship:</p>
+      budget, skills. <code>@agent</code> lists the eight that ship; <code>@agent &lt;name&gt;</code>
+      shows one in full.</p>
     <div class="table-wrap"><table>
       <tr><th>Agent</th><th>Role</th></tr>
-      <tr><td><code>@coder</code></td><td>Senior engineer + orchestrator — explores, makes the smallest correct edit, verifies, delegates sub-agents.</td></tr>
+      <tr><td><code>@planner</code></td><td>Turns a goal into a small plan with a concrete "done when" — reads, never writes.</td></tr>
       <tr><td><code>@explorer</code></td><td>Fast read-only scout — maps relevant code, reports tightly.</td></tr>
+      <tr><td><code>@researcher</code></td><td>Finds sources, reads them, and reports what they actually say — with links.</td></tr>
+      <tr><td><code>@coder</code></td><td>Senior engineer + orchestrator — explores, makes the smallest correct edit, verifies, delegates sub-agents.</td></tr>
+      <tr><td><code>@tester</code></td><td>Finds and runs the project's own tests; reproduces a failure, then fixes it.</td></tr>
       <tr><td><code>@reviewer</code></td><td>Read-only review — correctness, security, tests, design.</td></tr>
-      <tr><td><code>@tester</code></td><td>Writes and runs tests; reproduces a failure, then fixes it.</td></tr>
+      <tr><td><code>@writer</code></td><td>Documentation and reports for the person who will read them — and saves the file.</td></tr>
       <tr><td><code>@ai</code></td><td>General assistant — proposes a command to review/run, or answers a question.</td></tr>
     </table></div>
+    <p><b>Every agent ends by stating what it returns.</b> That is not a style rule: a flow node
+      chains on that text, so <code>{{explore.output}}</code> is only as good as the agent's
+      discipline. <code>@tester</code> and <code>@reviewer</code> go further and promise a final
+      <code>VERDICT: PASS</code> / <code>VERDICT: FAIL</code> line — an agent that <em>reports</em>
+      a failure has still finished its run successfully, so that line is how a workflow tells the
+      difference.</p>
     <p>Live chrome rides stderr, content rides stdout — so piping stays clean:
       <code>@explorer "map the auth flow" &gt; auth-map.md</code> works.</p>
 
-    <h2 id="cmd-flow">@flow — multi-step pipelines</h2>
-    <pre><code><span class="p">❯</span> @flow                          <span class="c"># list available flows</span>
-<span class="p">❯</span> @flow review the PTY layer     <span class="c"># first word names a flow → run it</span>
-<span class="p">❯</span> @flow add retry logic to fetch <span class="c"># free text → the default `implement` pipeline</span></code></pre>
-    <p>A flow is a TOML file of steps, each a full agent run; with <code>chain = true</code> every
-      step sees the previous answers. Bundled: <code>implement</code> (explore → implement → verify)
-      and <code>review</code> (map → review). A failed step stops the pipeline and exits non-zero.</p>
-    <pre><code><span class="c"># ~/.aiTerminal/ai/flows/ship.toml — your own in 10 lines</span>
-description = <span class="s">"implement, test, and write the changelog"</span>
-chain = true
-<span class="k">[[step]]</span>
-label  = <span class="s">"implement"</span>
+    <h2 id="cmd-flow">@flow — a workflow declared as a graph</h2>
+    <pre><code><span class="p">❯</span> @flow                            <span class="c"># the installed flows</span>
+<span class="p">❯</span> @flow check build                <span class="c"># prove it runs — no model needed, nothing spent</span>
+<span class="p">❯</span> @flow graph review               <span class="c"># draw it</span>
+<span class="p">❯</span> @flow review "this branch"       <span class="c"># three reviewers, at the same time</span>
+<span class="p">❯</span> @flow build --bg "add a --json flag"
+<span class="p">❯</span> @flow resume last                <span class="c"># run only what did not finish</span></code></pre>
+    <p>Five flows ship, and none of them names a build tool, a test command or a language —
+      <code>@tester</code> finds the project's own runner, which is what makes them yours rather
+      than somebody else's.</p>
+    <div class="table-wrap"><table>
+      <tr><th>Flow</th><th>What it does</th></tr>
+      <tr><td><code>build</code></td><td>plan → map the code and its conventions <b>in parallel</b> → implement → test → fix until green → review → summarise</td></tr>
+      <tr><td><code>fix</code></td><td>reproduce the failure <b>first</b> → find its cause → patch → prove it is gone</td></tr>
+      <tr><td><code>review</code></td><td>map once, then <b>three reviewers at the same time</b> → one merged verdict</td></tr>
+      <tr><td><code>research</code></td><td>break the question into sub-questions → research each <b>in parallel</b> → compare → report, with sources</td></tr>
+      <tr><td><code>document</code></td><td>read the real code → write the file → check every claim against the source → revise until it holds</td></tr>
+    </table></div>
+    <p>A flow is a TOML file of <code>[[node]]</code> entries — each one an agent run, a shell
+      command, or a pause for you — and <code>needs</code> names what must finish first. That is
+      the whole idea, and it buys four things a chain cannot do.</p>
+    <ul>
+      <li><b>Nodes that need nothing from each other run at the same time.</b> Three reviews cost
+        one review's wall clock.</li>
+      <li><b><code>when</code> puts the decision on the edge</b>, as data this tool parses — not as
+        an instruction a model interprets, differently, next time.</li>
+      <li><b>A <code>run</code> node costs no tokens.</b> It is a command through the same guard as
+        everything else, and its exit status is a fact the graph branches on. The model is spent
+        only where judgement is needed.</li>
+      <li><b><code>goto</code> points one edge backwards</b>, bounded by <code>max</code> — so
+        "test, fix, test again" is a flow rather than something you sit and supervise.</li>
+    </ul>
+    <pre><code><span class="c"># ~/.aiTerminal/ai/flows/ship.toml — the whole vocabulary in one file</span>
+<span class="k">[[node]]</span>
+id     = <span class="s">"build"</span>
 agent  = <span class="s">"coder"</span>
 prompt = <span class="s">"Implement: {{input}}"</span>
-<span class="k">[[step]]</span>
-label  = <span class="s">"verify"</span>
-agent  = <span class="s">"tester"</span>
-prompt = <span class="s">"Verify the change above."</span></code></pre>
+
+<span class="k">[[node]]</span>
+id    = <span class="s">"verify"</span>
+run   = <span class="s">"cargo test"</span>          <span class="c"># a command node — zero tokens</span>
+needs = [<span class="s">"build"</span>]
+
+<span class="k">[[node]]</span>
+id     = <span class="s">"fix"</span>
+agent  = <span class="s">"coder"</span>
+needs  = [<span class="s">"verify"</span>]
+when   = <span class="s">"verify.failed"</span>      <span class="c"># a conditional edge</span>
+prompt = <span class="s">"Fix:\n{{verify.output}}"</span>
+goto   = <span class="s">"verify"</span>             <span class="c"># a bounded retry loop</span>
+max    = 3</code></pre>
+    <p><b>Nothing runs until the graph is proved.</b> <code>@flow check</code> costs nothing and
+      needs no model: it refuses a dangling <code>needs</code>, a reference to a node that does not
+      run first, a condition naming a node that does not exist, an agent that is not installed, and
+      a command the guard would refuse. A node cannot read <code>{{other.output}}</code> unless
+      <code>other</code> is ordered ahead of it — otherwise what it reads depends on which thread
+      finished first, and that is a race, not a workflow.</p>
+    <p><b>And the graph is something you look at.</b> <code>@flow graph</code> draws it with the
+      same native diagram renderer <code>@md</code> uses; <code>@flow show &lt;id&gt;</code> draws the
+      same picture again after a run, with each node's real outcome, cost and duration on it.</p>
+    <pre><code><span class="p">❯</span> @flow graph review
+
+                             ┌───────────────┐
+                             │ map @explorer │
+                             └───────────────┘
+                                     │
+             ┌───────────────────────┴──┬───────────────────────┐
+             ▼                          ▼                       ▼
+ ┌───────────┴───────────┐   ┌──────────┴─────────┐   ┌─────────┴────────┐
+ │ correctness @reviewer │   │ security @reviewer │   │ design @reviewer │
+ └───────────────────────┘   └────────────────────┘   └──────────────────┘
+             │                          │                       │
+             └───────────────────────┬──┴───────────────────────┘
+                                     ▼
+                            ┌────────┴─────────┐
+                            │ report @reviewer │
+                            └──────────────────┘</code></pre>
+    <p><b>Every node is written down, so a run can be picked back up.</b> Each result lands in
+      <code>ai/flow-runs/&lt;id&gt;/</code> the moment it happens, and <code>@flow resume</code>
+      replays the finished nodes from disk — a six-node flow that died at node five costs one node
+      to finish, not six. A failed node stops its own branch and nothing else, so the independent
+      work is kept. An <code>approve</code> node asks on a terminal; detached, it parks the run as
+      <code>waiting</code> instead of deadlocking a background job.</p>
+
+    <h3>A goal on its own</h3>
+    <pre><code><span class="p">❯</span> @flow "Research LLM memory techniques"
+<span class="a">▸ research</span> <span class="c">— the goal asks for sources and a comparison, not a code change</span></code></pre>
+    <p>A flow name can never contain a space, so <b>one quoted argument that does is a goal</b>,
+      never a mistyped name. The model reads it against the installed flows' descriptions and names
+      one; the choice and its reason print <b>before the first node runs</b>, and
+      <code>--dry-run</code> shows them for nothing. If no flow fits, that is an error listing them
+      — never a flow chosen by falling back to a favourite. Loose words are still a name:
+      <code>@flow revieew the parser</code> is an error suggesting <code>review</code>, not a graph
+      run over your repository.</p>
+
+    <h3>Watching it run</h3>
+    <p>A chain can narrate itself; a graph cannot. Four nodes start together and finish in whatever
+      order they finish, so a stream of start/done lines hides the most useful thing about the run.
+      Every node gets <b>one line that stays where it is</b>, repainted in place.</p>
+    <pre><code><span class="a">▸ build · add a --json flag to the export command</span>
+  <span class="g">✓</span> plan         <span class="c">@planner        4.2s   3.1k</span>
+  <span class="g">✓</span> explore      <span class="c">@explorer       8.1s   9.4k</span>
+  <span class="g">✓</span> conventions  <span class="c">@explorer       7.6s   8.8k</span>
+  ⠻ apply        <span class="c">@coder         12.3s          ⚙ fs.edit src/cli.rs · 12ms · 1.4KB</span>
+  ○ verify       <span class="c">@tester</span>
+  ○ fix          <span class="c">@coder                        when verify.output contains "VERDICT…</span>
+  ○ review       <span class="c">@reviewer</span>
+  ○ summary      <span class="c">@writer</span>
+  <span class="c">3/8 done · 1 running · 21.3k tokens · 24.6s</span></code></pre>
+    <p>A waiting node shows the condition it is waiting on, a running one shows the tool it is in
+      right now, and a retry is the same line with <code>×2</code> rather than a second line. Off a
+      terminal — <code>--bg</code>, a pipe, CI — the same state machine prints
+      <code>[node] event</code> lines instead: nothing is overwritten, and the attribution a plain
+      stream could never give is still there.</p>
 
     <h2 id="cmd-loop">@loop — iterate until it verifies</h2>
     <pre><code><span class="p">❯</span> @loop "make the config tests pass"

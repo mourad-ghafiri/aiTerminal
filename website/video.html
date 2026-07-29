@@ -530,20 +530,22 @@ body { background: var(--paper); }
       { do: "pause", ms: 2000 },
     ]);
 
-    /* ---- 03 · @flow — a team, not a chatbot ---- */
-    chapter("03 · flows", "<code>@flow</code> — a <em>team</em> of specialists",
-      "explore → implement → verify, each step its own agent with its own context. Any free text runs the default pipeline.");
+    /* ---- 03 · @flow — a graph, not a chain ---- */
+    chapter("03 · flows", "<code>@flow</code> — a <em>graph</em> of specialists",
+      "Nodes that need nothing from each other run at the same time. A `run` node is a plain command that costs no tokens, and a condition on the edge decides what happens next.");
     await run(w, [
       { do: "call", fn: async (t) => t.clear() },
-      { do: "cmd", text: "@flow add retry logic to the fetch helper", speed: 11 },
-      { do: "out", spans: [FG("▶ flow 'implement' — 3 step(s)")] },
-      { do: "spin", label: "explore…", ms: 550 },
-      { do: "out", spans: [OK("✓"), DIM(" explore · 1.2k in / 340 out")] },
-      { do: "spin", label: "implement…", ms: 650 },
-      { do: "out", spans: [OK("✓"), DIM(" implement · 6.4k in / 1.1k out")] },
-      { do: "spin", label: "verify…", ms: 520 },
-      { do: "out", spans: [OK("✓"), DIM(" verify · 2.1k in / 280 out")] },
-      { do: "stream", spans: [FG("Added exponential backoff (3 attempts) — tests green.")], speed: 8 },
+      { do: "cmd", text: "@flow review \"the changes on this branch\"", speed: 11 },
+      { do: "out", spans: [ACC("▸"), FG(" flow 'review' · 5 node(s) · 3 in parallel · 4 at a time")] },
+      { do: "spin", label: "map…", ms: 500 },
+      { do: "out", spans: [OK("✓"), DIM(" map · 1.2k in / 340 out")] },
+      { do: "out", spans: [ACC("▶"), DIM(" correctness · security · design — all three at once")] },
+      { do: "spin", label: "three reviewers…", ms: 700 },
+      { do: "out", spans: [OK("✓"), DIM(" security · 2.0k in / 310 out")] },
+      { do: "out", spans: [OK("✓"), DIM(" correctness · 2.2k in / 380 out")] },
+      { do: "out", spans: [OK("✓"), DIM(" design · 1.9k in / 290 out")] },
+      { do: "spin", label: "report…", ms: 450 },
+      { do: "stream", spans: [FG("Two must-fix: parser.rs:88 splits CRLF wrong; cache.rs:41 races the reader.")], speed: 8 },
       { do: "pause", ms: 2000 },
     ]);
 

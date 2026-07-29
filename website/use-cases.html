@@ -54,11 +54,15 @@
 
       <div class="uc">
         <h3><span class="em">🚢</span>Ship a small feature, end to end</h3>
-        <p>The default <code>implement</code> pipeline explores your codebase, edits, then verifies — three specialists chained.</p>
-        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> add a --json flag to the export command</span>
-▶ flow 'implement' — 3 step(s)
-<span class="g">✓</span> explore · <span class="g">✓</span> implement · <span class="g">✓</span> verify
-<span class="d">✓ 58s · 11 tools · 32k in / 4.1k out</span></pre>
+        <p>The <code>build</code> graph plans it, maps the code <em>and</em> your conventions in parallel, edits, runs <em>your</em> tests — and if they fail, loops back through a fixer up to three times before giving up.</p>
+        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> build "add a --json flag to the export command"</span>
+<span class="a">▸ build · add a --json flag to the export command</span>
+  <span class="g">✓</span> plan         <span class="d">@planner        4.2s   3.1k</span>
+  <span class="g">✓</span> explore      <span class="d">@explorer       8.1s   9.4k</span>
+  <span class="g">✓</span> conventions  <span class="d">@explorer       7.6s   8.8k</span>
+  ⠻ apply        <span class="d">@coder         12.3s          ⚙ fs.edit src/cli.rs</span>
+  ○ verify       <span class="d">@tester</span>
+  <span class="d">3/8 done · 1 running · 21.3k tokens · 24.6s</span></pre>
       </div>
 
       <div class="uc">
@@ -122,18 +126,51 @@ Reproduced: rounding applied before the zero-check …</pre>
       </div>
 
       <div class="uc">
-        <h3><span class="em">🧬</span>Write your own flow in ten lines</h3>
-        <p>A flow is a TOML file in <code>ai/flows/</code> — your pipeline, your agents, chained.</p>
+        <h3><span class="em">🧬</span>Write your own graph in ten lines</h3>
+        <p>A flow is a TOML file in <code>ai/flows/</code>. <code>needs</code> draws the edges; a <code>run</code> node is a plain command that costs no tokens.</p>
         <pre><span class="d"># ~/.aiTerminal/ai/flows/ship.toml</span>
-<span class="d">[[step]]</span>
-<span class="d">label  = "implement"</span>
+<span class="d">[[node]]</span>
+<span class="d">id     = "build"</span>
 <span class="d">agent  = "coder"</span>
 <span class="d">prompt = "Implement: {{input}}"</span>
-<span class="d">[[step]]</span>
-<span class="d">label  = "verify"</span>
-<span class="d">agent  = "tester"</span>
-<span class="d">prompt = "Verify the change above."</span>
-<span class="p">❯</span> <span class="ab">@flow</span><span class="c"> ship add rate limiting to the login route</span></pre>
+<span class="d">[[node]]</span>
+<span class="d">id     = "verify"</span>
+<span class="d">run    = "npm test"</span>
+<span class="d">needs  = ["build"]</span>
+<span class="p">❯</span> <span class="ab">@flow</span><span class="c"> check ship</span>   <span class="d">← proved before it spends a token</span>
+<span class="p">❯</span> <span class="ab">@flow</span><span class="c"> ship "add rate limiting to the login route"</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🔎</span>Answer a question properly, with sources</h3>
+        <p>The <code>research</code> graph splits the question into sub-questions, researches each <em>at the same time</em>, then reports what the sources actually say — including where they disagree and what it could not establish.</p>
+        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> "Research LLM memory techniques"</span>
+<span class="a">▸ research</span> <span class="d">— the goal asks for sources and a comparison, not a code change</span>
+  <span class="g">✓</span> plan     <span class="d">@planner       3.1s</span>
+  ⠻ gather   <span class="d">@researcher ×n         × 5 items</span>
+  ○ compare  <span class="d">@researcher</span>
+  ○ report   <span class="d">@writer</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🩺</span>Fix the bug somebody just reported</h3>
+        <p>Reproduce <em>first</em> — a fix for a bug you never reproduced is a guess with a commit message — then find the cause, patch it, and re-run the same check until it is genuinely gone.</p>
+        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> fix "CSV export drops the last row when the file has no trailing newline"</span>
+  <span class="g">✓</span> reproduce  <span class="d">@tester    made it fail on purpose</span>
+  <span class="g">✓</span> locate     <span class="d">@explorer  writer.rs:212 — the flush is skipped</span>
+  <span class="g">✓</span> patch      <span class="d">@coder     + a regression test</span>
+  <span class="g">✓</span> verify     <span class="d">@tester    VERDICT: PASS</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">📚</span>Documentation that is actually true</h3>
+        <p>The <code>document</code> graph writes the file, then a reviewer checks <em>every claim</em> against the source and sends it back until nothing is wrong. The loop turns on the file on disk, so each pass sees the last one's edits.</p>
+        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> document "the plugin system — write docs/plugins.md"</span>
+  <span class="g">✓</span> read    <span class="d">@explorer</span>
+  <span class="g">✓</span> draft   <span class="d">@writer    wrote docs/plugins.md</span>
+  <span class="g">✗</span> check   <span class="d">@reviewer  VERDICT: FAIL — 2 claims contradict the code</span>
+  <span class="g">✓</span> revise  <span class="d">@writer    fixed both</span>
+  <span class="g">✓</span> check   <span class="d">@reviewer  VERDICT: PASS</span></pre>
       </div>
 
       <div class="uc">
@@ -163,9 +200,9 @@ Reproduced: rounding applied before the zero-check …</pre>
 
       <div class="uc">
         <h3><span class="em">👀</span>Pre-merge review without leaving the repo</h3>
-        <p>The <code>review</code> flow maps the touched code first, then a read-only reviewer reports concrete findings.</p>
-        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> review the changes on this branch vs main</span>
-<span class="g">✓</span> map · <span class="g">✓</span> review
+        <p>The <code>review</code> graph maps the code once, then runs three reviewers <em>at the same time</em> — correctness, security, design — and merges what they found.</p>
+        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> review "the changes on this branch vs main"</span>
+<span class="g">✓</span> map · <span class="g">✓</span> correctness · <span class="g">✓</span> security · <span class="g">✓</span> design · <span class="g">✓</span> report
 1. parser.rs:88 — CRLF input splits wrong …
 2. cache.rs:41 — eviction races the reader …</pre>
       </div>
