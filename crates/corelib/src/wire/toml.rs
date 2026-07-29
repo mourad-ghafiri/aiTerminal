@@ -2,8 +2,9 @@
 //! themes, apps, agents). Supports: `key = value` pairs, `[table]` and
 //! `[[array-of-tables]]` sections, **dotted keys / nested headers** (`[a.b]`,
 //! `[[a.b]]`, `a.b = 1`), **inline tables** (`{ k = v, k2 = v2 }`), inline
-//! arrays, string / integer / boolean / float values, `#` comments, and blank
-//! lines. Not full TOML (no datetimes, no multi-line strings) — deliberately
+//! arrays, basic `"…"` and literal `'…'` strings, integer / boolean / float values,
+//! **multi-line `"""` strings**,
+//! `#` comments, and blank lines. Not full TOML (no datetimes) — deliberately
 //! small and obvious. A later `[a]` header merges into an existing `a` table.
 
 /// A parsed TOML value.
@@ -80,9 +81,26 @@ impl Toml {
         }
         let mut sections: Vec<(Header, Vec<(String, Toml)>)> = vec![(Header::Root, Vec::new())];
 
-        for (lineno, raw) in input.lines().enumerate() {
+        // Indexed rather than iterated, because a `"""` value spans lines: the
+        // value's parser has to be able to consume ahead.
+        let lines: Vec<&str> = input.lines().collect();
+        let mut lineno = 0;
+        while lineno < lines.len() {
+            let raw = lines[lineno];
+            // Checked before comments are stripped: a `#` inside a multi-line string
+            // is text somebody wrote, not a comment.
+            match multiline(&lines, lineno) {
+                Ok(Some((key, value, next))) => {
+                    sections.last_mut().unwrap().1.push((key, Toml::Str(value)));
+                    lineno = next;
+                    continue;
+                }
+                Err(e) => return Err(format!("line {}: {e}", lineno + 1)),
+                Ok(None) => {}
+            }
             let line = strip_comment(raw).trim();
             if line.is_empty() {
+                lineno += 1;
                 continue;
             }
             if let Some(rest) = line.strip_prefix("[[") {
@@ -109,6 +127,7 @@ impl Toml {
                     .map_err(|e| format!("line {}: {e}", lineno + 1))?;
                 sections.last_mut().unwrap().1.push((key, val));
             }
+            lineno += 1;
         }
 
         // Second pass: assemble the root table, honoring dotted keys + nested
@@ -363,11 +382,48 @@ fn push_array(table: &mut Vec<(String, Toml)>, key: &str, elem: Toml) {
     table.push((key.to_string(), Toml::Array(vec![elem])));
 }
 
+/// A `key = """…"""` value, gathered across however many lines it spans.
+///
+/// Multi-line strings exist here for one reason: a `@flow` node's prompt is a
+/// paragraph, and a paragraph written as one line of `\n` escapes is not a thing
+/// anybody wants to edit. Returns the key, the text, and the line to resume at;
+/// `None` when this line is not one.
+fn multiline(lines: &[&str], at: usize) -> Result<Option<(String, String, usize)>, String> {
+    let Some((k, v)) = lines[at].split_once('=') else { return Ok(None) };
+    let Some(after) = v.trim_start().strip_prefix("\"\"\"") else { return Ok(None) };
+    let key = k.trim().to_string();
+    if key.is_empty() || key.starts_with('#') {
+        return Ok(None);
+    }
+    // It may also close on its own line.
+    if let Some(end) = after.find("\"\"\"") {
+        return Ok(Some((key, unescape(&after[..end]), at + 1)));
+    }
+    // TOML drops a newline immediately after the opening delimiter, so a prompt
+    // does not begin with a blank line nobody typed.
+    let mut body = String::new();
+    if !after.trim().is_empty() {
+        body.push_str(after);
+        body.push('\n');
+    }
+    for (offset, line) in lines.iter().enumerate().skip(at + 1) {
+        if let Some(end) = line.find("\"\"\"") {
+            body.push_str(&line[..end]);
+            return Ok(Some((key, unescape(&body), offset + 1)));
+        }
+        body.push_str(line);
+        body.push('\n');
+    }
+    Err(format!("{key} opens a \"\"\" string that is never closed"))
+}
+
 fn strip_comment(line: &str) -> &str {
     // a '#' outside a quoted string starts a comment; a backslash-escaped quote
-    // inside a string does not end the string.
+    // inside a string does not end the string. Both quote characters count, and only
+    // the one that opened a string can close it — otherwise an apostrophe inside a
+    // "…" string would be read as opening a literal one.
     let bytes = line.as_bytes();
-    let mut in_str = false;
+    let mut quote: Option<u8> = None;
     let mut esc = false;
     for (i, &b) in bytes.iter().enumerate() {
         if esc {
@@ -375,9 +431,13 @@ fn strip_comment(line: &str) -> &str {
             continue;
         }
         match b {
-            b'\\' if in_str => esc = true,
-            b'"' => in_str = !in_str,
-            b'#' if !in_str => return &line[..i],
+            b'\\' if quote == Some(b'"') => esc = true,
+            b'"' | b'\'' => match quote {
+                Some(q) if q == b => quote = None,
+                Some(_) => {}
+                None => quote = Some(b),
+            },
+            b'#' if quote.is_none() => return &line[..i],
             _ => {}
         }
     }
@@ -402,6 +462,13 @@ fn parse_value_depth(s: &str, depth: u32) -> Result<Toml, String> {
     if let Some(rest) = s.strip_prefix('"') {
         let body = rest.strip_suffix('"').ok_or("unterminated string")?;
         return Ok(Toml::Str(unescape(body)));
+    }
+    // A literal string: no escapes processed, so the text inside is exactly what was
+    // typed. This is how you write a value that itself contains double quotes —
+    // `when = 'a.output contains "FAIL"'` — without escaping every one of them.
+    if let Some(rest) = s.strip_prefix('\'') {
+        let body = rest.strip_suffix('\'').ok_or("unterminated literal string")?;
+        return Ok(Toml::Str(body.to_string()));
     }
     // inline array: [a, b, c]
     if let Some(inner) = s.strip_prefix('[').and_then(|x| x.strip_suffix(']')) {
@@ -499,6 +566,108 @@ fn unescape(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod multiline_tests {
+    use super::*;
+
+    #[test]
+    fn a_paragraph_survives_the_way_it_was_typed() {
+        // The reason this exists: a flow node's prompt is prose, and prose written
+        // as one line of escapes is not something anybody wants to edit.
+        let doc = Toml::parse(
+            "prompt = \"\"\"\nMap the code for: {{input}}\n\nName the files that change, and why.\n\"\"\"\nid = \"map\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            doc.get("prompt").and_then(|v| v.as_str()),
+            Some("Map the code for: {{input}}\n\nName the files that change, and why.\n")
+        );
+        assert_eq!(doc.get("id").and_then(|v| v.as_str()), Some("map"), "parsing resumes after the string");
+    }
+
+    #[test]
+    fn the_newline_after_the_opening_delimiter_is_dropped() {
+        let doc = Toml::parse("a = \"\"\"\nfirst\n\"\"\"\n").unwrap();
+        assert_eq!(doc.get("a").and_then(|v| v.as_str()), Some("first\n"), "no blank line nobody typed");
+        // Text on the opening line is kept, though.
+        let doc = Toml::parse("a = \"\"\"same line\nnext\n\"\"\"\n").unwrap();
+        assert_eq!(doc.get("a").and_then(|v| v.as_str()), Some("same line\nnext\n"));
+    }
+
+    #[test]
+    fn a_hash_inside_the_text_is_text() {
+        // Comment-stripping runs on ordinary lines; inside a string it must not.
+        let doc = Toml::parse("a = \"\"\"\nrun: cargo test  # not a comment\n\"\"\"\n").unwrap();
+        assert!(doc.get("a").and_then(|v| v.as_str()).unwrap().contains("# not a comment"));
+    }
+
+    #[test]
+    fn it_closes_on_one_line_too() {
+        let doc = Toml::parse("a = \"\"\"tight\"\"\"\nb = 1\n").unwrap();
+        assert_eq!(doc.get("a").and_then(|v| v.as_str()), Some("tight"));
+        assert_eq!(doc.get("b").and_then(|v| v.as_int()), Some(1));
+    }
+
+    #[test]
+    fn escapes_are_processed_and_an_unknown_one_is_left_alone() {
+        // A regex in a prompt (`\d`) must survive; `\n` must still mean a newline.
+        let doc = Toml::parse("a = \"\"\"\nmatches /(\\d+) failed/ then\\nstop\n\"\"\"\n").unwrap();
+        let text = doc.get("a").and_then(|v| v.as_str()).unwrap();
+        assert!(text.contains("(\\d+)"), "an unknown escape is left as written: {text:?}");
+        assert!(text.contains("then\nstop"), "a known one still works: {text:?}");
+    }
+
+    #[test]
+    fn an_unclosed_string_says_so_instead_of_blaming_the_next_line() {
+        let err = Toml::parse("prompt = \"\"\"\nforever\n").unwrap_err();
+        assert!(err.contains("never closed"), "{err}");
+        assert!(err.contains("prompt"), "and names the key: {err}");
+    }
+
+    #[test]
+    fn it_works_inside_an_array_of_tables() {
+        let doc = Toml::parse(
+            "[[node]]\nid = \"a\"\nprompt = \"\"\"\nline one\nline two\n\"\"\"\n\n[[node]]\nid = \"b\"\n",
+        )
+        .unwrap();
+        let nodes = doc.get("node").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(nodes.len(), 2, "the section after a multi-line string is still found");
+        assert_eq!(nodes[0].get("prompt").and_then(|v| v.as_str()), Some("line one\nline two\n"));
+        assert_eq!(nodes[1].get("id").and_then(|v| v.as_str()), Some("b"));
+    }
+
+    #[test]
+    fn a_literal_string_keeps_the_quotes_inside_it() {
+        // The reason this exists: a flow condition is a value that contains double
+        // quotes, and escaping every one of them in a config file is a papercut.
+        let doc = Toml::parse("when = 'a.output contains \"VERDICT: FAIL\"'\n").unwrap();
+        assert_eq!(doc.get("when").and_then(|v| v.as_str()), Some("a.output contains \"VERDICT: FAIL\""));
+        // Literal means literal: no escape processing at all.
+        let doc = Toml::parse("p = 'C:\\Users\\n'\n").unwrap();
+        assert_eq!(doc.get("p").and_then(|v| v.as_str()), Some("C:\\Users\\n"));
+        assert!(Toml::parse("a = 'unterminated\n").is_err());
+    }
+
+    #[test]
+    fn a_hash_inside_either_kind_of_string_is_not_a_comment() {
+        let doc = Toml::parse("a = 'has # inside'\nb = \"also # inside\"\nc = 1  # this one is\n").unwrap();
+        assert_eq!(doc.get("a").and_then(|v| v.as_str()), Some("has # inside"));
+        assert_eq!(doc.get("b").and_then(|v| v.as_str()), Some("also # inside"));
+        assert_eq!(doc.get("c").and_then(|v| v.as_int()), Some(1));
+        // An apostrophe inside a "…" string must not be read as opening a literal one.
+        let doc = Toml::parse("a = \"it's fine\"  # comment\nb = 2\n").unwrap();
+        assert_eq!(doc.get("a").and_then(|v| v.as_str()), Some("it's fine"));
+        assert_eq!(doc.get("b").and_then(|v| v.as_int()), Some(2));
+    }
+
+    #[test]
+    fn an_ordinary_quoted_string_is_untouched() {
+        let doc = Toml::parse("a = \"just one\"\nb = \"has \\\"quotes\\\"\"\n").unwrap();
+        assert_eq!(doc.get("a").and_then(|v| v.as_str()), Some("just one"));
+        assert_eq!(doc.get("b").and_then(|v| v.as_str()), Some("has \"quotes\""));
+    }
 }
 
 #[cfg(test)]
