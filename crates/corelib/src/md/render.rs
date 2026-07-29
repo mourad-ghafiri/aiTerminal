@@ -5,7 +5,7 @@
 //! count toward the column budget. When `style.enabled` is false (piped output)
 //! everything renders plain — no escape sequences.
 
-use super::ast::{Align, Block, Inline, List};
+use super::ast::{Align, AlertKind, Block, Inline, List};
 use crate::types::Rgba8;
 
 /// The color palette + on/off switch the renderer needs. The caller fills it from
@@ -18,6 +18,10 @@ pub struct Style {
     pub code: Rgba8,
     pub muted: Rgba8,
     pub link: Rgba8,
+    /// The three alert hues (`> [!WARNING]` and friends), from the theme's own tokens.
+    pub success: Rgba8,
+    pub warn: Rgba8,
+    pub error: Rgba8,
 }
 
 impl Default for Style {
@@ -29,6 +33,9 @@ impl Default for Style {
             code: Rgba8::hex(0x9ece6a),
             muted: Rgba8::hex(0x565f89),
             link: Rgba8::hex(0x7aa2f7),
+            success: Rgba8::hex(0x9ece6a),
+            warn: Rgba8::hex(0xe0af68),
+            error: Rgba8::hex(0xf7768e),
         }
     }
 }
@@ -124,6 +131,73 @@ fn render_block(b: &Block, style: &Style, width: usize, out: &mut String) {
             }
         }
         Block::Table { align, head, rows } => render_table(align, head, rows, style, width, out),
+        Block::Alert { kind, blocks } => {
+            // A colored bar in the alert's own hue, its name on the first line — the
+            // terminal's version of GitHub's tinted callout.
+            let color = match kind {
+                AlertKind::Note => style.link,
+                AlertKind::Tip => style.success,
+                AlertKind::Important => style.accent,
+                AlertKind::Warning => style.warn,
+                AlertKind::Caution => style.error,
+            };
+            let bar = format!("{}┃{} ", style.sgr(&[], Some(color)), style.reset());
+            out.push_str(&bar);
+            out.push_str(&format!("{}{} {}{}\n", style.sgr(&["1"], Some(color)), kind.icon(), kind.label(), style.reset()));
+            let mut body = String::new();
+            render_blocks(blocks, style, width.saturating_sub(2), &mut body);
+            for line in body.trim_end_matches('\n').split('\n') {
+                out.push_str(&bar);
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        Block::Details { summary, blocks, open } => {
+            let marker = if *open { "▾" } else { "▸" };
+            let head = inline_styled(summary, style);
+            out.push_str(&format!("{}{marker} {}{}{}\n", style.sgr(&[], Some(style.accent)), style.sgr(&["1"], None), head, style.reset()));
+            let mut body = String::new();
+            render_blocks(blocks, style, width.saturating_sub(2), &mut body);
+            for line in body.trim_end_matches('\n').split('\n') {
+                out.push_str("  ");
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        Block::Aligned { align, blocks } => {
+            let mut body = String::new();
+            render_blocks(blocks, style, width, &mut body);
+            for line in body.trim_end_matches('\n').split('\n') {
+                let pad = width.saturating_sub(marker_display_width(line));
+                let lead = match align {
+                    Align::Center => pad / 2,
+                    Align::Right => pad,
+                    _ => 0,
+                };
+                out.push_str(&" ".repeat(lead));
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        Block::Footnotes(notes) => {
+            out.push_str(&style.sgr(&[], Some(style.muted)));
+            out.push_str(&"─".repeat(width.min(60)));
+            out.push_str(style.reset());
+            out.push('\n');
+            for note in notes {
+                let marker = format!("{}{}{} ", style.sgr(&[], Some(style.accent)), superscript(&note.label), style.reset());
+                let mut body = String::new();
+                render_blocks(&note.blocks, style, width.saturating_sub(4), &mut body);
+                let mut first = true;
+                for line in body.trim_end_matches('\n').split('\n') {
+                    out.push_str(if first { &marker } else { "   " });
+                    first = false;
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+        Block::Math(text) => render_code("math", text, style, width, out),
         Block::Rule => {
             out.push_str(&style.sgr(&[], Some(style.muted)));
             out.push_str(&"─".repeat(width.min(60)));
@@ -301,6 +375,36 @@ fn emit_inline(inl: &Inline, base: &str, style: &Style, out: &mut Vec<Span>) {
             }
         }
         Inline::Code(t) => out.push(Span { text: t.clone(), sgr: style.sgr(&[], Some(style.code)) }),
+        Inline::Underline(inner) => {
+            let s = combine(base, &style.sgr(&["4"], None));
+            for i in inner {
+                emit_inline(i, &s, style, out);
+            }
+        }
+        // An image is a placeholder here; a host that can draw pixels replaces the whole
+        // block before it ever reaches this renderer.
+        Inline::Image { alt, src, .. } => {
+            let label = if alt.is_empty() { "image" } else { alt.as_str() };
+            out.push(Span { text: format!("▣ {label}"), sgr: style.sgr(&[], Some(style.accent)) });
+            if !src.is_empty() {
+                out.push(Span { text: format!(" ({src})"), sgr: style.sgr(&["2"], Some(style.muted)) });
+            }
+        }
+        Inline::Break => out.push(Span { text: "\n".to_string(), sgr: String::new() }),
+        // A key cap: reverse video reads as a key in every terminal; plain output keeps
+        // the brackets so it still reads as one.
+        Inline::Kbd(inner) => {
+            let text = inline_plain(inner);
+            if style.enabled {
+                out.push(Span { text: format!(" {text} "), sgr: style.sgr(&["7"], None) });
+            } else {
+                out.push(Span { text: format!("[{text}]"), sgr: String::new() });
+            }
+        }
+        Inline::Sub(inner) => out.push(Span { text: subscript(&inline_plain(inner)), sgr: base.to_string() }),
+        Inline::Sup(inner) => out.push(Span { text: superscript(&inline_plain(inner)), sgr: base.to_string() }),
+        Inline::FootnoteRef(label) => out.push(Span { text: superscript(label), sgr: style.sgr(&[], Some(style.accent)) }),
+        Inline::Math(t) => out.push(Span { text: t.clone(), sgr: combine(base, &style.sgr(&["3"], Some(style.code))) }),
         Inline::Link { text, href } => {
             let s = combine(base, &style.sgr(&["4"], Some(style.link)));
             let label = inline_plain(text);
@@ -313,6 +417,31 @@ fn emit_inline(inl: &Inline, base: &str, style: &Style, out: &mut Vec<Span>) {
             }
         }
     }
+}
+
+/// Text as Unicode superscript where the characters exist, else `^text`.
+fn superscript(s: &str) -> String {
+    map_script(s, "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ", '^')
+}
+
+/// Text as Unicode subscript where the characters exist, else `_text`.
+fn subscript(s: &str) -> String {
+    map_script(s, "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₙᵢ", '_')
+}
+
+/// Shared digit/sign mapping for [`superscript`] / [`subscript`].
+fn map_script(s: &str, table: &str, fallback: char) -> String {
+    const KEYS: &str = "0123456789+-=()ni";
+    let glyphs: Vec<char> = table.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match KEYS.chars().position(|k| k == c) {
+            Some(i) if i < glyphs.len() => out.push(glyphs[i]),
+            // A word can't be drawn small, so mark it instead of dropping it.
+            _ => return format!("{fallback}{s}"),
+        }
+    }
+    out
 }
 
 /// Merge two SGR prefixes (later attributes win / append). Empty when styling off.
@@ -334,9 +463,15 @@ fn inline_plain(inlines: &[Inline]) -> String {
     let mut s = String::new();
     for inl in inlines {
         match inl {
-            Inline::Text(t) | Inline::Code(t) => s.push_str(t),
-            Inline::Bold(i) | Inline::Italic(i) | Inline::Strike(i) => s.push_str(&inline_plain(i)),
+            Inline::Text(t) | Inline::Code(t) | Inline::Math(t) => s.push_str(t),
+            Inline::Bold(i) | Inline::Italic(i) | Inline::Strike(i) | Inline::Underline(i) => s.push_str(&inline_plain(i)),
             Inline::Link { text, .. } => s.push_str(&inline_plain(text)),
+            Inline::Image { alt, .. } => s.push_str(&format!("▣ {alt}")),
+            Inline::Break => s.push(' '),
+            Inline::Kbd(i) => s.push_str(&format!("[{}]", inline_plain(i))),
+            Inline::Sub(i) => s.push_str(&subscript(&inline_plain(i))),
+            Inline::Sup(i) => s.push_str(&superscript(&inline_plain(i))),
+            Inline::FootnoteRef(l) => s.push_str(&superscript(l)),
         }
     }
     s

@@ -194,6 +194,7 @@ pub(crate) fn build_preview(text: &str, width: usize, style: corelib::md::Style)
 /// [`build_preview`] with the diagram paint mode pinned — the form tests and scenarios use.
 pub(crate) fn build_preview_with(text: &str, width: usize, style: corelib::md::Style, paint: DiagramPaint) -> Vec<PRow> {
     let mut sr = corelib::md::StreamRenderer::new(style, width.max(4), &[DIAGRAM_LANG]);
+    sr.seed(corelib::md::scan_defs(text)); // the document's own references resolve
     let mut rows = Vec::new();
     let take = |chunks: Vec<corelib::md::Chunk>, rows: &mut Vec<PRow>| {
         for c in chunks {

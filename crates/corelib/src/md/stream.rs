@@ -8,7 +8,7 @@
 //! string is a known "diagram language" is returned as [`Chunk::Diagram`] (its raw
 //! source) so the host can draw it natively instead of boxing it.
 
-use super::parse::parse;
+use super::parse::{parse_with, scan_defs, Defs};
 use super::render::{render, Style};
 
 /// One unit of streamed output.
@@ -25,6 +25,10 @@ pub struct StreamRenderer {
     width: usize,
     diagram_langs: Vec<String>,
     buf: String,
+    /// The document's link references and footnote labels. Seeded up front when the whole
+    /// text is known ([`StreamRenderer::seed`]), and grown from each block otherwise, so a
+    /// reference resolves even though blocks are parsed one at a time.
+    defs: Defs,
 }
 
 impl StreamRenderer {
@@ -34,7 +38,15 @@ impl StreamRenderer {
             width: width.max(4),
             diagram_langs: diagram_langs.iter().map(|s| s.to_string()).collect(),
             buf: String::new(),
+            defs: Defs::default(),
         }
+    }
+
+    /// Seed the whole document's definitions before streaming it — what a host does when
+    /// it has the entire file in hand, so a reference defined at the bottom still resolves
+    /// in the paragraph at the top.
+    pub fn seed(&mut self, defs: Defs) {
+        self.defs.merge(&defs);
     }
 
     /// Feed a streamed delta; returns any blocks that are now complete.
@@ -78,7 +90,12 @@ impl StreamRenderer {
             if let Some(body) = fenced_diagram(&seg, &self.diagram_langs) {
                 chunks.push(Chunk::Diagram(body));
             } else {
-                let mut t = render(&parse(&seg), &self.style, self.width);
+                // A definition in this block resolves for every block after it, too.
+                let found = scan_defs(&seg);
+                if !found.is_empty() {
+                    self.defs.merge(&found);
+                }
+                let mut t = render(&parse_with(&seg, &self.defs), &self.style, self.width);
                 if !t.ends_with('\n') {
                     t.push('\n');
                 }

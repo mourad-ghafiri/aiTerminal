@@ -482,7 +482,19 @@ pub(crate) fn md_style() -> corelib::md::Style {
     let d = corelib::md::Style::default();
     let accent = rgb("TT_ACCENT_RGB", d.accent);
     let muted = rgb("TT_MUTED_RGB", d.muted);
-    corelib::md::Style { enabled: true, heading: accent, accent, code: d.code, muted, link: accent }
+    // The alert hues come from the theme's own semantic tokens, so a callout is the same
+    // green/amber/red the rest of the UI uses.
+    corelib::md::Style {
+        enabled: true,
+        heading: accent,
+        accent,
+        code: d.code,
+        muted,
+        link: accent,
+        success: rgb("TT_SUCCESS_RGB", d.success),
+        warn: rgb("TT_WARN_RGB", d.warn),
+        error: rgb("TT_ERROR_RGB", d.error),
+    }
 }
 
 /// Wrap width for rendered Markdown — the split's REAL width (via `TIOCGWINSZ`, since the shell
@@ -871,6 +883,9 @@ fn md_render(path: Option<&String>) -> i32 {
     }
     let style = if tty { md_style() } else { corelib::md::Style { enabled: false, ..corelib::md::Style::default() } };
     let mut sr = corelib::md::StreamRenderer::new(style, md_width(), &[DIAGRAM_LANG]);
+    // The whole file is in hand, so every reference and footnote resolves wherever it is
+    // defined — including below the text that uses it.
+    sr.seed(corelib::md::scan_defs(&text));
     let mut out = std::io::stdout().lock();
     let mut emit = |chunks: Vec<corelib::md::Chunk>| {
         for c in chunks {
