@@ -1,0 +1,21 @@
+name = "each failure is written down for the next iteration"
+tags = ["loop"]
+
+# Structured feedback is what makes the next attempt work the failure instead of the memory
+# of it — and the compact attempt log is what stops iteration 4 from rediscovering
+# iteration 2's dead end.
+
+[[step]]
+maker_says = ["widened the parser", "fixed the span", "narrowed the range"]
+
+[[step]]
+verifier_sees = ["exit=1\n3 failed", "exit=1\n2 failed", "PASS"]
+
+[[step]]
+run = "make the tests pass"
+
+[[step]]
+expect_stopped = "done"
+
+[[step]]
+expect_tried = ["1: widened the parser", "2: fixed the span", "3: narrowed the range"]

@@ -1,0 +1,46 @@
+name = "a stopped loop is resumed, not restarted"
+tags = ["loop"]
+
+# Two of five iterations spent, then the budget ends it. Resuming continues from three —
+# it does not re-bill the two that already ran, and it starts from what the verifier last
+# said rather than from nothing.
+
+[setup]
+max = 5
+budget = 1
+
+[[step]]
+verifier_sees = ["3 failed", "2 failed", "PASS"]
+
+[[step]]
+run = "make the tests pass"
+
+[[step]]
+expect_stopped = "budget"
+
+[[step]]
+expect_iterations = 1
+
+# Four of the five iterations are still on the table.
+[[step]]
+expect_remaining_iterations = 4
+
+[[step]]
+budget = 100000
+
+[[step]]
+resume = "make the tests pass"
+
+[[step]]
+expect_stopped = "done"
+
+# The record counts every iteration across both runs — one before the budget stopped it,
+# three after — and there is still only ONE record.
+[[step]]
+expect_record_iterations = 4
+
+[[step]]
+expect_records = 1
+
+[[step]]
+expect_tried = ["1: ", "2: ", "3: "]

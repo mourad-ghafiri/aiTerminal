@@ -1,0 +1,23 @@
+name = "real progress is allowed to continue to the cap"
+tags = ["loop"]
+
+# The mirror of the stall rules: while each iteration produces a genuinely new observation,
+# nothing interrupts it, and the run ends at the bound the user actually set.
+
+[setup]
+max = 4
+
+[[step]]
+verifier_sees = ["3 failed", "2 failed", "1 failed", "1 failed, 1 error"]
+
+[[step]]
+run = "make it green"
+
+[[step]]
+expect_stopped = "exhausted"
+
+[[step]]
+expect_iterations = 4
+
+[[step]]
+expect_escalated = false

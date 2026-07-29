@@ -1,0 +1,25 @@
+name = "a repeat buys one different approach, then stops"
+tags = ["loop"]
+
+# The same failure twice means refining the current approach will not converge. The loop
+# does not just give up: it spends exactly one escalation — a materially different
+# approach, told what was already tried — and stops if that lands in the same place.
+
+[setup]
+max = 10
+
+[[step]]
+verifier_sees = ["exit=1 the same failure"]
+
+[[step]]
+run = "make it green"
+
+[[step]]
+expect_stopped = "stalled"
+
+[[step]]
+expect_escalated = true
+
+# Three iterations, not ten: fail, repeat → escalate, repeat again → stop.
+[[step]]
+expect_iterations = 3

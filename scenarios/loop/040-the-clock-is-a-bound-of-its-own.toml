@@ -1,0 +1,23 @@
+name = "the clock is a bound of its own"
+tags = ["loop"]
+
+# Iterations and tokens say nothing about an agent that is simply slow. A loop with 10
+# iterations left and no time left stops, and says so.
+
+[setup]
+max = 10
+
+[[step]]
+out_of_time = true
+
+[[step]]
+verifier_sees = ["exit=1 still failing"]
+
+[[step]]
+run = "make it green"
+
+[[step]]
+expect_stopped = "timeout"
+
+[[step]]
+expect_iterations = 0

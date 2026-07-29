@@ -1,0 +1,21 @@
+name = "the loop stops the moment the verifier passes"
+tags = ["loop"]
+
+[[step]]
+model_proposes = """{"check":"cargo test","why":"the tests are the goal"}"""
+
+[[step]]
+verifier_sees = ["exit=1\n2 tests failed", "PASS"]
+
+[[step]]
+run = "make the tests pass"
+
+[[step]]
+expect_stopped = "done"
+
+[[step]]
+expect_iterations = 2
+
+# The verifier ran once per iteration and not once more — a pass ends the run immediately.
+[[step]]
+expect_verifications = 2

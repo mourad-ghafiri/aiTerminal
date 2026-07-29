@@ -34,6 +34,7 @@ const REGISTRY: &[(&str, Factory)] = &[
     ("gate", worlds::gate::build),
     ("jobs", worlds::jobs::build),
     ("keymap", worlds::keymap::build),
+    ("loop", worlds::loops::build),
     ("markdown", worlds::markdown::build),
     ("plugins", worlds::plugins::build),
     ("security", worlds::security::build),
@@ -131,6 +132,11 @@ mod tests {
     #[test]
     fn security_scenarios() {
         check("security", 15);
+    }
+
+    #[test]
+    fn loop_scenarios() {
+        check("loop", 13);
     }
 
     #[test]

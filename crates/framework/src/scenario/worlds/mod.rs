@@ -7,6 +7,7 @@ pub mod gate;
 mod gate_step;
 pub mod jobs;
 pub mod keymap;
+pub mod loops;
 pub mod markdown;
 mod plugin_step;
 pub mod plugins;

@@ -1,0 +1,13 @@
+name = "the AI proposes a real verifier"
+tags = ["loop", "ai"]
+
+# A loop is only as good as its stop condition, and the worst stop condition is a model
+# grading its own work. So when nobody types --check, the model is asked for one — once,
+# before the loop starts. The reply below travels the provider's real wire format.
+
+[[step]]
+model_proposes = """{"check":"cargo test -p framework config::","why":"the goal names the config tests"}"""
+
+[[step]]
+expect_verifier = "cargo test -p framework config:: — proposed from the goal"
+goal = "make the config tests pass"

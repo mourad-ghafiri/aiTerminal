@@ -1,0 +1,21 @@
+name = "the token budget holds"
+tags = ["loop"]
+
+# Each scripted turn reports 14 tokens, so a budget of 1 is spent by the end of the first
+# still-failing iteration.
+
+[setup]
+max = 10
+budget = 1
+
+[[step]]
+verifier_sees = ["exit=1 still failing", "exit=1 a different failure"]
+
+[[step]]
+run = "make it green"
+
+[[step]]
+expect_stopped = "budget"
+
+[[step]]
+expect_iterations = 1

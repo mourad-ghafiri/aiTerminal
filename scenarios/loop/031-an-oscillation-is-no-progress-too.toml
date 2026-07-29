@@ -1,0 +1,24 @@
+name = "an oscillation counts as no progress"
+tags = ["loop"]
+
+# A → B → A → B. Nothing is ever identical to the PREVIOUS observation, so a "same as last
+# time?" test would happily run to the cap while the loop flips between two bad states.
+
+[setup]
+max = 12
+
+[[step]]
+verifier_sees = ["failure A", "failure B", "failure A", "failure B", "failure A", "failure B"]
+
+[[step]]
+run = "make it green"
+
+[[step]]
+expect_stopped = "stalled"
+
+[[step]]
+expect_escalated = true
+
+# A, B, then A again → escalate, then B again → stop. Four, not the twelve it was allowed.
+[[step]]
+expect_iterations = 4

@@ -1,0 +1,15 @@
+name = "a verifier that needs a person is refused"
+tags = ["loop", "security"]
+
+# "Ask first" cannot be answered by a loop — there is nobody in front of it. A
+# confirm-tier proposal is therefore not usable as a stop condition either.
+
+[setup]
+confirm = ["git push"]
+
+[[step]]
+model_proposes = """{"check":"git push --dry-run","why":"the remote accepts it"}"""
+
+[[step]]
+expect_verifier = "an independent reviewer agent"
+goal = "make the branch pushable"

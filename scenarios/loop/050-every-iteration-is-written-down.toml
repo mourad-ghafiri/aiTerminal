@@ -1,0 +1,23 @@
+name = "every iteration is written down"
+tags = ["loop"]
+
+# A run that ends at its cap must leave something to read — the whole point of persisting
+# loop state rather than trusting scrollback.
+
+[setup]
+max = 3
+
+[[step]]
+verifier_sees = ["3 failed", "2 failed", "1 failed"]
+
+[[step]]
+run = "make the tests pass"
+
+[[step]]
+expect_records = 1
+
+[[step]]
+expect_record_status = "exhausted"
+
+[[step]]
+expect_record_iterations = 3

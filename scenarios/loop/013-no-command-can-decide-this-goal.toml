@@ -1,0 +1,12 @@
+name = "no command can decide a subjective goal"
+tags = ["loop", "ai"]
+
+# Saying "nothing can verify this" is a good answer, not a failure — some goals really are
+# judgement calls, and the reviewer agent is the right tool for those.
+
+[[step]]
+model_proposes = """{"check":null,"why":"tightening error messages is a judgement call"}"""
+
+[[step]]
+expect_verifier = "an independent reviewer agent"
+goal = "tighten the error messages to be actionable"
