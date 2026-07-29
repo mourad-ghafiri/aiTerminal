@@ -85,6 +85,58 @@ pub fn agent(dir: &Path, name: &str) -> Option<Agent> {
     load_agents(dir).into_iter().find(|a| a.name == name)
 }
 
+/// Everything wrong with the installed agents, one problem per line.
+///
+/// An agent is a file somebody edits, and until now nothing checked it. A misspelled
+/// tool was handed to the model with a generic description and failed only when the
+/// model tried to call it — three minutes and a few thousand tokens into a run. A
+/// missing skill silently produced a weaker prompt with no sign anything was wrong.
+/// Both are knowable for free, before anything starts.
+///
+/// `known_tool` is passed in rather than reached for: this module is the AI engine's
+/// on-disk loader and deliberately does not know what a capability registry is.
+pub fn validate(
+    agents_dir: &Path,
+    skills_dir: &Path,
+    prompts_dir: &Path,
+    known_tool: &dyn Fn(&str) -> bool,
+) -> Vec<String> {
+    let skills: Vec<String> = load_skills(skills_dir).into_iter().map(|s| s.name).collect();
+    let prompts: Vec<String> = load_prompts(prompts_dir).into_iter().map(|p| p.name).collect();
+    let mut out = Vec::new();
+    for a in load_agents(agents_dir) {
+        let at = |what: String| format!("agent '{}': {what}", a.name);
+        if a.description.trim().is_empty() {
+            out.push(at("no description — it is what `@agent` and every not-found error show".into()));
+        }
+        if a.system.trim().is_empty() {
+            out.push(at("no body — the system prompt would be empty".into()));
+        }
+        for t in &a.tools {
+            if !known_tool(t) {
+                out.push(at(format!("declares tool '{t}', which does not exist")));
+            }
+        }
+        for s in &a.skills {
+            if !skills.contains(s) {
+                out.push(at(format!("names skill '{s}', which is not installed")));
+            }
+        }
+        for p in &a.prompts {
+            if !prompts.contains(p) {
+                out.push(at(format!("names prompt '{p}', which is not installed")));
+            }
+        }
+        // A tool loop needs room to work and a ceiling it cannot run past. Both ends
+        // are failure modes: one step is a agent that can never use its tools, and a
+        // hundred is a bill nobody agreed to.
+        if a.max_steps == 0 || a.max_steps > 60 {
+            out.push(at(format!("max_steps = {} — expected 1..=60", a.max_steps)));
+        }
+    }
+    out
+}
+
 
 /// Load all skills from `dir/*.md`.
 pub fn load_skills(dir: &Path) -> Vec<Skill> {

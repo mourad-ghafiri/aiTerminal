@@ -17,15 +17,15 @@ use std::path::{Path, PathBuf};
 /// - `ai "<prompt>"` — stream a Markdown answer to stdout.
 /// - `ai --command "<request>"` — natural language → one guarded shell command.
 /// - `ai --agent <name> "<task>"` — run an agent's full tool loop (`@<agent>`).
-/// - `ai --flow <name> "<input>"` — run a declarative multi-step flow (workflow).
 /// - `ai --bg …` — run any of the above detached, tracked as a job.
 /// - `ai job [<task> [--agent <name>] [--bg]]` — run a TRACKED task; bare = list.
-/// - `ai flow [<name>|<free text>] [--bg]` — run a flow (unknown first word →
-///   the default `implement` pipeline over the whole text); bare = list.
+/// - `ai flow <name> "<input>"` — run a declarative **graph** of agent/command/approval
+///   nodes; bare = list, and `check`/`graph`/`runs`/`show`/`log`/`resume` operate on it.
 pub fn ai(args: &[String]) -> i32 {
     // Word subcommands first. Singular, like every command; both take intuitive
     // free-text forms with optional flags anywhere (`@job build the docs --bg`).
     match args.first().map(String::as_str) {
+        Some("agent") | Some("agents") => return ai_agent_cmd(args),
         Some("job") => return ai_job_cmd(args),
         Some("flow") => return ai_flow_cmd(args),
         Some("loop") => return ai_loop_cmd(args),
@@ -34,7 +34,6 @@ pub fn ai(args: &[String]) -> i32 {
 
     let mut as_command = false;
     let mut agent: Option<String> = None;
-    let mut flow: Option<String> = None;
     let mut bg = false;
     let mut job_record: Option<String> = None;
     let mut parts: Vec<&str> = Vec::new();
@@ -44,17 +43,18 @@ pub fn ai(args: &[String]) -> i32 {
             "--command" | "-c" => as_command = true,
             "--fast" => {} // reserved; Q&A already uses the pool, command uses the fast model
             "--agent" => agent = it.next().cloned(),
-            "--flow" => flow = it.next().cloned(),
             "--bg" => bg = true,
             "--job-record" => job_record = it.next().cloned(),
             other => parts.push(other),
         }
     }
     let prompt = parts.join(" ");
-    if prompt.trim().is_empty() && flow.is_none() {
-        eprintln!("usage: aiTerminal ai [--command | --agent <name> | --flow <name>] [--bg] \"<prompt>\"");
+    if prompt.trim().is_empty() {
+        eprintln!("usage: aiTerminal ai [--command | --agent <name>] [--bg] \"<prompt>\"");
+        eprintln!("       aiTerminal ai flow <name> \"<input>\"   |  ai flow check|graph|runs|show|log|resume");
         eprintln!("       aiTerminal ai loop \"<goal>\" [--check \"<cmd>\"] [--max N] [--timeout 30m]");
-        eprintln!("       aiTerminal ai job [clear] | flow | loop");
+        eprintln!("       aiTerminal ai agent [<name>]                 # the installed agents");
+        eprintln!("       aiTerminal ai job [clear]");
         return 2;
     }
 
@@ -64,7 +64,7 @@ pub fn ai(args: &[String]) -> i32 {
         return spawn_background(args);
     }
 
-    let code = ai_run(as_command, agent, flow, &prompt);
+    let code = ai_run(as_command, agent, &prompt);
     // A detached child carries `--job-record <id>`: stamp the job's outcome.
     if let Some(id) = job_record {
         crate::jobs::finish(&id, code);
@@ -73,7 +73,7 @@ pub fn ai(args: &[String]) -> i32 {
 }
 
 /// The foreground AI run (Q&A / command / agent / flow), streaming to stdout.
-fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt: &str) -> i32 {
+fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
     use std::io::Write;
 
     // `@<path>` tokens attach files: images/PDFs ride the request (vision/document),
@@ -126,13 +126,6 @@ fn ai_run(as_command: bool, agent: Option<String>, flow: Option<String>, prompt:
     let ctx = policy.redact(&ctx, crate::security::RedactScope::Ai);
     let policy = std::sync::Arc::new(policy);
     let workspace_root = cwd_path.clone();
-
-    // `--flow <name>` runs a declarative multi-step agent sequence.
-    if let Some(name) = flow {
-        let code = run_flow_cli(&cfg, settings, &name, prompt, &ctx, workspace_root, policy, media);
-        record_session_run(session.as_ref(), "@flow", prompt, &outcome_label(code));
-        return code;
-    }
 
     // `--agent <name>` runs the agent's full tool loop (tools = native objects via a
     // pure `caps::run` runner), streaming live — no GUI/host needed.
@@ -437,14 +430,20 @@ fn theme_color(var: &str, ansi_fallback: &str) -> String {
     }
 }
 
-fn accent() -> String {
+pub(crate) fn accent() -> String {
     theme_color("TT_ACCENT_RGB", "\x1b[36m")
 }
-fn muted() -> String {
+pub(crate) fn muted() -> String {
     theme_color("TT_MUTED_RGB", "\x1b[2m")
 }
-fn reset() -> &'static str {
-    "\x1b[0m"
+pub(crate) fn reset() -> &'static str {
+    // Gated exactly like the colours it closes: with `accent`/`muted` empty off a
+    // terminal, an ungated reset is a stray escape in every redirected line.
+    if err_is_tty() {
+        "\x1b[0m"
+    } else {
+        ""
+    }
 }
 
 /// Whether stdout is a terminal (agents/flows/loops stream the answer to stdout, so its
@@ -580,7 +579,7 @@ struct LiveMarkdown {
 }
 
 /// The escape sequence to erase a `painted`-line tail: return to its first line, clear below.
-fn erase_seq(painted: usize) -> String {
+pub(crate) fn erase_seq(painted: usize) -> String {
     if painted == 0 {
         return String::new();
     }
@@ -1445,6 +1444,10 @@ struct CliToolRunner {
     mcp: Option<crate::ai::McpHub>,
     sub: SubAgentCtx,
     depth: u8,
+    /// Where a tool trace goes. `None` is stderr, which is right for a single agent
+    /// run and wrong inside a graph: four nodes calling tools at once produce four
+    /// interleaved streams with nothing to say which is which.
+    trace: Option<std::sync::Arc<dyn crate::flow::board::ToolTrace>>,
 }
 impl crate::ai::ToolRunner for CliToolRunner {
     fn run(&mut self, name: &str, args: &str) -> Result<String, String> {
@@ -1468,15 +1471,16 @@ impl crate::ai::ToolRunner for CliToolRunner {
         let result = crate::caps::run(name, &pairs, &self.ctx);
         let ms = started.elapsed().as_millis();
         let (dim, r) = (muted(), reset());
-        match &result {
-            Ok(v) => {
-                let size = json_text(v).len();
-                eprintln!("{dim}  \u{2699} {name} {preview} \u{b7} {ms}ms \u{b7} {}{r}", human_bytes(size));
-            }
+        let line = match &result {
+            Ok(v) => format!("\u{2699} {name} {preview} \u{b7} {ms}ms \u{b7} {}", human_bytes(json_text(v).len())),
             Err(e) => {
                 let brief: String = e.chars().take(80).collect();
-                eprintln!("{dim}  \u{2699} {name} {preview} \u{b7} {ms}ms \u{b7} \u{2717} {brief}{r}");
+                format!("\u{2699} {name} {preview} \u{b7} {ms}ms \u{b7} \u{2717} {brief}")
             }
+        };
+        match &self.trace {
+            Some(sink) => sink.tool(&line),
+            None => eprintln!("{dim}  {line}{r}"),
         }
         result.map(|j| redact(self, json_text(&j)))
     }
@@ -1562,7 +1566,7 @@ fn run_sub_agent(sub: &SubAgentCtx, ctx: crate::caps::CapCtx, depth: u8, name: &
         max_steps: 12,
     };
     let client = crate::ai::Client::new(sub.settings.clone(), crate::ai::CurlTransport::default());
-    let mut runner = CliToolRunner { ctx, mcp: None, sub: sub.clone(), depth };
+    let mut runner = CliToolRunner { ctx, mcp: None, sub: sub.clone(), depth, trace: None };
     let run = crate::ai::run_agent(&client, &spec, prompt, "", &mut runner, &mut crate::ai::NoopObserver);
     run.answer
 }
@@ -1598,6 +1602,7 @@ fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::AiSettings, w
     CliToolRunner {
         ctx: crate::caps::CapCtx { policy, app_data: None, remote_enabled: cfg.ai_network, origin: "terminal://ai/".into(), sandbox: workspace, memory_dir },
         mcp,
+        trace: None,
         sub: SubAgentCtx {
             settings: settings.clone(),
             agents_dir: crate::config::Config::agents_dir(),
@@ -1606,6 +1611,77 @@ fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::AiSettings, w
         },
         depth: 0,
     }
+}
+
+// ===== @agent — what you have, and what each one does ========================
+//
+// An agent is a Markdown file with frontmatter: the tools it may call, the skills spliced into
+// its prompt, and a step cap. Until now you could only find out an agent existed by misspelling
+// one and reading the error. Two things fix that: this listing, and `defs::validate` — because
+// a roster you can read is only useful if the entries in it are real.
+
+/// `ai agent [<name>]` — the installed agents, or one in full.
+fn ai_agent_cmd(args: &[String]) -> i32 {
+    crate::config::Config::ensure_default();
+    crate::i18n::install(crate::config::Config::load().i18n_catalog());
+    let wanted = args.get(1).filter(|a| !a.starts_with('-'));
+    let agents = crate::ai::defs::load_agents(&crate::config::Config::agents_dir());
+    let (dim, r) = (muted(), reset());
+    if agents.is_empty() {
+        println!("{}", crate::i18n::translate("agent.none", &[crate::config::Config::agents_dir().display().to_string()]));
+        return 0;
+    }
+    let Some(name) = wanted else {
+        println!("{}", crate::i18n::translate("agent.header", &[agents.len().to_string()]));
+        for a in &agents {
+            println!(
+                "  {:<12} {dim}{:>2} tools \u{b7} {:>2} steps{r}  {}",
+                a.name,
+                a.tools.len(),
+                a.max_steps,
+                clip_tail(&a.description, 58)
+            );
+        }
+        println!("\n{}", crate::i18n::translate("agent.run_hint", &[]));
+        return 0;
+    };
+    let names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
+    let Some(a) = agents.iter().find(|a| a.name == *name) else {
+        eprintln!("aiTerminal: no agent '{name}'{}", crate::flow::verify::nearest(name, &names));
+        eprintln!("  installed: {}", names.join(", "));
+        return 2;
+    };
+    println!("{}@{}{r} {dim}\u{b7} {} step(s){r}", accent(), a.name, a.max_steps);
+    println!("  {}", a.description);
+    if !a.skills.is_empty() {
+        println!("\n  {dim}skills{r}  {}", a.skills.join(", "));
+    }
+    if !a.prompts.is_empty() {
+        println!("  {dim}prompts{r} {}", a.prompts.join(", "));
+    }
+    if a.tools.is_empty() {
+        println!("\n  {dim}no tools \u{2014} it answers from the conversation alone{r}");
+    } else {
+        println!("\n  {dim}tools{r}");
+        for t in &a.tools {
+            // A tool that is not in the registry is shown as such rather than
+            // quietly given the catalog's generic description.
+            let known = crate::caps::is_method(t);
+            let mark = if known { " " } else { "\u{2717}" };
+            let what = if known { crate::caps::describe(t) } else { "not a real capability" };
+            println!("   {mark} {t:<20} {dim}{}{r}", clip_tail(what, 60));
+        }
+    }
+    // The last section of an agent's prompt is its output contract, and a flow node
+    // chains on exactly that — so it is worth being able to read without opening the file.
+    if let Some(at) = a.system.rfind("## What you return") {
+        println!("\n  {dim}returns{r}");
+        for line in a.system[at..].lines().skip(1).filter(|l| !l.trim().is_empty()).take(8) {
+            println!("   {dim}{}{r}", clip_tail(line.trim(), 76));
+        }
+    }
+    println!("\n  {dim}{}{r}", crate::config::Config::agents_dir().join(format!("{}.md", a.name)).display());
+    0
 }
 
 /// "try one of: coder, explorer, …" — the installed agent names for not-found errors.
@@ -1722,179 +1798,1253 @@ fn run_agent_cli(cfg: &crate::config::Config, settings: crate::ai::AiSettings, n
     run_agent_streaming(cfg, settings, name, prompt, ctx, workspace_root, policy, media, None)
 }
 
-// ===== flows (declarative multi-step workflows) ==============================
-
-/// One parsed `[[step]]` of a flow file.
-struct FlowStep {
-    label: String,
-    agent: String,
-    prompt: String,
-}
-
-/// A declarative flow: `ai/flows/<name>.toml` — a named sequence of agent steps,
-/// each step's answer chained into the next step's context.
-struct Flow {
-    name: String,
-    description: String,
-    chain: bool,
-    steps: Vec<FlowStep>,
-}
-
-/// Parse a flow document. Each `[[step]]` needs an `agent` + `prompt`; `{{input}}`
-/// in a prompt is replaced with the CLI input.
-fn parse_flow(name: &str, text: &str) -> Result<Flow, String> {
-    let doc = corelib::wire::Toml::parse(text).map_err(|e| format!("flow '{name}': {e}"))?;
-    let description = doc.get("description").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let chain = doc.get("chain").and_then(|v| v.as_bool()).unwrap_or(true);
-    let mut steps = Vec::new();
-    if let Some(arr) = doc.get("step").and_then(|v| v.as_array()) {
-        for (i, s) in arr.iter().enumerate() {
-            let agent = s.get("agent").and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
-            let prompt = s.get("prompt").and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
-            if agent.is_empty() || prompt.is_empty() {
-                return Err(format!("flow '{name}': step {} needs `agent` and `prompt`", i + 1));
-            }
-            let label = s.get("label").and_then(|v| v.as_str()).unwrap_or(&agent).to_string();
-            steps.push(FlowStep { label, agent, prompt });
-        }
-    }
-    if steps.is_empty() {
-        return Err(format!("flow '{name}': no [[step]] entries"));
-    }
-    Ok(Flow { name: name.to_string(), description, chain, steps })
-}
+// ===== @flow — a workflow declared as a graph ================================
+//
+// Graph engineering in one sentence: stop writing a chain of prompts and start declaring the
+// graph the work actually is. Six pieces make that real here:
+//
+//   1. A DAG, NOT A LINE.  `needs` is a dependency, so nodes that need nothing from each other
+//      run AT THE SAME TIME. Three reviews cost one round of wall clock instead of three.
+//   2. ROUTING ON THE EDGE.  `when` is data this tool parses, not an instruction a model
+//      interprets — because an agent asked to decide what happens next decides differently
+//      each time, and nothing about the run can be audited afterwards.
+//   3. A DETERMINISTIC BACKBONE.  A `run` node is a command through the same guard everything
+//      else uses, and costs no tokens. The model is spent only where judgement is needed.
+//   4. BOUNDED CYCLES.  `goto` points one edge backwards with a `max`, so "test, fix, test
+//      again" is a flow rather than something you sit and supervise.
+//   5. PROVED BEFORE IT SPENDS.  Everything checkable without a model is checked first
+//      (`flow::verify`): a dangling edge, a reference to a node that does not run first, an
+//      agent that is not installed, a command the guard refuses. Exit 2, zero tokens.
+//   6. STATE THAT SURVIVES.  Every node's result is written to `ai/flow-runs/<id>/` the moment
+//      it lands, so `@flow show` reads the shape, `@flow log` reads a node, and `@flow resume`
+//      runs only what did not complete — the fix for the old chain's all-or-nothing failure.
 
 /// Load flow `name` from `~/.aiTerminal/ai/flows/<name>.toml`.
-fn load_flow(name: &str) -> Result<Flow, String> {
-    let safe = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-    if name.is_empty() || !safe {
+fn load_flow(name: &str) -> Result<crate::flow::Flow, String> {
+    if !crate::flow::tmpl::id_ok(name) {
         return Err(format!("'{name}' is not a flow name"));
     }
     let path = crate::config::Config::flows_dir().join(format!("{name}.toml"));
     match std::fs::read_to_string(&path) {
-        Ok(text) => parse_flow(name, &text),
-        Err(_) => Err(format!("no flow '{name}' in {}", crate::config::Config::flows_dir().display())),
+        Ok(text) => crate::flow::parse(name, &text),
+        Err(_) => {
+            let installed = flow_names();
+            let refs: Vec<&str> = installed.iter().map(String::as_str).collect();
+            // A typo must never quietly become a different flow: this used to fall
+            // through to the `implement` pipeline, so a misspelling ran a
+            // code-editing graph over the repository.
+            Err(format!(
+                "no flow '{name}'{}{}",
+                crate::flow::verify::nearest(name, &refs),
+                if installed.is_empty() {
+                    format!(" — add one to {}", crate::config::Config::flows_dir().display())
+                } else {
+                    String::new()
+                }
+            ))
+        }
     }
 }
 
-/// `aiTerminal ai --flow <name> "<input>"` — run the flow's steps in sequence via
-/// [`run_orchestration`](crate::ai::run_orchestration), streaming step progress to
-/// stderr and the final answer to stdout.
-fn run_flow_cli(cfg: &crate::config::Config, settings: crate::ai::AiSettings, name: &str, input: &str, ctx: &str, workspace_root: Option<std::path::PathBuf>, policy: std::sync::Arc<crate::security::Policy>, media: Vec<crate::ai::ImageData>) -> i32 {
-    let flow = match load_flow(name) {
-        Ok(f) => f,
+/// Every installed flow's name, sorted.
+fn flow_names() -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(crate::config::Config::flows_dir())
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("toml"))
+                .filter_map(|p| p.file_stem()?.to_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+/// What the verifier needs from outside itself: the installed agents and the guard.
+struct FlowWorld {
+    policy: std::sync::Arc<crate::security::Policy>,
+    agents: Vec<crate::ai::defs::Agent>,
+}
+
+impl FlowWorld {
+    fn build() -> FlowWorld {
+        let cfg = crate::config::Config::load();
+        let registry = crate::plugin::load_registry(&cfg);
+        FlowWorld {
+            policy: std::sync::Arc::new(crate::security::build_policy(&cfg, &registry)),
+            agents: crate::ai::defs::load_agents(&crate::config::Config::agents_dir()),
+        }
+    }
+}
+
+impl crate::flow::verify::World for FlowWorld {
+    fn agent_tools(&self, name: &str) -> Option<Vec<String>> {
+        self.agents.iter().find(|a| a.name == name).map(|a| a.tools.clone())
+    }
+    fn guard(&self, command: &str) -> crate::flow::verify::Guard {
+        use crate::flow::verify::Guard;
+        match self.policy.check_command(command) {
+            crate::security::Verdict::Allow => Guard::Allow,
+            crate::security::Verdict::Confirm { reason } => Guard::Confirm(reason),
+            crate::security::Verdict::Deny { reason } => Guard::Deny(reason),
+        }
+    }
+    fn agent_names(&self) -> Vec<String> {
+        self.agents.iter().map(|a| a.name.clone()).collect()
+    }
+}
+
+/// Load and verify in one step — the gate every path that spends money goes through.
+fn checked_flow(name: &str) -> Result<(crate::flow::Flow, crate::flow::verify::Report), String> {
+    let flow = load_flow(name)?;
+    let report = crate::flow::verify::verify(&flow, &FlowWorld::build());
+    Ok((flow, report))
+}
+
+/// Print a verification report. Errors first: they are why nothing ran.
+fn print_report(name: &str, report: &crate::flow::verify::Report, nodes: usize) {
+    let (dim, r) = (muted(), reset());
+    for e in &report.errors {
+        eprintln!("  {}\u{2717}{r} {e}", accent());
+    }
+    for w in &report.warnings {
+        eprintln!("  {dim}\u{26a0}  {w}{r}");
+    }
+    if report.ok() && report.warnings.is_empty() {
+        println!("  {dim}\u{2713} {name} \u{b7} {nodes} node(s) \u{b7} worst case {} agent run(s){r}", report.worst_case_runs);
+    }
+}
+
+// ─────────────────────────────── the surface ───────────────────────────────
+
+/// What an `ai flow …` invocation asks for.
+#[derive(Debug, PartialEq)]
+pub(crate) enum FlowCmd {
+    /// Bare `@flow` — the installed flows.
+    List,
+    Help,
+    /// Verify one flow, or every installed flow when no name is given.
+    Check(Option<String>),
+    /// Draw a flow's graph.
+    Graph(String),
+    /// Past runs.
+    Runs,
+    Clear,
+    Show(String),
+    Log { id: String, node: Option<String>, follow: bool },
+    Resume(String),
+    Run(Box<FlowSpec>),
+}
+
+/// A flow to run.
+#[derive(Debug, PartialEq, Default)]
+pub(crate) struct FlowSpec {
+    pub(crate) name: String,
+    /// The text typed after the flow name — `{{input}}`.
+    pub(crate) input: String,
+    /// Bounds left unset fall back to the file's `[bounds]`, then `[flow]` config.
+    pub(crate) timeout: Option<u64>,
+    pub(crate) budget: Option<u64>,
+    pub(crate) concurrency: Option<usize>,
+    pub(crate) bg: bool,
+    pub(crate) dry_run: bool,
+    /// Set on the detached child so it can stamp its job record on exit.
+    pub(crate) job_record: Option<String>,
+}
+
+/// Read `ai flow …` argv.
+///
+/// Subcommands win over flow names, and a flow file named after one is refused by
+/// the verifier — so `@flow show` is never ambiguous, and the ambiguity is reported
+/// where it can be explained rather than resolved by a coin toss.
+pub(crate) fn parse_flow_args(args: &[String]) -> Result<FlowCmd, String> {
+    let word = |i: usize| args.get(i).filter(|a| !a.starts_with('-')).cloned();
+    let id_or_last = |from: usize| args[from..].iter().find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| "last".into());
+    match args.first().map(String::as_str) {
+        None => return Ok(FlowCmd::List),
+        Some("list") if args.len() == 1 => return Ok(FlowCmd::List),
+        Some("help") | Some("--help") | Some("-h") => return Ok(FlowCmd::Help),
+        Some("check") => return Ok(FlowCmd::Check(word(1))),
+        Some("graph") | Some("draw") => {
+            return match word(1) {
+                Some(name) => Ok(FlowCmd::Graph(name)),
+                None => Err("graph needs a flow name — try `@flow graph implement`".into()),
+            }
+        }
+        Some("runs") if args.len() == 1 => return Ok(FlowCmd::Runs),
+        Some("clear") if args.len() == 1 => return Ok(FlowCmd::Clear),
+        Some("show") => return Ok(FlowCmd::Show(id_or_last(1))),
+        Some("resume") | Some("continue") => return Ok(FlowCmd::Resume(id_or_last(1))),
+        Some("log") | Some("logs") => {
+            let follow = args.iter().any(|a| a == "-f" || a == "--follow");
+            let plain: Vec<String> = args[1..].iter().filter(|a| !a.starts_with('-')).cloned().collect();
+            return Ok(FlowCmd::Log {
+                id: plain.first().cloned().unwrap_or_else(|| "last".into()),
+                node: plain.get(1).cloned(),
+                follow,
+            });
+        }
+        _ => {}
+    }
+    let mut spec = FlowSpec::default();
+    let mut words: Vec<String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--bg" => spec.bg = true,
+            "--dry-run" | "--plan" => spec.dry_run = true,
+            "--job-record" => spec.job_record = Some(flag_value(&mut it, "--job-record")?),
+            "--timeout" => {
+                let v = flag_value(&mut it, "--timeout")?;
+                let secs = corelib::datetime::duration(&v)
+                    .ok_or_else(|| format!("--timeout needs a duration like 30m or 90s, got {v:?}"))?;
+                spec.timeout = Some(secs.max(30));
+            }
+            "--budget" => {
+                let v = flag_value(&mut it, "--budget")?;
+                spec.budget = Some(v.parse().map_err(|_| format!("--budget needs a token count, got {v:?}"))?);
+            }
+            "--concurrency" => {
+                let v = flag_value(&mut it, "--concurrency")?;
+                let n: usize = v.parse().map_err(|_| format!("--concurrency needs a whole number, got {v:?}"))?;
+                spec.concurrency = Some(n.clamp(1, 16));
+            }
+            w => words.push(w.to_string()),
+        }
+    }
+    let Some((name, rest)) = words.split_first() else {
+        return Err("a flow needs a name or a goal — `@flow` on its own lists them".into());
+    };
+    // `@flow "make the export emit JSON"` — one argument with a space in it is a goal,
+    // because no flow can be called that. The model routes it, and prints its choice.
+    if rest.is_empty() && crate::flow::pick::is_goal(name) {
+        spec.input = name.clone();
+        return Ok(FlowCmd::Run(Box::new(spec)));
+    }
+    spec.name = name.clone();
+    // One argument is the input as typed, so `@flow ship "raise --max to 10"` keeps
+    // its flag-looking words; several loose words are a sentence to rejoin.
+    spec.input = match rest {
+        [only] => only.clone(),
+        many => many.join(" "),
+    };
+    Ok(FlowCmd::Run(Box::new(spec)))
+}
+
+fn flow_usage() -> String {
+    [
+        "usage: @flow <name> \"<input>\"       run a flow",
+        "       @flow … --bg | --dry-run     detach it | verify and draw it, spend nothing",
+        "       @flow … --timeout 30m --budget TOKENS --concurrency N",
+        "       @flow                        list the installed flows",
+        "       @flow check [<name>]         verify a flow (or all of them) — no model needed",
+        "       @flow graph <name>           draw the graph",
+        "       @flow runs                   recent runs",
+        "       @flow show <id>              one run: the graph, with what each node cost",
+        "       @flow log <id> [<node>] [-f] a node's full output",
+        "       @flow resume <id>            run only what did not complete",
+        "       @flow clear                  prune finished runs",
+    ]
+    .join("\n")
+}
+
+/// `ai flow …` — the whole surface. `args` includes the leading "flow" word.
+fn ai_flow_cmd(args: &[String]) -> i32 {
+    let cmd = match parse_flow_args(&args[1..]) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            eprintln!("aiTerminal: {e}");
+            eprintln!("{}", flow_usage());
+            return 2;
+        }
+    };
+    crate::config::Config::ensure_default();
+    crate::i18n::install(crate::config::Config::load().i18n_catalog());
+    match cmd {
+        FlowCmd::List => flow_list(),
+        FlowCmd::Help => {
+            println!("{}", flow_usage());
+            0
+        }
+        FlowCmd::Check(name) => flow_check(name.as_deref()),
+        FlowCmd::Graph(name) => flow_graph(&name),
+        FlowCmd::Runs => flow_runs(),
+        FlowCmd::Clear => {
+            println!("{}", crate::i18n::translate("flow.cleared", &[crate::flowruns::clear_finished().to_string()]));
+            0
+        }
+        FlowCmd::Show(id) => flow_show(&id),
+        FlowCmd::Log { id, node, follow } => flow_log(&id, node.as_deref(), follow),
+        FlowCmd::Resume(id) => match crate::flowruns::resolve(&id) {
+            Ok(id) => run_flow_cli(FlowSpec::default(), Some(id)),
+            Err(e) => {
+                eprintln!("aiTerminal: {e}");
+                2
+            }
+        },
+        FlowCmd::Run(spec) => {
+            if spec.bg {
+                return spawn_background(args);
+            }
+            let record = spec.job_record.clone();
+            let code = run_flow_cli(*spec, None);
+            if let Some(id) = record {
+                crate::jobs::finish(&id, code);
+            }
+            code
+        }
+    }
+}
+
+/// `@flow` — the installed flows.
+fn flow_list() -> i32 {
+    let names = flow_names();
+    if names.is_empty() {
+        println!("{}", crate::i18n::translate("flow.none", &[crate::config::Config::flows_dir().display().to_string()]));
+        return 0;
+    }
+    let (dim, r) = (muted(), reset());
+    println!("{}", crate::i18n::translate("flow.header", &[names.len().to_string()]));
+    for name in &names {
+        match load_flow(name) {
+            Ok(flow) => {
+                println!("  {name:<12} {:<28} {}", clip_tail(&shape_of(&flow), 28), flow.description);
+            }
+            // A file that will not parse is shown rather than hidden: a flow that
+            // silently vanished from the list is the harder thing to debug.
+            Err(e) => println!("  {name:<16} {dim}\u{26a0} {}{r}", opening_line(&e)),
+        }
+    }
+    println!("\n{}", crate::i18n::translate("flow.run_hint", &[]));
+    0
+}
+
+/// "5 nodes · 3 in parallel · loops" — a flow's shape at a glance.
+fn shape_of(flow: &crate::flow::Flow) -> String {
+    let n = flow.nodes.len();
+    let mut notes = Vec::new();
+    // The widest set of nodes waiting on exactly the same thing — the parallelism
+    // someone actually gets. Branch alternatives are excluded: the two arms of one
+    // verdict wait on the same node but only ever one of them runs.
+    let widest = (0..flow.nodes.len())
+        .map(|i| {
+            (0..flow.nodes.len())
+                .filter(|&j| flow.nodes[j].needs == flow.nodes[i].needs && !crate::flow::verify::exclusive(flow, i, j))
+                .count()
+        })
+        .max()
+        .unwrap_or(0);
+    if widest > 1 {
+        notes.push(format!("{widest} parallel"));
+    }
+    if flow.nodes.iter().any(|x| x.goto.is_some()) {
+        notes.push("loops".into());
+    }
+    if flow.nodes.iter().any(|x| x.is_map()) {
+        notes.push("fans out".into());
+    }
+    if flow.nodes.iter().any(|x| matches!(x.kind, crate::flow::Kind::Approve { .. })) {
+        notes.push("asks you".into());
+    }
+    if notes.is_empty() {
+        format!("{n} nodes")
+    } else {
+        format!("{n} nodes \u{b7} {}", notes.join(" \u{b7} "))
+    }
+}
+
+/// `@flow check [<name>]` — everything provable without a model.
+fn flow_check(name: Option<&str>) -> i32 {
+    let names: Vec<String> = match name {
+        Some(n) => vec![n.to_string()],
+        None => flow_names(),
+    };
+    if names.is_empty() {
+        println!("{}", crate::i18n::translate("flow.none", &[crate::config::Config::flows_dir().display().to_string()]));
+        return 0;
+    }
+    let mut worst = 0;
+    for n in &names {
+        if names.len() > 1 {
+            println!("{}", n);
+        }
+        match checked_flow(n) {
+            Ok((flow, report)) => {
+                print_report(n, &report, flow.nodes.len());
+                worst = worst.max(report.exit());
+            }
+            Err(e) => {
+                eprintln!("aiTerminal: {e}");
+                worst = 2;
+            }
+        }
+    }
+    worst
+}
+
+/// `@flow graph <name>` — the shape, drawn.
+fn flow_graph(name: &str) -> i32 {
+    let (flow, report) = match checked_flow(name) {
+        Ok(v) => v,
         Err(e) => {
             eprintln!("aiTerminal: {e}");
             return 2;
         }
     };
-    let mut steps = Vec::new();
-    for s in &flow.steps {
-        let Some(agent) = build_agent_spec(&s.agent) else {
-            eprintln!("aiTerminal: flow '{}': no agent '{}' — {}", flow.name, s.agent, available_agents_hint());
-            return 2;
-        };
-        steps.push(crate::ai::OrchestrationStep {
-            label: s.label.clone(),
-            agent,
-            prompt: s.prompt.replace("{{input}}", input),
-        });
+    // A broken graph is still drawn: seeing the shape is usually how you understand
+    // what the error is telling you.
+    for line in crate::flow::render::draw(&flow, None, md_width()) {
+        println!("{line}");
     }
-    // A compact header; each step announces itself live via the observer (▶ i/n label).
-    eprintln!("{}\u{25B6} flow '{}' — {} step(s){}", accent(), flow.name, steps.len(), reset());
-    let cancel = crate::ai::CancelToken::new();
-    let _sigint = wire_sigint(cancel.clone());
-    let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default()).with_images(media).with_cancel(cancel);
-    let mut runner = build_runner(cfg, &settings, workspace_root, policy, true);
-    let started = std::time::Instant::now();
-    let mut obs = CliObserver::new(std::io::stdout()).with_reasoning(cfg.ai_show_reasoning).with_markdown(markdown_opts(out_is_tty()));
-    let result = crate::ai::run_orchestration(&client, &steps, ctx, flow.chain, &mut runner, &mut obs);
-    finish_streamed(&mut obs, &result.final_answer);
-    let (dim, r) = (muted(), reset());
-    // A compact one-line step recap: `✓ explore · ✓ implement · ✓ verify`.
-    if !result.steps.is_empty() {
-        let recap = result
-            .steps
-            .iter()
-            .map(|s| format!("{} {}", if s.ok { "\u{2713}" } else { "\u{2717}" }, s.label))
-            .collect::<Vec<_>>()
-            .join(" \u{b7} ");
-        eprintln!("{dim}{recap}{r}");
+    if !report.ok() {
+        println!();
+        print_report(name, &report, flow.nodes.len());
+        return 2;
     }
-    let complete = result.steps.len() == steps.len() && result.steps.iter().all(|s| s.ok);
-    let glyph = if complete { "\u{2713}" } else { "\u{2717}" };
-    let cost = Some(client.model().cost(result.input_tokens as u64, result.output_tokens as u64));
-    eprintln!("{dim}{}{r}", run_footer_with(glyph, started.elapsed(), result.tools, result.input_tokens as u64, result.output_tokens as u64, cost, cfg.ai_budget));
-    if complete { 0 } else { 1 }
+    // Warnings do not fail a drawing: you asked for the picture and got it.
+    0
 }
 
-/// The flow every free-text `@flow <words…>` runs when the first word names no
-/// flow file — the bundled explore → implement → verify pipeline.
-const DEFAULT_FLOW: &str = "implement";
+/// `@flow runs` — the recent runs, newest first.
+fn flow_runs() -> i32 {
+    let runs = crate::flowruns::list();
+    if runs.is_empty() {
+        println!("{}", crate::i18n::translate("flow.no_runs", &[]));
+        return 0;
+    }
+    let now = crate::flowruns::now();
+    let (dim, r) = (muted(), reset());
+    println!("{}", crate::i18n::translate("flow.runs_header", &[runs.len().to_string()]));
+    for run in runs {
+        let age = crate::flowruns::human_age(now.saturating_sub(run.finished.unwrap_or(run.started)));
+        let input = clip_tail(&run.input, 40);
+        println!("  {} {} {:<9} {} {input}  {dim}({age} ago){r}", run.status_glyph(), run.id, run.status, run.flow);
+        let done = run.nodes.iter().filter(|n| n.state == crate::flowruns::NodeState::Done).count();
+        let (tin, tout) = run.tokens();
+        println!("      {dim}{done}/{} node(s) done \u{b7} {} tool call(s) \u{b7} {tin} in / {tout} out{r}", run.nodes.len(), run.tools());
+    }
+    println!("\n{}", crate::i18n::translate("flow.runs_hint", &[]));
+    0
+}
 
-/// `@flow` — bare lists; `@flow <name> [input]` runs a named flow; any other
-/// free text runs the DEFAULT pipeline with the whole text as its input; `--bg`
-/// detaches. `args` includes the leading "flow" word.
-fn ai_flow_cmd(args: &[String]) -> i32 {
-    let mut bg = false;
-    let mut record = None;
-    let mut words: Vec<String> = Vec::new();
-    let mut it = args[1..].iter();
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--bg" => bg = true,
-            "--job-record" => record = it.next().cloned(),
-            w => words.push(w.to_string()),
+/// `@flow show <id>` — one run: the same picture, with what actually happened on it.
+fn flow_show(id: &str) -> i32 {
+    let Some(run) = resolved_run(id) else { return 2 };
+    let (dim, r) = (muted(), reset());
+    println!("{} {} {} \u{b7} flow '{}'", run.status_glyph(), run.id, run.status, run.flow);
+    if !run.input.is_empty() {
+        println!("  {dim}input{r}     {}", run.input);
+    }
+    if !run.cwd.is_empty() {
+        println!("  {dim}folder{r}    {}", run.cwd);
+    }
+    let budget = run.budget.map(|b| format!(" \u{b7} {b} tokens")).unwrap_or_default();
+    println!(
+        "  {dim}bounds{r}    {} \u{b7} {} at a time{budget}",
+        crate::flowruns::human_age(run.timeout),
+        run.concurrency
+    );
+    let (tin, tout) = run.tokens();
+    println!("  {dim}spent{r}     {} tool call(s) \u{b7} {tin} in / {tout} out", run.tools());
+    println!();
+    // The definition may have been edited since; then the record is the only truth.
+    match load_flow(&run.flow) {
+        Ok(flow) if flow.nodes.iter().all(|n| run.node(&n.id).is_some()) => {
+            for line in crate::flow::render::draw(&flow, Some(&run), md_width()) {
+                println!("{line}");
+            }
+        }
+        _ => {
+            for node in &run.nodes {
+                println!("  {} {:<16} {}", node.state.glyph(), node.id, clip_tail(&node.output, 50));
+            }
         }
     }
-    if words.is_empty() {
-        return ai_flows();
+    if !run.unfinished().is_empty() {
+        let left: Vec<&str> = run.unfinished().iter().map(|n| n.id.as_str()).collect();
+        println!("\n  {dim}left to do{r} {}", left.join(", "));
+        println!("  {}", crate::i18n::translate("flow.resume_hint", &[run.id.clone()]));
     }
-    if bg {
-        return spawn_background(args);
-    }
-    // A known flow name runs with the rest as input; anything else is free text
-    // for the default pipeline (the run header names which flow actually ran).
-    let (name, input) = if load_flow(&words[0]).is_ok() {
-        (words[0].clone(), words[1..].join(" "))
-    } else {
-        (DEFAULT_FLOW.to_string(), words.join(" "))
-    };
-    let code = ai_run(false, None, Some(name), &input);
-    if let Some(id) = record {
-        crate::jobs::finish(&id, code);
-    }
-    code
+    0
 }
 
-/// `aiTerminal ai flows` — list the available flows (project + global).
-fn ai_flows() -> i32 {
-    crate::config::Config::ensure_default();
-    crate::i18n::install(crate::config::Config::load().i18n_catalog());
-    let mut rows: Vec<(String, String, usize)> = Vec::new();
-    let dir = crate::config::Config::flows_dir();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        let mut files: Vec<std::path::PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().and_then(|x| x.to_str()) == Some("toml")).collect();
-        files.sort();
-        for f in files {
-            let Some(name) = f.file_stem().and_then(|s| s.to_str()).map(str::to_string) else { continue };
-            if let Ok(text) = std::fs::read_to_string(&f) {
-                if let Ok(flow) = parse_flow(&name, &text) {
-                    rows.push((name, flow.description, flow.steps.len()));
+/// `@flow log <id> [<node>] [-f]` — what a node actually said.
+fn flow_log(id: &str, node: Option<&str>, follow: bool) -> i32 {
+    let Some(run) = resolved_run(id) else { return 2 };
+    // With no node named, the one whose answer is the flow's answer — which is what
+    // someone reaching for `@flow log last` almost always wants.
+    let wanted = match node {
+        Some(n) => n.to_string(),
+        None => match load_flow(&run.flow).ok().and_then(|f| f.answer_node().map(|i| f.nodes[i].id.clone())) {
+            Some(id) => id,
+            None => run.nodes.last().map(|n| n.id.clone()).unwrap_or_default(),
+        },
+    };
+    let Some(path) = run.node_log(&wanted) else {
+        let names: Vec<&str> = run.nodes.iter().map(|n| n.id.as_str()).collect();
+        eprintln!("aiTerminal: run {} has no output for node '{wanted}'{}", run.id, crate::flow::verify::nearest(&wanted, &names));
+        eprintln!("  nodes: {}", names.join(", "));
+        return 2;
+    };
+    let id = run.id.clone();
+    let alive = || matches!(crate::flowruns::read(&id), Some(r) if r.is_live());
+    tail_log(&path, follow, &alive)
+}
+
+fn resolved_run(id: &str) -> Option<crate::flowruns::Run> {
+    match crate::flowruns::resolve(id) {
+        Ok(id) => crate::flowruns::read(&id),
+        Err(e) => {
+            eprintln!("aiTerminal: {e}");
+            None
+        }
+    }
+}
+
+/// The first line of a multi-line message — for one-line list rows.
+fn opening_line(s: &str) -> String {
+    s.lines().next().unwrap_or_default().trim().to_string()
+}
+
+/// Whether somebody is actually at the keyboard — what decides if an approval can
+/// be asked or has to park the run.
+fn stdin_is_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal()
+}
+
+// ─────────────────────────────── the executor ───────────────────────────────
+
+/// What a finished node produced. The scheduler carries these between nodes, so
+/// everything a later node or a condition can see is in here.
+#[derive(Clone, Debug, Default)]
+struct NodeOut {
+    ok: bool,
+    output: String,
+    /// A command node's exit status.
+    exit: Option<i64>,
+    /// An approve node's answer.
+    approved: bool,
+    /// Reached an approval with nobody to ask: the run parks rather than deadlocks.
+    parked: bool,
+    input_tokens: u64,
+    output_tokens: u64,
+    tools: usize,
+    ms: u64,
+    attempts: u32,
+}
+
+/// Self-contained work for one node — resolved on the scheduler's thread, executed
+/// on a worker's. Nothing in here refers to another node, which is why two nodes
+/// running at once cannot race for state.
+enum NodeWork {
+    /// An agent run, or one run per item when the node fans out.
+    Agent { agent: String, prompts: Vec<String> },
+    Run { commands: Vec<String> },
+    Approve { show: String, question: String },
+    /// A resume: this node already ran, and its answer is read back from disk.
+    Replay(Box<NodeOut>),
+}
+
+/// Runs one flow's graph.
+struct FlowDriver<'a> {
+    flow: &'a crate::flow::Flow,
+    cfg: &'a crate::config::Config,
+    settings: crate::ai::AiSettings,
+    policy: std::sync::Arc<crate::security::Policy>,
+    workspace: Option<std::path::PathBuf>,
+    input: String,
+    run_id: String,
+    /// Outputs replayed from a previous run's record, by node id.
+    replay: Vec<(String, String)>,
+    /// The whole-run cancel: Ctrl+C and the wall clock both trip it.
+    cancel: crate::ai::CancelToken,
+    budget: Option<u64>,
+    spent: std::sync::atomic::AtomicU64,
+    concurrency: usize,
+    /// Somebody is at the terminal, so an approval can actually be answered.
+    interactive: bool,
+    /// The record rows, updated as each node lands.
+    rows: std::sync::Mutex<Vec<crate::flowruns::NodeRun>>,
+    /// The live display — one line per node, in graph order.
+    board: std::sync::Arc<crate::flow::board::Board>,
+}
+
+impl FlowDriver<'_> {
+    /// What a condition can ask about node `name`.
+    fn facts(&self, name: &str, done: &[Option<NodeOut>], status: &[platform::orchestrator::Status]) -> Option<crate::flow::expr::Facts> {
+        let i = self.flow.index(name)?;
+        if status[i] == platform::orchestrator::Status::Skipped {
+            return Some(crate::flow::expr::Facts { skipped: true, ..Default::default() });
+        }
+        let out = done[i].as_ref()?;
+        Some(crate::flow::expr::Facts {
+            ran: true,
+            passed: out.ok,
+            skipped: false,
+            approved: out.approved,
+            exit: out.exit,
+            output: out.output.clone(),
+        })
+    }
+
+    /// Fill in one `{{…}}`. Every reference was proved upstream by the verifier, so
+    /// a missing one here means the branch legitimately did not run.
+    fn resolve(&self, r: &crate::flow::tmpl::Ref, done: &[Option<NodeOut>], item: Option<&str>) -> String {
+        use crate::flow::tmpl::{Field, Ref};
+        match r {
+            Ref::Input => self.input.clone(),
+            Ref::FlowName => self.flow.name.clone(),
+            Ref::Var(_) => item.unwrap_or_default().to_string(),
+            Ref::Node { id, field } => {
+                let Some(i) = self.flow.index(id) else { return String::new() };
+                let Some(out) = done[i].as_ref() else { return String::new() };
+                match field {
+                    Field::Output => out.output.clone(),
+                    Field::Exit => out.exit.map(|e| e.to_string()).unwrap_or_default(),
                 }
             }
         }
     }
-    if rows.is_empty() {
-        println!("{}", crate::i18n::translate("flow.none", &[crate::config::Config::flows_dir().display().to_string()]));
+
+    /// The items a `map` node fans out over: a JSON array if the upstream produced
+    /// one, else its non-empty lines. Capped, because the list comes from a node
+    /// nobody bounded.
+    fn items(&self, text: &str) -> Vec<String> {
+        // The array first, even when it arrives wrapped in a sentence or a fence — an
+        // agent asked for a list usually introduces it, and that introduction would
+        // otherwise become an item with an agent run of its own.
+        let parsed = crate::ai::plan::extract_array(text)
+            .and_then(|json| corelib::wire::Json::parse(&json).ok())
+            .and_then(|j| j.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect::<Vec<_>>()))
+            .filter(|v: &Vec<String>| !v.is_empty());
+        let mut items = parsed.unwrap_or_else(|| {
+            text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
+        });
+        items.truncate(self.cfg.flow_max_map);
+        items
+    }
+
+    /// Record one node's result the moment it lands, so a run that dies mid-way is
+    /// still worth resuming.
+    fn record(&self, node: &crate::flow::Node, asked: &str, out: &NodeOut, state: crate::flowruns::NodeState) {
+        crate::flowruns::write_node(&self.run_id, &node.id, asked, &out.output);
+        let Ok(mut rows) = self.rows.lock() else { return };
+        if let Some(row) = rows.iter_mut().find(|r| r.id == node.id) {
+            *row = crate::flowruns::NodeRun {
+                id: node.id.clone(),
+                state,
+                exit: out.exit,
+                approved: out.approved,
+                input_tokens: out.input_tokens,
+                output_tokens: out.output_tokens,
+                tools: out.tools,
+                ms: out.ms,
+                attempts: out.attempts,
+                output: out.output.clone(),
+            };
+        }
+        if let Some(mut run) = crate::flowruns::read(&self.run_id) {
+            run.nodes = rows.clone();
+            crate::flowruns::write(&self.run_id, &run);
+        }
+    }
+
+    /// One agent run, on its own client and its own tool runner — the shape
+    /// `task.run` already uses for parallel sub-agents.
+    fn one_agent(&self, name: &str, prompt: &str, node: &crate::flow::Node) -> NodeOut {
+        let Some(mut spec) = build_agent_spec(name) else {
+            return NodeOut { ok: false, output: format!("no agent '{name}'"), ..NodeOut::default() };
+        };
+        if let Some(max) = node.max_steps {
+            spec.max_steps = max;
+        }
+        let cancel = crate::ai::CancelToken::new();
+        let _watch = self.node_watchdog(cancel.clone(), node);
+        let client = crate::ai::Client::new(self.settings.clone(), crate::ai::CurlTransport::default()).with_cancel(cancel);
+        let mut runner = build_runner(self.cfg, &self.settings, self.workspace.clone(), self.policy.clone(), true);
+        runner.trace = Some(std::sync::Arc::new(crate::flow::board::NodeTrace {
+            board: self.board.clone(),
+            node: node.id.clone(),
+        }));
+        if let Some(hub) = &runner.mcp {
+            for (n, describe) in hub.tools() {
+                spec.tools.push(crate::ai::ToolSpec { name: n, describe });
+            }
+        }
+        let started = std::time::Instant::now();
+        let run = crate::ai::run_agent(&client, &spec, prompt, "", &mut runner, &mut crate::ai::NoopObserver);
+        self.spent.fetch_add((run.input_tokens + run.output_tokens) as u64, std::sync::atomic::Ordering::Relaxed);
+        NodeOut {
+            ok: run.outcome == crate::ai::RunOutcome::Completed,
+            output: run.answer,
+            input_tokens: run.input_tokens as u64,
+            output_tokens: run.output_tokens as u64,
+            tools: run.steps.len(),
+            ms: started.elapsed().as_millis() as u64,
+            attempts: 1,
+            ..NodeOut::default()
+        }
+    }
+
+    /// A token that trips when this node runs out of its own time, or when the whole
+    /// run is cancelled — so Ctrl+C reaches into a node that is mid-request.
+    fn node_watchdog(&self, token: crate::ai::CancelToken, node: &crate::flow::Node) -> SigintWatch {
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let secs = node.timeout.unwrap_or(self.cfg.flow_node_timeout);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        let whole_run = self.cancel.clone();
+        let flag = done.clone();
+        std::thread::spawn(move || {
+            while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if whole_run.is_cancelled() || std::time::Instant::now() >= deadline {
+                    token.cancel();
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+        });
+        SigintWatch { done }
+    }
+
+    /// One command node, through the same guard every other command goes through.
+    fn one_command(&self, command: &str, node: &crate::flow::Node) -> NodeOut {
+        let secs = node.timeout.unwrap_or(self.cfg.flow_node_timeout);
+        let started = std::time::Instant::now();
+        match run_check(command, &self.policy, std::time::Duration::from_secs(secs)) {
+            Ok(v) => NodeOut {
+                ok: v.passed,
+                output: v.raw,
+                exit: v.code.map(i64::from),
+                ms: started.elapsed().as_millis() as u64,
+                attempts: 1,
+                ..NodeOut::default()
+            },
+            Err(e) => NodeOut {
+                ok: false,
+                output: e,
+                exit: None,
+                ms: started.elapsed().as_millis() as u64,
+                attempts: 1,
+                ..NodeOut::default()
+            },
+        }
+    }
+
+    /// Ask the person. Off a terminal there is nobody to ask, so the run *parks*
+    /// rather than guessing or hanging — `@flow resume` picks it up with somebody
+    /// there. Gating an action behind a question nobody hears is how an unattended
+    /// pipeline deadlocks.
+    fn ask(&self, show: &str, question: &str) -> NodeOut {
+        if !show.trim().is_empty() {
+            println!("{show}");
+        }
+        if !self.interactive {
+            return NodeOut {
+                ok: false,
+                parked: true,
+                output: format!("{question}\n(nobody at the terminal — resume this run to answer)"),
+                ..NodeOut::default()
+            };
+        }
+        use std::io::Write;
+        eprint!("{}{question} [y/N] {}", accent(), reset());
+        let _ = std::io::stderr().flush();
+        let mut line = String::new();
+        let yes = std::io::stdin().read_line(&mut line).is_ok() && matches!(line.trim(), "y" | "Y" | "yes" | "Yes");
+        NodeOut {
+            ok: yes,
+            approved: yes,
+            output: if yes { "approved".into() } else { "declined".into() },
+            attempts: 1,
+            ..NodeOut::default()
+        }
+    }
+}
+
+use platform::orchestrator::Driver as _;
+
+impl platform::orchestrator::Driver for FlowDriver<'_> {
+    type Work = NodeWork;
+    type Out = NodeOut;
+
+    fn prepare(&self, i: usize, done: &[Option<NodeOut>], status: &[platform::orchestrator::Status]) -> platform::orchestrator::Plan<NodeWork> {
+        use platform::orchestrator::Plan;
+        let node = &self.flow.nodes[i];
+        // A resume replays what already succeeded instead of paying for it again.
+        if let Some((_, text)) = self.replay.iter().find(|(id, _)| *id == node.id) {
+            let previous = crate::flowruns::read(&self.run_id).and_then(|r| r.node(&node.id).cloned());
+            return Plan::Go(NodeWork::Replay(Box::new(NodeOut {
+                ok: true,
+                output: text.clone(),
+                exit: previous.as_ref().and_then(|p| p.exit),
+                approved: previous.as_ref().is_some_and(|p| p.approved),
+                attempts: previous.as_ref().map_or(1, |p| p.attempts),
+                ..NodeOut::default()
+            })));
+        }
+        // The condition, evaluated on results that are already in hand.
+        if let Some(when) = &node.when {
+            if !when.eval(&|name| self.facts(name, done, status)) {
+                self.board.settled(&node.id, crate::flow::board::State::Skipped, 0, 0, &format!("not {}", node.when_src));
+                return Plan::Skip;
+            }
+        }
+        let fill = |t: &crate::flow::tmpl::Template, item: Option<&str>| t.render(&|r| self.resolve(r, done, item));
+        // A fan-out resolves its list here, on the scheduler's thread, so each item's
+        // work is complete before any of it is handed to a thread.
+        let items: Vec<Option<String>> = match &node.over {
+            Some(over) => {
+                let list = self.items(&fill(over, None));
+                if list.is_empty() {
+                    self.board.settled(&node.id, crate::flow::board::State::Skipped, 0, 0, "nothing to fan out over");
+                    return Plan::Skip;
+                }
+                list.into_iter().map(Some).collect()
+            }
+            None => vec![None],
+        };
+        let each = |t: &crate::flow::tmpl::Template| items.iter().map(|it| fill(t, it.as_deref())).collect::<Vec<_>>();
+        Plan::Go(match &node.kind {
+            crate::flow::Kind::Agent { agent, prompt } => NodeWork::Agent { agent: agent.clone(), prompts: each(prompt) },
+            crate::flow::Kind::Run { command } => NodeWork::Run { commands: each(command) },
+            crate::flow::Kind::Approve { show, question } => {
+                NodeWork::Approve { show: fill(show, None), question: question.clone() }
+            }
+        })
+    }
+
+    fn work(&self, i: usize, w: NodeWork) -> NodeOut {
+        let node = &self.flow.nodes[i];
+        if let NodeWork::Replay(out) = w {
+            let ms = out.ms;
+            let tokens = out.input_tokens + out.output_tokens;
+            self.board.settled(&node.id, crate::flow::board::State::Done, ms, tokens, "replayed from the record");
+            return *out;
+        }
+        self.board.running(&node.id, &running_note(&w));
+        let started = std::time::Instant::now();
+        let mut out = self.attempt(node, &w);
+        out.ms = started.elapsed().as_millis() as u64;
+        let shown = if out.parked {
+            crate::flow::board::State::Parked
+        } else if out.ok {
+            crate::flow::board::State::Done
+        } else {
+            crate::flow::board::State::Failed
+        };
+        let note = if out.ok { String::new() } else { opening_line(&out.output) };
+        self.board.settled(&node.id, shown, out.ms, out.input_tokens + out.output_tokens, &note);
+        let state = if out.parked {
+            crate::flowruns::NodeState::Waiting
+        } else if out.ok {
+            crate::flowruns::NodeState::Done
+        } else {
+            crate::flowruns::NodeState::Failed
+        };
+        self.record(node, &asked_text(&w), &out, state);
+        out
+    }
+
+    fn ok(&self, _i: usize, out: &NodeOut) -> bool {
+        out.ok
+    }
+
+    fn halted(&self) -> bool {
+        if self.cancel.is_cancelled() {
+            return true;
+        }
+        match self.budget {
+            Some(b) => self.spent.load(std::sync::atomic::Ordering::Relaxed) >= b,
+            None => false,
+        }
+    }
+}
+
+impl FlowDriver<'_> {
+    /// Run a node, retrying a failure up to its `retry` count. Each attempt is a
+    /// fresh run; the count survives into the record so a flaky node is visible.
+    fn attempt(&self, node: &crate::flow::Node, w: &NodeWork) -> NodeOut {
+        let mut last = NodeOut::default();
+        for attempt in 0..=node.retry {
+            if attempt > 0 {
+                self.board.retrying(&node.id, attempt, node.retry);
+            }
+            last = self.once(node, w);
+            last.attempts = attempt + 1;
+            if last.ok || last.parked || self.halted() {
+                break;
+            }
+        }
+        last
+    }
+
+    fn once(&self, node: &crate::flow::Node, w: &NodeWork) -> NodeOut {
+        match w {
+            NodeWork::Replay(out) => (**out).clone(),
+            NodeWork::Approve { show, question } => self.ask(show, question),
+            NodeWork::Run { commands } => join(commands.iter().map(|c| self.one_command(c, node)).collect()),
+            NodeWork::Agent { agent, prompts } => {
+                // One prompt is the common case; several mean the node fans out, and
+                // the items are independent by construction — each was resolved
+                // before any of them started.
+                if prompts.len() == 1 {
+                    return self.one_agent(agent, &prompts[0], node);
+                }
+                let width = self.concurrency.max(1);
+                let mut results: Vec<NodeOut> = Vec::with_capacity(prompts.len());
+                for batch in prompts.chunks(width) {
+                    let done = std::thread::scope(|scope| {
+                        let handles: Vec<_> = batch
+                            .iter()
+                            .map(|p| scope.spawn(move || self.one_agent(agent, p, node)))
+                            .collect();
+                        handles.into_iter().map(|h| h.join().unwrap_or_default()).collect::<Vec<_>>()
+                    });
+                    results.extend(done);
+                    if self.halted() {
+                        break;
+                    }
+                }
+                join(results)
+            }
+        }
+    }
+}
+
+/// Fold a fan-out's results into one: every part must pass, and the outputs read as
+/// a numbered list so a later node can tell them apart.
+fn join(parts: Vec<NodeOut>) -> NodeOut {
+    if parts.len() == 1 {
+        return parts.into_iter().next().unwrap_or_default();
+    }
+    let mut out = NodeOut { ok: true, attempts: 1, ..NodeOut::default() };
+    let mut text = Vec::new();
+    for (i, p) in parts.iter().enumerate() {
+        out.ok &= p.ok;
+        out.input_tokens += p.input_tokens;
+        out.output_tokens += p.output_tokens;
+        out.tools += p.tools;
+        out.ms = out.ms.max(p.ms);
+        // The last non-zero exit, so a fan-out of commands reports a real failure.
+        if p.exit.is_some_and(|e| e != 0) || out.exit.is_none() {
+            out.exit = p.exit;
+        }
+        text.push(format!("## {}\n{}", i + 1, p.output.trim()));
+    }
+    out.output = text.join("\n\n");
+    out
+}
+
+/// What a node is, in the few characters the board gives it.
+fn describe_node(node: &crate::flow::Node) -> String {
+    match &node.kind {
+        crate::flow::Kind::Agent { agent, .. } if node.is_map() => format!("@{agent} \u{d7}n"),
+        crate::flow::Kind::Agent { agent, .. } => format!("@{agent}"),
+        crate::flow::Kind::Run { command } => format!("$ {}", command.source().split_whitespace().take(2).collect::<Vec<_>>().join(" ")),
+        crate::flow::Kind::Approve { .. } => "asks you".into(),
+    }
+}
+
+/// What to say beside a node the moment it starts.
+///
+/// Usually nothing: the board's own column already says what the node is, and
+/// repeating it there costs the space a tool trace is about to need. A fan-out is the
+/// exception — how many items it turned out to be is not knowable from the file.
+fn running_note(w: &NodeWork) -> String {
+    match w {
+        NodeWork::Agent { prompts, .. } if prompts.len() > 1 => format!("\u{d7} {} items", prompts.len()),
+        NodeWork::Run { commands } if commands.len() > 1 => format!("\u{d7} {} items", commands.len()),
+        _ => String::new(),
+    }
+}
+
+/// What the node was asked, for its record.
+fn asked_text(w: &NodeWork) -> String {
+    match w {
+        NodeWork::Agent { prompts, .. } => prompts.join("\n\n---\n\n"),
+        NodeWork::Run { commands } => commands.join("\n"),
+        NodeWork::Approve { show, question } => format!("{show}\n\n{question}"),
+        NodeWork::Replay(_) => String::new(),
+    }
+}
+
+/// `aiTerminal ai flow <name> "<input>"` — verify, then run the graph.
+fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
+    crate::config::Config::ensure_default();
+    let cfg = crate::config::Config::load();
+    crate::i18n::install(cfg.i18n_catalog());
+
+    // A resume takes its flow and its input from the record, so continuing a run
+    // never quietly becomes a different one.
+    let prior = match &resume {
+        Some(id) => match crate::flowruns::read(id) {
+            Some(run) => Some(run),
+            None => {
+                eprintln!("aiTerminal: flow run {id} has no record to resume");
+                return 2;
+            }
+        },
+        None => None,
+    };
+    // A goal with no flow name: ask the model which of the installed graphs it wants,
+    // and say so out loud before anything runs.
+    let mut routed: Option<String> = None;
+    let name = match prior.as_ref() {
+        Some(p) => p.flow.clone(),
+        None if !spec.name.is_empty() => spec.name.clone(),
+        None => {
+            let catalogue: Vec<(String, String)> = flow_names()
+                .into_iter()
+                .filter_map(|n| load_flow(&n).ok().map(|f| (n, f.description)))
+                .collect();
+            match crate::flow::pick::choose(&spec.input, &catalogue) {
+                Ok((picked, why)) => {
+                    routed = Some(why);
+                    picked
+                }
+                Err(e) => {
+                    eprintln!("aiTerminal: {e}");
+                    eprintln!("  name one instead:  {}", catalogue.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(" · "));
+                    return 2;
+                }
+            }
+        }
+    };
+    let (flow, report) = match checked_flow(&name) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("aiTerminal: {e}");
+            return 2;
+        }
+    };
+    if !report.ok() {
+        eprintln!("aiTerminal: flow '{name}' cannot run:");
+        print_report(&name, &report, flow.nodes.len());
+        return 2;
+    }
+    let input = prior.as_ref().map_or(spec.input.clone(), |p| p.input.clone());
+    if flow.input == crate::flow::Input::Required && input.trim().is_empty() {
+        eprintln!("aiTerminal: flow '{name}' needs something to work on \u{2014} @flow {name} \"<what to do>\"");
+        return 2;
+    }
+
+    // Bounds: the flags win, then the file, then `[flow]` config.
+    let timeout = spec.timeout.or(flow.bounds.timeout).unwrap_or(cfg.flow_timeout);
+    let budget = spec.budget.or(flow.bounds.budget);
+    let concurrency = spec.concurrency.or(flow.bounds.concurrency).unwrap_or(cfg.flow_concurrency).clamp(1, 16);
+
+    if spec.dry_run {
+        let (dim, r) = (muted(), reset());
+        println!("{}\u{25B8} flow '{name}'{r} {dim}\u{b7} {}{r}", accent(), shape_of(&flow));
+        if let Some(why) = &routed {
+            println!("  {dim}chosen for this goal \u{2014} {why}{r}");
+        }
+        for line in crate::flow::render::draw(&flow, None, md_width()) {
+            println!("{line}");
+        }
+        println!(
+            "\n  {dim}bounds{r}    {} \u{b7} {concurrency} at a time{}",
+            crate::flowruns::human_age(timeout),
+            budget.map(|b| format!(" \u{b7} {b} tokens")).unwrap_or_default()
+        );
+        print_report(&name, &report, flow.nodes.len());
         return 0;
     }
-    println!("{}", crate::i18n::translate("flow.header", &[rows.len().to_string()]));
-    for (name, desc, n) in rows {
-        println!("  {name:<20} {n} step(s)  {desc}");
+
+    // Only an agent node needs a model. A graph of `run` nodes is a perfectly good
+    // flow and must not be blocked by an unconfigured key.
+    let needs_model = flow.nodes.iter().any(|n| matches!(n.kind, crate::flow::Kind::Agent { .. }));
+    let settings = cfg.ai_settings();
+    if needs_model && settings.resolve_key().is_none() {
+        eprintln!("aiTerminal: {}", crate::ai::setup_hint(&settings));
+        return 2;
     }
-    println!("\n{}", crate::i18n::translate("flow.run_hint", &[]));
-    0
+
+    let registry = crate::plugin::load_registry(&cfg);
+    let policy = std::sync::Arc::new(crate::security::build_policy(&cfg, &registry));
+    let workspace = std::env::current_dir().ok();
+
+    // The record exists from the first moment, so a run killed at node one is still
+    // something you can look at.
+    let run_id = prior.as_ref().map_or_else(crate::flowruns::new_id, |p| p.id.clone());
+    let rows: Vec<crate::flowruns::NodeRun> = flow
+        .nodes
+        .iter()
+        .map(|n| match prior.as_ref().and_then(|p| p.node(&n.id)) {
+            Some(previous) if previous.state == crate::flowruns::NodeState::Done => previous.clone(),
+            _ => crate::flowruns::NodeRun { id: n.id.clone(), ..crate::flowruns::NodeRun::default() },
+        })
+        .collect();
+    let record = crate::flowruns::Run {
+        id: run_id.clone(),
+        flow: name.clone(),
+        input: input.clone(),
+        status: "running".into(),
+        cwd: workspace.as_ref().map(|w| w.display().to_string()).unwrap_or_default(),
+        started: prior.as_ref().map_or_else(crate::flowruns::now, |p| p.started),
+        finished: None,
+        pid: std::process::id(),
+        timeout,
+        budget,
+        concurrency,
+        nodes: rows.clone(),
+    };
+    crate::flowruns::write(&run_id, &record);
+
+    // What a resume already has in hand: the finished nodes' answers, read back off
+    // disk so they cost nothing the second time.
+    let replay: Vec<(String, String)> = prior
+        .as_ref()
+        .map(|p| {
+            p.nodes
+                .iter()
+                .filter(|n| n.state == crate::flowruns::NodeState::Done)
+                .filter_map(|n| crate::flowruns::read_node(&run_id, &n.id).map(|text| (n.id.clone(), text)))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let cancel = crate::ai::CancelToken::new();
+    let sigint = wire_sigint(cancel.clone());
+    let _clock = wire_deadline(cancel.clone(), timeout);
+    let (dim, r) = (muted(), reset());
+    if let Some(why) = &routed {
+        // The pick is printed BEFORE the first node, so a wrong one is a line to read
+        // rather than three nodes to sit through.
+        eprintln!("{}\u{25B8} {name}{r} {dim}\u{2014} {why}{r}", accent());
+    }
+    if !replay.is_empty() {
+        eprintln!("{dim}\u{21ba} resuming {run_id} \u{2014} {} node(s) already done{r}", replay.len());
+    }
+    for w in &report.warnings {
+        eprintln!("{dim}\u{26a0}  {w}{r}");
+    }
+
+    // One line per node, in graph order, from before the first one starts — so the
+    // shape of the run is visible rather than revealed a line at a time.
+    let heading = match input.trim().is_empty() {
+        true => format!("{name} \u{b7} {}", shape_of(&flow)),
+        false => format!("{name} \u{b7} {}", clip_tail(input.trim(), 62)),
+    };
+    let board = crate::flow::board::Board::new(
+        heading,
+        flow.nodes
+            .iter()
+            .map(|n| (n.id.clone(), describe_node(n), n.when_src.clone()))
+            .collect(),
+        // A repainting board needs a cursor. A pipe, a job log and CI have none.
+        err_is_tty(),
+    );
+    board.start();
+
+    let driver = FlowDriver {
+        flow: &flow,
+        cfg: &cfg,
+        settings,
+        policy,
+        workspace,
+        input,
+        run_id: run_id.clone(),
+        replay,
+        cancel: cancel.clone(),
+        budget,
+        spent: std::sync::atomic::AtomicU64::new(0),
+        concurrency,
+        interactive: stdin_is_tty(),
+        rows: std::sync::Mutex::new(rows),
+        board: board.clone(),
+    };
+    let nodes = graph_nodes(&flow);
+    let started = std::time::Instant::now();
+    let result = platform::orchestrator::run_graph(&nodes, &driver, concurrency);
+    drop(sigint);
+    board.finish();
+
+    // ── the outcome ───────────────────────────────────────────────────────
+    use platform::orchestrator::Status;
+    let parked = result.results.iter().flatten().any(|o| o.parked);
+    let failed = result.status.iter().any(|s| matches!(s, Status::Failed | Status::Blocked));
+    let status = if parked {
+        "waiting"
+    } else if cancel.is_cancelled() && started.elapsed().as_secs() >= timeout {
+        "timeout"
+    } else if cancel.is_cancelled() {
+        "cancelled"
+    } else if driver.halted() {
+        "budget"
+    } else if failed {
+        "failed"
+    } else {
+        "done"
+    };
+    let final_rows = driver.rows.lock().map(|r| r.clone()).unwrap_or_default();
+    let mut final_rows = final_rows;
+    for (i, node) in flow.nodes.iter().enumerate() {
+        if let Some(row) = final_rows.iter_mut().find(|r| r.id == node.id) {
+            if row.state == crate::flowruns::NodeState::Pending {
+                row.state = match result.status[i] {
+                    Status::Skipped => crate::flowruns::NodeState::Skipped,
+                    Status::Blocked => crate::flowruns::NodeState::Blocked,
+                    _ => crate::flowruns::NodeState::Pending,
+                };
+            }
+        }
+    }
+    let mut record = crate::flowruns::read(&run_id).unwrap_or(record);
+    record.nodes = final_rows;
+    record.status = status.into();
+    record.finished = Some(crate::flowruns::now());
+    crate::flowruns::write(&run_id, &record);
+    crate::flowruns::prune(cfg.flow_keep_runs);
+
+    // The answer: the node the flow says is its answer, printed to stdout so the
+    // whole thing composes with a pipe like every other command here.
+    if let Some(answer) = flow.answer_node().and_then(|i| result.results[i].as_ref()) {
+        if !answer.output.trim().is_empty() {
+            println!("{}", answer.output.trim());
+        }
+    }
+    let (tin, tout) = record.tokens();
+    let cost = Some(cfg.ai_settings().primary().cost(tin, tout));
+    let glyph = match status {
+        "done" => "\u{2713}",
+        "waiting" => "\u{23f8}",
+        "cancelled" => "\u{23f9}",
+        _ => "\u{2717}",
+    };
+    eprintln!("{dim}{}{r}", run_footer_with(glyph, started.elapsed(), record.tools(), tin, tout, cost, cfg.ai_budget));
+    if parked {
+        eprintln!("{dim}{}{r}", crate::i18n::translate("flow.resume_hint", &[run_id.clone()]));
+    }
+    match status {
+        "done" => 0,
+        "waiting" => 0,
+        _ => 1,
+    }
+}
+
+/// The flow, as the scheduler sees it: edges by index, and the two flags it needs.
+fn graph_nodes(flow: &crate::flow::Flow) -> Vec<platform::orchestrator::Node> {
+    flow.nodes
+        .iter()
+        .map(|n| platform::orchestrator::Node {
+            needs: n.needs.iter().filter_map(|d| flow.index(d)).collect(),
+            goto: n.goto.as_ref().and_then(|g| flow.index(g)),
+            max_loops: if n.goto.is_some() { n.max } else { 0 },
+            solo: n.solo,
+            optional: n.optional,
+            // One rule, and it is the whole story: `needs` decides the ORDER, `when`
+            // decides whether it runs. So a node that carries a condition always gets
+            // to evaluate it — a fixer is not blocked by the breakage it exists to
+            // handle, and a node conditioned on success is *skipped* rather than
+            // *blocked*, which is what actually happened. A node with no condition
+            // keeps the safe default: a failed dependency stops it.
+            guarded: n.when.is_some(),
+        })
+        .collect()
 }
 
 // ===== @loop — an engineered agent loop (iterate until a verifiable goal) =====
@@ -1939,6 +3089,10 @@ pub(crate) struct Verdict {
     /// The check command's exit status, when there was a command. `127`/`126` mean the
     /// verifier itself is broken — a distinction that matters before the loop starts.
     code: Option<i32>,
+    /// The command's output, undecorated. `feedback` is shaped for a loop to read
+    /// back to a model; a `@flow` node's `{{x.output}}` is what the command printed
+    /// and nothing else, with the status available separately as `{{x.exit}}`.
+    raw: String,
 }
 
 /// FNV-1a over a string — the no-progress signature.
@@ -2070,8 +3224,9 @@ fn run_check(cmd: &str, policy: &crate::security::Policy, deadline: std::time::D
     let mut text = out_h.join().unwrap_or_default();
     text.push_str(&err_h.join().unwrap_or_default());
     let passed = status.success();
-    let observed = format!("exit={:?}\n{}", status.code(), tail(&text, 4000));
-    Ok(Verdict { passed, feedback: observed.clone(), signature: fnv1a(&observed), code: status.code() })
+    let raw = tail(&text, 4000).to_string();
+    let observed = format!("exit={:?}\n{raw}", status.code());
+    Ok(Verdict { passed, feedback: observed.clone(), signature: fnv1a(&observed), code: status.code(), raw })
 }
 
 /// The checker-agent verifier (no `--check` given): a SEPARATE reviewer agent
@@ -2088,7 +3243,7 @@ fn run_reviewer(sub: &SubAgentCtx, ctx: crate::caps::CapCtx, goal: &str, work: &
     );
     let answer = run_sub_agent(sub, ctx, 1, "reviewer", &prompt);
     let passed = reviewer_passed(&answer);
-    Verdict { signature: fnv1a(&answer), feedback: answer, passed, code: None }
+    Verdict { signature: fnv1a(&answer), raw: answer.clone(), feedback: answer, passed, code: None }
 }
 
 /// Why an engineered loop stopped. Every one of these is a *bound* doing its job, except
@@ -2235,6 +3390,7 @@ pub(crate) fn scripted_verdict(observed: &str) -> Verdict {
     Verdict {
         passed: observed.trim().eq_ignore_ascii_case("PASS"),
         feedback: observed.to_string(),
+        raw: observed.to_string(),
         signature: fnv1a(observed),
         code: None,
     }
@@ -4087,7 +5243,7 @@ fn theme_set(name: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{clamp_tail, command_marker, erase_seq, error_comment, fnv1a, is_open_diagram_fence, loop_prompt, parse_flow, reviewer_passed, session_lines, tail, CONFIRM_MARK, EDIT_MARK, RUN_MARK};
+    use super::{clamp_tail, command_marker, erase_seq, error_comment, fnv1a, is_open_diagram_fence, loop_prompt, reviewer_passed, session_lines, tail, CONFIRM_MARK, EDIT_MARK, RUN_MARK};
     use crate::security::Verdict;
 
     #[test]
@@ -4167,35 +5323,99 @@ mod tests {
     }
 
     #[test]
-    fn flow_files_parse_and_validate() {
-        let f = parse_flow(
-            "review",
-            "description = \"explore then review\"\nchain = true\n\
-             [[step]]\nlabel = \"map\"\nagent = \"explorer\"\nprompt = \"Map: {{input}}\"\n\
-             [[step]]\nagent = \"reviewer\"\nprompt = \"Review the findings\"\n",
-        )
-        .unwrap();
-        assert_eq!(f.steps.len(), 2);
-        assert_eq!(f.steps[0].label, "map");
-        assert_eq!(f.steps[1].label, "reviewer", "label defaults to the agent name");
-        assert!(f.chain);
-        assert_eq!(f.description, "explore then review");
-        // Placeholder substitution happens at run time (verify the raw prompt survives).
-        assert!(f.steps[0].prompt.contains("{{input}}"));
-        // Invalid flows are rejected with a clear error.
-        assert!(parse_flow("x", "chain = true\n").is_err(), "no steps");
-        assert!(parse_flow("x", "[[step]]\nagent = \"a\"\n").is_err(), "missing prompt");
+    fn every_flow_subcommand_is_told_from_a_flow_name() {
+        use super::{FlowCmd, parse_flow_args};
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let parse = |xs: &[&str]| parse_flow_args(&a(xs)).expect("parses");
+        assert_eq!(parse(&[]), FlowCmd::List);
+        assert_eq!(parse(&["list"]), FlowCmd::List);
+        assert_eq!(parse(&["check"]), FlowCmd::Check(None), "no name checks them all");
+        assert_eq!(parse(&["check", "implement"]), FlowCmd::Check(Some("implement".into())));
+        assert_eq!(parse(&["graph", "implement"]), FlowCmd::Graph("implement".into()));
+        assert_eq!(parse(&["runs"]), FlowCmd::Runs);
+        assert_eq!(parse(&["clear"]), FlowCmd::Clear);
+        assert_eq!(parse(&["show"]), FlowCmd::Show("last".into()), "an id defaults to the newest");
+        assert_eq!(parse(&["show", "1700-1"]), FlowCmd::Show("1700-1".into()));
+        assert_eq!(parse(&["resume", "1700-1"]), FlowCmd::Resume("1700-1".into()));
+        assert_eq!(
+            parse(&["log", "1700-1", "verify", "-f"]),
+            FlowCmd::Log { id: "1700-1".into(), node: Some("verify".into()), follow: true }
+        );
+        assert_eq!(parse(&["log"]), FlowCmd::Log { id: "last".into(), node: None, follow: false });
+        // `graph` with nothing to draw is an error, not a guess.
+        assert!(parse_flow_args(&a(&["graph"])).is_err());
     }
 
     #[test]
-    fn example_flow_and_agent_parse() {
-        // The shipped examples are the templates users copy — they must always
-        // match the live schemas.
+    fn a_quoted_input_arrives_verbatim_and_loose_words_rejoin() {
+        use super::{FlowCmd, parse_flow_args};
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let run = |xs: &[&str]| match parse_flow_args(&a(xs)).expect("parses") {
+            FlowCmd::Run(spec) => *spec,
+            other => panic!("expected a run, got {other:?}"),
+        };
+        // One argument is the input exactly as typed — so a flag-looking word inside
+        // the quotes stays text instead of being eaten.
+        let spec = run(&["ship", "raise --max to 10"]);
+        assert_eq!((spec.name.as_str(), spec.input.as_str()), ("ship", "raise --max to 10"));
+        // Loose words become a sentence.
+        let spec = run(&["ship", "add", "a", "flag"]);
+        assert_eq!(spec.input, "add a flag");
+        // Flags are read wherever they appear, and never land in the input.
+        let spec = run(&["ship", "--bg", "add", "a", "flag", "--concurrency", "2"]);
+        assert!(spec.bg && spec.concurrency == Some(2));
+        assert_eq!(spec.input, "add a flag", "--bg used to end up inside the prompt text");
+    }
+
+    #[test]
+    fn one_argument_with_a_space_in_it_is_a_goal_not_a_name() {
+        use super::{FlowCmd, parse_flow_args};
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let run = |xs: &[&str]| match parse_flow_args(&a(xs)).expect("parses") {
+            FlowCmd::Run(spec) => *spec,
+            other => panic!("expected a run, got {other:?}"),
+        };
+        // No flow can be called this, so it is a goal for the model to route.
+        let spec = run(&["Build a SaaS landing page end to end"]);
+        assert_eq!(spec.name, "", "no flow was named");
+        assert_eq!(spec.input, "Build a SaaS landing page end to end");
+        // Flags still work around it.
+        let spec = run(&["Research LLM memory techniques", "--dry-run"]);
+        assert!(spec.dry_run && spec.name.is_empty());
+        // A single word is still a flow name, and loose words are still an error case
+        // resolved by name — the typo footgun does not return through this door.
+        assert_eq!(run(&["build"]).name, "build");
+        assert_eq!(run(&["revieew", "the", "parser"]).name, "revieew");
+    }
+
+    #[test]
+    fn a_bound_you_asked_for_and_a_bound_you_got_are_the_same_thing() {
+        use super::parse_flow_args;
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // A value that cannot be read is an error naming the flag — never a silent
+        // default, which would run the flow with a bound the user did not choose.
+        for (args, want) in [
+            (vec!["f", "--budget", "abc"], "--budget"),
+            (vec!["f", "--budget"], "--budget needs a value"),
+            (vec!["f", "--timeout", "soon"], "--timeout"),
+            (vec!["f", "--concurrency", "lots"], "--concurrency"),
+            (vec!["f", "--timeout", "--bg"], "--timeout needs a value"),
+        ] {
+            let err = parse_flow_args(&a(&args)).map(|_| ()).expect_err(&format!("{args:?} must not parse"));
+            assert!(err.contains(want), "{args:?} said {err:?}");
+        }
+        assert!(parse_flow_args(&a(&[])).is_ok());
+        // And a name is required: `@flow --bg` alone asks for nothing.
+        assert!(parse_flow_args(&a(&["--bg"])).is_err());
+    }
+
+    #[test]
+    fn the_shipped_example_flow_is_a_valid_graph() {
+        // The examples are what people copy, so they are held to the live schema.
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples");
-        let flow_text = std::fs::read_to_string(format!("{root}/ai/flow.toml")).unwrap();
-        let flow = parse_flow("ship", &flow_text).expect("examples/ai/flow.toml parses");
-        assert_eq!(flow.steps.len(), 4);
-        assert!(flow.chain);
+        let text = std::fs::read_to_string(format!("{root}/ai/flow.toml")).unwrap();
+        let flow = crate::flow::parse("ship", &text).expect("examples/ai/flow.toml parses");
+        assert!(flow.nodes.len() >= 3);
         // The example agent's frontmatter loads through the real agent loader.
         let dir = std::env::temp_dir().join(format!("tt-example-agent-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -4318,7 +5538,7 @@ mod tests {
     }
 
     fn verdict(passed: bool, feedback: &str) -> super::Verdict {
-        super::Verdict { passed, feedback: feedback.into(), signature: fnv1a(feedback), code: None }
+        super::Verdict { passed, feedback: feedback.into(), raw: feedback.into(), signature: fnv1a(feedback), code: None }
     }
 
     /// Fresh loop state with the given bounds and no history.
@@ -4877,14 +6097,91 @@ mod tests {
     }
 
     #[test]
-    fn flow_free_text_falls_back_to_the_default_pipeline() {
-        // A known flow name runs by name; unknown first words become input to the
-        // default `implement` pipeline (the resolution `ai_flow_cmd` applies).
-        let (_h, _home) = crate::test_home::lock_home("cli-flow-default");
+    fn a_misspelled_flow_name_is_refused_and_pointed_at_the_real_one() {
+        // This used to fall through to the `implement` pipeline, so a typo ran a
+        // code-editing graph over the repository. Now it is an error with a hint.
+        let (_h, _home) = crate::test_home::lock_home("cli-flow-typo");
         crate::config::Config::ensure_default();
-        assert!(super::load_flow("review").is_ok(), "bundled flow resolves by name");
-        assert!(super::load_flow("add").is_err(), "free text is not a flow name");
-        assert!(super::load_flow(super::DEFAULT_FLOW).is_ok(), "the default pipeline ships");
+        assert!(super::load_flow("review").is_ok(), "a bundled flow resolves by name");
+        let err = super::load_flow("revieew").expect_err("a typo is not a flow");
+        assert!(err.contains("no flow 'revieew'"), "{err}");
+        assert!(err.contains("did you mean 'review'?"), "{err}");
+        // Nothing that could escape the flows directory is a name at all.
+        assert!(super::load_flow("../../etc/passwd").is_err());
+        assert!(super::load_flow("").is_err());
+    }
+
+    #[test]
+    fn every_bundled_agent_is_valid() {
+        // An agent is a file somebody edits. A misspelled tool used to reach the model
+        // with a plausible generic description and fail three minutes into a run; a
+        // missing skill silently produced a weaker prompt with no sign of it.
+        let (_h, _home) = crate::test_home::lock_home("cli-agents-valid");
+        crate::config::Config::ensure_default();
+        let problems = crate::ai::defs::validate(
+            &crate::config::Config::agents_dir(),
+            &crate::config::Config::skills_dir(),
+            &crate::config::Config::prompts_dir(),
+            &crate::caps::is_method,
+        );
+        assert!(problems.is_empty(), "the agents we ship are not valid:\n  {}", problems.join("\n  "));
+
+        let agents = crate::ai::defs::load_agents(&crate::config::Config::agents_dir());
+        assert!(agents.len() >= 5, "agents ship with the app");
+        // Every agent a bundled flow names has to exist, or the flow dies partway
+        // through — the one class of breakage a user cannot do anything about.
+        for name in super::flow_names() {
+            let flow = super::load_flow(&name).unwrap_or_else(|e| panic!("{name}: {e}"));
+            for node in &flow.nodes {
+                if let crate::flow::Kind::Agent { agent, .. } = &node.kind {
+                    assert!(
+                        agents.iter().any(|a| &a.name == agent),
+                        "flow '{name}' node '{}' wants agent '{agent}', which is not installed",
+                        node.id
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_agent_a_flow_chains_on_states_what_it_returns() {
+        // `{{explore.output}}` is only as good as the agent's discipline, and the two
+        // loops in the bundled flows branch on a literal verdict line. Both are
+        // contracts, so both are checked rather than hoped for.
+        let (_h, _home) = crate::test_home::lock_home("cli-agents-contract");
+        crate::config::Config::ensure_default();
+        for a in crate::ai::defs::load_agents(&crate::config::Config::agents_dir()) {
+            assert!(
+                a.system.contains("## What you return"),
+                "agent '{}' does not say what it returns",
+                a.name
+            );
+        }
+        for name in ["tester", "reviewer"] {
+            let a = crate::ai::defs::agent(&crate::config::Config::agents_dir(), name)
+                .unwrap_or_else(|| panic!("{name} ships"));
+            assert!(a.system.contains("VERDICT: PASS"), "{name} must promise the line the loops read");
+            assert!(a.system.contains("VERDICT: FAIL"), "{name} must promise the line the loops read");
+        }
+    }
+
+    #[test]
+    fn every_bundled_flow_verifies_clean() {
+        // The flows we ship are the worked examples of the format. If one of them
+        // does not pass the tool's own checker, the format is not documented — it is
+        // aspirational.
+        let (_h, _home) = crate::test_home::lock_home("cli-flow-bundled");
+        crate::config::Config::ensure_default();
+        let names = super::flow_names();
+        assert!(!names.is_empty(), "flows ship with the app");
+        for name in names {
+            let (flow, report) = super::checked_flow(&name).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(report.ok(), "{name} has errors: {:?}", report.errors);
+            assert!(!flow.description.is_empty(), "{name} needs a description — it is what `@flow` lists");
+            // And each one draws, so `@flow graph <name>` can never come up empty.
+            assert!(!crate::flow::render::draw(&flow, None, 100).is_empty(), "{name} draws");
+        }
     }
 
     #[test]

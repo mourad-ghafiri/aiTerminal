@@ -141,8 +141,21 @@ pub(crate) fn decode(reply: &str, request: &str, now: u64) -> Option<Plan> {
 /// The first balanced `{ … }` in a reply — models like to wrap JSON in a fence or a
 /// sentence, and the object is the only part that matters.
 pub(crate) fn extract_object(reply: &str) -> Option<String> {
+    extract_balanced(reply, '{', '}')
+}
+
+/// The first balanced `[ … ]` in a reply.
+///
+/// A `map` node splits an upstream answer into items, and an agent asked for a list
+/// tends to deliver it with a sentence of introduction. Without this, that sentence
+/// becomes an item and gets its own agent run.
+pub(crate) fn extract_array(reply: &str) -> Option<String> {
+    extract_balanced(reply, '[', ']')
+}
+
+fn extract_balanced(reply: &str, open: char, close: char) -> Option<String> {
     let bytes = reply.as_bytes();
-    let start = reply.find('{')?;
+    let start = reply.find(open)?;
     let mut depth = 0i32;
     let mut in_str = false;
     let mut escaped = false;
@@ -159,8 +172,8 @@ pub(crate) fn extract_object(reply: &str) -> Option<String> {
         }
         match c {
             '"' => in_str = true,
-            '{' => depth += 1,
-            '}' => {
+            c if c == open => depth += 1,
+            c if c == close => {
                 depth -= 1;
                 if depth == 0 {
                     return Some(reply[start..=i].to_string());

@@ -109,6 +109,18 @@ pub struct Config {
     /// `[loop] propose_check` — let the AI read the goal and propose a real verifier command
     /// when none was given. Off → an unverified goal falls to the reviewer agent.
     pub loop_propose_check: bool,
+    /// `[flow] concurrency` — how many graph nodes may be in flight at once. The whole
+    /// reason a graph beats a chain is that independent work overlaps; this bounds it.
+    pub flow_concurrency: usize,
+    /// `[flow] timeout` — the default wall clock for a whole flow, in seconds.
+    pub flow_timeout: u64,
+    /// `[flow] node_timeout` — how long any single node may take before it is cut off.
+    pub flow_node_timeout: u64,
+    /// `[flow] keep_runs` — how many flow records are kept.
+    pub flow_keep_runs: usize,
+    /// `[flow] max_map` — the hard ceiling on a `map` node's fan-out, so a list nobody
+    /// bounded cannot turn into a thousand agent runs.
+    pub flow_max_map: usize,
     /// The primary-model pool: each `[[ai.model]]` table contributes one candidate
     /// (id + optional provider qualifier + weight + per-model overrides). Empty →
     /// the catalog's default model as a single-entry pool.
@@ -222,6 +234,11 @@ impl Default for Config {
             loop_check_timeout: 10 * 60,
             loop_keep_runs: 20,
             loop_propose_check: true,
+            flow_concurrency: 4,
+            flow_timeout: 30 * 60,
+            flow_node_timeout: 10 * 60,
+            flow_keep_runs: 20,
+            flow_max_map: 32,
             md_remote_images: false,
             md_image_max_rows: 20,
             md_syntax: true,
@@ -456,6 +473,14 @@ impl Config {
         Self::ai_dir().join("loops")
     }
 
+    /// `@flow` run records (`ai/flow-runs/<id>/{run.toml,nodes/<id>.md}`) — which nodes
+    /// ran, what each produced and what it cost, so a flow that stopped can be read and
+    /// resumed instead of paid for twice. Separate from `flows_dir`, which holds the
+    /// *definitions*.
+    pub fn flow_runs_dir() -> PathBuf {
+        Self::ai_dir().join("flow-runs")
+    }
+
     /// Per-folder AI sessions (`ai/sessions/<id>/{meta.toml,session.md,memory/}`) — a
     /// folder's remembered AI context (recent-run digest + folder-scoped memory), so
     /// returning to a project restores what the AI knows about it. `<id>` derives from
@@ -512,6 +537,7 @@ impl Config {
             Self::memory_dir(),
             Self::models_dir(),
             Self::jobs_dir(),
+            Self::flow_runs_dir(),
             Self::sessions_dir(),
             Self::gates_dir(),
         ] {
@@ -771,6 +797,23 @@ impl Config {
             }
             if let Some(v) = l.get("propose_check").and_then(|v| v.as_bool()) {
                 c.loop_propose_check = v;
+            }
+        }
+        if let Some(f) = doc.get("flow") {
+            if let Some(v) = f.get("concurrency").and_then(|v| v.as_int()) {
+                c.flow_concurrency = v.clamp(1, 16) as usize;
+            }
+            if let Some(v) = f.get("timeout").and_then(|v| v.as_str()).and_then(corelib::datetime::duration) {
+                c.flow_timeout = v.clamp(30, 24 * 3600);
+            }
+            if let Some(v) = f.get("node_timeout").and_then(|v| v.as_str()).and_then(corelib::datetime::duration) {
+                c.flow_node_timeout = v.clamp(5, 24 * 3600);
+            }
+            if let Some(v) = f.get("keep_runs").and_then(|v| v.as_int()) {
+                c.flow_keep_runs = v.clamp(1, 500) as usize;
+            }
+            if let Some(v) = f.get("max_map").and_then(|v| v.as_int()) {
+                c.flow_max_map = v.clamp(1, 256) as usize;
             }
         }
         if let Some(ai) = doc.get("ai") {

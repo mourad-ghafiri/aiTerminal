@@ -1,7 +1,7 @@
 //! `framework-ai` — the AI capability of the Framework layer.
 //!
 //! A streaming chat client built on the generic Platform transport, with the
-//! agentic loop, multi-agent orchestration, terminal-context capture, and
+//! agentic loop, terminal-context capture, and
 //! on-disk agent/skill loading. The wire protocol is pluggable
 //! behind a provider Strategy ([`provider`]), so the engine is **not** locked to
 //! any single vendor. Tests run fully offline against a mock transport; no
@@ -16,7 +16,6 @@ pub mod diff;
 mod mcp;
 pub mod memory;
 mod model;
-mod orchestrate;
 pub(crate) mod plan;
 pub(crate) mod verify;
 pub mod pool;
@@ -34,7 +33,6 @@ pub use client::Client;
 pub use context::{capture_context, TermContext};
 pub use mcp::{load_servers, McpHub, McpServer};
 pub use model::{key_env_name, AiSettings};
-pub use orchestrate::{run_orchestration, Orchestration, OrchestrationStep, StepResult};
 pub use memory::{MemoryEntry, MemoryService};
 pub use session::Session;
 pub use pool::{ModelOverrides, ModelPool, PoolEntry, Strategy};

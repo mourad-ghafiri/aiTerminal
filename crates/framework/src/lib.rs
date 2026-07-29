@@ -23,6 +23,8 @@ pub mod ai;
 pub mod caps;
 pub mod cli;
 pub mod config;
+pub(crate) mod flow;
+pub(crate) mod flowruns;
 pub mod gate;
 pub mod gui;
 pub mod i18n;

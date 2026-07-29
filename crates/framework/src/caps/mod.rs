@@ -97,6 +97,23 @@ pub fn describe(method: &str) -> &'static str {
     registry().describe(method)
 }
 
+/// Whether `method` is a real capability.
+///
+/// [`describe`] deliberately falls back to a generic string for anything it does not
+/// know, which is right for a catalog and wrong for a check: a misspelled tool in an
+/// agent file would be handed to the model with a plausible description and then fail
+/// only when the model tried to call it. This is the question with a truthful answer.
+pub fn is_method(method: &str) -> bool {
+    registry().methods().any(|m| m.method == method)
+}
+
+/// Every capability name, sorted — for listings and "did you mean" suggestions.
+pub fn method_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = registry().methods().map(|m| m.method).collect();
+    names.sort_unstable();
+    names
+}
+
 pub(super) fn arg<'a>(args: &'a [(String, String)], i: usize, name: &str) -> Option<&'a str> {
     // Exact name, then a known synonym, then the positional index. Synonyms make weak
     // models robust: a call keyed `command`/`file`/`text` still lands on the right arg.
