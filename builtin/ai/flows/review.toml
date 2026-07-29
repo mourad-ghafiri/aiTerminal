@@ -1,15 +1,88 @@
-# A multi-step AI workflow, run from the terminal:  @flow review "<what to review>"
-# Each [[step]] is a full agent run; with `chain = true` every step sees the
-# previous steps' answers, so later agents build on earlier ones.
-description = "Explore the relevant code, then review it"
-chain = true
+# Map the code once, then review it from three angles AT THE SAME TIME:
+#
+#   @flow review "the changes on this branch vs main"
+#   @flow graph review        the three parallel branches, drawn
+#
+# `correctness`, `security` and `design` all need only `map`, so the scheduler runs
+# them together — three reviews for one review's wall clock. `report` needs all
+# three, so it waits, then reads each of them by name. That is fan-out and fan-in,
+# and it is the shape a chain cannot express.
+description = "Map the code, review it three ways in parallel, then merge into one verdict"
+input       = "required"
 
-[[step]]
-label  = "map"
+[bounds]
+timeout     = "20m"
+concurrency = 4
+
+[[node]]
+id     = "map"
 agent  = "explorer"
-prompt = "Map the code relevant to: {{input}}. List the key files and how they relate."
+prompt = """
+Map the code relevant to: {{input}}
+List the key files, what each is responsible for, and how they relate.
+"""
 
-[[step]]
-label  = "review"
+[[node]]
+id     = "correctness"
 agent  = "reviewer"
-prompt = "Using the map above, review the code for: {{input}}. Report concrete findings with file:line references."
+needs  = ["map"]
+prompt = """
+Review for CORRECTNESS only: logic errors, edge cases, error handling, concurrency,
+resource leaks. Report concrete findings with file:line. Say so plainly if you find nothing.
+
+Reviewing: {{input}}
+
+The map:
+{{map.output}}
+"""
+
+[[node]]
+id     = "security"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = """
+Review for SECURITY only: input validation, injection, path traversal, secrets in code
+or logs, unsafe defaults, missing authorisation. Report concrete findings with file:line.
+
+Reviewing: {{input}}
+
+The map:
+{{map.output}}
+"""
+
+[[node]]
+id     = "design"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = """
+Review for DESIGN and TESTS only: naming, structure, duplication, missing coverage,
+anything that will be hard to change later. Report concrete findings with file:line.
+
+Reviewing: {{input}}
+
+The map:
+{{map.output}}
+"""
+
+[[node]]
+id     = "report"
+agent  = "reviewer"
+needs  = ["correctness", "security", "design"]
+final  = true
+prompt = """
+Three reviewers looked at this independently. Merge their findings into one report:
+drop the duplicates, rank by severity, and keep every file:line reference. Where two
+of them disagree, say so rather than quietly picking a side.
+
+Your closing VERDICT line covers the whole change, not any one reviewer's slice: FAIL
+only if something here should genuinely stop a merge.
+
+Correctness:
+{{correctness.output}}
+
+Security:
+{{security.output}}
+
+Design and tests:
+{{design.output}}
+"""

@@ -1,0 +1,93 @@
+# Answer a question properly, with sources:
+#
+#   @flow research "how do teams handle schema migrations with zero downtime"
+#   @flow "Research LLM memory techniques"      ← a bare goal picks this too
+#   @flow graph research
+#
+# The shape here is fan-out. `plan` breaks the question into sub-questions and returns
+# them as a JSON array; `gather` then runs ONE researcher PER sub-question, in parallel.
+# The list does not exist until the flow is running, so this could not be written by
+# hand — `over` is what makes it possible.
+#
+# Needs `[ai] network = true` for web.search / web.read. With it off the researcher
+# says so and falls back to what the project itself can tell it.
+description = "Break a question into parts, research each in parallel, then compare and report"
+input       = "required"
+
+[bounds]
+timeout     = "30m"
+budget      = 500000
+concurrency = 5
+
+[[node]]
+id     = "plan"
+agent  = "planner"
+prompt = """
+Break this question into 3 to 6 sub-questions that can each be researched independently.
+Each one must be specific enough that a different person could answer it without asking
+you what you meant.
+
+Cover the parts that actually decide the answer, and include at least one that could
+CONTRADICT the obvious conclusion — a research plan that can only confirm what you already
+suspect is not research.
+
+Reply with a JSON array of strings and nothing else.
+
+The question: {{input}}
+"""
+
+[[node]]
+id     = "gather"
+agent  = "researcher"
+needs  = ["plan"]
+over   = "{{plan.output}}"
+as     = "question"
+prompt = """
+Research this one sub-question and report only on it.
+
+{{question}}
+
+It is part of a wider question — {{input}} — but do not answer that one here.
+
+Find real sources and read them. Report what they say, with links. Where you could not
+establish something, say so and say where you looked; do not fill the gap.
+"""
+
+[[node]]
+id     = "compare"
+agent  = "researcher"
+needs  = ["gather"]
+prompt = """
+Several sub-questions were researched separately. Put the findings side by side.
+
+Where they agree, say so once. Where they DISAGREE, that is the most valuable thing on
+the page — name the disagreement, both positions, and what would settle it. Note anything
+that was researched but not established, and anything the original question needed that
+nobody covered.
+
+Do not resolve a genuine conflict by picking the answer you like better.
+
+The question: {{input}}
+
+The findings:
+{{gather.output}}
+"""
+
+[[node]]
+id     = "report"
+agent  = "writer"
+needs  = ["compare"]
+final  = true
+prompt = """
+Write the report. Lead with the answer to the question as asked — the reader wants that in
+the first three sentences, not on page two.
+
+Then the evidence, keeping every source link. Then, honestly: where the sources disagree,
+what could not be established, and what would change the conclusion. A report that reads
+as more certain than the evidence is a worse report.
+
+The question: {{input}}
+
+Compared findings:
+{{compare.output}}
+"""

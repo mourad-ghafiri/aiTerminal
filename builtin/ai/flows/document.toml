@@ -1,0 +1,106 @@
+# Write documentation that is actually true:
+#
+#   @flow document "the plugin system — write docs/plugins.md"
+#   @flow document "refresh the README's install section"
+#
+# The loop here is the point. `draft` WRITES THE FILE, `check` READS IT BACK and verifies
+# every claim against the source, and `revise` edits the file until the checker passes —
+# up to twice, then it stops and says what is still unverified.
+#
+# It works because the loop turns on the FILE, not on a prompt. A checker reading
+# `{{draft.output}}` would re-read the first draft forever, however many times it looped.
+# The state has to live in the world for a cycle to mean anything.
+description = "Read the real code, write the doc, and check every claim against the source"
+input       = "required"
+
+[bounds]
+timeout = "30m"
+budget  = 400000
+
+[[node]]
+id     = "read"
+agent  = "explorer"
+prompt = """
+Map what this documentation has to describe — the real behaviour, not the intended one.
+
+Report the entry points, the options and their actual defaults, the error cases, and
+anything surprising that a reader would otherwise get wrong. Give `path:line` for each,
+so the next step can check its own claims.
+
+To document: {{input}}
+"""
+
+[[node]]
+id     = "draft"
+agent  = "writer"
+needs  = ["read"]
+prompt = """
+Write the documentation and SAVE IT TO THE FILE. If the request named a path, use it; if
+not, choose the obvious one for this project and say which you chose. If the file exists,
+edit it rather than replacing it.
+
+Read a neighbouring document first and follow its structure and tone.
+
+Every statement you make must be one you can point at in the source. Do not describe
+behaviour that is merely likely.
+
+To document: {{input}}
+
+What it actually does:
+{{read.output}}
+"""
+
+[[node]]
+id     = "check"
+agent  = "reviewer"
+needs  = ["draft"]
+prompt = """
+Read the file that was just written and check it against the source, claim by claim.
+
+You are looking for: statements that are wrong, examples that would not run, options or
+defaults that do not match the code, and anything important that a reader needs and is
+missing. Ignore style and wording — that is not what this is for.
+
+Report each problem with the line in the document and the `path:line` in the code that
+contradicts it.
+
+Which file, and what it covers:
+{{draft.output}}
+
+What the code actually does:
+{{read.output}}
+"""
+
+[[node]]
+id     = "revise"
+agent  = "writer"
+needs  = ["check"]
+when   = 'check.output contains "VERDICT: FAIL"'
+goto   = "check"
+max    = 2
+prompt = """
+Fix the document. Edit the file in place, changing only what the checker flagged.
+
+Where a claim cannot be verified against the code, remove it or mark it explicitly as
+unverified — do not rewrite it into something vaguer that survives review.
+
+What is wrong:
+{{check.output}}
+"""
+
+[[node]]
+id     = "final"
+agent  = "writer"
+needs  = ["check"]
+when   = 'check.output contains "VERDICT: PASS"'
+final  = true
+prompt = """
+Report what was done: the file, whether it was created or edited, and what it now covers in
+three or four lines. Then anything a human should still look at — a claim you could not
+verify, a section you deliberately left out.
+
+Do not paste the document back; it is already on disk.
+
+The check:
+{{check.output}}
+"""

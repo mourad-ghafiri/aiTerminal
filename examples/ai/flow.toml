@@ -1,30 +1,78 @@
-# A multi-step AI workflow. Install to ~/.aiTerminal/ai/flows/ship.toml, then:
+# A flow is a GRAPH. Install this to ~/.aiTerminal/ai/flows/ship.toml, then:
 #
+#   @flow check ship            prove it runs before it spends anything
+#   @flow graph ship            draw it
 #   @flow ship "add pagination to the users endpoint"
-#   @flow ship --bg "…"        # detached; monitor with @job
+#   @flow ship --bg "…"         detached; monitor with @job
 #
-# Each [[step]] is a full agent run; with `chain = true` later steps see every
-# earlier step's answer. `{{input}}` is replaced with the CLI input.
+# Every field below is optional except `id`, one kind (`agent` / `run` /
+# `kind = "approve"`), and an agent's `prompt`. The whole vocabulary:
+#
+#   needs = ["a", "b"]     run after these — nodes with no shared `needs` run TOGETHER
+#   when  = "a.failed"     only run if this holds:
+#                            <node>.passed | .failed | .skipped | .ran | .approved
+#                            <node>.exit == 1        (also != < >)
+#                            <node>.output contains "text"  ·  matches /regex/
+#                            combine with  and · or · not · ( )
+#   goto  = "a"   max = 3  after this node, run `a` again — a bounded retry loop
+#   over  = "…"   as = "f" fan out: one run per item of a list, in parallel
+#   retry = 1              re-run this node once if it fails
+#   timeout = "10m"        this node's own wall clock
+#   solo = true            never run alongside another node
+#   optional = true        a failure here neither blocks anything nor fails the run
+#   final = true           this node's answer is the flow's answer
+#
+# In any prompt, command or `show`: {{input}} · {{<node>.output}} · {{<node>.exit}}
+# · {{flow.name}} · the map variable inside an `over` node. Every one of those is
+# checked against the graph BEFORE the flow runs — a name that does not exist, or
+# one that is not ordered ahead of the node reading it, is an error, not an empty
+# string quietly pasted into a prompt.
 
-description = "Explore → implement → verify → summarize a change"
-chain = true
+description = "Explore → implement → verify → ask → commit"
+input       = "required"
 
-[[step]]
-label  = "explore"
+[bounds]
+timeout     = "30m"     # the whole run
+budget      = 400000    # tokens
+concurrency = 4         # nodes in flight at once
+
+[[node]]
+id     = "explore"
 agent  = "explorer"
 prompt = "Map the code relevant to this change and the conventions to follow: {{input}}"
 
-[[step]]
-label  = "implement"
+[[node]]
+id     = "implement"
 agent  = "coder"
-prompt = "Implement the change, following the map above: {{input}}"
+needs  = ["explore"]
+retry  = 1
+prompt = """
+Implement the change, following this map:
+{{explore.output}}
 
-[[step]]
-label  = "verify"
-agent  = "tester"
-prompt = "Build and test the change above; report failures precisely."
+The change: {{input}}
+"""
 
-[[step]]
-label  = "summarize"
-agent  = "reviewer"
-prompt = "Summarize what changed, what was verified, and any follow-ups — for a commit message."
+# A `run` node is a command through the guard. It costs no tokens, and its exit
+# status is a fact the graph can branch on — the deterministic backbone.
+[[node]]
+id    = "diff"
+run   = "git --no-pager diff --stat"
+needs = ["implement"]
+
+# Human in the loop, gating the ACTION rather than the investigation. On a terminal
+# this asks; detached, the run parks as `waiting` and `@flow resume` picks it up
+# with somebody there — it never deadlocks a background job.
+[[node]]
+id     = "confirm"
+kind   = "approve"
+needs  = ["diff"]
+show   = "{{diff.output}}"
+prompt = "Commit this?"
+
+[[node]]
+id    = "commit"
+run   = "git commit -am {{input}}"
+needs = ["confirm"]
+when  = "confirm.approved"
+final = true

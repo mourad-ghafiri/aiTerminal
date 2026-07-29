@@ -1,0 +1,147 @@
+# Ship a change, end to end:
+#
+#   @flow build "add a --json flag to the export command"
+#   @flow "add a --json flag to the export command"    ← a bare goal picks this too
+#   @flow graph build                                   see the shape first
+#   @flow build --bg "…"                                detached  ·  @job
+#
+# Two things here are worth reading. `explore` and `conventions` both need only
+# `plan`, so they run AT THE SAME TIME — one round of wall clock for two scouts.
+# And `fix` runs only `when` the tests reported a failure, then `goto`es back to
+# `verify` — up to three rounds, then the flow stops and says so.
+#
+# Nothing below names a build tool, a test runner or a language: @tester finds the
+# project's own runner. That is what makes this flow yours and not somebody else's.
+description = "Plan it, map the code, implement it, and fix until the project's own tests pass"
+input       = "required"
+
+[bounds]
+timeout = "45m"
+budget  = 600000
+
+[[node]]
+id     = "plan"
+agent  = "planner"
+prompt = """
+Turn this into a small plan with a concrete "done when".
+
+{{input}}
+"""
+
+[[node]]
+id     = "explore"
+agent  = "explorer"
+needs  = ["plan"]
+prompt = """
+Map the code this change touches: the files, the entry points, and where the change goes.
+
+The change: {{input}}
+
+The plan:
+{{plan.output}}
+"""
+
+[[node]]
+id     = "conventions"
+agent  = "explorer"
+needs  = ["plan"]
+prompt = """
+Report how THIS project does things, so the change looks like it belongs. Find and
+report, with a real example of each from the code:
+
+- how tests are written and where they live, and the command that runs them
+- how errors are handled and reported
+- naming, module layout, and how comments are used
+- anything a newcomer would get wrong here
+
+Do not report general best practice — report what this repository actually does.
+
+The change being planned: {{input}}
+"""
+
+[[node]]
+id     = "apply"
+agent  = "coder"
+needs  = ["explore", "conventions"]
+retry  = 1
+prompt = """
+Make this change. The smallest correct edit, following the conventions below — not the
+conventions you would have chosen.
+
+The change: {{input}}
+
+The plan:
+{{plan.output}}
+
+Where the code is:
+{{explore.output}}
+
+How this project does things:
+{{conventions.output}}
+"""
+
+[[node]]
+id     = "verify"
+agent  = "tester"
+needs  = ["apply"]
+prompt = """
+Run this project's own tests and report what actually happened. Do not fix anything here
+and do not write new tests — this node only measures.
+
+What was just changed:
+{{apply.output}}
+"""
+
+# The verdict line is why this works: an agent that *reports* a failure still finished
+# its run successfully, so the condition reads what it said, not whether it crashed.
+[[node]]
+id     = "fix"
+agent  = "coder"
+needs  = ["verify"]
+when   = 'verify.output contains "VERDICT: FAIL"'
+goto   = "verify"
+max    = 3
+prompt = """
+The tests are failing. Fix the cause rather than the symptom, and do not weaken or delete
+a test to make it pass.
+
+What the tests reported:
+{{verify.output}}
+"""
+
+[[node]]
+id     = "review"
+agent  = "reviewer"
+needs  = ["verify"]
+when   = 'verify.output contains "VERDICT: PASS"'
+prompt = """
+Review the change that was just made, now that it is green. Correctness first, then
+security, then whether it matches the project's conventions.
+
+The change that was asked for: {{input}}
+
+What was done:
+{{apply.output}}
+"""
+
+[[node]]
+id     = "summary"
+agent  = "writer"
+needs  = ["review"]
+final  = true
+prompt = """
+Write the summary somebody reads before merging: a one-line subject, then what changed and
+why, then what was verified. Keep the reviewer's blockers if there are any — do not soften
+them. End with anything left to do, or "nothing outstanding".
+
+Asked for: {{input}}
+
+Done:
+{{apply.output}}
+
+Tests:
+{{verify.output}}
+
+Review:
+{{review.output}}
+"""

@@ -1,0 +1,118 @@
+# Something is broken. Reproduce it, find it, fix it, prove it:
+#
+#   @flow fix "the CSV export drops the last row when the file has no trailing newline"
+#   @flow fix "TypeError in checkout when the cart is empty — see the stack trace in the issue"
+#
+# The order matters more than it looks. `reproduce` runs FIRST and its only job is to
+# make the failure happen on purpose — because a fix for a bug you never reproduced is
+# a guess with a commit message. Then `verify` re-runs that same check after the patch,
+# and `again` loops back if it is still red.
+description = "Reproduce a failure, find its cause, fix it, and prove it is gone"
+input       = "required"
+
+[bounds]
+timeout = "45m"
+budget  = 500000
+
+[[node]]
+id     = "reproduce"
+agent  = "tester"
+prompt = """
+Reproduce this failure on purpose. Do not fix anything yet.
+
+Find or write the smallest check that fails because of it — an existing test, a new one, or
+a command — and run it. Report the exact command and the exact output.
+
+If you CANNOT make it fail, say so clearly and say what you tried: that is the most
+important thing anybody can learn here, and everything after this depends on it.
+
+The report: {{input}}
+"""
+
+[[node]]
+id     = "locate"
+agent  = "explorer"
+needs  = ["reproduce"]
+prompt = """
+Find where this failure comes from. Trace it from the symptom back to the code that causes
+it, and name the exact `path:line`. Report what the code does now and why that produces
+this behaviour.
+
+The report: {{input}}
+
+How it was reproduced:
+{{reproduce.output}}
+"""
+
+[[node]]
+id     = "patch"
+agent  = "coder"
+needs  = ["locate"]
+retry  = 1
+prompt = """
+Fix the cause. The smallest correct change — no refactor, no scope creep, and never a
+change to the check itself to make it stop failing.
+
+Add or keep a regression test that fails before your change and passes after it.
+
+The report: {{input}}
+
+How it was reproduced:
+{{reproduce.output}}
+
+Where it comes from:
+{{locate.output}}
+"""
+
+[[node]]
+id     = "verify"
+agent  = "tester"
+needs  = ["patch"]
+prompt = """
+Re-run the check that reproduced this failure, and then the project's wider test suite —
+a fix that repairs one thing and breaks another is not a fix.
+
+Report both results. Measure only; do not change anything.
+
+The check that reproduced it:
+{{reproduce.output}}
+"""
+
+[[node]]
+id     = "again"
+agent  = "coder"
+needs  = ["verify"]
+when   = 'verify.output contains "VERDICT: FAIL"'
+goto   = "verify"
+max    = 3
+prompt = """
+Still failing. Look again at what the output is actually telling you — if your first idea
+about the cause was wrong, say so and take a different one.
+
+What the tests reported:
+{{verify.output}}
+"""
+
+[[node]]
+id     = "report"
+agent  = "writer"
+needs  = ["verify"]
+when   = 'verify.output contains "VERDICT: PASS"'
+final  = true
+prompt = """
+Write it up for whoever reported this: what was actually wrong (the cause, not the
+symptom), what changed, and how it was proved fixed. Name the regression test.
+
+If anything related is still suspect, say so plainly rather than closing it off.
+
+Reported: {{input}}
+
+Cause:
+{{locate.output}}
+
+Fix:
+{{patch.output}}
+
+Proof:
+{{verify.output}}
+"""
