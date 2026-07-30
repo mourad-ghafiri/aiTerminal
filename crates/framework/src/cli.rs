@@ -1631,6 +1631,20 @@ fn ai_agent_cmd(args: &[String]) -> i32 {
     crate::i18n::install(crate::config::Config::load().i18n_catalog());
     let wanted = args.get(1).filter(|a| !a.starts_with('-'));
     let agents = crate::ai::defs::load_agents(&crate::config::Config::agents_dir());
+    // The validator already knows when a file is wrong; it just never reached the person
+    // who edited it. A malformed agent used to be listed as if it were fine — blank
+    // description, default toolset, runnable — with no sign that its frontmatter had not
+    // parsed.
+    let problems = crate::ai::defs::validate(
+        &crate::config::Config::agents_dir(),
+        &crate::config::Config::skills_dir(),
+        &crate::config::Config::prompts_dir(),
+        &crate::caps::is_method,
+    );
+    let faults = |name: &str| -> Vec<String> {
+        let head = format!("agent '{name}': ");
+        problems.iter().filter_map(|p| p.strip_prefix(&head).map(str::to_string)).collect()
+    };
     let (dim, r) = (muted(), reset());
     if agents.is_empty() {
         println!("{}", crate::i18n::translate("agent.none", &[crate::config::Config::agents_dir().display().to_string()]));
@@ -1639,13 +1653,18 @@ fn ai_agent_cmd(args: &[String]) -> i32 {
     let Some(name) = wanted else {
         println!("{}", crate::i18n::translate("agent.header", &[agents.len().to_string()]));
         for a in &agents {
-            println!(
-                "  {:<12} {dim}{:>2} tools \u{b7} {:>2} steps{r}  {}",
-                a.name,
-                a.tools.len(),
-                a.max_steps,
-                clip_tail(&a.description, 58)
-            );
+            let bad = faults(&a.name);
+            if bad.is_empty() {
+                println!(
+                    "  {:<12} {dim}{:>2} tools \u{b7} {:>2} steps{r}  {}",
+                    a.name,
+                    a.tools.len(),
+                    a.max_steps,
+                    clip_tail(&a.description, 58)
+                );
+            } else {
+                println!("  {:<12} {}\u{26a0} {}{r}", a.name, accent(), clip_tail(&bad.join(" \u{b7} "), 62));
+            }
         }
         println!("\n{}", crate::i18n::translate("agent.run_hint", &[]));
         return 0;
@@ -1656,6 +1675,14 @@ fn ai_agent_cmd(args: &[String]) -> i32 {
         eprintln!("  installed: {}", names.join(", "));
         return 2;
     };
+    let bad = faults(&a.name);
+    if !bad.is_empty() {
+        println!("{}\u{26a0} this file has problems{r}", accent());
+        for b in &bad {
+            println!("  \u{2022} {b}");
+        }
+        println!();
+    }
     println!("{}@{}{r} {dim}\u{b7} {} step(s){r}", accent(), a.name, a.max_steps);
     println!("  {}", a.description);
     if !a.skills.is_empty() {
