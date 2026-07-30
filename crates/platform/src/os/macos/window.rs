@@ -30,6 +30,33 @@ fn guarded(f: impl FnOnce()) {
 
 #[cfg(test)]
 mod guard_tests {
+    use corelib::types::KeyCode;
+
+    #[test]
+    fn a_key_resolves_by_the_character_it_types_not_where_it_sits() {
+        // Why ⌘Q works on any layout. `keycode_from_event` asks the OS what character
+        // the key produces in the ACTIVE layout (`charactersIgnoringModifiers`) and
+        // maps that — so the keycap marked Q is `KeyCode::Q` on AZERTY, QWERTZ and
+        // QWERTY alike, even though it sits in three different places.
+        assert_eq!(super::char_to_keycode('q'), Some(KeyCode::Q));
+        assert_eq!(super::char_to_keycode('a'), Some(KeyCode::A));
+        assert_eq!(super::char_to_keycode('z'), Some(KeyCode::Z));
+        assert_eq!(super::char_to_keycode('w'), Some(KeyCode::W));
+
+        // The hardware table underneath is US-QWERTY and is ONLY a fallback for keys
+        // that type no character. It disagrees with AZERTY on exactly the keys AZERTY
+        // moves — which is why it must never be consulted first.
+        assert_eq!(super::keycode_from_hw(12), KeyCode::Q, "US scancode 12 is Q");
+        assert_eq!(super::keycode_from_hw(0), KeyCode::A, "US scancode 0 is A");
+        // On a French AZERTY the key at scancode 0 types 'q'; the character path gives
+        // Q, the scancode path would give A. The character path is the one that runs.
+        assert_ne!(super::char_to_keycode('q').unwrap(), super::keycode_from_hw(0));
+
+        // NOTE: the `charactersIgnoringModifiers` call itself is ObjC and only runs on
+        // a real keypress, so no unit test can cover that hop. It is verified by
+        // pressing ⌘Q on a non-US layout.
+    }
+
     #[test]
     fn guarded_catches_panic_and_continues() {
         // A panic in one "frame" must NOT propagate — the loop keeps running, so a
@@ -363,14 +390,16 @@ unsafe fn dispatch(
             let mods = translate_mods(flags);
             let code = keycode_from_event(kc, event);
             // The bare system chords (Cmd alone, by the *logical* key, any layout):
-            // Cmd-Q quits; Cmd-H / Cmd-M (Hide / Minimize) go to AppKit. Anything with
-            // Shift/Alt/Ctrl (our Cmd+Shift / Cmd+Alt app chords) passes through.
+            // Cmd-Q asks to quit; Cmd-H / Cmd-M (Hide / Minimize) go to AppKit. Anything
+            // with Shift/Alt/Ctrl (our Cmd+Shift / Cmd+Alt app chords) passes through.
             if mods == Modifiers::SUPER {
                 if code == KeyCode::Q {
-                    // Cmd-Q: let the app persist its workspace before exit. The handler's
-                    // `CloseRequested` arm saves + exits; the trailing exit is a fallback.
+                    // Cmd-Q is a REQUEST, not a notice. We hand it to the app and return:
+                    // the app either saves and exits itself, or declines (it may be showing
+                    // a confirmation, whose modal could not draw on a process already on
+                    // its way out). Forcing the exit here is what made the request a lie.
                     handler.handle(Event::CloseRequested, win, gpu);
-                    std::process::exit(0);
+                    return;
                 }
                 if matches!(code, KeyCode::H | KeyCode::M) {
                     msg_send![(); app, sel("sendEvent:"), event => Id];
@@ -546,6 +575,14 @@ impl Platform for MacPlatform {
 
                 // Window closed by the user (red button, or menu Quit → performClose:)? Persist
                 // the workspace first — the handler's `CloseRequested` arm saves, then exits.
+                //
+                // This branch DOES force the exit, unlike the Cmd-Q arm above, and the
+                // asymmetry is deliberate: by the time `isVisible` reads false AppKit has
+                // already torn the window down. There is no surface left to draw a
+                // confirmation on and nothing to go back to, so declining here would strand
+                // the process with no window. Vetoing a red-button close has to happen
+                // BEFORE it (an NSWindow `windowShouldClose:` delegate); until that exists,
+                // the button and the menu item are immediate by construction.
                 let visible: bool = msg_send![bool; window, sel("isVisible")];
                 if !visible {
                     guarded(|| handler.handle(Event::CloseRequested, &win, &mut gpu));
