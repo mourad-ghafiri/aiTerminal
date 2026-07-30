@@ -308,6 +308,10 @@ footer { border-top: 1px solid var(--border); margin-top: 70px; padding: 40px 0 
 .docs-main .callout pre { margin: 12px 0 0; }
 .docs-main pre .bad { color: #FF453A; }
 .docs-main pre .good { color: #30D158; }
+/* Outcome marks in a transcript — the ✓/✗ the terminal itself draws in the theme's
+   own success/error tokens, so a pasted board reads here the way it reads there. */
+.docs-main pre .g { color: #30D158; }
+.docs-main pre .r { color: #FF453A; }
 
 /* use-case cards */
 .uc { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 22px; margin-top: 18px; }

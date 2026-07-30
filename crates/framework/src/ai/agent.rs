@@ -108,6 +108,11 @@ const NO_TEXT_HINT: &str = "_The model returned an empty response. Try rephrasin
 /// without the AI layer depending on it (Observer pattern). Every method has a default
 /// no-op, so a caller that only wants the final [`AgentRun`] passes a [`NoopObserver`].
 pub trait AgentObserver {
+    /// The run has PINNED the model that will serve it — reported once, before the
+    /// first turn. The host cannot work this out for itself: under a weighted or
+    /// round-robin strategy `Client::candidates()` re-rolls on every call, so a caller
+    /// that asked would name a model that is not the one answering.
+    fn on_model(&mut self, _model: &str) {}
     /// A new model turn is starting (reset the in-flight buffer).
     fn on_turn_start(&mut self) {}
     /// A streamed text token (already stripped of the tool marker by the host's display).
@@ -379,6 +384,7 @@ pub fn run_agent<T: Transport>(
     // against. Resolved HERE, not by the caller, so the budget always belongs to the
     // model that is actually answering.
     let turn_model = candidates.first().cloned().unwrap_or_default();
+    observer.on_model(&turn_model.id);
     let budget = ContextBudget::for_model(&turn_model, agent.context_window, agent.compact_at);
     for _ in 0..max {
         // Honor a host cancellation between turns: stop cleanly rather than starting a

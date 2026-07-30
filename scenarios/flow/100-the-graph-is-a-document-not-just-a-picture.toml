@@ -1,0 +1,50 @@
+name = "`@flow graph` is a document — the diagram, and the facts a diagram cannot carry"
+tags = ["flow", "render", "docs"]
+
+# A picture answers "what runs after what" and nothing else. The questions people
+# actually arrive with are "which agent is behind that box", "what can it reach" and
+# "what is the condition on that arrow" — so the drawing goes into a Markdown document
+# with a table of exactly those, and the whole thing goes through the renderer `@md`
+# already uses. In aiTerminal the fence is drawn by the diagram renderer; in a pipe it
+# degrades to box art. Neither is this module's business, and that is the point.
+
+[[step]]
+flow = """
+description = "Explore, implement, verify"
+
+[[node]]
+id     = "map"
+agent  = "explorer"
+prompt = "Map it"
+
+[[node]]
+id    = "verify"
+run   = "cargo test"
+needs = ["map"]
+
+[[node]]
+id     = "fix"
+agent  = "coder"
+needs  = ["verify"]
+when   = "verify.failed"
+prompt = "Fix it"
+goto   = "verify"
+max    = 3
+
+[[node]]
+id     = "ok"
+kind   = "approve"
+needs  = ["verify"]
+when   = "verify.passed"
+prompt = "Ship it?"
+"""
+
+# The picture: every node, every edge, each kind its own shape, and the one backward
+# edge drawn as the exception it is.
+[[step]]
+expect_graph_contains = ["```mermaid", "map @explorer", "verify $ cargo test", "fix @coder", "ok?", "failed", "passed", "up to 3x"]
+
+# And the facts around it. `reaches` is the one nothing else in the product answers:
+# what an agent node can actually touch is otherwise a thing you assume.
+[[step]]
+expect_document_contains = ["# test", "Explore, implement, verify", "4 nodes", "| node | runs | when | reaches |", "| map |", "| verify |", "| fix |", "| ok |", "verify failed · ↺ verify ≤3", "1 tool"]

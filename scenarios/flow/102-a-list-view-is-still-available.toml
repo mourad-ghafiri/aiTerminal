@@ -1,0 +1,47 @@
+name = "the same run, drawn as a list — the shortest board that can exist"
+tags = ["flow", "ui", "config"]
+
+# The graph view costs vertical space: a band join between every wave, plus the line
+# that states the run's capability surface. In a six-line split, or with twenty nodes,
+# that is the difference between a board you can see and one you cannot. So `[flow]
+# view = "list"` — and `--view list` for one command — puts every node back on one
+# dense row, in the order the file declares them.
+
+[[step]]
+flow = """
+[[node]]
+id     = "map"
+agent  = "explorer"
+prompt = "Map it"
+
+[[node]]
+id     = "left"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "Look at {{map.output}}"
+
+[[node]]
+id     = "right"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "Look at {{map.output}}"
+"""
+
+[[step]]
+node_says = ["map: the map", "left: fine", "right: fine"]
+
+[[step]]
+run = true
+
+# Every node, and the same tally — nothing about the run is hidden by the denser view.
+[[step]]
+expect_list_view_contains = ["map", "left", "right", "@explorer", "@reviewer", "3/3 done"]
+
+# What it does NOT have is the graph: no band joins, no forks, no capability line. That
+# is the trade being made, and it is the only difference between the two.
+[[step]]
+expect_list_view_excludes = ["├─ ", "└─ ", "3 nodes · 2 agents"]
+
+# And the graph view of the same run still has all three.
+[[step]]
+expect_graph_view_contains = ["├─ ", "└─ ", "3 nodes"]

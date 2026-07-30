@@ -263,10 +263,34 @@ impl World for FlowWorld {
             let got = self.board_lines()?;
             return world::expect_contains(&got.join("\n"), &want, "the run's live output");
         }
+        // `@flow graph` — the document as it is written, diagram source and all. What
+        // the terminal does with the fence (native pixels here, box art in a pipe) is
+        // the Markdown renderer's business and is proved where that lives.
         if let Some(want) = world::list(step, "expect_graph_contains") {
+            return world::expect_contains(&self.document(120)?, &want, "the drawn graph");
+        }
+        if let Some(want) = world::list(step, "expect_document_contains") {
+            return world::expect_contains(&self.document(120)?, &want, "the flow's document");
+        }
+        // `@flow …` as it is watched: the real board, in the named view, at a fixed
+        // width — the same renderer a live run paints with.
+        if let Some(want) = world::list(step, "expect_graph_view_contains") {
+            return world::expect_contains(&self.painted("graph")?, &want, "the graph view");
+        }
+        if let Some(want) = world::list(step, "expect_list_view_contains") {
+            return world::expect_contains(&self.painted("list")?, &want, "the list view");
+        }
+        if let Some(bad) = world::list(step, "expect_list_view_excludes") {
+            return world::expect_missing(&self.painted("list")?, &bad, "the list view");
+        }
+        // `@flow retry <node>` — what running one node again would take with it.
+        if let Some(want) = world::list(step, "expect_downstream") {
             let flow = self.flow.as_ref().ok_or("no flow declared yet")?;
-            let drawn = crate::flow::render::draw(flow, None, 120).join("\n");
-            return world::expect_contains(&drawn, &want, "the drawn graph");
+            for pair in pairs(want)? {
+                let got = flow.downstream(&pair.0).join(", ");
+                world::expect_eq(&got, &pair.1, &format!("what re-running '{}' takes with it", pair.0))?;
+            }
+            return Ok(());
         }
         Err(world::unknown_verb(step))
     }
@@ -336,6 +360,67 @@ impl FlowWorld {
 
     fn outcome(&self) -> Result<&Outcome, String> {
         self.outcome.as_ref().ok_or_else(|| "the flow has not been run yet — add a `run = true` step".into())
+    }
+
+    /// The document `@flow graph` prints: the heading, the diagram, and the node facts.
+    fn document(&self, cols: usize) -> Result<String, String> {
+        let flow = self.flow.as_ref().ok_or("no flow declared yet")?;
+        let agents: Vec<crate::ai::defs::Agent> = self
+            .agents
+            .iter()
+            .map(|name| crate::ai::defs::Agent {
+                name: name.clone(),
+                description: String::new(),
+                system: String::new(),
+                tools: vec!["fs.read".into()],
+                skills: Vec::new(),
+                prompts: Vec::new(),
+                max_steps: 6,
+            })
+            .collect();
+        let cast = crate::flow::doc::Cast { agents: &agents, mcps: 0 };
+        Ok(crate::flow::doc::document(flow, None, &cast, crate::flow::doc::Picture::Graph, cols))
+    }
+
+    /// The board a live run paints, in the named view — the real renderer, at a fixed
+    /// width, with each node put where the run left it.
+    fn painted(&self, view: &str) -> Result<String, String> {
+        use crate::flow::board::{Board, BoardNode, State};
+        let flow = self.flow.as_ref().ok_or("no flow declared yet")?;
+        let nodes: Vec<BoardNode> = flow
+            .nodes
+            .iter()
+            .map(|n| BoardNode {
+                id: n.id.clone(),
+                what: match &n.kind {
+                    crate::flow::Kind::Agent { agent, .. } => format!("@{agent}"),
+                    crate::flow::Kind::Run { command } => format!("$ {}", command.source()),
+                    crate::flow::Kind::Approve { .. } => "asks you".into(),
+                },
+                when: n.when_src.clone(),
+                needs: n.needs.clone(),
+                goto: n.goto.clone(),
+                max: n.max,
+                tools: 1,
+                skills: 0,
+                mcps: 0,
+            })
+            .collect();
+        let board = Board::new("scenario".into(), nodes, false, view, self.concurrency);
+        // A run is optional: the shape of a flow is worth asserting before it has run,
+        // which is exactly what a board drawn from the file alone shows.
+        if let Some(outcome) = self.outcome.as_ref() {
+            for (id, state) in &outcome.states {
+                match state {
+                    Status::Done => board.settled(id, State::Done, 1200, 3400, ""),
+                    Status::Failed => board.settled(id, State::Failed, 900, 0, "it failed"),
+                    Status::Skipped => board.settled(id, State::Skipped, 0, 0, "its condition was false"),
+                    Status::Blocked => board.settled(id, State::Skipped, 0, 0, "something it needed failed"),
+                    _ => {}
+                }
+            }
+        }
+        Ok(board.draw(120))
     }
 
     fn run(&mut self) -> Result<(), String> {

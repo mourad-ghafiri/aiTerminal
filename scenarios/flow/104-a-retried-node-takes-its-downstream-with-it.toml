@@ -1,0 +1,63 @@
+name = "running one node again invalidates everything built on it, and nothing before it"
+tags = ["flow", "record"]
+
+# `@flow retry <node>` is the one control verb that spends money, so what it will redo
+# has to be exactly right. Re-running `apply` while `verify` and `summary` keep the
+# answers they derived from the OLD apply is not a retry — it is a record that
+# contradicts itself, where a downstream `{{apply.output}}` names text that no longer
+# exists anywhere. So the cascade is computed from the graph, printed before anything
+# runs, and stops dead at the node's own dependencies: what came BEFORE is exactly what
+# a resume is for keeping.
+
+[[step]]
+flow = """
+[[node]]
+id     = "plan"
+agent  = "planner"
+prompt = "Plan it"
+
+[[node]]
+id     = "left"
+agent  = "coder"
+needs  = ["plan"]
+prompt = "Left of {{plan.output}}"
+
+[[node]]
+id     = "right"
+agent  = "coder"
+needs  = ["plan"]
+prompt = "Right of {{plan.output}}"
+
+[[node]]
+id     = "verify"
+run    = "cargo test"
+needs  = ["left", "right"]
+
+[[node]]
+id     = "fix"
+agent  = "coder"
+needs  = ["verify"]
+when   = "verify.failed"
+prompt = "Fix it"
+goto   = "verify"
+max    = 3
+"""
+
+# Everything downstream of `left`, and nothing upstream of it: the join below it and
+# the loop below that, but never the plan both arms were derived from.
+[[step]]
+expect_downstream = ["left: left, verify, fix"]
+
+# The other arm is untouched — a retry of one branch is not a rerun of the fan-out.
+[[step]]
+expect_downstream = ["right: right, verify, fix"]
+
+# A `goto` points backwards, so re-running the fixer re-runs what it loops to, and
+# therefore the rest of the loop with it.
+[[step]]
+expect_downstream = ["fix: verify, fix"]
+
+# And the first node takes the whole graph, which is the same thing as starting over —
+# said plainly rather than pretended otherwise.
+[[step]]
+expect_downstream = ["plan: plan, left, right, verify, fix"]

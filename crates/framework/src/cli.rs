@@ -445,6 +445,28 @@ pub(crate) fn accent() -> String {
 pub(crate) fn muted() -> String {
     theme_color("TT_MUTED_RGB", "\x1b[2m")
 }
+/// The theme's three semantic hues. `md_style` already reads them for a document's
+/// callouts; chrome that reports an OUTCOME — a finished node, a failed one, a run
+/// parked for a person — has the same claim on them, and drawing all of it in the one
+/// accent throws away a distinction the theme already makes.
+pub(crate) fn success() -> String {
+    theme_color("TT_SUCCESS_RGB", "\x1b[32m")
+}
+pub(crate) fn warn() -> String {
+    theme_color("TT_WARN_RGB", "\x1b[33m")
+}
+pub(crate) fn danger() -> String {
+    theme_color("TT_ERROR_RGB", "\x1b[31m")
+}
+/// Emphasis, gated exactly like the colours — an ungated `\x1b[1m` is a stray escape
+/// in every redirected line.
+pub(crate) fn bold() -> &'static str {
+    if err_is_tty() {
+        "\x1b[1m"
+    } else {
+        ""
+    }
+}
 pub(crate) fn reset() -> &'static str {
     // Gated exactly like the colours it closes: with `accent`/`muted` empty off a
     // terminal, an ungated reset is a stray escape in every redirected line.
@@ -954,7 +976,6 @@ fn md_usage() -> &'static str {
 /// past), while content that fits prints inline (no alt-screen flash). Piped output is plain text +
 /// boxed diagrams. Reuses the exact engine `@ai` answers use.
 fn md_render(path: Option<&String>) -> i32 {
-    use std::io::Write;
     let Some(path) = path else {
         eprintln!("usage: @md render <file.md>");
         return 2;
@@ -977,11 +998,29 @@ fn md_render(path: Option<&String>) -> i32 {
             return crate::mdedit::page(path);
         }
     }
+    print_markdown(&text, &doc_dir);
+    0
+}
+
+/// Render Markdown to stdout the way `@md` does — the ONE path from a document to the
+/// terminal.
+///
+/// On a TTY it is styled, wrapped to the split, and every ```` ```mermaid ```` fence is
+/// handed to the native diagram renderer; in a pipe it is plain text with the diagram
+/// drawn in box characters. That second sentence is why anything that wants to *show*
+/// something — a rendered file, a flow's graph, a node's transcript — comes through
+/// here rather than printing its own approximation.
+///
+/// `base` is the document's own directory, so a relative image resolves the way the
+/// document meant it.
+pub(crate) fn print_markdown(text: &str, base: &Path) {
+    use std::io::Write;
+    let tty = out_is_tty();
     let style = if tty { md_style() } else { corelib::md::Style { enabled: false, ..corelib::md::Style::default() } };
     let mut sr = corelib::md::StreamRenderer::new(style, md_width(), &[DIAGRAM_LANG]);
-    // The whole file is in hand, so every reference and footnote resolves wherever it is
-    // defined — including below the text that uses it.
-    sr.seed(corelib::md::scan_defs(&text));
+    // The whole document is in hand, so every reference and footnote resolves wherever
+    // it is defined — including below the text that uses it.
+    sr.seed(corelib::md::scan_defs(text));
     let mut out = std::io::stdout().lock();
     let mut emit = |chunks: Vec<corelib::md::Chunk>| {
         for c in chunks {
@@ -994,16 +1033,15 @@ fn md_render(path: Option<&String>) -> i32 {
                     let _ = out.write_all(d.as_bytes());
                 }
                 corelib::md::Chunk::Image { src, fallback, .. } => {
-                    let d = if tty { image_output(&src, &fallback, &doc_dir) } else { fallback };
+                    let d = if tty { image_output(&src, &fallback, base) } else { fallback };
                     let _ = out.write_all(d.as_bytes());
                 }
             }
         }
     };
-    emit(sr.push(&text));
+    emit(sr.push(text));
     emit(sr.finish());
     let _ = out.flush();
-    0
 }
 
 /// `2048` → `2.0KB` (tool result sizes at a glance).
@@ -2072,14 +2110,64 @@ pub(crate) enum FlowCmd {
     /// Verify one flow, or every installed flow when no name is given.
     Check(Option<String>),
     /// Draw a flow's graph.
-    Graph(String),
+    Graph { name: String, view: Option<String> },
     /// Past runs.
     Runs,
     Clear,
-    Show(String),
+    Show { id: String, view: Option<String> },
+    /// Every node of a run, side by side.
+    Nodes(String),
+    /// One node, in full.
+    Node { id: String, node: String },
+    /// Follow a run that is still going.
+    Watch { id: String, view: Option<String> },
+    /// Run one node again, and everything that depended on it.
+    Retry { id: String, node: String },
     Log { id: String, node: Option<String>, follow: bool },
     Resume(String),
     Run(Box<FlowSpec>),
+}
+
+/// Pull `--view <word>` (or `--view=<word>`) out of argv, leaving the rest.
+///
+/// Every `@flow` verb that draws something accepts it, so it is taken once here rather
+/// than in each branch — and taking it here is also what stops its value being read as
+/// a run id by the subcommands that take one positionally.
+fn take_view(args: &[String]) -> Result<(Vec<String>, Option<String>), String> {
+    let (mut rest, mut view) = (Vec::with_capacity(args.len()), None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--view" => {
+                let v = it.next().ok_or("--view needs a word: graph or list")?;
+                view = Some(view_word(v)?);
+            }
+            other if other.starts_with("--view=") => view = Some(view_word(&other["--view=".len()..])?),
+            other => rest.push(other.to_string()),
+        }
+    }
+    Ok((rest, view))
+}
+
+/// The two words a view can be. An unrecognised one is refused rather than quietly
+/// falling back: a flag someone typed is a thing they meant.
+fn view_word(v: &str) -> Result<String, String> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "graph" => Ok("graph".into()),
+        "list" => Ok("list".into()),
+        other => Err(format!("--view takes `graph` or `list`, not {other:?}")),
+    }
+}
+
+/// `[]` → the last run · `[x]` → node `x` of the last run · `[a, b]` → node `b` of run
+/// `a`. Naming the node alone is the common case, and a run id is never a bare word
+/// anyone types twice.
+fn id_and_node(plain: &[String]) -> (String, Option<String>) {
+    match plain {
+        [] => ("last".into(), None),
+        [only] => ("last".into(), Some(only.clone())),
+        [id, node, ..] => (id.clone(), Some(node.clone())),
+    }
 }
 
 /// A flow to run.
@@ -2092,6 +2180,8 @@ pub(crate) struct FlowSpec {
     pub(crate) timeout: Option<u64>,
     pub(crate) budget: Option<u64>,
     pub(crate) concurrency: Option<usize>,
+    /// `--view graph|list`, overriding `[flow] view` for this command alone.
+    pub(crate) view: Option<String>,
     pub(crate) bg: bool,
     pub(crate) dry_run: bool,
     /// Set on the detached child so it can stamp its job record on exit.
@@ -2103,9 +2193,17 @@ pub(crate) struct FlowSpec {
 /// Subcommands win over flow names, and a flow file named after one is refused by
 /// the verifier — so `@flow show` is never ambiguous, and the ambiguity is reported
 /// where it can be explained rather than resolved by a coin toss.
-pub(crate) fn parse_flow_args(args: &[String]) -> Result<FlowCmd, String> {
+pub(crate) fn parse_flow_args(raw: &[String]) -> Result<FlowCmd, String> {
+    // `--view` is lifted out FIRST, because every subcommand accepts it and because a
+    // flag's value must never be mistaken for a positional word: `@flow show --view
+    // list` would otherwise read "list" as the run id.
+    let (args, view) = take_view(raw)?;
+    let args = args.as_slice();
     let word = |i: usize| args.get(i).filter(|a| !a.starts_with('-')).cloned();
-    let id_or_last = |from: usize| args[from..].iter().find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| "last".into());
+    let plain = |from: usize| -> Vec<String> {
+        args.get(from..).unwrap_or_default().iter().filter(|a| !a.starts_with('-')).cloned().collect()
+    };
+    let id_or_last = |from: usize| plain(from).first().cloned().unwrap_or_else(|| "last".into());
     match args.first().map(String::as_str) {
         None => return Ok(FlowCmd::List),
         Some("list") if args.len() == 1 => return Ok(FlowCmd::List),
@@ -2113,17 +2211,33 @@ pub(crate) fn parse_flow_args(args: &[String]) -> Result<FlowCmd, String> {
         Some("check") => return Ok(FlowCmd::Check(word(1))),
         Some("graph") | Some("draw") => {
             return match word(1) {
-                Some(name) => Ok(FlowCmd::Graph(name)),
+                Some(name) => Ok(FlowCmd::Graph { name, view }),
                 None => Err("graph needs a flow name — try `@flow graph implement`".into()),
             }
         }
         Some("runs") if args.len() == 1 => return Ok(FlowCmd::Runs),
         Some("clear") if args.len() == 1 => return Ok(FlowCmd::Clear),
-        Some("show") => return Ok(FlowCmd::Show(id_or_last(1))),
+        Some("show") => return Ok(FlowCmd::Show { id: id_or_last(1), view }),
+        Some("nodes") => return Ok(FlowCmd::Nodes(id_or_last(1))),
+        Some("watch") => return Ok(FlowCmd::Watch { id: id_or_last(1), view }),
+        Some("node") => {
+            let (id, node) = id_and_node(&plain(1));
+            return match node {
+                Some(node) => Ok(FlowCmd::Node { id, node }),
+                None => Err("node needs a node to look at — try `@flow node last verify`".into()),
+            };
+        }
+        Some("retry") => {
+            let (id, node) = id_and_node(&plain(1));
+            return match node {
+                Some(node) => Ok(FlowCmd::Retry { id, node }),
+                None => Err("retry needs a node to run again — try `@flow retry last verify`".into()),
+            };
+        }
         Some("resume") | Some("continue") => return Ok(FlowCmd::Resume(id_or_last(1))),
         Some("log") | Some("logs") => {
             let follow = args.iter().any(|a| a == "-f" || a == "--follow");
-            let plain: Vec<String> = args[1..].iter().filter(|a| !a.starts_with('-')).cloned().collect();
+            let plain = plain(1);
             return Ok(FlowCmd::Log {
                 id: plain.first().cloned().unwrap_or_else(|| "last".into()),
                 node: plain.get(1).cloned(),
@@ -2132,7 +2246,7 @@ pub(crate) fn parse_flow_args(args: &[String]) -> Result<FlowCmd, String> {
         }
         _ => {}
     }
-    let mut spec = FlowSpec::default();
+    let mut spec = FlowSpec { view, ..FlowSpec::default() };
     let mut words: Vec<String> = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -2182,13 +2296,18 @@ fn flow_usage() -> String {
         "usage: @flow <name> \"<input>\"       run a flow",
         "       @flow … --bg | --dry-run     detach it | verify and draw it, spend nothing",
         "       @flow … --timeout 30m --budget TOKENS --concurrency N",
+        "       @flow … --view graph|list    draw the shape, or one dense row per node",
         "       @flow                        list the installed flows",
         "       @flow check [<name>]         verify a flow (or all of them) — no model needed",
-        "       @flow graph <name>           draw the graph",
+        "       @flow graph <name>           the graph, drawn, with what each node reaches",
         "       @flow runs                   recent runs",
         "       @flow show <id>              one run: the graph, with what each node cost",
+        "       @flow nodes [<id>]           every node of a run, side by side",
+        "       @flow node [<id>] <node>     one node in full: cost, model, what it said",
+        "       @flow watch [<id>]           follow a run that is still going",
         "       @flow log <id> [<node>] [-f] a node's full output",
         "       @flow resume <id>            run only what did not complete",
+        "       @flow retry [<id>] <node>    run one node again, and what depended on it",
         "       @flow clear                  prune finished runs",
     ]
     .join("\n")
@@ -2213,13 +2332,17 @@ fn ai_flow_cmd(args: &[String]) -> i32 {
             0
         }
         FlowCmd::Check(name) => flow_check(name.as_deref()),
-        FlowCmd::Graph(name) => flow_graph(&name),
+        FlowCmd::Graph { name, view } => flow_graph(&name, &picture(view)),
         FlowCmd::Runs => flow_runs(),
         FlowCmd::Clear => {
             println!("{}", crate::i18n::translate("flow.cleared", &[crate::flowruns::clear_finished().to_string()]));
             0
         }
-        FlowCmd::Show(id) => flow_show(&id),
+        FlowCmd::Show { id, view } => flow_show(&id, &picture(view)),
+        FlowCmd::Nodes(id) => flow_nodes(&id),
+        FlowCmd::Node { id, node } => flow_node(&id, &node),
+        FlowCmd::Watch { id, view } => flow_watch(&id, &view_name(view)),
+        FlowCmd::Retry { id, node } => flow_retry(&id, &node),
         FlowCmd::Log { id, node, follow } => flow_log(&id, node.as_deref(), follow),
         FlowCmd::Resume(id) => match crate::flowruns::resolve(&id) {
             Ok(id) => run_flow_cli(FlowSpec::default(), Some(id)),
@@ -2254,7 +2377,7 @@ fn flow_list() -> i32 {
     for name in &names {
         match load_flow(name) {
             Ok(flow) => {
-                println!("  {name:<12} {:<28} {}", clip_tail(&shape_of(&flow), 28), flow.description);
+                println!("  {name:<12} {:<28} {}", clip_tail(&crate::flow::render::shape(&flow), 28), flow.description);
             }
             // A file that will not parse is shown rather than hidden: a flow that
             // silently vanished from the list is the harder thing to debug.
@@ -2263,40 +2386,6 @@ fn flow_list() -> i32 {
     }
     println!("\n{}", crate::i18n::translate("flow.run_hint", &[]));
     0
-}
-
-/// "5 nodes · 3 in parallel · loops" — a flow's shape at a glance.
-fn shape_of(flow: &crate::flow::Flow) -> String {
-    let n = flow.nodes.len();
-    let mut notes = Vec::new();
-    // The widest set of nodes waiting on exactly the same thing — the parallelism
-    // someone actually gets. Branch alternatives are excluded: the two arms of one
-    // verdict wait on the same node but only ever one of them runs.
-    let widest = (0..flow.nodes.len())
-        .map(|i| {
-            (0..flow.nodes.len())
-                .filter(|&j| flow.nodes[j].needs == flow.nodes[i].needs && !crate::flow::verify::exclusive(flow, i, j))
-                .count()
-        })
-        .max()
-        .unwrap_or(0);
-    if widest > 1 {
-        notes.push(format!("{widest} parallel"));
-    }
-    if flow.nodes.iter().any(|x| x.goto.is_some()) {
-        notes.push("loops".into());
-    }
-    if flow.nodes.iter().any(|x| x.is_map()) {
-        notes.push("fans out".into());
-    }
-    if flow.nodes.iter().any(|x| matches!(x.kind, crate::flow::Kind::Approve { .. })) {
-        notes.push("asks you".into());
-    }
-    if notes.is_empty() {
-        format!("{n} nodes")
-    } else {
-        format!("{n} nodes \u{b7} {}", notes.join(" \u{b7} "))
-    }
 }
 
 /// `@flow check [<name>]` — everything provable without a model.
@@ -2334,8 +2423,37 @@ fn flow_check(name: Option<&str>) -> i32 {
     worst
 }
 
-/// `@flow graph <name>` — the shape, drawn.
-fn flow_graph(name: &str) -> i32 {
+/// The view a command should use: the flag if one was given, else `[flow] view`.
+fn view_name(flag: Option<String>) -> String {
+    flag.unwrap_or_else(|| crate::config::Config::load().flow_view.clone())
+}
+
+fn picture(flag: Option<String>) -> crate::flow::doc::Picture {
+    crate::flow::doc::Picture::named(&view_name(flag))
+}
+
+/// What the document can say about the agents behind a flow's nodes.
+///
+/// Both halves are plain files — agent definitions and MCP declarations — so building
+/// this reads a directory and launches nothing.
+fn flow_cast() -> (Vec<crate::ai::defs::Agent>, usize) {
+    (
+        crate::ai::defs::load_agents(&crate::config::Config::agents_dir()),
+        crate::ai::load_servers(&[crate::config::Config::mcp_dir()]).len(),
+    )
+}
+
+/// Print a flow's document through the Markdown renderer — a native diagram in our own
+/// terminal, box art and a plain table anywhere else.
+fn print_flow_doc(flow: &crate::flow::Flow, run: Option<&crate::flowruns::Run>, picture: crate::flow::doc::Picture) {
+    let (agents, mcps) = flow_cast();
+    let cast = crate::flow::doc::Cast { agents: &agents, mcps };
+    let doc = crate::flow::doc::document(flow, run, &cast, picture, md_width());
+    print_markdown(&doc, &crate::config::Config::flows_dir());
+}
+
+/// `@flow graph <name>` — the shape, drawn, with the facts around it.
+fn flow_graph(name: &str, picture: &crate::flow::doc::Picture) -> i32 {
     let (flow, report) = match checked_flow(name) {
         Ok(v) => v,
         Err(e) => {
@@ -2345,9 +2463,7 @@ fn flow_graph(name: &str) -> i32 {
     };
     // A broken graph is still drawn: seeing the shape is usually how you understand
     // what the error is telling you.
-    for line in crate::flow::render::draw(&flow, None, md_width()) {
-        println!("{line}");
-    }
+    print_flow_doc(&flow, None, *picture);
     if !report.ok() {
         println!();
         print_report(name, &report, flow.nodes.len());
@@ -2380,44 +2496,269 @@ fn flow_runs() -> i32 {
 }
 
 /// `@flow show <id>` — one run: the same picture, with what actually happened on it.
-fn flow_show(id: &str) -> i32 {
+fn flow_show(id: &str, picture: &crate::flow::doc::Picture) -> i32 {
     let Some(run) = resolved_run(id) else { return 2 };
-    let (dim, r) = (muted(), reset());
-    println!("{} {} {} \u{b7} flow '{}'", run.status_glyph(), run.id, run.status, run.flow);
-    if !run.input.is_empty() {
-        println!("  {dim}input{r}     {}", run.input);
-    }
-    if !run.cwd.is_empty() {
-        println!("  {dim}folder{r}    {}", run.cwd);
-    }
-    let budget = run.budget.map(|b| format!(" \u{b7} {b} tokens")).unwrap_or_default();
-    println!(
-        "  {dim}bounds{r}    {} \u{b7} {} at a time{budget}",
-        crate::flowruns::human_age(run.timeout),
-        run.concurrency
-    );
-    let (tin, tout) = run.tokens();
-    println!("  {dim}spent{r}     {} tool call(s) \u{b7} {tin} in / {tout} out", run.tools());
-    println!();
-    // The definition may have been edited since; then the record is the only truth.
+    // The definition may have been edited since — a node the file no longer has means
+    // the drawing would be of a graph this run never was. Then the record is the only
+    // truth, and the table alone is what can honestly be shown.
     match load_flow(&run.flow) {
         Ok(flow) if flow.nodes.iter().all(|n| run.node(&n.id).is_some()) => {
-            for line in crate::flow::render::draw(&flow, Some(&run), md_width()) {
-                println!("{line}");
-            }
+            print_flow_doc(&flow, Some(&run), *picture);
         }
         _ => {
-            for node in &run.nodes {
-                println!("  {} {:<16} {}", node.state.glyph(), node.id, clip_tail(&node.output, 50));
-            }
+            flow_nodes_table(&run);
         }
     }
     if !run.unfinished().is_empty() {
-        let left: Vec<&str> = run.unfinished().iter().map(|n| n.id.as_str()).collect();
-        println!("\n  {dim}left to do{r} {}", left.join(", "));
         println!("  {}", crate::i18n::translate("flow.resume_hint", &[run.id.clone()]));
     }
     0
+}
+
+/// `@flow nodes [<id>]` — every node of a run, side by side.
+///
+/// `show` draws the graph; this is the same facts as a table you can scan down a
+/// column of. They come apart the moment a run has fifteen nodes.
+fn flow_nodes(id: &str) -> i32 {
+    let Some(run) = resolved_run(id) else { return 2 };
+    flow_nodes_table(&run);
+    println!("  {}", crate::i18n::translate("flow.node_hint", &[run.id.clone()]));
+    0
+}
+
+fn flow_nodes_table(run: &crate::flowruns::Run) {
+    let (dim, r) = (muted(), reset());
+    println!("{} {} {} \u{b7} flow '{}'", run.status_glyph(), run.id, run.status, run.flow);
+    let width = run.nodes.iter().map(|n| n.id.chars().count()).max().unwrap_or(4).clamp(4, 20);
+    for node in &run.nodes {
+        let tokens = node.input_tokens + node.output_tokens;
+        let mut facts = Vec::new();
+        if !node.agent.is_empty() {
+            facts.push(format!("@{}", node.agent));
+        }
+        if !node.model.is_empty() {
+            facts.push(node.model.clone());
+        }
+        if node.attempts > 1 {
+            facts.push(format!("\u{d7}{}", node.attempts));
+        }
+        if node.ms >= 100 {
+            facts.push(format!("{:.1}s", node.ms as f64 / 1000.0));
+        }
+        if tokens > 0 {
+            facts.push(format!("{tokens} tokens"));
+        }
+        if node.tools > 0 {
+            facts.push(format!("{} tool call(s)", node.tools));
+        }
+        if let Some(exit) = node.exit {
+            facts.push(format!("exit {exit}"));
+        }
+        // Trimmed, so the padding that aligns the columns does not become trailing
+        // whitespace in somebody's scrollback for a node that had nothing to report.
+        let line = format!(
+            "  {} {:<width$}  {:<9} {dim}{}{r}",
+            node.state.glyph(),
+            node.id,
+            node.state.word(),
+            facts.join(" \u{b7} ")
+        );
+        println!("{}", line.trim_end());
+    }
+    let left: Vec<&str> = run.unfinished().iter().map(|n| n.id.as_str()).collect();
+    if !left.is_empty() {
+        println!("\n  {dim}left to do{r} {}", left.join(", "));
+    }
+}
+
+/// `@flow node [<id>] <node>` — one node, in full.
+///
+/// Everything the run knows about it, then what it was asked and what it said —
+/// rendered as the Markdown it is, because a node's answer usually IS Markdown and
+/// showing it raw is showing somebody their own syntax.
+fn flow_node(id: &str, node: &str) -> i32 {
+    let Some(run) = resolved_run(id) else { return 2 };
+    let Some(state) = run.node(node).cloned() else {
+        for line in no_output_message(&run, node) {
+            eprintln!("{line}");
+        }
+        return 2;
+    };
+    let mut doc = format!("# {} \u{b7} {} {}\n\n", state.id, state.state.glyph(), state.state.word());
+    let tokens = state.input_tokens + state.output_tokens;
+    let mut facts: Vec<String> = Vec::new();
+    if !state.agent.is_empty() {
+        facts.push(format!("@{}", state.agent));
+    }
+    if !state.model.is_empty() {
+        facts.push(state.model.clone());
+    }
+    if state.attempts > 0 {
+        facts.push(format!("{} attempt(s)", state.attempts));
+    }
+    if state.ms >= 100 {
+        facts.push(format!("{:.1}s", state.ms as f64 / 1000.0));
+    }
+    if tokens > 0 {
+        facts.push(format!("{} in / {} out", state.input_tokens, state.output_tokens));
+    }
+    if state.tools > 0 {
+        facts.push(format!("{} tool call(s)", state.tools));
+    }
+    if let Some(exit) = state.exit {
+        facts.push(format!("exit {exit}"));
+    }
+    if !facts.is_empty() {
+        doc.push_str(&format!("**{}**\n\n", facts.join(" \u{b7} ")));
+    }
+    // Where it sits in the graph — the part the record cannot know on its own.
+    if let Ok(flow) = load_flow(&run.flow) {
+        if let Some(def) = flow.nodes.iter().find(|n| n.id == state.id) {
+            let mut edges = Vec::new();
+            if !def.needs.is_empty() {
+                edges.push(format!("after `{}`", def.needs.join("`, `")));
+            }
+            if !def.when_src.is_empty() {
+                edges.push(format!("when `{}`", def.when_src));
+            }
+            if let Some(goto) = &def.goto {
+                edges.push(format!("then back to `{goto}` up to {}x", def.max));
+            }
+            let feeds: Vec<&str> =
+                flow.nodes.iter().filter(|n| n.needs.contains(&state.id)).map(|n| n.id.as_str()).collect();
+            if !feeds.is_empty() {
+                edges.push(format!("feeds `{}`", feeds.join("`, `")));
+            }
+            if !edges.is_empty() {
+                doc.push_str(&format!("{}\n\n", edges.join(" \u{b7} ")));
+            }
+        }
+    }
+    // The transcript, verbatim: the file already reads as "## asked / ## answered".
+    match run.node_log(&state.id).and_then(|p| std::fs::read_to_string(p).ok()) {
+        // Its own `# <node>` heading would repeat the one above it.
+        Some(text) => doc.push_str(text.split_once('\n').map_or(text.as_str(), |(_, rest)| rest)),
+        None => doc.push_str(&format!("_Nothing to show \u{2014} {}._\n", why_not_run(state.state))),
+    }
+    print_markdown(&doc, &crate::config::Config::flow_runs_dir());
+    0
+}
+
+/// `@flow watch [<id>]` — follow a run that is still going.
+///
+/// The record is written the moment each node lands, so a board built from it is the
+/// same board the running process is painting — from any pane, any terminal, and for a
+/// `--bg` run that has no terminal of its own at all.
+fn flow_watch(id: &str, view: &str) -> i32 {
+    let Some(run) = resolved_run(id) else { return 2 };
+    let Ok(flow) = load_flow(&run.flow) else {
+        eprintln!("aiTerminal: flow '{}' is no longer installed, so its run cannot be drawn", run.flow);
+        return 2;
+    };
+    let board = crate::flow::board::Board::new(
+        format!("{} \u{b7} {}", run.flow, clip_tail(run.input.trim(), 62)),
+        board_nodes(&flow),
+        err_is_tty(),
+        view,
+        run.concurrency,
+    );
+    eprintln!("{}{}{}", muted(), crate::i18n::translate("flow.watching", &[run.id.clone()]), reset());
+    board.start();
+    let id = run.id.clone();
+    // What has already been put on the board, so a node is applied when it CHANGES
+    // rather than on every poll. Off a terminal the board prints one line per change,
+    // and re-applying a settled node would reprint its whole history twice a second.
+    let mut seen: Vec<(String, crate::flowruns::NodeState)> = Vec::new();
+    let mut live = true;
+    while live {
+        let Some(current) = crate::flowruns::read(&id) else { break };
+        for node in &current.nodes {
+            if seen.iter().any(|(id, state)| *id == node.id && *state == node.state) {
+                continue;
+            }
+            seen.retain(|(id, _)| *id != node.id);
+            seen.push((node.id.clone(), node.state));
+            apply_record(&board, node);
+        }
+        // A record left `running` by a process that is gone must not hold the watcher
+        // forever: the same liveness test `@flow runs` heals a dead record with.
+        live = current.is_live() && platform::os::pid_alive(current.pid);
+        if live {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        }
+    }
+    board.finish();
+    0
+}
+
+/// Put one recorded node onto a board — the seam that lets `watch` reuse the very
+/// display a live run paints, instead of growing a second one that drifts from it.
+fn apply_record(board: &std::sync::Arc<crate::flow::board::Board>, node: &crate::flowruns::NodeRun) {
+    use crate::flow::board::State;
+    use crate::flowruns::NodeState;
+    if !node.model.is_empty() {
+        board.model(&node.id, &node.model);
+    }
+    let tokens = node.input_tokens + node.output_tokens;
+    match node.state {
+        NodeState::Pending => {}
+        NodeState::Done => board.settled(&node.id, State::Done, node.ms, tokens, ""),
+        NodeState::Failed => board.settled(&node.id, State::Failed, node.ms, tokens, &opening_line(&node.output)),
+        NodeState::Skipped => board.settled(&node.id, State::Skipped, 0, 0, "its condition was false"),
+        NodeState::Blocked => board.settled(&node.id, State::Skipped, 0, 0, "something it needed failed"),
+        NodeState::Waiting => board.settled(&node.id, State::Parked, node.ms, tokens, "waiting for you"),
+    }
+}
+
+/// `@flow retry [<id>] <node>` — run one node again, and everything built on it.
+///
+/// The cascade is the point. Re-running a node while the nodes downstream keep the
+/// answers they derived from its OLD output is not a retry, it is a record that
+/// contradicts itself — so what will be redone is computed from the graph, printed,
+/// and then handed to the ordinary resume path.
+fn flow_retry(id: &str, node: &str) -> i32 {
+    let Some(mut run) = resolved_run(id) else { return 2 };
+    let flow = match load_flow(&run.flow) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("aiTerminal: {e}");
+            return 2;
+        }
+    };
+    if flow.index(node).is_none() {
+        let names: Vec<&str> = flow.nodes.iter().map(|n| n.id.as_str()).collect();
+        eprintln!("aiTerminal: flow '{}' has no node '{node}'{}", run.flow, crate::flow::verify::nearest(node, &names));
+        eprintln!("  nodes: {}", names.join(", "));
+        return 2;
+    }
+    if run.is_live() {
+        eprintln!("aiTerminal: run {} is still going \u{2014} stop it before running a node again", run.id);
+        return 2;
+    }
+    let again = flow.downstream(node);
+    for row in run.nodes.iter_mut().filter(|r| again.contains(&r.id)) {
+        *row = crate::flowruns::NodeRun { id: row.id.clone(), ..crate::flowruns::NodeRun::default() };
+    }
+    // Only the node states are written here. The status stays whatever it was until
+    // the run itself claims it — a record marked `running` by a run that then refused
+    // to start (no model configured, say) would be healed to `died` by the next `@flow
+    // runs`, reporting a crash that never happened.
+    crate::flowruns::write(&run.id, &run);
+    let (dim, r) = (muted(), reset());
+    eprintln!("{dim}\u{21ba} {} \u{2014} running again: {}{r}", run.id, again.join(", "));
+    run_flow_cli(FlowSpec::default(), Some(run.id))
+}
+
+/// Why a node has nothing to show. It did not fail to be *found* — it did not run, and
+/// the record already says which of those it was. One decision, so the two places that
+/// report it can never come to disagree.
+fn why_not_run(state: crate::flowruns::NodeState) -> &'static str {
+    match state {
+        crate::flowruns::NodeState::Skipped => "its condition was false",
+        crate::flowruns::NodeState::Blocked => "something it needed failed",
+        crate::flowruns::NodeState::Waiting => "it is waiting for an answer",
+        _ => "it has not run yet",
+    }
 }
 
 /// `@flow log <id> [<node>] [-f]` — what a node actually said.
@@ -2452,12 +2793,7 @@ fn flow_log(id: &str, node: Option<&str>, follow: bool) -> i32 {
 fn no_output_message(run: &crate::flowruns::Run, wanted: &str) -> Vec<String> {
     match run.node(wanted) {
         Some(node) => {
-            let why = match node.state {
-                crate::flowruns::NodeState::Skipped => "its condition was false",
-                crate::flowruns::NodeState::Blocked => "something it needed failed",
-                crate::flowruns::NodeState::Waiting => "it is waiting for an answer",
-                _ => "it has not run yet",
-            };
+            let why = why_not_run(node.state);
             vec![
                 format!("aiTerminal: node '{wanted}' produced no output \u{2014} {why}"),
                 format!("  {}", crate::i18n::translate("flow.resume_hint", &[run.id.clone()])),
@@ -2513,6 +2849,9 @@ struct NodeOut {
     approved: bool,
     /// Reached an approval with nobody to ask: the run parks rather than deadlocks.
     parked: bool,
+    /// The model that actually served this node. A pool that picks per run means the
+    /// config cannot be read backwards for it, so the record has to carry it.
+    model: String,
     input_tokens: u64,
     output_tokens: u64,
     tools: usize,
@@ -2534,17 +2873,22 @@ enum NodeWork {
 
 /// One flow node's end of the [`Board`](crate::flow::board::Board) as an agent observer.
 ///
-/// Only `on_compact` does anything: token streaming belongs on a single agent run, but
-/// "this node just gave context back" is exactly the kind of thing a run is unreadable
-/// without.
+/// Token streaming belongs on a single agent run, not on a board where four nodes are
+/// talking at once. Two things do belong: which model is serving this node, and "this
+/// node just gave context back" — a run is unreadable without either.
 struct NodeObserver {
     board: std::sync::Arc<crate::flow::board::Board>,
     node: String,
 }
 
 impl crate::ai::AgentObserver for NodeObserver {
+    fn on_model(&mut self, model: &str) {
+        self.board.model(&self.node, model);
+    }
     fn on_compact(&mut self, report: &crate::ai::CompactionReport) {
-        self.board.tool(&self.node, &format!("\u{2139} {}", report.summary()));
+        // A note, not a tool call: the harness folded the history, the node did not
+        // run anything, and counting it would overstate the work on that row.
+        self.board.note(&self.node, &format!("\u{2139} {}", report.summary()));
     }
 }
 
@@ -2636,6 +2980,11 @@ impl FlowDriver<'_> {
             *row = crate::flowruns::NodeRun {
                 id: node.id.clone(),
                 state,
+                agent: match &node.kind {
+                    crate::flow::Kind::Agent { agent, .. } => agent.clone(),
+                    _ => String::new(),
+                },
+                model: out.model.clone(),
                 exit: out.exit,
                 approved: out.approved,
                 input_tokens: out.input_tokens,
@@ -2687,6 +3036,7 @@ impl FlowDriver<'_> {
         NodeOut {
             ok: run.outcome == crate::ai::RunOutcome::Completed,
             output: run.answer,
+            model: run.model_used,
             input_tokens: run.input_tokens as u64,
             output_tokens: run.output_tokens as u64,
             tools: run.steps.len(),
@@ -2786,6 +3136,7 @@ impl platform::orchestrator::Driver for FlowDriver<'_> {
             return Plan::Go(NodeWork::Replay(Box::new(NodeOut {
                 ok: true,
                 output: text.clone(),
+                model: previous.as_ref().map(|p| p.model.clone()).unwrap_or_default(),
                 exit: previous.as_ref().and_then(|p| p.exit),
                 approved: previous.as_ref().is_some_and(|p| p.approved),
                 attempts: previous.as_ref().map_or(1, |p| p.attempts),
@@ -2931,6 +3282,9 @@ fn join(parts: Vec<NodeOut>) -> NodeOut {
     let mut text = Vec::new();
     for (i, p) in parts.iter().enumerate() {
         out.ok &= p.ok;
+        if out.model.is_empty() {
+            out.model = p.model.clone();
+        }
         out.input_tokens += p.input_tokens;
         out.output_tokens += p.output_tokens;
         out.tools += p.tools;
@@ -2943,6 +3297,40 @@ fn join(parts: Vec<NodeOut>) -> NodeOut {
     }
     out.output = text.join("\n\n");
     out
+}
+
+/// The graph, as the board needs it: what each node is, what it waits on, and what
+/// the agent behind it can reach.
+///
+/// The capability surface is resolved HERE, before the first node starts, so the board
+/// can state it from the first frame instead of discovering it one tool call at a
+/// time. Agent definitions and MCP declarations are both plain files — reading them
+/// costs nothing and launches nothing.
+fn board_nodes(flow: &crate::flow::Flow) -> Vec<crate::flow::board::BoardNode> {
+    let agents = crate::ai::defs::load_agents(&crate::config::Config::agents_dir());
+    let mcps = crate::ai::load_servers(&[crate::config::Config::mcp_dir()]).len() as u32;
+    flow.nodes
+        .iter()
+        .map(|n| {
+            let def = match &n.kind {
+                crate::flow::Kind::Agent { agent, .. } => agents.iter().find(|a| &a.name == agent),
+                _ => None,
+            };
+            crate::flow::board::BoardNode {
+                id: n.id.clone(),
+                what: describe_node(n),
+                when: n.when_src.clone(),
+                needs: n.needs.clone(),
+                goto: n.goto.clone(),
+                max: n.max,
+                tools: def.map_or(0, |a| a.tools.len() as u32),
+                skills: def.map_or(0, |a| a.skills.len() as u32),
+                // Only an agent node can reach a tool server, so a graph of commands
+                // reports none rather than advertising a hub nothing in it will use.
+                mcps: if def.is_some() { mcps } else { 0 },
+            }
+        })
+        .collect()
 }
 
 /// What a node is, in the few characters the board gives it.
@@ -3042,16 +3430,16 @@ fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
     let timeout = spec.timeout.or(flow.bounds.timeout).unwrap_or(cfg.flow_timeout);
     let budget = spec.budget.or(flow.bounds.budget);
     let concurrency = spec.concurrency.or(flow.bounds.concurrency).unwrap_or(cfg.flow_concurrency).clamp(1, 16);
+    // `--view` wins over `[flow] view` for this run alone — the same order as every
+    // other bound here.
+    let view = spec.view.clone().unwrap_or_else(|| cfg.flow_view.clone());
 
     if spec.dry_run {
         let (dim, r) = (muted(), reset());
-        println!("{}\u{25B8} flow '{name}'{r} {dim}\u{b7} {}{r}", accent(), shape_of(&flow));
         if let Some(why) = &routed {
-            println!("  {dim}chosen for this goal \u{2014} {why}{r}");
+            println!("{dim}chosen for this goal \u{2014} {why}{r}");
         }
-        for line in crate::flow::render::draw(&flow, None, md_width()) {
-            println!("{line}");
-        }
+        print_flow_doc(&flow, None, crate::flow::doc::Picture::named(&view));
         println!(
             "\n  {dim}bounds{r}    {} \u{b7} {concurrency} at a time{}",
             crate::flowruns::human_age(timeout),
@@ -3133,17 +3521,16 @@ fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
     // One line per node, in graph order, from before the first one starts — so the
     // shape of the run is visible rather than revealed a line at a time.
     let heading = match input.trim().is_empty() {
-        true => format!("{name} \u{b7} {}", shape_of(&flow)),
+        true => format!("{name} \u{b7} {}", crate::flow::render::shape(&flow)),
         false => format!("{name} \u{b7} {}", clip_tail(input.trim(), 62)),
     };
     let board = crate::flow::board::Board::new(
         heading,
-        flow.nodes
-            .iter()
-            .map(|n| (n.id.clone(), describe_node(n), n.when_src.clone()))
-            .collect(),
+        board_nodes(&flow),
         // A repainting board needs a cursor. A pipe, a job log and CI have none.
         err_is_tty(),
+        &view,
+        concurrency,
     );
     board.start();
 
@@ -5714,11 +6101,11 @@ mod tests {
         assert_eq!(parse(&["list"]), FlowCmd::List);
         assert_eq!(parse(&["check"]), FlowCmd::Check(None), "no name checks them all");
         assert_eq!(parse(&["check", "implement"]), FlowCmd::Check(Some("implement".into())));
-        assert_eq!(parse(&["graph", "implement"]), FlowCmd::Graph("implement".into()));
+        assert_eq!(parse(&["graph", "implement"]), FlowCmd::Graph { name: "implement".into(), view: None });
         assert_eq!(parse(&["runs"]), FlowCmd::Runs);
         assert_eq!(parse(&["clear"]), FlowCmd::Clear);
-        assert_eq!(parse(&["show"]), FlowCmd::Show("last".into()), "an id defaults to the newest");
-        assert_eq!(parse(&["show", "1700-1"]), FlowCmd::Show("1700-1".into()));
+        assert_eq!(parse(&["show"]), FlowCmd::Show { id: "last".into(), view: None }, "an id defaults to the newest");
+        assert_eq!(parse(&["show", "1700-1"]), FlowCmd::Show { id: "1700-1".into(), view: None });
         assert_eq!(parse(&["resume", "1700-1"]), FlowCmd::Resume("1700-1".into()));
         assert_eq!(
             parse(&["log", "1700-1", "verify", "-f"]),
@@ -5727,6 +6114,52 @@ mod tests {
         assert_eq!(parse(&["log"]), FlowCmd::Log { id: "last".into(), node: None, follow: false });
         // `graph` with nothing to draw is an error, not a guess.
         assert!(parse_flow_args(&a(&["graph"])).is_err());
+    }
+
+    #[test]
+    fn a_node_can_be_named_on_its_own_or_alongside_its_run() {
+        use super::{FlowCmd, parse_flow_args};
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let parse = |xs: &[&str]| parse_flow_args(&a(xs)).expect("parses");
+        // Naming the node alone is the common case: a run id is not something anyone
+        // retypes when they only ever look at the newest one.
+        assert_eq!(parse(&["node", "verify"]), FlowCmd::Node { id: "last".into(), node: "verify".into() });
+        assert_eq!(parse(&["node", "1700-1", "verify"]), FlowCmd::Node { id: "1700-1".into(), node: "verify".into() });
+        assert_eq!(parse(&["retry", "verify"]), FlowCmd::Retry { id: "last".into(), node: "verify".into() });
+        assert_eq!(parse(&["nodes"]), FlowCmd::Nodes("last".into()));
+        assert_eq!(parse(&["nodes", "1700-1"]), FlowCmd::Nodes("1700-1".into()));
+        assert_eq!(parse(&["watch"]), FlowCmd::Watch { id: "last".into(), view: None });
+        // Both verbs act on ONE node, so neither guesses which when none is named.
+        assert!(parse_flow_args(&a(&["node"])).is_err());
+        assert!(parse_flow_args(&a(&["retry"])).is_err());
+    }
+
+    #[test]
+    fn the_view_flag_is_never_mistaken_for_a_positional_word() {
+        use super::{FlowCmd, parse_flow_args};
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let parse = |xs: &[&str]| parse_flow_args(&a(xs)).expect("parses");
+        // THE reason `--view` is lifted out before anything else: read positionally,
+        // `list` here would become the run id and `@flow show --view list` would look
+        // for a run called "list".
+        assert_eq!(parse(&["show", "--view", "list"]), FlowCmd::Show { id: "last".into(), view: Some("list".into()) });
+        assert_eq!(
+            parse(&["graph", "--view", "list", "build"]),
+            FlowCmd::Graph { name: "build".into(), view: Some("list".into()) }
+        );
+        assert_eq!(parse(&["watch", "--view=graph"]), FlowCmd::Watch { id: "last".into(), view: Some("graph".into()) });
+        match parse(&["build", "--view", "list", "do a thing"]) {
+            FlowCmd::Run(spec) => {
+                assert_eq!(spec.view.as_deref(), Some("list"));
+                assert_eq!(spec.input, "do a thing", "and the flag never eats the input");
+            }
+            other => panic!("expected a run, got {other:?}"),
+        }
+        // A word it does not know is refused rather than quietly ignored: a flag
+        // somebody typed is a thing they meant.
+        let err = parse_flow_args(&a(&["show", "--view", "tree"])).unwrap_err();
+        assert!(err.contains("graph") && err.contains("list"), "{err}");
+        assert!(parse_flow_args(&a(&["show", "--view"])).is_err(), "and it needs a word");
     }
 
     #[test]
@@ -6907,8 +7340,17 @@ mod tests {
             let (flow, report) = super::checked_flow(&name).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert!(report.ok(), "{name} has errors: {:?}", report.errors);
             assert!(!flow.description.is_empty(), "{name} needs a description — it is what `@flow` lists");
-            // And each one draws, so `@flow graph <name>` can never come up empty.
-            assert!(!crate::flow::render::draw(&flow, None, 100).is_empty(), "{name} draws");
+            // And each one becomes a document `@flow graph <name>` can print, with a
+            // diagram that really draws rather than a fence nothing can render.
+            let (agents, mcps) = super::flow_cast();
+            let cast = crate::flow::doc::Cast { agents: &agents, mcps };
+            let doc = crate::flow::doc::document(&flow, None, &cast, crate::flow::doc::Picture::Graph, 100);
+            assert!(doc.contains("```mermaid\n"), "{name} draws a diagram:\n{doc}");
+            let src = doc.split("```mermaid\n").nth(1).and_then(|t| t.split("```").next()).unwrap();
+            assert!(corelib::mermaid::art(src, 100).is_some(), "{name}'s diagram renders:\n{src}");
+            for node in &flow.nodes {
+                assert!(doc.contains(&format!("| {} |", node.id)), "{name} lists node '{}':\n{doc}", node.id);
+            }
         }
     }
 

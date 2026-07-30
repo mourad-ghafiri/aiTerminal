@@ -254,16 +254,24 @@ it warns about the rest.
 ```text
 ❯ @flow                          # the installed flows
 ❯ @flow check [<name>]           # verify one, or all of them
-❯ @flow graph <name>             # draw the graph in the terminal
+❯ @flow graph <name>             # the graph, drawn, with what each node reaches
 ❯ @flow build "add a --json flag to the export command"
 ❯ @flow build --bg "…"           # detached, tracked as a job
 ❯ @flow review "this branch" --dry-run --concurrency 2
+❯ @flow build --view list "…"    # the dense board instead of the graph
 ❯ @flow runs                     # past runs
 ❯ @flow show <id>                # the graph again, with what each node cost
+❯ @flow nodes [<id>]             # every node of a run, side by side
+❯ @flow node [<id>] <node>       # one node in full: model, cost, transcript
+❯ @flow watch [<id>]             # follow a run that is still going
 ❯ @flow log <id> [<node>] [-f]   # what a node actually said
 ❯ @flow resume <id>              # run only what did not complete
+❯ @flow retry [<id>] <node>      # run one node again, and what depended on it
 ❯ @flow clear                    # prune finished runs
 ```
+
+`--view graph|list` works on any of the drawing verbs. Without it they use `[flow]
+view`, which ships as `graph`.
 
 ### Five flows ship
 
@@ -298,11 +306,28 @@ never a flow chosen by falling back to a favourite.
 Loose words are still a name: `@flow revieew the parser` is an error suggesting
 `review`, not a graph run over your repository.
 
-`@flow graph` and `@flow show` draw the real thing — the same native diagram renderer
-`@md` uses, so a flow is something you look at rather than hold in your head:
+### The graph is a document, not just a picture
+
+`@flow graph` builds a **Markdown document** — a heading, the diagram as a `mermaid`
+fence, and a table of the facts — and hands it to the renderer `@md` already uses. So
+in aiTerminal the diagram is drawn by the same GPU renderer that draws every other
+diagram, and in a pipe it degrades to box art and a plain table. Neither is a special
+case; both fall out of it being ordinary Markdown.
+
+A picture answers "what runs after what" and nothing else. The questions people arrive
+with are *which agent is behind that box*, *what can it reach*, and *what is the
+condition on that arrow* — so those are the columns:
 
 ```text
 ❯ @flow graph review
+
+review
+────────────────────────────────────────────────────────────
+
+Map the code, review it three ways in parallel, then merge into one verdict
+
+5 nodes · 3 parallel · 20m · 4 at a time · needs an input
+
 
                              ┌───────────────┐
                              │ map @explorer │
@@ -319,7 +344,21 @@ Loose words are still a name: `@flow revieew the parser` is an error suggesting
                             ┌────────┴─────────┐
                             │ report @reviewer │
                             └──────────────────┘
+
+╭─────────────┬───────────┬──────┬────────────────────╮
+│ node        │ runs      │ when │ reaches            │
+├─────────────┼───────────┼──────┼────────────────────┤
+│ map         │ @explorer │ —    │ 7 tools · 1 skill  │
+│ correctness │ @reviewer │ —    │ 7 tools · 5 skills │
+│ security    │ @reviewer │ —    │ 7 tools · 5 skills │
+│ design      │ @reviewer │ —    │ 7 tools · 5 skills │
+│ report      │ @reviewer │ —    │ 7 tools · 5 skills │
+╰─────────────┴───────────┴──────┴────────────────────╯
 ```
+
+`@flow show <id>` prints the same document after a run, with each node's real state,
+model and cost written over it. A window too narrow to draw the diagram in gets the
+outline instead — never raw diagram syntax.
 
 ### Every node is written down, so a run can be picked back up
 
@@ -336,26 +375,80 @@ An `approve` node asks on a terminal; detached, it parks the run as `waiting` an
 
 A chain can narrate itself; a graph cannot. Four nodes start together and finish in
 whatever order they finish, so a stream of start/done lines hides the most useful thing
-about the run. Every node gets **one line that stays where it is**, repainted in place:
+about the run. Every node gets **one line that stays where it is**, repainted in place —
+and the lines are grouped into **bands**, one per wave of work, so what runs together
+looks like it:
 
 ```text
 ▸ build · add a --json flag to the export command
-  ✓ plan         @planner        4.2s   3.1k
-  ✓ explore      @explorer       8.1s   9.4k
-  ✓ conventions  @explorer       7.6s   8.8k
-  ⠻ apply        @coder         12.3s          ⚙ fs.edit src/cli.rs · 12ms · 1.4KB
-  ○ verify       @tester
-  ○ fix          @coder                        when verify.output contains "VERDICT…
-  ○ review       @reviewer
-  ○ summary      @writer
+  8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time
+     ✓ plan         @planner     claude-sonnet-5    4.2s  3.1k   ⚙3
+  │
+  ├─ ✓ explore      @explorer    claude-sonnet-5    8.1s  9.4k  ⚙12
+  └─ ✓ conventions  @explorer    claude-sonnet-5    7.6s  8.8k   ⚙9
+  │
+     ⠻ apply        @coder       claude-opus-5     12.3s  2.1k   ⚙4  fs.edit src/cli.rs
+  │
+     ○ verify       @tester
+  │
+  ├─ ○ fix          @coder                       when verify.output contains "VERDICT…
+  └─ ○ review       @reviewer                    when verify.output contains "VERDICT…
+  │
+     ○ summary      @writer
   3/8 done · 1 running · 21.3k tokens · 24.6s
 ```
 
-A waiting node shows the condition it is waiting on, a running one shows the tool it is
-in right now, and a retry is the same line with `×2` rather than a second line. Off a
-terminal — `--bg`, a pipe, CI — the same state machine prints `[node] event` lines
-instead: nothing is overwritten, and the attribution a plain stream could never give is
-still there.
+The first line is what the whole run can reach. Every row carries the agent, the model
+actually serving it, its wall clock, its tokens and its tool calls, and the **running
+node pulses** in the theme's accent while the finished ones are its green, the failed
+ones its red and the parked ones its amber — all five of the theme's semantic colours,
+so the board restyles with everything else. A waiting node shows the condition holding
+it and the backward edge it loops to; a retry is the same line with `×2` rather than a
+second line.
+
+Columns give way rather than wrap as the window narrows: the model goes first, then the
+tool count, then the note. The node and its state never do.
+
+**Two views.** `[flow] view = "list"` — or `--view list` for one command — puts every
+node back on a single dense row in file order, with no band joins. It is the shortest
+board that can exist, which is what a twenty-node flow in a six-line split wants.
+
+Off a terminal — `--bg`, a pipe, CI — neither view applies: the same state machine
+prints `[node] event` lines instead. Nothing is overwritten, and the attribution a
+plain stream could never give is still there.
+
+### Node control
+
+`show` is the whole run and `log` is one node's text. Between them sits the question
+people actually ask when an answer looks wrong — *what is this node*:
+
+```text
+❯ @flow nodes last
+✗ 900-1 failed · flow 'build'
+  ✓ plan         done      @planner · claude-sonnet-5 · 4.2s · 9000 tokens · 3 tool call(s)
+  ✓ explore      done      @explorer · claude-sonnet-5 · 8.1s · 6900 tokens · 12 tool call(s)
+  ✗ apply        failed    @coder · claude-opus-5 · ×2 · 12.3s · 4 tool call(s)
+  ⊘ verify       blocked
+  · review       skipped
+
+  left to do apply, fix, summary
+```
+
+`@flow node last apply` opens one of them in full — which agent, which model, how many
+attempts, its edges and its condition, then what it was asked and what it answered,
+rendered as the Markdown it is. Which model served a node is a fact the record has to
+keep: a pool that picks per run cannot be read backwards for it.
+
+`@flow watch [<id>]` follows a run that is still going, from any pane. Every node's
+result is written the moment it lands, so the board it paints is the same board the
+running process is painting — including for a `--bg` run that has no terminal of its
+own.
+
+`@flow retry [<id>] <node>` runs one node again **and everything built on it**, and
+prints that set before anything starts. The cascade is the point: re-running `apply`
+while `verify` keeps the answer it derived from the old one is not a retry, it is a
+record that contradicts itself, where a downstream `{{apply.output}}` names text that
+no longer exists. What came *before* is exactly what a resume keeps.
 
 `examples/ai/flow.toml` is a commented tour of every field, including `run` and
 `approve` nodes, which the bundled five deliberately leave out — a default that shells

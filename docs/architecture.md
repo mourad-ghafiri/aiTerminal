@@ -70,7 +70,7 @@ The rules that keep an idle terminal at ~0% CPU and every input bounded:
 | `ai` | The engine: streaming `Client` over a `Transport` seam, the agent loop (`run_agent` + `ToolRunner`/`AgentObserver`), the context budget + compaction ladder (below), the `aiTerminal.md` instruction base, BM25 memory, MCP hub, model catalog + weighted pools (vision/document/thinking caps), redaction-aware context capture. Fully offline-testable (`MockTransport`/`ScriptedTransport`). |
 | `caps` | The native tool catalog agents call (fs/sys/web/memory/data/todo/task/…): a registry of `NativeObject`s, pure over `CapCtx` (policy + data dirs + the write sandbox = the invocation directory). |
 | `cli` | The headless subcommands: `ai` (Q&A / command / agent / flow / loop / job), `profile`, `plugin`, `config`, `theme`. This is what the `@`-commands invoke. |
-| `flow` | The `@flow` graph: the model + parser, the `when` language, the static verifier that proves a graph before it spends, and the diagram it draws. |
+| `flow` | The `@flow` graph: the model + parser, the `when` language, the static verifier that proves a graph before it spends, the Markdown+mermaid document it draws (`doc`), and the live board — one state machine, two interchangeable `View`s (`board/graph`, `board/list`). |
 | `plugin` | Declarative plugins: manifest parsing, the registry (aliases/abbr/completions/segments/security rules/snippets), the store. |
 | `security` | The command guard (allow/confirm/deny, regex over the in-house `re` engine) + scoped redaction. Deny wins. |
 | `config` | `~/.aiTerminal/config.toml` load/bootstrap/seeding + the profile overlay layering. |

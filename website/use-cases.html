@@ -161,10 +161,25 @@ Reproduced: rounding applied before the zero-check …</pre>
         <p>The <code>research</code> graph splits the question into sub-questions, researches each <em>at the same time</em>, then reports what the sources actually say — including where they disagree and what it could not establish.</p>
         <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> "Research LLM memory techniques"</span>
 <span class="a">▸ research</span> <span class="d">— the goal asks for sources and a comparison, not a code change</span>
-  <span class="g">✓</span> plan     <span class="d">@planner       3.1s</span>
-  ⠻ gather   <span class="d">@researcher ×n         × 5 items</span>
-  ○ compare  <span class="d">@researcher</span>
-  ○ report   <span class="d">@writer</span></pre>
+  <span class="d">4 nodes · 3 agents · 24 tools · 6 skills · 4 at a time</span>
+     <span class="g">✓</span> plan     <span class="d">@planner    claude-sonnet-5   3.1s  1.2k   ⚙2</span>
+  <span class="d">│</span>
+     ⠻ gather   <span class="d">@researcher claude-sonnet-5              × 5 items  ⚙ web.search</span>
+  <span class="d">│</span>
+     ○ compare  <span class="d">@researcher</span>
+  <span class="d">│</span>
+     ○ report   <span class="d">@writer</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🔬</span>Find out what one node actually did</h3>
+        <p>A run you can only read as a whole is a run you cannot debug. Every node's model, cost and transcript is written the moment it lands — so you can open one, follow a detached run from another pane, or run a single node again and take its downstream with it.</p>
+        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> nodes last</span>
+  <span class="g">✓</span> plan     <span class="d">done      @planner · claude-sonnet-5 · 4.2s · 9000 tokens · 3 tool call(s)</span>
+  <span class="g">✗</span> apply    <span class="d">failed    @coder · claude-opus-5 · ×2 · 12.3s · 4 tool call(s)</span>
+<span class="p">❯</span> <span class="ab">@flow</span><span class="c"> node last apply</span>   <span class="d">← its edges, its cost, and what it said</span>
+<span class="p">❯</span> <span class="ab">@flow</span><span class="c"> watch last</span>        <span class="d">← follow a --bg run from any pane</span>
+<span class="p">❯</span> <span class="ab">@flow</span><span class="c"> retry last apply</span>  <span class="d">← and everything built on it</span></pre>
       </div>
 
       <div class="uc">

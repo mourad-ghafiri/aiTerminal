@@ -1,0 +1,54 @@
+name = "a node's own record answers what it did, what it cost, and what decided it"
+tags = ["flow", "record"]
+
+# `@flow show` is the whole run and `@flow log` is one node's text. Between them sits
+# the question people actually ask when an answer looks wrong: what IS this node —
+# which agent, which model, how many attempts, what condition let it run, and what
+# depends on it. Every one of those is recorded the moment the node lands, which is
+# also what makes `@flow node` and `@flow retry` possible at all.
+
+[[step]]
+flow = """
+[[node]]
+id     = "map"
+agent  = "explorer"
+prompt = "Map it"
+
+[[node]]
+id    = "verify"
+run   = "cargo test"
+needs = ["map"]
+
+[[node]]
+id     = "fix"
+agent  = "coder"
+needs  = ["verify"]
+when   = "verify.failed"
+prompt = "Fix {{verify.output}}"
+
+[[node]]
+id     = "ship"
+agent  = "reviewer"
+needs  = ["verify"]
+when   = "verify.passed"
+final  = true
+prompt = "Write it up"
+"""
+
+[[step]]
+node_fails = ["verify"]
+
+[[step]]
+node_says = ["map: the map", "verify: 2 tests failed", "fix: patched"]
+
+[[step]]
+run = true
+
+# The branch that ran, and the branch that did not — each with its own reason, kept.
+[[step]]
+expect_states = ["map=done", "verify=failed", "fix=done", "ship=skipped"]
+
+# A failing node does not stop the branch that exists to handle it, and the record says
+# which condition made that call rather than leaving it to be inferred.
+[[step]]
+expect_asked = ["fix: Fix 2 tests failed"]

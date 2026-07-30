@@ -18,6 +18,7 @@
 //! difference between finding a typo now and finding it after three agent runs.
 
 pub(crate) mod board;
+pub(crate) mod doc;
 pub(crate) mod expr;
 pub(crate) mod pick;
 pub(crate) mod render;
@@ -146,6 +147,48 @@ impl Flow {
             .filter(|i| !self.nodes.iter().any(|n| n.needs.contains(&self.nodes[*i].id)))
             .next_back();
         leaf.or_else(|| self.nodes.len().checked_sub(1))
+    }
+
+    /// Everything that depends on `id`, however far down — `id` itself included.
+    ///
+    /// This is the set a re-run has to invalidate. Running one node again while the
+    /// nodes built on its old answer keep theirs is not a retry, it is a record that
+    /// disagrees with itself: `{{verify.output}}` in a downstream prompt would name
+    /// text that no longer exists anywhere. Returned in the graph's own order so the
+    /// caller can print it as the run will do it.
+    pub fn downstream(&self, id: &str) -> Vec<String> {
+        let Some(start) = self.index(id) else { return Vec::new() };
+        // Every "runs after" edge, in one direction. `needs` points from a dependency
+        // to its dependent; a `goto` points the other way — the node holding it sends
+        // the run BACK to its target, so that target runs again too.
+        let mut edges: Vec<(usize, usize)> = Vec::new();
+        for (i, node) in self.nodes.iter().enumerate() {
+            for dep in &node.needs {
+                if let Some(j) = self.index(dep) {
+                    edges.push((j, i));
+                }
+            }
+            if let Some(j) = node.goto.as_ref().and_then(|g| self.index(g)) {
+                edges.push((i, j));
+            }
+        }
+        let mut marked = vec![false; self.nodes.len()];
+        marked[start] = true;
+        // Relax until nothing new is reached. Bounded by the edge count, so a graph
+        // that somehow held a cycle settles instead of spinning.
+        for _ in 0..=edges.len() {
+            let mut moved = false;
+            for (from, to) in &edges {
+                if marked[*from] && !marked[*to] {
+                    marked[*to] = true;
+                    moved = true;
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
+        self.nodes.iter().zip(marked).filter(|(_, m)| *m).map(|(n, _)| n.id.clone()).collect()
     }
 }
 
@@ -485,6 +528,33 @@ prompt = "Summarise {{build.output}}"
         // With nothing marked, the last leaf wins — never an arbitrary middle node.
         let plain = parse("p", "[[node]]\nid=\"a\"\nrun=\"true\"\n\n[[node]]\nid=\"b\"\nrun=\"true\"\nneeds=[\"a\"]\n").unwrap();
         assert_eq!(plain.answer_node().map(|i| plain.nodes[i].id.clone()), Some("b".into()));
+    }
+
+    #[test]
+    fn running_one_node_again_takes_everything_built_on_it_with_it() {
+        // The cascade IS the feature. Re-running `build` while `verify` and `summary`
+        // keep the answers they derived from the OLD build is a record that contradicts
+        // itself: `{{build.output}}` downstream would name text that no longer exists.
+        let f = ship();
+        assert_eq!(f.downstream("build"), vec!["build", "verify", "fix", "summary"]);
+        // And nothing before it is touched — the whole point of resuming rather than
+        // starting over.
+        assert!(!f.downstream("build").contains(&"map".to_string()));
+        // A leaf takes only itself.
+        assert_eq!(f.downstream("summary"), vec!["summary"]);
+        // A `goto` points backwards, so re-running the fixer re-runs what it loops to,
+        // and therefore the rest of the loop.
+        assert_eq!(f.downstream("fix"), vec!["verify", "fix", "summary"]);
+        // A fan-out reaches every arm, and the join below them.
+        let diamond = parse(
+            "d",
+            "[[node]]\nid=\"a\"\nrun=\"true\"\n\n[[node]]\nid=\"l\"\nrun=\"true\"\nneeds=[\"a\"]\n\n[[node]]\nid=\"r\"\nrun=\"true\"\nneeds=[\"a\"]\n\n[[node]]\nid=\"j\"\nrun=\"true\"\nneeds=[\"l\",\"r\"]\n",
+        )
+        .unwrap();
+        assert_eq!(diamond.downstream("a"), vec!["a", "l", "r", "j"]);
+        assert_eq!(diamond.downstream("l"), vec!["l", "j"], "the other arm is untouched");
+        // A name that is not in the graph resets nothing at all.
+        assert!(diamond.downstream("nope").is_empty());
     }
 
     #[test]

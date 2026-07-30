@@ -74,8 +74,10 @@ impl Report {
 
 /// Names the `@flow` surface owns. A flow file called one of these could never be
 /// run, so it is refused where it can be explained rather than shadowed in silence.
-pub(crate) const RESERVED: &[&str] =
-    &["check", "graph", "show", "log", "logs", "runs", "resume", "clear", "help", "list"];
+pub(crate) const RESERVED: &[&str] = &[
+    "check", "graph", "draw", "show", "nodes", "node", "watch", "log", "logs", "runs", "resume", "continue", "retry",
+    "clear", "help", "list",
+];
 
 /// Beyond this many worst-case agent runs, a flow is worth a second look before it
 /// is launched unattended.

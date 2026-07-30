@@ -54,7 +54,7 @@ AI works for you.
 | `[md]` | `syntax` (highlight code fences), `image_max_rows`, `remote_images` (fetch `https://` images; off by default) — see [markdown.md](markdown.md) |
 | `[jobs]` | `max_concurrent` (jobs running at once), `keep_runs` (per-occurrence logs kept), `max_log_bytes` (cap per run log) — see [ai.md](ai.md#job--say-what-to-do-and-when) |
 | `[loop]` | `max`, `timeout`, `check_timeout`, `keep_runs`, `propose_check` (let the AI infer a verifier command) — see [ai.md](ai.md#loop--iterate-until-it-verifies) |
-| `[flow]` | `concurrency` (nodes in flight at once), `timeout`, `node_timeout`, `keep_runs`, `max_map` (the ceiling on a fan-out) — see [ai.md](ai.md#flow--a-workflow-declared-as-a-graph) |
+| `[flow]` | `concurrency` (nodes in flight at once), `timeout`, `node_timeout`, `keep_runs`, `max_map` (the ceiling on a fan-out), `view` (`graph` \| `list` — how a run is watched and drawn) — see [ai.md](ai.md#flow--a-workflow-declared-as-a-graph) |
 | `[plugins]` | `enabled`, `disabled = ["name", …]` |
 | `[shell]` | `integration` (master switch for injected aliases/snippets/colors) |
 | `[registry]` | `dir` — where the bundled `builtin/` lives (empty = auto-resolve) |

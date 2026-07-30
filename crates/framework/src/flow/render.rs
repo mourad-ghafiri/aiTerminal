@@ -88,11 +88,21 @@ fn brackets(node: &Node) -> (&'static str, &'static str) {
     }
 }
 
+/// What a node IS, in the few characters a label or an outline row can spare.
+fn what_of(node: &Node) -> String {
+    match &node.kind {
+        Kind::Agent { agent, .. } => format!("@{agent}"),
+        Kind::Run { command } => format!("$ {}", first_word_run(command.source())),
+        Kind::Approve { .. } => "asks you".into(),
+    }
+}
+
 fn label_for(node: &Node, run: Option<&Run>) -> String {
     let what = match &node.kind {
-        Kind::Agent { agent, .. } => format!("{} @{agent}", node.id),
-        Kind::Run { command } => format!("{} $ {}", node.id, first_word_run(command.source())),
+        // A decision shape already says "approve", so the label spends its width on
+        // the id and a question mark rather than repeating the shape in words.
         Kind::Approve { .. } => format!("{}?", node.id),
+        _ => format!("{} {}", node.id, what_of(node)),
     };
     let mut label = clip(&what, LABEL);
     // Marked with separators, not brackets: `escape` strips brackets out of labels
@@ -142,13 +152,40 @@ fn escape(s: &str) -> String {
     s.chars().map(|c| if "[]{}()|\"<>".contains(c) { ' ' } else { c }).collect::<String>().trim().to_string()
 }
 
-/// Draw the flow at `cols` wide.
+/// "5 nodes · 3 parallel · loops" — a flow's shape at a glance.
 ///
-/// A diagram that will not fit is not forced: `art` says so, and the outline below
-/// says the same thing in a shape that always fits. Showing someone raw mermaid
-/// source because their terminal is narrow would be the tool giving up.
-pub(crate) fn draw(flow: &Flow, run: Option<&Run>, cols: usize) -> Vec<String> {
-    corelib::mermaid::art(&mermaid(flow, run), cols.max(20)).unwrap_or_else(|| outline(flow, run))
+/// The parallelism reported is the parallelism you actually get: the widest set of
+/// nodes waiting on exactly the same thing, with branch alternatives excluded. The two
+/// arms of one verdict wait on the same node but only ever one of them runs, and
+/// counting them would promise a concurrency the graph cannot deliver.
+pub(crate) fn shape(flow: &Flow) -> String {
+    let n = flow.nodes.len();
+    let mut notes = Vec::new();
+    let widest = (0..flow.nodes.len())
+        .map(|i| {
+            (0..flow.nodes.len())
+                .filter(|&j| flow.nodes[j].needs == flow.nodes[i].needs && !crate::flow::verify::exclusive(flow, i, j))
+                .count()
+        })
+        .max()
+        .unwrap_or(0);
+    if widest > 1 {
+        notes.push(format!("{widest} parallel"));
+    }
+    if flow.nodes.iter().any(|x| x.goto.is_some()) {
+        notes.push("loops".into());
+    }
+    if flow.nodes.iter().any(|x| x.is_map()) {
+        notes.push("fans out".into());
+    }
+    if flow.nodes.iter().any(|x| matches!(x.kind, Kind::Approve { .. })) {
+        notes.push("asks you".into());
+    }
+    if notes.is_empty() {
+        format!("{n} nodes")
+    } else {
+        format!("{n} nodes \u{b7} {}", notes.join(" \u{b7} "))
+    }
 }
 
 /// The always-fits fallback: one line per node, dependencies named.
@@ -168,7 +205,10 @@ pub(crate) fn outline(flow: &Flow, run: Option<&Run>) -> Vec<String> {
                 Some(g) => format!("  then back to {g} (up to {}x)", node.max),
                 None => String::new(),
             };
-            format!("  {mark}{:<14} {}{after}{when}{back}", node.id, node.kind.word())
+            // What the node IS, not which of the three kinds it is: the diagram's
+            // labels say `@coder` and `$ cargo test`, and the outline stands in for the
+            // diagram — so it says the same thing, in the same width.
+            format!("  {mark}{:<14} {:<14}{after}{when}{back}", node.id, what_of(node))
         })
         .collect()
 }
@@ -328,22 +368,15 @@ prompt = "Ship it?"
     }
 
     #[test]
-    fn drawing_falls_back_to_an_outline_rather_than_showing_source() {
-        // Nobody's terminal is 20 columns, but if it were, showing raw mermaid would
-        // be the tool giving up. The outline says the same thing and always fits.
-        let rows = draw(&graph(), None, 20);
-        assert!(!rows.is_empty());
-        assert!(!rows.iter().any(|r| r.contains("flowchart")), "never raw source:\n{}", rows.join("\n"));
-        let wide = draw(&graph(), None, 120).join("\n");
-        assert!(wide.contains("map"), "and at a real width it is a diagram:\n{wide}");
-    }
-
-    #[test]
     fn the_outline_states_the_edges_conditions_and_the_loop() {
         let text = outline(&graph(), None).join("\n");
         assert!(text.contains("after map"), "{text}");
         assert!(text.contains("when verify.failed"), "{text}");
         assert!(text.contains("then back to verify (up to 3x)"), "{text}");
-        assert!(text.contains("approve"), "the kind of each node is named: {text}");
+        // It stands in for the diagram, so it says what the diagram's labels say —
+        // which agent, which command, which node is a question — rather than which of
+        // the three kinds each node is. The table beside it already has the kinds.
+        assert!(text.contains("@explorer") && text.contains("$ cargo test"), "{text}");
+        assert!(text.contains("asks you"), "an approval is named as one: {text}");
     }
 }

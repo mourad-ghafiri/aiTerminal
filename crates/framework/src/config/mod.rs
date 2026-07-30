@@ -135,6 +135,10 @@ pub struct Config {
     /// `[flow] max_map` — the hard ceiling on a `map` node's fan-out, so a list nobody
     /// bounded cannot turn into a thousand agent runs.
     pub flow_max_map: usize,
+    /// `[flow] view` — `graph` (the run drawn as the graph it is) or `list` (one dense
+    /// row per node). Anything else is read as `graph`: a misspelt setting should leave
+    /// you with the better picture, not the worse one.
+    pub flow_view: String,
     /// The primary-model pool: each `[[ai.model]]` table contributes one candidate
     /// (id + optional provider qualifier + weight + per-model overrides). Empty →
     /// the catalog's default model as a single-entry pool.
@@ -263,6 +267,7 @@ impl Default for Config {
             flow_node_timeout: 10 * 60,
             flow_keep_runs: 20,
             flow_max_map: 32,
+            flow_view: "graph".into(),
             md_remote_images: false,
             md_image_max_rows: 20,
             md_syntax: true,
@@ -863,6 +868,14 @@ impl Config {
             }
             if let Some(v) = f.get("max_map").and_then(|v| v.as_int()) {
                 c.flow_max_map = v.clamp(1, 256) as usize;
+            }
+            // `[flow] view = "graph"|"list"`. Only the two words this understands are
+            // taken; anything else leaves the default standing rather than turning a
+            // typo into a board nobody asked for.
+            if let Some(v) = f.get("view").and_then(|v| v.as_str()) {
+                if matches!(v.trim().to_ascii_lowercase().as_str(), "graph" | "list") {
+                    c.flow_view = v.trim().to_ascii_lowercase();
+                }
             }
         }
         if let Some(ai) = doc.get("ai") {

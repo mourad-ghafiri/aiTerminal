@@ -78,6 +78,10 @@ node_timeout = "10m"   # how long any single node may take before it is cut off
 keep_runs    = 20      # flow run records kept on disk
 max_map      = 32      # ceiling on a `map` node's fan-out, so a list nobody bounded
                        # cannot become a thousand agent runs
+view         = "graph" # how a run is watched and drawn. "graph" shows the shape — one
+                       # band per wave of work, so what runs together looks like it —
+                       # and "list" shows one dense row per node. `--view` overrides it
+                       # per command.
 
 # Custom keybindings — rebind any built-in action (snake_case; full list of action
 # names in docs/keybindings.md). Uncomment and add [[keybinding]] tables:

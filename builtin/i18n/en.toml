@@ -54,6 +54,8 @@ runs_header = "flow runs ({0}):"
 runs_hint = "one run:  @flow show <id>  ·  @flow log <id> [<node>] -f  ·  @flow resume <id>"
 cleared = "cleared {0} finished flow run(s)"
 resume_hint = "carry on where it stopped:  @flow resume {0}"
+node_hint = "one node:  @flow node {0} <node>  ·  its output:  @flow log {0} <node>  ·  run it again:  @flow retry {0} <node>"
+watching = "watching {0} — it repaints as each node lands"
 
 [theme]
 switched = "theme '{0}' applied to profile '{1}' — a running window restyles within a second"

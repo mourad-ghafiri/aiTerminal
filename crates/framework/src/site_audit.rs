@@ -84,7 +84,9 @@ const NEEDS_MODEL: [&str; 3] = ["@ai", "@loop", "@agent"];
 
 /// `@flow`/`@job` subcommands that run WITHOUT a model — everything else under them
 /// plans or runs an agent and is skipped.
-const OFFLINE_FLOW_SUBS: [&str; 5] = ["check", "graph", "show", "log", "resume"];
+/// `@flow` verbs that spend nothing, so the audit can actually run them. `watch` is
+/// deliberately absent: it follows a live run and would not return.
+const OFFLINE_FLOW_SUBS: [&str; 7] = ["check", "graph", "show", "nodes", "node", "log", "resume"];
 
 /// Split a claim into argv, or say why it is not run.
 fn classify(line: &str) -> Verdict {
@@ -193,8 +195,12 @@ fn expected_failure(line: &str) -> Option<&'static str> {
     if l.starts_with("@gate") && (l.contains("start") || l.contains("stop") || l.contains("only")) {
         return Some("gates ship off, so starting or stopping one declines until enabled");
     }
-    // Inspecting a flow run needs a previous run, which needs a model.
-    if l.starts_with("@flow") && ["show", "log", "resume"].iter().any(|s| l.contains(s)) {
+    // Inspecting a flow run needs a previous run, which needs a model. Matched on the
+    // SUBCOMMAND, not on the line: `contains` also fires on the explanatory comment
+    // beside the command ("# … what each node reaches"), which would list a claim that
+    // works perfectly well as one expected to fail.
+    let sub = l.strip_prefix("@flow ").and_then(|rest| rest.split_whitespace().next()).unwrap_or_default();
+    if ["show", "nodes", "node", "log", "resume", "retry"].contains(&sub) {
         return Some("inspects a previous flow run, which cannot exist without a model");
     }
     if l.contains("revieew") {

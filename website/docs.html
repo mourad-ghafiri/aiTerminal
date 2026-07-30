@@ -254,9 +254,10 @@ The fix: the parser dropped the final line …
     <h2 id="cmd-flow">@flow — a workflow declared as a graph</h2>
     <pre><code><span class="p">❯</span> @flow                            <span class="c"># the installed flows</span>
 <span class="p">❯</span> @flow check build                <span class="c"># prove it runs — no model needed, nothing spent</span>
-<span class="p">❯</span> @flow graph review               <span class="c"># draw it</span>
+<span class="p">❯</span> @flow graph review               <span class="c"># draw it, with what each node reaches</span>
 <span class="p">❯</span> @flow review "this branch"       <span class="c"># three reviewers, at the same time</span>
 <span class="p">❯</span> @flow build --bg "add a --json flag"
+<span class="p">❯</span> @flow nodes last                 <span class="c"># every node of a run, side by side</span>
 <span class="p">❯</span> @flow resume last                <span class="c"># run only what did not finish</span></code></pre>
     <p>Five flows ship, and none of them names a build tool, a test command or a language —
       <code>@tester</code> finds the project's own runner, which is what makes them yours rather
@@ -310,10 +311,24 @@ max    = 3</code></pre>
       a command the guard would refuse. A node cannot read <code>{{other.output}}</code> unless
       <code>other</code> is ordered ahead of it — otherwise what it reads depends on which thread
       finished first, and that is a race, not a workflow.</p>
-    <p><b>And the graph is something you look at.</b> <code>@flow graph</code> draws it with the
-      same native diagram renderer <code>@md</code> uses; <code>@flow show &lt;id&gt;</code> draws the
-      same picture again after a run, with each node's real outcome, cost and duration on it.</p>
+    <h3>The graph is a document, not just a picture</h3>
+    <p><code>@flow graph</code> builds a <b>Markdown document</b> — a heading, the diagram as a
+      <code>mermaid</code> fence, and a table of the facts — and hands it to the renderer
+      <code>@md</code> already uses. So inside aiTerminal the diagram is drawn by the same GPU
+      renderer that draws every other diagram, and in a pipe it degrades to box art and a plain
+      table. Neither is a special case; both fall out of it being ordinary Markdown.</p>
+    <p>A picture answers "what runs after what" and nothing else. The questions people arrive with
+      are <i>which agent is behind that box</i>, <i>what can it reach</i>, and <i>what is the
+      condition on that arrow</i> — so those are the columns.</p>
     <pre><code><span class="p">❯</span> @flow graph review
+
+review
+────────────────────────────────────────────────────────────
+
+Map the code, review it three ways in parallel, then merge into one verdict
+
+<span class="c">5 nodes · 3 parallel · 20m · 4 at a time · needs an input</span>
+
 
                              ┌───────────────┐
                              │ map @explorer │
@@ -329,7 +344,20 @@ max    = 3</code></pre>
                                      ▼
                             ┌────────┴─────────┐
                             │ report @reviewer │
-                            └──────────────────┘</code></pre>
+                            └──────────────────┘
+
+╭─────────────┬───────────┬──────┬────────────────────╮
+│ node        │ runs      │ when │ reaches            │
+├─────────────┼───────────┼──────┼────────────────────┤
+│ map         │ @explorer │ —    │ 7 tools · 1 skill  │
+│ correctness │ @reviewer │ —    │ 7 tools · 5 skills │
+│ security    │ @reviewer │ —    │ 7 tools · 5 skills │
+│ design      │ @reviewer │ —    │ 7 tools · 5 skills │
+│ report      │ @reviewer │ —    │ 7 tools · 5 skills │
+╰─────────────┴───────────┴──────┴────────────────────╯</code></pre>
+    <p><code>@flow show &lt;id&gt;</code> prints the same document after a run, with each node's real
+      state, model and cost written over it. A window too narrow to draw the diagram in gets the
+      outline instead — never raw diagram syntax.</p>
     <p><b>Every node is written down, so a run can be picked back up.</b> Each result lands in
       <code>ai/flow-runs/&lt;id&gt;/</code> the moment it happens, and <code>@flow resume</code>
       replays the finished nodes from disk — a six-node flow that died at node five costs one node
@@ -351,22 +379,64 @@ max    = 3</code></pre>
     <h3>Watching it run</h3>
     <p>A chain can narrate itself; a graph cannot. Four nodes start together and finish in whatever
       order they finish, so a stream of start/done lines hides the most useful thing about the run.
-      Every node gets <b>one line that stays where it is</b>, repainted in place.</p>
+      Every node gets <b>one line that stays where it is</b>, repainted in place — and the lines are
+      grouped into <b>bands</b>, one per wave of work, so what runs together looks like it.</p>
     <pre><code><span class="a">▸ build · add a --json flag to the export command</span>
-  <span class="g">✓</span> plan         <span class="c">@planner        4.2s   3.1k</span>
-  <span class="g">✓</span> explore      <span class="c">@explorer       8.1s   9.4k</span>
-  <span class="g">✓</span> conventions  <span class="c">@explorer       7.6s   8.8k</span>
-  ⠻ apply        <span class="c">@coder         12.3s          ⚙ fs.edit src/cli.rs · 12ms · 1.4KB</span>
-  ○ verify       <span class="c">@tester</span>
-  ○ fix          <span class="c">@coder                        when verify.output contains "VERDICT…</span>
-  ○ review       <span class="c">@reviewer</span>
-  ○ summary      <span class="c">@writer</span>
+  <span class="c">8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time</span>
+     <span class="g">✓</span> plan         <span class="c">@planner     claude-sonnet-5    4.2s  3.1k   ⚙3</span>
+  <span class="c">│</span>
+  <span class="c">├─</span> <span class="g">✓</span> explore      <span class="c">@explorer    claude-sonnet-5    8.1s  9.4k  ⚙12</span>
+  <span class="c">└─</span> <span class="g">✓</span> conventions  <span class="c">@explorer    claude-sonnet-5    7.6s  8.8k   ⚙9</span>
+  <span class="c">│</span>
+     <span class="a">⠻ apply</span>        <span class="c">@coder       claude-opus-5     12.3s  2.1k   ⚙4  fs.edit src/cli.rs</span>
+  <span class="c">│</span>
+     ○ verify       <span class="c">@tester</span>
+  <span class="c">│</span>
+  <span class="c">├─</span> ○ fix          <span class="c">@coder                     when verify.output contains "VERDICT…</span>
+  <span class="c">└─</span> ○ review       <span class="c">@reviewer                  when verify.output contains "VERDICT…</span>
+  <span class="c">│</span>
+     ○ summary      <span class="c">@writer</span>
   <span class="c">3/8 done · 1 running · 21.3k tokens · 24.6s</span></code></pre>
-    <p>A waiting node shows the condition it is waiting on, a running one shows the tool it is in
-      right now, and a retry is the same line with <code>×2</code> rather than a second line. Off a
-      terminal — <code>--bg</code>, a pipe, CI — the same state machine prints
-      <code>[node] event</code> lines instead: nothing is overwritten, and the attribution a plain
-      stream could never give is still there.</p>
+    <p>The first line is what the whole run can reach. Every row carries the agent, the model
+      actually serving it, its wall clock, its tokens and its tool calls — and the <b>running node
+      pulses</b> in the theme's accent, while finished nodes are its green, failed ones its red and
+      parked ones its amber. All five of the theme's semantic colours, so the board restyles with
+      everything else. A waiting node shows the condition holding it and the backward edge it loops
+      to; a retry is the same line with <code>×2</code> rather than a second line.</p>
+    <p>Columns give way rather than wrap as the window narrows: the model first, then the tool
+      count, then the note. The node and its state never do.</p>
+    <p><b>Two views.</b> <code>[flow] view = "list"</code> — or <code>--view list</code> for one
+      command — puts every node back on a single dense row in file order, with no band joins. It is
+      the shortest board that can exist, which is what a twenty-node flow in a six-line split wants.
+      Off a terminal — <code>--bg</code>, a pipe, CI — neither view applies: the same state machine
+      prints <code>[node] event</code> lines instead, nothing is overwritten, and the attribution a
+      plain stream could never give is still there.</p>
+
+    <h3>Node control</h3>
+    <p><code>show</code> is the whole run and <code>log</code> is one node's text. Between them sits
+      the question people actually ask when an answer looks wrong — <i>what is this node</i>.</p>
+    <pre><code><span class="p">❯</span> @flow nodes last
+<span class="r">✗</span> 900-1 failed · flow 'build'
+  <span class="g">✓</span> plan         done      <span class="c">@planner · claude-sonnet-5 · 4.2s · 9000 tokens · 3 tool call(s)</span>
+  <span class="g">✓</span> explore      done      <span class="c">@explorer · claude-sonnet-5 · 8.1s · 6900 tokens · 12 tool call(s)</span>
+  <span class="r">✗</span> apply        failed    <span class="c">@coder · claude-opus-5 · ×2 · 12.3s · 4 tool call(s)</span>
+  ⊘ verify       blocked
+  · review       skipped
+
+  <span class="c">left to do apply, fix, summary</span></code></pre>
+    <div class="table-wrap"><table>
+      <tr><th>Command</th><th>What it does</th></tr>
+      <tr><td><code>@flow nodes [&lt;id&gt;]</code></td><td>every node of a run, side by side: state, agent, model, attempts, time, tokens, tool calls, exit</td></tr>
+      <tr><td><code>@flow node [&lt;id&gt;] &lt;node&gt;</code></td><td>one node in full — its edges and condition, then what it was asked and what it answered, rendered as the Markdown it is</td></tr>
+      <tr><td><code>@flow watch [&lt;id&gt;]</code></td><td>follow a run that is still going, from any pane — including a <code>--bg</code> run with no terminal of its own</td></tr>
+      <tr><td><code>@flow retry [&lt;id&gt;] &lt;node&gt;</code></td><td>run one node again <b>and everything built on it</b>, printed before anything starts</td></tr>
+    </table></div>
+    <p>Which model served a node is a fact the record has to keep: a pool that picks per run cannot
+      be read backwards for it. And the cascade in <code>retry</code> is the point — re-running
+      <code>apply</code> while <code>verify</code> keeps the answer it derived from the old one is
+      not a retry, it is a record that contradicts itself, where a downstream
+      <code>{{apply.output}}</code> names text that no longer exists. What came <i>before</i> is
+      exactly what a resume keeps.</p>
 
     <h2 id="cmd-loop">@loop — iterate until it verifies</h2>
     <pre><code><span class="p">❯</span> @loop "make the config tests pass"
@@ -884,7 +954,7 @@ confirm_quit       = <span class="s">true</span></code></pre>
       <tr><td><code>[gates]</code></td><td><code>enabled</code> · <code>require_pairing</code> · <code>plain_text</code> = run|ignore · <code>screenshot</code> = document|photo · <code>max_reply_messages</code> · <code>idle_timeout_minutes</code> — then a <code>[gates.&lt;channel&gt;]</code> table (<code>token</code> · <code>allow</code>), last</td></tr>
       <tr><td><code>[jobs]</code></td><td><code>max_concurrent</code> · <code>keep_runs</code> · <code>max_log_bytes</code></td></tr>
       <tr><td><code>[loop]</code></td><td><code>max</code> · <code>timeout</code> · <code>check_timeout</code> · <code>keep_runs</code> · <code>propose_check</code> (let the AI infer a verifier command)</td></tr>
-      <tr><td><code>[flow]</code></td><td><code>concurrency</code> (nodes in flight at once) · <code>timeout</code> · <code>node_timeout</code> · <code>keep_runs</code> · <code>max_map</code> (the ceiling on a fan-out)</td></tr>
+      <tr><td><code>[flow]</code></td><td><code>concurrency</code> (nodes in flight at once) · <code>timeout</code> · <code>node_timeout</code> · <code>keep_runs</code> · <code>max_map</code> (the ceiling on a fan-out) · <code>view</code> (<code>graph</code> | <code>list</code> — how a run is watched and drawn)</td></tr>
       <tr><td><code>[md]</code></td><td><code>syntax</code> · <code>image_max_rows</code> · <code>remote_images</code></td></tr>
       <tr><td><code>[plugins]</code></td><td><code>enabled</code> · <code>disabled = [...]</code></td></tr>
       <tr><td><code>[shell]</code></td><td><code>integration</code></td></tr>

@@ -45,6 +45,8 @@ runs_header = "exécutions de flux ({0}) :"
 runs_hint = "une exécution :  @flow show <id>  ·  @flow log <id> [<nœud>] -f  ·  @flow resume <id>"
 cleared = "{0} exécution(s) de flux terminée(s) supprimée(s)"
 resume_hint = "reprendre là où elle s'est arrêtée :  @flow resume {0}"
+node_hint = "un nœud :  @flow node {0} <nœud>  ·  sa sortie :  @flow log {0} <nœud>  ·  le relancer :  @flow retry {0} <nœud>"
+watching = "suivi de {0} — l'affichage se met à jour à chaque nœud terminé"
 
 [theme]
 switched = "thème '{0}' appliqué au profil '{1}' — une fenêtre ouverte se restyle en une seconde"

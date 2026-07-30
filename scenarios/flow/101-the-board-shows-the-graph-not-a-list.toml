@@ -1,0 +1,52 @@
+name = "the board draws the graph: nodes that run together sit together"
+tags = ["flow", "ui"]
+
+# The whole reason to declare a graph rather than a chain is that independent work
+# overlaps. A flat list of rows throws that away — three reviews and a summary read as
+# four things in a queue. So the board groups nodes into bands by how deep they sit in
+# the dependency graph: one band is one wave, everything in it starts at the same time,
+# and the fork in the gutter says so without anyone having to read the file.
+
+[[step]]
+flow = """
+[[node]]
+id     = "map"
+agent  = "explorer"
+prompt = "Map it"
+
+[[node]]
+id     = "correctness"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "Correctness of {{map.output}}"
+
+[[node]]
+id     = "security"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "Security of {{map.output}}"
+
+[[node]]
+id     = "report"
+agent  = "reviewer"
+needs  = ["correctness", "security"]
+when   = "correctness.passed"
+final  = true
+prompt = "Merge {{correctness.output}} and {{security.output}}"
+"""
+
+# Before anything runs: the shape is already on screen, the capability surface is
+# stated, and the node that is waiting says what it is waiting on.
+[[step]]
+expect_graph_view_contains = ["4 nodes", "2 agents", "├─ ", "└─ ", "when correctness.passed", "0/4 done"]
+
+[[step]]
+node_says = ["map: the map", "correctness: looks right", "security: no leaks", "report: agreed"]
+
+[[step]]
+run = true
+
+# And after: the same lines, in the same places, carrying what each one cost. A node's
+# row never moves — that is what makes a repainting board readable at all.
+[[step]]
+expect_graph_view_contains = ["✓ map", "✓ correctness", "✓ security", "✓ report", "4/4 done"]

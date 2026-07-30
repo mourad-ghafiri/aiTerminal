@@ -85,6 +85,12 @@ impl NodeState {
 pub(crate) struct NodeRun {
     pub id: String,
     pub state: NodeState,
+    /// The agent that ran this node, and the model that actually served it — the two
+    /// facts a record could not answer afterwards. "Which model wrote this" is the
+    /// first question anyone asks of a node whose answer looks wrong, and a pool that
+    /// picks per run means the config cannot be read backwards for it.
+    pub agent: String,
+    pub model: String,
     /// A command node's exit status.
     pub exit: Option<i64>,
     /// An approve node's answer.
@@ -232,6 +238,11 @@ pub(crate) fn write(id: &str, run: &Run) {
                 ("attempts".into(), Toml::Int(n.attempts as i64)),
                 ("output".into(), Toml::Str(clip(&n.output))),
             ];
+            for (key, value) in [("agent", &n.agent), ("model", &n.model)] {
+                if !value.is_empty() {
+                    t.push((key.into(), Toml::Str(value.clone())));
+                }
+            }
             if let Some(e) = n.exit {
                 t.push(("exit".into(), Toml::Int(e)));
             }
@@ -270,6 +281,8 @@ pub(crate) fn read(id: &str) -> Option<Run> {
             NodeRun {
                 id: n.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
                 state: NodeState::read(n.get("state").and_then(|v| v.as_str()).unwrap_or_default()),
+                agent: n.get("agent").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                model: n.get("model").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
                 exit: n.get("exit").and_then(|v| v.as_int()),
                 approved: n.get("approved").and_then(|v| v.as_bool()).unwrap_or(false),
                 input_tokens: i("input_tokens") as u64,
@@ -383,6 +396,8 @@ mod tests {
         run.nodes[0] = NodeRun {
             id: "map".into(),
             state: NodeState::Done,
+            agent: "explorer".into(),
+            model: "claude-sonnet-5".into(),
             exit: None,
             approved: false,
             input_tokens: 8100,
@@ -401,6 +416,12 @@ mod tests {
         assert_eq!(back.nodes.len(), 3);
         assert_eq!(back.node("map").unwrap().output, "the map");
         assert_eq!(back.node("map").unwrap().attempts, 2, "retries and loop turns are counted");
+        // Which agent ran it and which model served it. A pool that picks per run
+        // means the config cannot be read backwards for the second one — if the record
+        // does not keep it, "which model wrote this" has no answer at all.
+        assert_eq!(back.node("map").unwrap().agent, "explorer");
+        assert_eq!(back.node("map").unwrap().model, "claude-sonnet-5");
+        assert_eq!(back.node("verify").unwrap().model, "", "a command node has no model, and claims none");
         assert_eq!(back.node("verify").unwrap().exit, Some(1), "a command's exit status survives");
         assert_eq!(back.tokens(), (8100, 2400));
         assert_eq!(back.tools(), 7);
