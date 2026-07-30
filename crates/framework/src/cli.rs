@@ -2298,14 +2298,48 @@ fn flow_log(id: &str, node: Option<&str>, follow: bool) -> i32 {
         },
     };
     let Some(path) = run.node_log(&wanted) else {
-        let names: Vec<&str> = run.nodes.iter().map(|n| n.id.as_str()).collect();
-        eprintln!("aiTerminal: run {} has no output for node '{wanted}'{}", run.id, crate::flow::verify::nearest(&wanted, &names));
-        eprintln!("  nodes: {}", names.join(", "));
+        for line in no_output_message(&run, &wanted) {
+            eprintln!("{line}");
+        }
         return 2;
     };
     let id = run.id.clone();
     let alive = || matches!(crate::flowruns::read(&id), Some(r) if r.is_live());
     tail_log(&path, follow, &alive)
+}
+
+/// The stderr lines for a node the run has no log for — the two cases kept apart.
+///
+/// A node that EXISTS but has no log did not fail to be found: it did not run, and the
+/// record already says why. Suggesting the name back ("no output for node 'b' — did you
+/// mean 'b'?") is the tool answering a question nobody asked, so `nearest` is reserved
+/// for a name that genuinely is not in the graph.
+fn no_output_message(run: &crate::flowruns::Run, wanted: &str) -> Vec<String> {
+    match run.node(wanted) {
+        Some(node) => {
+            let why = match node.state {
+                crate::flowruns::NodeState::Skipped => "its condition was false",
+                crate::flowruns::NodeState::Blocked => "something it needed failed",
+                crate::flowruns::NodeState::Waiting => "it is waiting for an answer",
+                _ => "it has not run yet",
+            };
+            vec![
+                format!("aiTerminal: node '{wanted}' produced no output \u{2014} {why}"),
+                format!("  {}", crate::i18n::translate("flow.resume_hint", &[run.id.clone()])),
+            ]
+        }
+        None => {
+            let names: Vec<&str> = run.nodes.iter().map(|n| n.id.as_str()).collect();
+            vec![
+                format!(
+                    "aiTerminal: run {} has no node '{wanted}'{}",
+                    run.id,
+                    crate::flow::verify::nearest(wanted, &names)
+                ),
+                format!("  nodes: {}", names.join(", ")),
+            ]
+        }
+    }
 }
 
 fn resolved_run(id: &str) -> Option<crate::flowruns::Run> {
@@ -6324,6 +6358,56 @@ mod tests {
         assert_eq!(super::parse_job_args(&a(&["cancel"])), JobCmd::Cancel("last".into()));
         assert_eq!(super::parse_job_args(&a(&["show", "17-3"])), JobCmd::Show("17-3".into()));
         assert_eq!(super::parse_job_args(&a(&["log"])), JobCmd::Log { id: "last".into(), follow: false });
+    }
+
+    #[test]
+    fn a_node_with_no_log_is_told_why_not_suggested_back_to_itself() {
+        // `@flow log last b` on a node that WAS skipped used to answer
+        //   run … has no output for node 'b' — did you mean 'b'?
+        // The node is 'b'. It ran the only way a skipped node can: not at all, because
+        // its edge condition was false — which is the one thing the message should say.
+        use crate::flowruns::{NodeRun, NodeState, Run};
+        let node = |id: &str, state: NodeState| NodeRun { id: id.into(), state, ..Default::default() };
+        let run = Run {
+            id: "1785371201-90257".into(),
+            flow: "review".into(),
+            input: String::new(),
+            status: "done".into(),
+            cwd: String::new(),
+            started: 0,
+            finished: None,
+            pid: 0,
+            timeout: 0,
+            budget: None,
+            concurrency: 1,
+            nodes: vec![
+                node("a", NodeState::Done),
+                node("b", NodeState::Skipped),
+                node("c", NodeState::Blocked),
+                node("d", NodeState::Waiting),
+                node("e", NodeState::Pending),
+            ],
+        };
+
+        // A node that exists is explained, never suggested back to itself.
+        for (id, why) in [
+            ("b", "its condition was false"),
+            ("c", "something it needed failed"),
+            ("d", "it is waiting for an answer"),
+            ("e", "it has not run yet"),
+        ] {
+            let msg = super::no_output_message(&run, id).join("\n");
+            assert!(msg.contains(why), "node '{id}' should say {why:?}, said: {msg}");
+            assert!(!msg.contains("did you mean"), "node '{id}' suggested a name: {msg}");
+            assert!(msg.contains(&format!("node '{id}' produced no output")), "{msg}");
+        }
+
+        // A name that genuinely is not in the graph still gets the suggestion — that is
+        // the case `nearest` was for.
+        let msg = super::no_output_message(&run, "bb").join("\n");
+        assert!(msg.contains("has no node 'bb'"), "{msg}");
+        assert!(msg.contains("did you mean 'b'"), "a real typo should be corrected: {msg}");
+        assert!(msg.contains("nodes: a, b, c, d, e"), "{msg}");
     }
 
     #[test]
