@@ -459,6 +459,18 @@ impl PluginRegistry {
     pub fn names(&self) -> Vec<String> {
         self.entries.iter().map(|e| e.manifest.name.clone()).collect()
     }
+
+    /// Every loaded plugin as `(name, version, description, trusted)`.
+    ///
+    /// The bundled plugins load from the registry root, not from the user's plugins
+    /// directory — so a listing built only from that directory reports "(none)" while
+    /// thirty-one of them are running.
+    pub fn loaded(&self) -> Vec<(String, String, String, bool)> {
+        self.entries
+            .iter()
+            .map(|e| (e.manifest.name.clone(), e.manifest.version.clone(), e.manifest.description.clone(), e.trusted))
+            .collect()
+    }
     pub fn set_enabled(&mut self, name: &str, on: bool) -> bool {
         match self.entries.iter_mut().find(|e| e.manifest.name == name) {
             Some(e) => {

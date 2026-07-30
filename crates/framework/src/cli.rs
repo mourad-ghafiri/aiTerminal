@@ -5221,18 +5221,27 @@ pub fn plugin(args: &[String]) -> i32 {
     let sub = args.first().map(String::as_str).unwrap_or("list");
     match sub {
         "list" => {
-            // Every plugin is loaded dynamically from ~/.aiTerminal/plugins/;
-            // nothing is built into the binary. Install by copying a plugin folder
-            // into the plugins dir.
+            // Both sources, because both are running. The bundled plugins load from the
+            // registry root and the installed ones from `~/.aiTerminal/plugins/` — listing
+            // only the second printed "(none)" on a fresh machine while thirty-one were
+            // active, which reads as "you have no plugins".
+            let cfg = crate::config::Config::load();
+            let registry = crate::plugin::load_registry(&cfg);
             let installed = store.installed();
-            println!("plugins in {} ({}):", crate::config::Config::plugins_dir().display(), installed.len());
-            if installed.is_empty() {
-                println!("  (none) — copy a plugin folder into the plugins dir");
+            let names: Vec<String> = installed.iter().map(|p| p.name.clone()).collect();
+            let bundled: Vec<(String, String, String, bool)> =
+                registry.loaded().into_iter().filter(|(n, _, _, _)| !names.contains(n)).collect();
+            println!("plugins ({} bundled · {} installed):", bundled.len(), installed.len());
+            for (name, version, description, _) in &bundled {
+                println!("  \u{25CF} {name:<18} {version:<8} {description}");
             }
-            for p in installed {
-                let mark = if p.enabled { "●" } else { "○" };
-                println!("  {mark} {:<16} {:<8} {}", p.name, p.version, p.description);
+            for p in &installed {
+                let mark = if p.enabled { "\u{25CF}" } else { "\u{25CB}" };
+                println!("  {mark} {:<18} {:<8} {}  (installed)", p.name, p.version, p.description);
             }
+            let (dim, r) = (muted(), reset());
+            println!("\n{dim}bundled plugins live in the app; yours go in {}{r}", crate::config::Config::plugins_dir().display());
+            println!("{dim}one in full:  @plugin info <name>   \u{b7}  turn one off:  @plugin disable <name>{r}");
             0
         }
         "install" => match args.get(1) {
@@ -5285,14 +5294,29 @@ pub fn plugin(args: &[String]) -> i32 {
             }
         },
         "info" => match args.get(1) {
+            // Installed first (yours shadows a bundled one of the same name), then the
+            // bundled set — `info git` used to say "not installed" about a plugin that was
+            // loaded and working.
             Some(name) => match store.installed().into_iter().find(|p| &p.name == name) {
                 Some(p) => {
-                    println!("{}  v{}\n{}\nenabled: {}", p.name, p.version, p.description, p.enabled);
+                    println!("{}  v{}\n{}\ninstalled \u{b7} enabled: {}", p.name, p.version, p.description, p.enabled);
                     0
                 }
                 None => {
-                    eprintln!("plugin '{name}' not installed");
-                    1
+                    let cfg = crate::config::Config::load();
+                    let registry = crate::plugin::load_registry(&cfg);
+                    match registry.loaded().into_iter().find(|(n, _, _, _)| n == name) {
+                        Some((n, v, d, _)) => {
+                            println!("{n}  v{v}\n{d}\nbundled with the app \u{b7} enabled: {}", store.is_enabled(&n));
+                            0
+                        }
+                        None => {
+                            let all: Vec<String> = registry.names();
+                            let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+                            eprintln!("no plugin '{name}'{}", crate::flow::verify::nearest(name, &refs));
+                            1
+                        }
+                    }
                 }
             },
             None => {
