@@ -357,6 +357,30 @@ fn zsh_abbr_block(abbrs: &[(String, String)]) -> String {
     s
 }
 
+/// Where the user's *own* zsh config lives — never our generated directory.
+///
+/// This is the whole bug, and it only bites when the app is launched from inside one of
+/// its own shells, which is exactly what happens all day while developing it. We set
+/// `ZDOTDIR` to our directory for every shell we spawn; reading `ZDOTDIR` back as "the
+/// user's real one" therefore yields *ours*, and the generated files go on to source
+/// themselves without end.
+///
+/// So: trust an inherited `TT_REAL_ZDOTDIR` first (it is what a parent already worked
+/// out), fall back to `ZDOTDIR`, and reject either the moment it names our own tree.
+/// Idempotent at any nesting depth, because the answer can only ever be a directory that
+/// is not `zdir`.
+fn real_zdotdir(zdir: &Path) -> String {
+    let ours = |p: &str| {
+        let p = Path::new(p);
+        p == zdir || p.starts_with(zdir)
+    };
+    ["TT_REAL_ZDOTDIR", "ZDOTDIR"]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok())
+        .find(|v| !v.trim().is_empty() && !ours(v))
+        .unwrap_or_else(home)
+}
+
 // ===== zsh =================================================================
 
 struct Zsh;
@@ -367,15 +391,31 @@ impl Dialect for Zsh {
         let _ = std::fs::create_dir_all(&zdir);
         let integ = zdir.join("integration.zsh");
         // Chain the user's real config (sourced from $TT_REAL_ZDOTDIR), then ours.
+        //
+        // The `!=` is not paranoia. If `TT_REAL_ZDOTDIR` ever names THIS directory, each
+        // of these files sources itself, forever — zsh reports it as "job table full or
+        // recursion limit exceeded", in every pane, and the shell never starts. The Rust
+        // side below makes that unreachable; this guard makes a file already written with
+        // the old value stop recursing the moment it is read, without waiting to be
+        // regenerated.
         let header = header();
-        let chain = |hook: &str| format!("[ -r \"${{TT_REAL_ZDOTDIR}}/{hook}\" ] && source \"${{TT_REAL_ZDOTDIR}}/{hook}\"\n");
-        let _ = std::fs::write(zdir.join(".zshenv"), format!("{header}{}", chain(".zshenv")));
-        let _ = std::fs::write(zdir.join(".zprofile"), format!("{header}{}", chain(".zprofile")));
-        let _ = std::fs::write(zdir.join(".zlogin"), format!("{header}{}", chain(".zlogin")));
+        let own = sh_squote(&zdir.to_string_lossy());
+        let guard = format!("TT_OWN_ZDOTDIR={own}\n: \"${{TT_REAL_ZDOTDIR:=$HOME}}\"\n");
+        // An `if` rather than `[ … ] && source`, so the file's exit status is 0 when there
+        // is nothing to chain. The old form returned 1 whenever the user had no such file,
+        // which makes `source .zshenv && …` fail for a reason that is not a failure.
+        let chain = |hook: &str| {
+            format!(
+                "if [ \"$TT_REAL_ZDOTDIR\" != \"$TT_OWN_ZDOTDIR\" ] && [ -r \"$TT_REAL_ZDOTDIR/{hook}\" ]; then\n  source \"$TT_REAL_ZDOTDIR/{hook}\"\nfi\n"
+            )
+        };
+        let _ = std::fs::write(zdir.join(".zshenv"), format!("{header}{guard}{}", chain(".zshenv")));
+        let _ = std::fs::write(zdir.join(".zprofile"), format!("{header}{guard}{}", chain(".zprofile")));
+        let _ = std::fs::write(zdir.join(".zlogin"), format!("{header}{guard}{}", chain(".zlogin")));
         // .zshrc: snapshot the default PROMPT (so the prompt plugin can avoid clobbering
         // a custom one), source the user's, then our integration.
         let zshrc = format!(
-            "{header}__tt_prompt_default=\"$PROMPT\"\n{}source {}\n",
+            "{header}{guard}__tt_prompt_default=\"$PROMPT\"\n{}source {}\n",
             chain(".zshrc"),
             sh_squote(&integ.to_string_lossy()),
         );
@@ -384,9 +424,11 @@ impl Dialect for Zsh {
             platform::warn!("failed to write zsh integration {}: {e}", integ.display());
         }
 
-        let real = std::env::var("ZDOTDIR").ok().filter(|s| !s.is_empty()).unwrap_or_else(home);
         ShellSpawn {
-            env: vec![("ZDOTDIR".into(), zdir.to_string_lossy().into_owned()), ("TT_REAL_ZDOTDIR".into(), real)],
+            env: vec![
+                ("ZDOTDIR".into(), zdir.to_string_lossy().into_owned()),
+                ("TT_REAL_ZDOTDIR".into(), real_zdotdir(&zdir)),
+            ],
             args: Vec::new(),
             login: true,
         }
@@ -541,6 +583,91 @@ mod tests {
 
     fn ctx(aliases: Vec<(String, String)>, snippets: Vec<(String, String)>) -> Integration {
         Integration { aliases, abbrs: Vec::new(), completions: Vec::new(), snippets }
+    }
+
+    /// A scratch dir that behaves like `<home>/.aiTerminal/shell`.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("tt-shell-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn our_own_directory_is_never_mistaken_for_the_users() {
+        // The bug: we set ZDOTDIR to our directory for every shell we spawn, so launching
+        // the app from inside one of its own shells made `ZDOTDIR` — and therefore
+        // `TT_REAL_ZDOTDIR` — point at us. Each generated file then sourced itself.
+        let zdir = scratch("real").join("zsh");
+        std::fs::create_dir_all(&zdir).unwrap();
+
+        // Inherited ZDOTDIR is ours → fall back to $HOME, never to ourselves.
+        std::env::set_var("ZDOTDIR", zdir.to_string_lossy().to_string());
+        std::env::remove_var("TT_REAL_ZDOTDIR");
+        assert_eq!(real_zdotdir(&zdir), home(), "ours must be refused");
+        // …and so is anything nested inside it.
+        std::env::set_var("ZDOTDIR", zdir.join("deeper").to_string_lossy().to_string());
+        assert_eq!(real_zdotdir(&zdir), home());
+
+        // A genuine user ZDOTDIR is respected.
+        std::env::set_var("ZDOTDIR", "/Users/somebody/dotfiles");
+        assert_eq!(real_zdotdir(&zdir), "/Users/somebody/dotfiles");
+
+        // An inherited TT_REAL_ZDOTDIR wins — a parent already worked it out.
+        std::env::set_var("TT_REAL_ZDOTDIR", "/Users/somebody/elsewhere");
+        assert_eq!(real_zdotdir(&zdir), "/Users/somebody/elsewhere");
+        // Unless it too was poisoned, in which case it is refused like any other.
+        std::env::set_var("TT_REAL_ZDOTDIR", zdir.to_string_lossy().to_string());
+        assert_eq!(real_zdotdir(&zdir), "/Users/somebody/dotfiles", "falls through to ZDOTDIR");
+
+        // Empty is not an answer.
+        std::env::set_var("TT_REAL_ZDOTDIR", "");
+        std::env::set_var("ZDOTDIR", "  ");
+        assert_eq!(real_zdotdir(&zdir), home());
+        std::env::remove_var("ZDOTDIR");
+        std::env::remove_var("TT_REAL_ZDOTDIR");
+    }
+
+    #[test]
+    fn a_generated_file_refuses_to_source_itself() {
+        // Belt and braces: the guard lives in the file too, so a copy written with the old
+        // value stops recursing when it is read rather than when it is regenerated.
+        let dir = scratch("guard");
+        Zsh.prepare(&dir, &ctx(Vec::new(), Vec::new()));
+        let zdir = dir.join("zsh");
+        for hook in [".zshenv", ".zprofile", ".zlogin", ".zshrc"] {
+            let text = std::fs::read_to_string(zdir.join(hook)).unwrap();
+            assert!(text.contains("TT_OWN_ZDOTDIR="), "{hook} knows its own directory");
+            assert!(
+                text.contains("if [ \"$TT_REAL_ZDOTDIR\" != \"$TT_OWN_ZDOTDIR\" ]"),
+                "{hook} guards the chain: {text}"
+            );
+        }
+    }
+
+    /// The reproducer, in a real shell: point `TT_REAL_ZDOTDIR` at the generated directory
+    /// itself and source `.zshenv`. Before the guard this printed "job table full or
+    /// recursion limit exceeded" until zsh gave up.
+    #[test]
+    fn sourcing_a_generated_file_terminates_even_when_pointed_at_itself() {
+        if !std::path::Path::new("/bin/zsh").exists() {
+            return; // nothing to prove without zsh
+        }
+        let dir = scratch("recurse");
+        Zsh.prepare(&dir, &ctx(Vec::new(), Vec::new()));
+        let zdir = dir.join("zsh");
+        let out = std::process::Command::new("/bin/zsh")
+            .arg("-c")
+            .arg(format!("source {}/.zshenv && echo OK", zdir.display()))
+            .env("TT_REAL_ZDOTDIR", &zdir)
+            .env("ZDOTDIR", &zdir)
+            .env("HOME", &dir)
+            .output()
+            .expect("zsh runs");
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(!text.contains("recursion limit"), "it recursed: {text}");
+        assert!(!text.contains("job table full"), "it recursed: {text}");
+        assert!(text.contains("OK"), "it did not finish: {text}");
     }
 
     #[test]
