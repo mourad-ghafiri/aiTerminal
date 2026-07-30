@@ -5402,6 +5402,14 @@ pub fn plugin(args: &[String]) -> i32 {
         "enable" | "disable" => match args.get(1) {
             Some(name) => {
                 let on = sub == "enable";
+                // The name has to name a real plugin. `set_enabled` just writes the
+                // config list, so `@plugin enable nosuchplugin` cheerfully reported
+                // success for a plugin that has never existed — and the typo sat in
+                // `[plugins] disabled` doing nothing for as long as it took to notice.
+                if let Some(err) = unknown_plugin(&store, name) {
+                    eprintln!("{err}");
+                    return 1;
+                }
                 match store.set_enabled(name, on) {
                     Ok(()) => {
                         println!("{} plugin '{name}'", if on { "enabled" } else { "disabled" });
@@ -5424,7 +5432,15 @@ pub fn plugin(args: &[String]) -> i32 {
                 0
             }
             Some(name) => {
-                eprintln!("plugin '{name}' not found");
+                // A bundled plugin is not missing — it lives in the app bundle and
+                // cannot be deleted, only turned off. Saying "not found" about `git`,
+                // which is loaded and working, sent people looking for the wrong thing.
+                match unknown_plugin(&store, name) {
+                    Some(err) => eprintln!("{err}"),
+                    None => eprintln!(
+                        "plugin '{name}' ships with the app \u{2014} it cannot be removed, only turned off:  @plugin disable {name}"
+                    ),
+                }
                 1
             }
             None => {
@@ -5468,6 +5484,21 @@ pub fn plugin(args: &[String]) -> i32 {
             1
         }
     }
+}
+
+/// `Some(message)` when `name` is neither installed nor bundled — the one check the
+/// mutating plugin subcommands share, so they can never disagree about what exists.
+fn unknown_plugin(store: &crate::plugin::store::PluginStore, name: &str) -> Option<String> {
+    if store.installed().iter().any(|p| p.name == name) {
+        return None;
+    }
+    let registry = crate::plugin::load_registry(&crate::config::Config::load());
+    if registry.loaded().iter().any(|(n, ..)| n == name) {
+        return None;
+    }
+    let all: Vec<String> = registry.names();
+    let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+    Some(format!("no plugin '{name}'{}", crate::flow::verify::nearest(name, &refs)))
 }
 
 /// `aiTerminal config [path]` — show config location + current values.
@@ -5515,7 +5546,17 @@ pub fn theme(args: &[String]) -> i32 {
                 eprintln!("usage: aiTerminal theme export <name>");
                 return 2;
             };
-            print!("{}", crate::config::Config::resolve_theme(name).to_toml());
+            // The name has to EXIST. `resolve_theme` falls back to midnight, which is
+            // the right thing for a config naming a theme somebody deleted — the window
+            // must still open — and the wrong thing here: `@theme export typo` printed a
+            // complete, valid Midnight and exited 0, so you saved it, edited it, and
+            // wondered why your theme was not your theme.
+            let available = crate::config::Config::user_theme_names();
+            let Some(canonical) = available.iter().find(|n| n.eq_ignore_ascii_case(name)) else {
+                eprintln!("{}", crate::i18n::translate("theme.unknown", &[name.to_string(), available.join(", ")]));
+                return 2;
+            };
+            print!("{}", crate::config::Config::resolve_theme(canonical).to_toml());
             return 0;
         }
         // `theme <name>` (or `theme set <name>`) — switch the active profile's theme.
@@ -6331,6 +6372,42 @@ mod tests {
         // An unknown name is rejected with the available list, and changes nothing.
         assert_eq!(super::theme_set("no-such-theme"), 2);
         assert_eq!(crate::config::Config::load().theme, "graphite");
+    }
+
+    #[test]
+    fn exporting_a_theme_that_does_not_exist_is_refused_not_substituted() {
+        // `@theme export typo` printed a complete, valid MIDNIGHT and exited 0, because
+        // `resolve_theme` falls back — which is right for a config naming a deleted theme
+        // (the window must still open) and wrong here. People saved that file, edited it,
+        // and could not work out why their theme was not their theme.
+        let (_h, _home) = crate::test_home::lock_home("cli-theme-export");
+        crate::config::Config::ensure_default();
+
+        let t = |args: &[&str]| super::theme(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(t(&["export", "no-such-theme"]), 2, "an unknown name is an error");
+        assert_eq!(t(&["export", "nebula"]), 0, "a real one still exports");
+        // Case-insensitive, like every other theme lookup.
+        assert_eq!(t(&["export", "Nebula"]), 0);
+        assert_eq!(t(&["export"]), 2, "and the usage still guards a missing name");
+    }
+
+    #[test]
+    fn a_plugin_subcommand_refuses_a_name_that_is_not_a_plugin() {
+        // `@plugin enable nosuchplugin` reported success and wrote the typo into the
+        // config list, where it sat doing nothing. And `@plugin remove git` said "not
+        // found" about a plugin that was loaded and working — it is bundled, which is a
+        // different thing entirely and points somewhere else to look.
+        let (_h, _home) = crate::test_home::lock_home("cli-plugin-names");
+        crate::config::Config::ensure_default();
+        let store = crate::plugin::store::PluginStore::open_default().expect("store");
+
+        assert!(super::unknown_plugin(&store, "definitely-not-a-plugin").is_some());
+        assert!(
+            super::unknown_plugin(&store, "definitely-not-a-plugin").unwrap().contains("no plugin"),
+            "it says what is wrong"
+        );
+        // A bundled plugin is known, so enable/disable/remove all treat it as real.
+        assert_eq!(super::unknown_plugin(&store, "git"), None, "bundled plugins exist");
     }
 
     #[test]
