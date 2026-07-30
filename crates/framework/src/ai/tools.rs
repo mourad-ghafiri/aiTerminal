@@ -19,7 +19,7 @@ pub const DEFAULT_SAFE_TOOLS: &[&str] = &[
 pub const DEFAULT_CODER_TOOLS: &[&str] = &[
     "fs.read", "fs.list", "fs.stat", "fs.glob", "fs.search", "fs.write", "fs.mkdir", "fs.edit", "fs.delete", "fs.copy",
     "fs.move", "fs.append", "sys.run", "web.read", "sec.check_command",
-    "memory.search", "memory.get", "memory.add", "memory.update", "memory.forget",
+    "memory.search", "memory.get", "memory.add", "memory.update", "memory.forget", "memory.link",
     "data.query", "data.get", "data.count", "data.insert", "data.update", "data.delete",
     "queue.push", "queue.pop", "http.get", "http.post", "time.now", "codec.json_parse",
     "todo.set", "todo.add", "todo.done", "todo.list", "task.run",

@@ -24,11 +24,18 @@ pub struct Bm25Retriever {
     pub salience_weight: f32,
     /// Per-day decay of the recency factor since the entry was last touched/recalled.
     pub recency_decay: f32,
+    /// Boost per query term that exactly matches one of the entry's TAGS.
+    ///
+    /// A tag is a deliberate act — somebody decided this note is about `release` —
+    /// while the same word in a body may be an aside. BM25 cannot tell the two apart,
+    /// because `searchable()` hands it one flat bag of words. This is where that
+    /// distinction is put back.
+    pub tag_boost: f32,
 }
 
 impl Default for Bm25Retriever {
     fn default() -> Self {
-        Bm25Retriever { k1: 1.2, b: 0.75, salience_weight: 0.5, recency_decay: 0.03 }
+        Bm25Retriever { k1: 1.2, b: 0.75, salience_weight: 0.5, recency_decay: 0.03, tag_boost: 0.35 }
     }
 }
 
@@ -70,7 +77,18 @@ impl Retriever for Bm25Retriever {
                 continue;
             }
             let e = &entries[i];
-            let factor = (1.0 + self.salience_weight * e.salience.max(0.0)) * recency(e.updated, now, self.recency_decay);
+            // An exact tag hit is worth more than the same word appearing in prose.
+            let tag_hits = e
+                .tags
+                .iter()
+                .filter(|t| {
+                    let t = t.trim().to_lowercase();
+                    !t.is_empty() && q_uniq.contains(t.as_str())
+                })
+                .count() as f32;
+            let factor = (1.0 + self.salience_weight * e.salience.max(0.0))
+                * (1.0 + self.tag_boost * tag_hits)
+                * recency(e.updated, now, self.recency_decay);
             scored.push((i, bm * factor));
         }
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));

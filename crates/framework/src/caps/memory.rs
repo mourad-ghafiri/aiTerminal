@@ -25,6 +25,7 @@ const SPECS: &[MethodSpec] = &[
     MethodSpec { method: "memory.list", describe: "List all memories" },
     MethodSpec { method: "memory.update", describe: "Edit a memory" },
     MethodSpec { method: "memory.forget", describe: "Delete a memory" },
+    MethodSpec { method: "memory.link", describe: "Relate two memories (args: from, to)" },
     MethodSpec { method: "memory.consolidate", describe: "Merge + prune memories" },
     MethodSpec { method: "memory.stats", describe: "Memory store stats" },
 ];
@@ -91,6 +92,17 @@ impl NativeObject for MemoryObj {
                     Ok(Json::Bool(true))
                 } else {
                     Err(format!("no memory '{id}'"))
+                }
+            }
+            "memory.link" => {
+                let (from, to) = (arg("from"), arg("to"));
+                if from.is_empty() || to.is_empty() {
+                    return Err("memory.link needs `from=` and `to=`".into());
+                }
+                if svc.link(from, to) {
+                    Ok(Json::Bool(true))
+                } else {
+                    Err(format!("cannot link '{from}' to '{to}' \u{2014} check both ids exist and differ"))
                 }
             }
             "memory.consolidate" => {

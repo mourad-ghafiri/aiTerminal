@@ -25,6 +25,11 @@ use corelib::wire::{Frontmatter, Json, Toml};
 /// the closest of these, defaulting to `fact`.
 pub const KINDS: &[&str] = &["fact", "preference", "decision", "task", "reference"];
 
+/// Token overlap at which two memories are the same memory. ONE constant, used by
+/// both `add` (refuse to write the duplicate) and `consolidate` (merge the ones
+/// already written), so the two can never disagree about what a duplicate is.
+const DEDUP_SIMILARITY: f32 = 0.8;
+
 /// One memory: a typed, tagged note with a salience + recency record for ranking.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MemoryEntry {
@@ -37,12 +42,16 @@ pub struct MemoryEntry {
     /// Last write / reinforcement — the recency clock the ranker decays from.
     pub updated: u64,
     pub recalls: u32,
+    /// Ids of related memories. Recall follows these one hop, so retrieving a
+    /// decision brings the note it depends on — the reason it was made rarely shares
+    /// enough words with the question to rank on its own.
+    pub links: Vec<String>,
     pub body: String,
 }
 
 impl MemoryEntry {
     pub fn new(id: String, kind: String, tags: Vec<String>, body: String, now: u64) -> Self {
-        MemoryEntry { id, kind, tags, salience: 1.0, created: now, updated: now, recalls: 0, body }
+        MemoryEntry { id, kind, tags, salience: 1.0, created: now, updated: now, recalls: 0, links: Vec::new(), body }
     }
 
     /// The text the retriever indexes: body + tags + kind (so a tag match also scores).
@@ -62,10 +71,10 @@ impl MemoryEntry {
 
     /// Serialize as a frontmatter `.md` document.
     fn to_markdown(&self) -> String {
-        let tags = self.tags.iter().map(|t| format!("\"{}\"", t.replace('"', "'"))).collect::<Vec<_>>().join(", ");
+        let quoted = |v: &Vec<String>| v.iter().map(|t| format!("\"{}\"", t.replace('"', "'"))).collect::<Vec<_>>().join(", ");
         format!(
-            "---\nkind = \"{}\"\ntags = [{}]\nsalience = {}\ncreated = {}\nupdated = {}\nrecalls = {}\n---\n{}\n",
-            self.kind, tags, self.salience, self.created, self.updated, self.recalls, self.body.trim()
+            "---\nkind = \"{}\"\ntags = [{}]\nsalience = {}\ncreated = {}\nupdated = {}\nrecalls = {}\nlinks = [{}]\n---\n{}\n",
+            self.kind, quoted(&self.tags), self.salience, self.created, self.updated, self.recalls, quoted(&self.links), self.body.trim()
         )
     }
 
@@ -73,11 +82,22 @@ impl MemoryEntry {
     fn parse(id: &str, text: &str) -> MemoryEntry {
         let fm = Frontmatter::parse(text);
         let h = &fm.header;
-        let tags = h
-            .get("tags")
-            .and_then(Toml::as_array)
-            .map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
-            .unwrap_or_default();
+        let strings = |key: &str| -> Vec<String> {
+            h.get(key)
+                .and_then(Toml::as_array)
+                .map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
+                .unwrap_or_default()
+        };
+        let tags = strings("tags");
+        // `links = [...]` is authoritative; `[[id]]` in the body is the human way to
+        // write the same thing, so both are read and merged. Someone editing a memory
+        // by hand should not have to keep two lists in step.
+        let mut links = strings("links");
+        for id in body_links(&fm.body) {
+            if !links.contains(&id) {
+                links.push(id);
+            }
+        }
         MemoryEntry {
             id: id.to_string(),
             kind: normalize_kind(h.get("kind").and_then(Toml::as_str).unwrap_or("fact")).to_string(),
@@ -86,6 +106,7 @@ impl MemoryEntry {
             created: h.get("created").and_then(Toml::as_int).unwrap_or(0) as u64,
             updated: h.get("updated").and_then(Toml::as_int).unwrap_or(0) as u64,
             recalls: h.get("recalls").and_then(Toml::as_int).unwrap_or(0) as u32,
+            links,
             body: fm.body.trim().to_string(),
         }
     }
@@ -100,6 +121,7 @@ impl MemoryEntry {
             ("created".into(), Json::Num(self.created as f64)),
             ("updated".into(), Json::Num(self.updated as f64)),
             ("recalls".into(), Json::Num(self.recalls as f64)),
+            ("links".into(), Json::Arr(self.links.iter().map(|l| Json::Str(l.clone())).collect())),
             ("preview".into(), Json::Str(self.preview())),
             ("body".into(), Json::Str(self.body.clone())),
         ])
@@ -241,11 +263,60 @@ impl MemoryService {
         v
     }
 
-    /// Add a new memory (to the write dir). Returns the stored entry.
+    /// Add a memory — or, when the store already holds one saying the same thing,
+    /// **reinforce that one instead**.
+    ///
+    /// An agent re-learns the same fact constantly: it reads a config, saves what it
+    /// found, and does it again next run. Writing a second near-identical file made
+    /// both rank and both get recalled, so the model paid twice to be told one thing,
+    /// and the corpus grew without gaining anything. `consolidate` cleaned it up
+    /// eventually — but only if someone ran it.
+    ///
+    /// Reinforcing is also more truthful about what happened: learning a fact twice
+    /// is evidence the fact matters, which is exactly what salience records.
     pub fn add(&self, kind: &str, tags: Vec<String>, body: &str) -> std::io::Result<MemoryEntry> {
-        let e = MemoryEntry::new(make_id(body), normalize_kind(kind).to_string(), tags, body.to_string(), now_unix());
+        if let Some((dir, mut existing)) = self.near_duplicate(body) {
+            for t in tags {
+                if !existing.tags.contains(&t) {
+                    existing.tags.push(t);
+                }
+            }
+            existing.salience = (existing.salience + 0.3).min(5.0);
+            existing.updated = now_unix();
+            MemoryStore::save(&dir, &existing)?;
+            return Ok(existing);
+        }
+        let mut e = MemoryEntry::new(make_id(body), normalize_kind(kind).to_string(), tags, body.to_string(), now_unix());
+        e.links = body_links(body);
         MemoryStore::save(&self.write_dir, &e)?;
         Ok(e)
+    }
+
+    /// The stored memory that already says what `body` says, if there is one. The same
+    /// token-overlap measure `consolidate` merges on, so "would be merged later" and
+    /// "is not written now" can never disagree.
+    fn near_duplicate(&self, body: &str) -> Option<(PathBuf, MemoryEntry)> {
+        self.load_all().iter().find(|(_, e)| jaccard(&e.body, body) >= DEDUP_SIMILARITY).cloned()
+    }
+
+    /// Link `from` to `to` (both directions — a relation nobody can follow backwards
+    /// is half a relation). Returns whether both ids exist.
+    pub fn link(&self, from: &str, to: &str) -> bool {
+        if from == to {
+            return false;
+        }
+        let (Some((from_dir, mut a)), Some((to_dir, mut b))) = (self.find(from), self.find(to)) else {
+            return false;
+        };
+        if !a.links.contains(&b.id) {
+            a.links.push(b.id.clone());
+            let _ = MemoryStore::save(&from_dir, &a);
+        }
+        if !b.links.contains(&a.id) {
+            b.links.push(a.id.clone());
+            let _ = MemoryStore::save(&to_dir, &b);
+        }
+        true
     }
 
     /// Rank memories against `query`, returning the top `k` `(entry, score)` — READ-ONLY.
@@ -256,13 +327,34 @@ impl MemoryService {
         ranked.into_iter().take(k).map(|(i, s)| (all[i].clone(), s)).collect()
     }
 
-    /// The top `k` memories relevant to `context`, filtered to strong matches — for
-    /// auto-recall injection. READ-ONLY (never churns disk).
+    /// The top `k` memories relevant to `context`, filtered to strong matches, plus
+    /// one hop along their links — for auto-recall injection. READ-ONLY (never churns
+    /// disk).
+    ///
+    /// The hop is the point of links: a decision ranks because it shares words with
+    /// the question, while the reason it was made usually does not. Following the
+    /// relation retrieves what lexical matching structurally cannot.
     pub fn recall(&self, context: &str, k: usize) -> Vec<MemoryEntry> {
         let hits = self.search(context, k.max(1) * 2);
         let Some((_, top)) = hits.first() else { return Vec::new() };
         let floor = (top * 0.35).max(0.15);
-        hits.into_iter().filter(|(_, s)| *s >= floor).take(k).map(|(e, _)| e).collect()
+        let direct: Vec<MemoryEntry> = hits.into_iter().filter(|(_, s)| *s >= floor).take(k).map(|(e, _)| e).collect();
+
+        // One hop only. Two would pull in most of a well-linked store, which is the
+        // opposite of what a budgeted context needs.
+        let have: HashSet<String> = direct.iter().map(|e| e.id.clone()).collect();
+        let wanted: Vec<String> = direct.iter().flat_map(|e| e.links.iter().cloned()).filter(|id| !have.contains(id)).collect();
+        if wanted.is_empty() {
+            return direct;
+        }
+        let all = self.load_all();
+        let mut out = direct;
+        for id in wanted {
+            if let Some((_, e)) = all.iter().find(|(_, e)| e.id == id) {
+                out.push(e.clone());
+            }
+        }
+        out
     }
 
     fn find(&self, id: &str) -> Option<(PathBuf, MemoryEntry)> {
@@ -323,7 +415,7 @@ impl MemoryService {
                 if drop.contains(&j) {
                     continue;
                 }
-                if jaccard(&all[i].1.searchable(), &all[j].1.searchable()) >= 0.8 {
+                if jaccard(&all[i].1.searchable(), &all[j].1.searchable()) >= DEDUP_SIMILARITY {
                     // keep the higher-salience entry, forget the other
                     let (keep, lose) = if all[i].1.salience >= all[j].1.salience { (i, j) } else { (j, i) };
                     MemoryStore::remove(&all[lose].0, &all[lose].1.id);
@@ -366,6 +458,23 @@ impl MemoryService {
             ("by_kind".into(), Json::Obj(by_kind.into_iter().map(|(k, v)| (k, Json::Num(v as f64))).collect())),
         ])
     }
+}
+
+/// The `[[id]]` references written in a memory's body — the human way to link one
+/// note to another, the same notation a wiki uses.
+fn body_links(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = body;
+    while let Some(open) = rest.find("[[") {
+        let after = &rest[open + 2..];
+        let Some(close) = after.find("]]") else { break };
+        let id = sanitize(after[..close].trim());
+        if !id.is_empty() && !out.contains(&id) {
+            out.push(id);
+        }
+        rest = &after[close + 2..];
+    }
+    out
 }
 
 /// Normalize a free-form kind to one of [`KINDS`] (default `fact`).
@@ -459,6 +568,90 @@ mod tests {
     }
 
     #[test]
+    fn learning_a_fact_twice_reinforces_it_instead_of_writing_it_twice() {
+        // An agent re-learns the same thing constantly — it reads a config, saves what
+        // it found, and does it again next run. Two files both ranked, so the model
+        // paid twice to be told one thing.
+        let (s, dir) = svc();
+        let first = s.add("fact", vec!["deploy".into()], "Deploys go through `make ship`, never push to main").unwrap();
+        let again = s.add("decision", vec!["ci".into()], "Deploys go through `make ship` and never push to main").unwrap();
+
+        assert_eq!(again.id, first.id, "the same fact is one memory");
+        assert_eq!(s.list().len(), 1, "no near-duplicate file was written");
+        assert!(again.salience > first.salience, "learning it twice is evidence it matters");
+        assert!(again.tags.contains(&"deploy".to_string()) && again.tags.contains(&"ci".to_string()), "tags merge: {:?}", again.tags);
+
+        // A genuinely different fact is still a new memory.
+        let other = s.add("fact", vec![], "The staging database resets every Sunday").unwrap();
+        assert_ne!(other.id, first.id);
+        assert_eq!(s.list().len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recall_follows_links_one_hop() {
+        // A decision ranks because it shares words with the question; the reason it was
+        // made usually does not. Following the relation retrieves what lexical
+        // matching structurally cannot.
+        let (s, dir) = svc();
+        let decision = s.add("decision", vec!["deploy".into()], "Deploys go through `make ship`").unwrap();
+        let why = s.add("fact", vec![], "Direct pushes skipped the migration step and corrupted two tenants").unwrap();
+        assert!(s.link(&decision.id, &why.id));
+
+        let recalled = s.recall("how do we deploy", 3);
+        assert!(recalled.iter().any(|m| m.id == decision.id), "the decision ranks on its own words");
+        assert!(recalled.iter().any(|m| m.id == why.id), "and brings its reason, which shares no query words");
+
+        // The relation is followable in both directions.
+        assert!(s.get(&why.id).unwrap().links.contains(&decision.id));
+        // Linking is refused when an id is wrong, rather than silently doing nothing.
+        assert!(!s.link(&decision.id, "no-such-id"));
+        assert!(!s.link(&decision.id, &decision.id), "a memory cannot link to itself");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn links_survive_the_file_and_can_be_written_by_hand() {
+        let (s, dir) = svc();
+        let a = s.add("fact", vec![], "the first note").unwrap();
+        let b = s.add("fact", vec![], "a completely unrelated second note").unwrap();
+        s.link(&a.id, &b.id);
+        // Round-trips through the frontmatter.
+        assert!(s.get(&a.id).unwrap().links.contains(&b.id));
+
+        // And someone editing the file by hand can write `[[id]]` in the body instead
+        // of maintaining the frontmatter list.
+        let hand_written = format!("---\nkind = \"fact\"\n---\nSee [[{}]] for the reason.\n", b.id);
+        std::fs::write(dir.join("hand-written.md"), hand_written).unwrap();
+        let parsed = MemoryService::with_dirs(dir.clone(), vec![dir.clone()])
+            .list()
+            .into_iter()
+            .find(|e| e.id == "hand-written")
+            .expect("the hand-written note loaded");
+        assert!(parsed.links.contains(&b.id), "a [[link]] in the body counts: {:?}", parsed.links);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_exact_tag_beats_the_same_word_in_prose() {
+        // A tag is a deliberate act; the same word in a body may be an aside. BM25
+        // alone cannot tell them apart, because it sees one flat bag of words.
+        // Same word, same number of times, in bodies of the same length — the ONLY
+        // difference is that somebody tagged one of them.
+        let (s, dir) = svc();
+        let tagged = s.add("fact", vec!["release".into()], "We cut a release from a dated branch").unwrap();
+        let untagged = s.add("fact", vec![], "Ada brought cake to the release party").unwrap();
+        let hits = s.search("release", 5);
+        let rank = |id: &str| hits.iter().position(|(e, _)| e.id == id).expect("both matched");
+        assert!(
+            rank(&tagged.id) < rank(&untagged.id),
+            "the deliberately tagged note wins: {:?}",
+            hits.iter().map(|(e, s)| (&e.body, s)).collect::<Vec<_>>()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn forget_removes() {
         let (s, dir) = svc();
         let e = s.add("fact", vec![], "ephemeral note").unwrap();
@@ -470,10 +663,19 @@ mod tests {
 
     #[test]
     fn consolidate_merges_duplicates() {
+        // `add` now refuses to write a near-duplicate, so duplicates only reach the
+        // store the other ways: a file written by hand, or a note that predates the
+        // check. That is still `consolidate`'s job, and this is now the honest fixture
+        // for it — going through `add` twice would silently test nothing.
         let (s, dir) = svc();
         s.add("fact", vec![], "Deploy runs on push to the main branch").unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        s.add("fact", vec![], "Deploy runs on push to the main branch").unwrap();
+        std::fs::write(
+            dir.join("hand-written-copy.md"),
+            "---\nkind = \"fact\"\n---\nDeploy runs on push to the main branch\n",
+        )
+        .unwrap();
+        assert_eq!(s.list().len(), 2, "two files really are on disk");
+
         let (merged, _pruned) = s.consolidate();
         assert!(merged >= 1, "near-duplicate merged");
         assert_eq!(s.list().len(), 1, "one survives");
