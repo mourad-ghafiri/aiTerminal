@@ -16,6 +16,10 @@ truth — they always match the binary); your dir holds third-party installs and
 disables. Manage with `@plugin list|install|enable|disable|remove|info`, or
 `[plugins] disabled = [...]` in config.
 
+`@plugin list` shows **both** — the bundled plugins and your installed ones — because
+both are running (`plugins (31 bundled · 0 installed):`). A bundled plugin cannot be
+removed, only disabled; `@plugin info <name>` says which kind it is.
+
 ## What a manifest can declare
 
 | Table | What it does |

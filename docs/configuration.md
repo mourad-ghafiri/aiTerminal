@@ -3,6 +3,14 @@
 Everything is TOML — there is no settings UI. Inspect with `@config`, edit the file,
 reload live with `Cmd+,` (or restart).
 
+```text
+❯ @config       # the EFFECTIVE settings — after the active profile's overlay
+❯ @config path  # the config file's path:  $EDITOR "$(@config path)"
+```
+
+`@config` prints the effective value, so it is the quickest way to find out whether
+a profile overlay is overriding what you think it is.
+
 ## `~/.aiTerminal/` layout
 
 ```text
@@ -91,6 +99,7 @@ tabs/splits. Manage them entirely from the prompt:
 
 ```text
 ❯ @profile                           # list — ● marks the active one
+❯ @profile current                   # the active id, one word (for scripts)
 ❯ @profile create "Work" 💼
 ❯ @profile work                      # switch directly (by id or name) — live in ~1 s
 ❯ @profile edit [work]               # open its config overlay in $EDITOR;

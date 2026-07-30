@@ -13,7 +13,12 @@ in the window (chrome, panes, status bar, switcher) and the shell (prompt colors
 ❯ @theme nord            # switch the CURRENT profile's theme — the window
                          # restyles live within a second
 ❯ @theme export midnight # print a theme's COMPLETE normalized TOML
+❯ @theme path            # print the themes directory
 ```
+
+`@theme export` resolves every token, so it is a complete, correct starting point
+for your own theme rather than a blank page:
+`@theme export nebula > ~/.aiTerminal/themes/mine.toml`.
 
 `@theme <name>` writes the active profile's config overlay, so every profile
 keeps its own look (`@profile switch` restyles accordingly). The window follows

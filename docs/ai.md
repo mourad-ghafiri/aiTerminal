@@ -124,10 +124,20 @@ max_steps = 40
 You are a careful senior engineer. …
 ```
 
-- Agents live in `~/.aiTerminal/ai/agents/<name>.md`; bundled: `coder`,
-  `explorer`, `reviewer`, `tester`, `ai`.
+- Agents live in `~/.aiTerminal/ai/agents/<name>.md`; **8 bundled**: `ai`,
+  `coder`, `explorer`, `planner`, `researcher`, `reviewer`, `tester`, `writer`.
+  `@agent` lists them, `@agent <name>` shows one in full — tools, skills, steps.
 - **Skills** (`ai/skills/*.md`) and **prompts** (`ai/prompts/*.md`) are reusable
-  Markdown blocks spliced into an agent's system prompt by name.
+  Markdown blocks spliced into an agent's system prompt by name, **in the order
+  the agent declared them** — so the list reads as a priority, and the same agent
+  always builds a byte-identical prompt. **12 skills** ship: `code-review`,
+  `concise`, `debugging`, `git`, `orchestration`, `planning`, `refactoring`,
+  `research`, `security-review`, `testing`, `verification`, `writing`.
+- An agent file is **validated**: a tool it names must exist in the capability
+  registry, a skill or prompt it names must be installed, its description must be
+  non-empty and `max_steps` sane. `@agent` marks a file that fails with `⚠` and
+  `@agent <name>` lists the problems — rather than running it with a silently
+  weaker prompt.
 - **`~/.aiTerminal/ai/aiTerminal.md`** is the global instructions file — prepended
   to every agent's system prompt and every `@ai` request, so your durable
   preferences shape every run.
