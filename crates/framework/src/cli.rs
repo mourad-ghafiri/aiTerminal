@@ -1568,7 +1568,19 @@ impl CliToolRunner {
             return Err("task.run: sub-agents may not delegate further".into());
         }
         let tasks = parse_delegation(args)?;
-        eprintln!("  \u{2514} task.run \u{2192} {} sub-agent(s): {}", tasks.len(), tasks.iter().map(|(a, _)| format!("@{a}")).collect::<Vec<_>>().join(" "));
+        // Through the SAME sink as every other tool trace. A bare `eprintln!` here
+        // wrote straight into the middle of a `@flow` board's painted region — the
+        // board then erased the wrong rows, because its line count no longer matched
+        // what was on screen.
+        let line = format!(
+            "\u{2514} task.run \u{2192} {} sub-agent(s): {}",
+            tasks.len(),
+            tasks.iter().map(|(a, _)| format!("@{a}")).collect::<Vec<_>>().join(" ")
+        );
+        match &self.trace {
+            Some(sink) => sink.tool(&line),
+            None => eprintln!("  {line}"),
+        }
 
         let handles: Vec<std::thread::JoinHandle<(String, String)>> = tasks
             .into_iter()
