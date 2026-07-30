@@ -52,7 +52,10 @@
     <a href="#cmd-job">@job</a>
     <a href="#cmd-md">@md</a>
     <a href="#cmd-gate">@gate</a>
-    <a href="#cmd-manage">@profile · @theme · @config · @plugin</a>
+    <a href="#cmd-profile">@profile</a>
+    <a href="#cmd-theme">@theme</a>
+    <a href="#cmd-config">@config</a>
+    <a href="#cmd-plugin">@plugin</a>
     <a href="#exit-codes">Exit codes</a>
     <b>The terminal</b>
     <a href="#tabs">Tabs, splits &amp; switcher</a>
@@ -435,38 +438,110 @@ background jobs (3):
       neither running nor scheduled.</p>
 
     <h2 id="cmd-md">@md — read &amp; live-edit Markdown</h2>
-    <pre><code><span class="p">❯</span> @md render README.md                                      <span class="c"># pretty-print (native diagrams)</span>
-<span class="p">❯</span> @md edit notes.md                                         <span class="c"># live split editor</span>
-┌ notes.md ● (42L) ───────────────┬─────────────────────────────┐
-│ 1 # Release plan                │ Release plan                 │
-│ 2                               │ ────────────                 │
-│ 3 - cut the branch              │  • cut the branch            │
-│ 4                               │                              │
-│ 5 ```mermaid                    │  ╭──── diagram ───────────╮  │
-│ 6 flowchart LR                  │  │ [branch]→[test]→[ship]  │  │
-│ 7   A--&gt;B--&gt;C                    │  ╰─────────────────────────╯ │
-│ ^S save  ^W focus  ^Q quit  · scroll ↑↓ ←→ · wheel            │
-└─────────────────────────────────┴─────────────────────────────┘</code></pre>
-    <p><code>@md render &lt;file&gt;</code> prints styled Markdown to the pane at the split's full
-      width — GitHub-flavored Markdown plus the HTML subset (alerts, footnotes, <code>&lt;details&gt;</code>,
-      centered blocks, HTML tables), syntax-highlighted code, images drawn as pixels, and every
-      mermaid diagram type — flowchart, sequence, class, state, ER, gantt, pie,
-      journey, mindmap, git graph and the rest — drawn as real pixels inline (the same picture in
-      Unicode box art in other terminals /
-      when piped). A <b>long file opens a scrollable pager</b> (<code>↑↓</code>/<code>Space</code>/
-      <code>g</code>/<code>G</code>, mouse wheel, <code>q</code> to quit) that starts at the top and
-      <b>reflows on resize</b> — no more scrolling past the end.
-      <code>@md edit &lt;file&gt;</code> is a full-screen split editor — raw Markdown on
-      the left, a <b>live preview</b> on the right that re-renders as you type, diagrams included.
-      Both panes scroll <b>vertically and horizontally</b>, by keyboard (<code>↑↓ ←→</code>,
-      <code>PageUp/Down</code>, <code>Ctrl+W</code> toggles focus) and by <b>mouse</b> (wheel;
-      <kbd>Shift</kbd>+wheel for horizontal; click to focus / place the caret).
-      <code>Ctrl+S</code> saves; <code>Ctrl+Q</code>/<code>Esc</code> quits with a
-      <b>save / discard / cancel</b> prompt when there are unsaved edits. To make the mouse work for
-      full-screen programs, aiTerminal reports SGR mouse events to the running program — so
-      <code>vim</code> and <code>less</code> get the mouse inside aiTerminal too.</p>
+    <p><b>Needs nothing</b> — no model, no network, no config.</p>
+    <div class="table-wrap"><table>
+      <tr><th>Command</th><th>Does</th></tr>
+      <tr><td><code>@md render &lt;file.md&gt;</code></td><td>pretty-print it in the pane; a long file opens a scrollable pager</td></tr>
+      <tr><td><code>@md edit &lt;file.md&gt;</code></td><td>a full-screen split — Markdown left, live preview right</td></tr>
+    </table></div>
+    <p>Anything else prints the usage and exits 2.</p>
+
+    <h3><code>@md render</code></h3>
+    <p>This is the real output, at 72 columns — headings get a rule, tables are drawn, and the
+      mermaid block becomes a diagram:</p>
+    <pre><code><span class="p">❯</span> @md render release.md
+<span class="a">Release plan</span>
+<span class="c">────────────────────────────────────────────────────────────</span>
+
+  • cut the branch
+  • run the suite
+
+╭──────┬───────╮
+│ step │ owner │
+├──────┼───────┤
+│ cut  │ ada   │
+│ ship │ grace │
+╰──────┴───────╯
+
+ ┌───┐   ┌───┐   ┌───┐
+ │ A │──▶┤ B │──▶┤ C │
+ └───┘   └───┘   └───┘</code></pre>
+    <p>GitHub-flavored Markdown plus the HTML subset (alerts, footnotes,
+      <code>&lt;details&gt;</code>, centered blocks, HTML tables), syntax-highlighted code, images
+      drawn as pixels, and <b>every</b> mermaid diagram type — flowchart, sequence, class, state,
+      ER, gantt, pie, journey, mindmap, git graph and the rest. Inside aiTerminal a diagram is
+      drawn as real pixels; piped or in another terminal it is the same picture in Unicode box
+      art, which is what you see above.</p>
+    <p>A file taller than the pane opens a pager that starts at the top and reflows on resize:</p>
+    <pre><code><span class="c">  ↑↓/j k scroll · Space/b page · g/G top/bottom · ←→ pan · wheel · q quit</span></code></pre>
+
+    <h3><code>@md edit</code></h3>
+    <p>A full-screen split: the raw Markdown with a gutter on the left, the rendered preview on
+      the right, re-rendered as you type. The status bar carries the file, a <span class="w">●</span>
+      when there are unsaved edits, and the line count; the bar at the foot is the whole keymap.</p>
+    <pre><code><span class="p">❯</span> @md edit release.md
+
+<span class="a"> release.md ●  (10L)                                        saved release.md </span>
+  1 │ # Release plan          │ <span class="a">Release plan</span>
+  2 │                         │ <span class="c">────────────</span>
+  3 │ - cut the branch        │
+  4 │ - run the suite         │  • cut the branch
+  5 │                         │  • run the suite
+  6 │ ```mermaid              │
+  7 │ flowchart LR            │  ┌───┐   ┌───┐   ┌───┐
+  8 │   A --&gt; B --&gt; C         │  │ A │──▶┤ B │──▶┤ C │
+  9 │ ```                     │  └───┘   └───┘   └───┘
+<span class="a">  ^S save   ^W focus:editor   ^Q quit    ·  scroll: ↑↓ ←→ · wheel   ·  shift+wheel = horizontal </span></code></pre>
+    <div class="table-wrap"><table>
+      <tr><th>Key</th><th>Does</th></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>save — the status bar confirms <code>saved &lt;file&gt;</code></td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>move focus between editor and preview (the bar shows which has it)</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Q</kbd> · <kbd>Esc</kbd></td><td>quit — with unsaved edits it asks <b>(y) save · (n) discard · (esc) cancel</b></td></tr>
+      <tr><td><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> · <kbd>PageUp</kbd>/<kbd>PageDown</kbd></td><td>scroll and pan the focused half</td></tr>
+      <tr><td>wheel · <kbd>Shift</kbd>+wheel</td><td>scroll · scroll horizontally; click to focus a half and place the caret</td></tr>
+    </table></div>
+    <p>aiTerminal reports SGR mouse events to whatever is running, so <code>vim</code> and
+      <code>less</code> get the mouse inside aiTerminal too — not just <code>@md</code>.</p>
 
     <h2 id="cmd-gate">@gate — drive your terminal from a chat app</h2>
+    <div class="callout"><b>Gates ship off.</b> This is remote code execution over a chat app, so
+      nothing listens until you turn it on, and an unpaired chat gets <b>no reply at all</b> — not
+      even a hint that a bot is there.</div>
+
+    <h3>Setting up Telegram, step by step</h3>
+    <p>Five minutes, and four of them are Telegram's.</p>
+    <p><b>1 — Create a bot.</b> Open Telegram and message
+      <a href="https://t.me/BotFather" target="_blank" rel="noopener"><b>@BotFather</b></a> — it is
+      Telegram's own bot for making bots. Send <code>/newbot</code>. It asks for a display name
+      (anything, e.g. <code>My Terminal</code>), then a username that must be unique and end in
+      <code>bot</code> (e.g. <code>mourad_term_bot</code>). It replies with a token that looks like
+      this:</p>
+    <pre><code>123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw</code></pre>
+    <p><b>2 — Put the token in your environment, not in the config file.</b> Add this to your shell
+      profile (<code>~/.zshrc</code>), so it is not sitting in a file you might share or commit:</p>
+    <pre><code><span class="p">❯</span> export TELEGRAM_BOT_TOKEN='123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw'</code></pre>
+    <p><b>3 — Turn gates on</b> in <code>~/.aiTerminal/config.toml</code>. The
+      <code>"$VAR"</code> form is read from the environment at start:</p>
+    <pre><code><span class="k">[gates]</span>
+enabled = <span class="s">true</span>
+
+<span class="k">[gates.telegram]</span>
+token = <span class="s">"$TELEGRAM_BOT_TOKEN"</span></code></pre>
+    <p><b>4 — Start it</b> in whichever tab or split you want to share:</p>
+    <pre><code><span class="p">❯</span> @gate telegram start
+<span class="c">  ⬤ telegram gate live · @mourad_term_bot</span>
+<span class="c">  pair from the chat: </span>/pair 418-207<span class="c">   (nothing runs until you do)</span></code></pre>
+    <p><b>5 — Pair.</b> Open a chat with <em>your</em> bot and send the six-digit code exactly as
+      the pane printed it. Until you do, the gate ignores every message. After that, send
+      <code>git status</code> and it runs.</p>
+    <div class="callout"><b>One honest caveat.</b> The token is passed to <code>curl</code>, so it
+      is visible in the process list on your own machine. It never leaves your machine except to
+      Telegram's API, and nothing else is sent — but if that matters where you work, know it before
+      you start.</div>
+    <p>If something is missing, <code>@gate</code> says which piece and how to fix it — it will not
+      start half-configured.</p>
+
+    <h3>What it looks like</h3>
     <pre><code><span class="p">❯</span> @gate telegram start                                      <span class="c"># hand this pane to Telegram</span>
 
   ⬤ telegram gate live · @mourad_term_bot
@@ -567,18 +642,140 @@ README.md  crates  docs
       Read <a href="https://github.com/mouradghafiri/aiTerminal/blob/main/docs/gate.md">docs/gate.md</a>
       — including what it does <i>not</i> protect against — before enabling it.</div>
 
-    <h2 id="cmd-manage">@profile · @theme · @config · @plugin</h2>
+    <h2 id="cmd-profile">@profile — identities that switch everything</h2>
+    <p><b>Needs nothing.</b> A profile is a named terminal identity: its own config overlay and its
+      own saved tabs, splits, working directories and terminal content.</p>
     <div class="table-wrap"><table>
       <tr><th>Command</th><th>Does</th></tr>
-      <tr><td><code>@profile</code></td><td>list profiles (● marks active)</td></tr>
-      <tr><td><code>@profile work</code></td><td>switch by id or name — a running window applies it within a second</td></tr>
-      <tr><td><code>@profile create|rename|delete|edit</code></td><td>manage profiles; <code>edit</code> opens the overlay in <code>$EDITOR</code></td></tr>
-      <tr><td><code>@theme</code></td><td>list the 19 themes</td></tr>
-      <tr><td><code>@theme sunset</code></td><td>live restyle — window, panes, and running shells' colors</td></tr>
-      <tr><td><code>@theme export nebula</code></td><td>print the full normalized TOML (start your own from it)</td></tr>
-      <tr><td><code>@config</code> / <code>@config path</code></td><td>show effective config / the file path</td></tr>
-      <tr><td><code>@plugin list|install|enable|disable|info</code></td><td>manage plugins from the prompt</td></tr>
+      <tr><td><code>@profile</code></td><td>list them — <span class="g">●</span> marks the active one</td></tr>
+      <tr><td><code>@profile &lt;id&gt;</code></td><td>switch by id or name; a running window follows within a second</td></tr>
+      <tr><td><code>@profile current</code></td><td>print the active id (one word — made for scripts)</td></tr>
+      <tr><td><code>@profile create "&lt;name&gt;" [emoji]</code></td><td>create one and print its config-overlay path</td></tr>
+      <tr><td><code>@profile rename &lt;id&gt; "&lt;new name&gt;" [emoji]</code></td><td>rename it</td></tr>
+      <tr><td><code>@profile delete &lt;id&gt;</code></td><td>delete it</td></tr>
+      <tr><td><code>@profile edit [&lt;id&gt;]</code></td><td>open its config overlay in <code>$EDITOR</code>; saving applies live</td></tr>
     </table></div>
+    <pre><code><span class="p">❯</span> @profile
+profiles in ~/.aiTerminal/profiles (1):
+  <span class="g">●</span> 🚀 Default          (default)
+
+<span class="c">switch:  @profile &lt;id&gt;   ·  settings:  @profile edit   (a running window follows live)</span>
+
+<span class="p">❯</span> @profile create "Work" 💼
+created profile 'Work' (work) — switch with: aiTerminal profile switch work
+its config overlay: ~/.aiTerminal/profiles/work/config.toml
+
+<span class="p">❯</span> @profile
+profiles in ~/.aiTerminal/profiles (2):
+  ○ 🚀 Default          (default)
+  <span class="g">●</span> 💼 Work             (work)
+
+<span class="c">switch:  @profile &lt;id&gt;   ·  settings:  @profile edit   (a running window follows live)</span>
+
+<span class="p">❯</span> @profile default
+switched to profile 'default' — a running window applies it within a second</code></pre>
+    <p>Every profile owns <code>profiles/&lt;id&gt;/config.toml</code> — an all-commented template
+      where only the keys you uncomment override the global config. A different theme, a different
+      AI pool, different keybindings per profile, all TOML. Its open tabs and splits persist to
+      <code>workspace.toml</code> on quit and autosave, including each pane's working directory,
+      zoom and terminal content <em>with its colours</em> — so switching back restores what you
+      left, not an empty shell.</p>
+
+    <h2 id="cmd-theme">@theme — 19 themes, live</h2>
+    <p><b>Needs nothing.</b> Switching restyles the window, its panes and the running shells'
+      colours within a second — there is no settings window in this product.</p>
+    <div class="table-wrap"><table>
+      <tr><th>Command</th><th>Does</th></tr>
+      <tr><td><code>@theme</code></td><td>list all 19 — <span class="g">●</span> marks the active one</td></tr>
+      <tr><td><code>@theme &lt;name&gt;</code></td><td>apply it to the active profile, live</td></tr>
+      <tr><td><code>@theme path</code></td><td>print the themes directory</td></tr>
+      <tr><td><code>@theme export &lt;name&gt;</code></td><td>print that theme's full normalized TOML, every token resolved</td></tr>
+    </table></div>
+    <pre><code><span class="p">❯</span> @theme
+themes in ~/.aiTerminal/themes (19):
+  ○ alpine
+  ○ coral
+  ○ cosmic-orange
+  …
+  <span class="g">●</span> midnight
+  …
+  ○ sunset
+  ○ titanium
+
+<span class="c">switch:  @theme &lt;name&gt;   ·  export a reference:  @theme export &lt;name&gt;</span>
+
+<span class="p">❯</span> @theme sunset
+theme 'sunset' applied to profile 'default' — a running window restyles within a second
+
+<span class="p">❯</span> @theme export nebula
+name = "Nebula"
+dark = true
+
+bg       = "#0B0E14"
+surface  = "#161A23"
+fg       = "#F2F4F8"
+muted    = "#8A90A0"
+accent   = "#D85BFF"
+…</code></pre>
+    <p>A theme is one TOML of semantic tokens. Themes are seeded into
+      <code>~/.aiTerminal/themes/</code> on first launch and read from there, so dropping a file in
+      adds a theme — <code>@theme export</code> gives you a complete, correct starting point rather
+      than a blank page.</p>
+
+    <h2 id="cmd-config">@config — the one file</h2>
+    <p><b>Needs nothing.</b> Everything is TOML and there is no settings UI: inspect here, edit the
+      file, reload with <kbd>⌘</kbd><kbd>,</kbd> or restart.</p>
+    <div class="table-wrap"><table>
+      <tr><th>Command</th><th>Does</th></tr>
+      <tr><td><code>@config</code></td><td>the effective settings — after the profile overlay is applied</td></tr>
+      <tr><td><code>@config path</code></td><td>print the config file's path (for <code>$EDITOR "$(@config path)"</code>)</td></tr>
+    </table></div>
+    <pre><code><span class="p">❯</span> @config
+config: ~/.aiTerminal/config.toml
+  theme       = sunset
+  font_family = Menlo
+  font_size   = 13
+  zoom        = 1
+  tab_bar     = top
+  shell       = $SHELL
+  scrollback  = 10000
+
+<span class="c">edit the file, then reload in the app with Cmd-, (or restart)</span></code></pre>
+    <p>What it prints is the <em>effective</em> value, so it is the fastest way to find out whether
+      a profile overlay is overriding what you think it is. The full key reference is
+      <a href="#config">below</a>.</p>
+
+    <h2 id="cmd-plugin">@plugin — what is running, and what you add</h2>
+    <p><b>Needs nothing.</b> A plugin is a folder with a <code>plugin.toml</code> — declarative
+      data, not code. <b>31 ship with the app</b> and load from the bundle; the ones you add live in
+      <code>~/.aiTerminal/plugins/</code>. Both are listed, because both are running.</p>
+    <div class="table-wrap"><table>
+      <tr><th>Command</th><th>Does</th></tr>
+      <tr><td><code>@plugin</code> · <code>@plugin list</code></td><td>every plugin — bundled and installed</td></tr>
+      <tr><td><code>@plugin info &lt;name&gt;</code></td><td>one in full: version, description, whether it is bundled or yours</td></tr>
+      <tr><td><code>@plugin install &lt;path&gt;</code></td><td>copy a plugin folder into the plugins dir</td></tr>
+      <tr><td><code>@plugin enable &lt;name&gt;</code> · <code>disable</code></td><td>turn one on or off — bundled ones included</td></tr>
+      <tr><td><code>@plugin remove &lt;name&gt;</code></td><td>delete an installed plugin (bundled ones cannot be removed, only disabled)</td></tr>
+    </table></div>
+    <pre><code><span class="p">❯</span> @plugin
+plugins (31 bundled · 0 installed):
+  <span class="g">●</span> ai-terminal        1.0.0    @ai · @&lt;agent&gt; · @flow · @loop · @job · @md · @gate …
+  <span class="g">●</span> alias-hints        1.0.0    Suggests the shortest alias for any command you type
+  <span class="g">●</span> autosuggest        1.0.0    Inline suggestions from history as you type — → accepts
+  …
+
+<span class="c">bundled plugins live in the app; yours go in ~/.aiTerminal/plugins</span>
+<span class="c">one in full:  @plugin info &lt;name&gt;   ·  turn one off:  @plugin disable &lt;name&gt;</span>
+
+<span class="p">❯</span> @plugin info git
+git  v1.2.0
+Comprehensive git integration: status segment (staged + unstaged dots), 100+ aliases,
+branch-aware helpers, abbreviations, completions
+bundled with the app · enabled: true</code></pre>
+    <p>Only <b>trusted</b> plugins — the bundled ones — may contribute <code>exec</code> providers
+      or shell snippets, because a snippet is shell code your shell runs. An installed third-party
+      plugin still supplies aliases, abbreviations, completions and status segments, but its
+      <code>exec</code> providers are skipped. Disabling a plugin takes effect on the next shell.</p>
 
     <h2 id="exit-codes">Exit codes &amp; scripting</h2>
     <p>Every AI command tells the shell the truth, so <code>$?</code>, <code>&amp;&amp;</code> and CI compose:</p>
@@ -756,11 +953,32 @@ strategy = <span class="s">"weighted"</span>       <span class="c"># weighted (d
     <h2 id="agents">Agents, skills &amp; prompts</h2>
     <p>All plain files under <code>ai/</code>. <b>8 agents</b> are Markdown + frontmatter (tools,
       <code>max_steps</code>, skills) — run <code>@agent</code> to see them, <code>@agent
-      &lt;name&gt;</code> for one in full. <b>8 skills</b> (<code>code-review concise debugging git
-      orchestration refactoring security-review testing</code>) splice into prompts; 3 prompt
-      templates ship. The global <code>ai/aiTerminal.md</code> is the system-prompt base for
-      <em>every</em> run — edit it to change the persona. Project-local <code>ai/</code> folders
-      shadow the global set, so a repo can ship its own agents and flows.</p>
+      &lt;name&gt;</code> for one in full. <b>12 skills</b> ship; 3 prompt templates ship. The global
+      <code>ai/aiTerminal.md</code> is the system-prompt base for <em>every</em> run — edit it to
+      change the persona. Project-local <code>ai/</code> folders shadow the global set, so a repo
+      can ship its own agents and flows.</p>
+    <p>A <b>skill</b> is a Markdown file of standing instructions for one kind of work. An agent
+      names the ones it wants in its frontmatter, and they splice into its system prompt under
+      <code>## Skill: &lt;name&gt;</code> — <b>in the order the agent declared them</b>, so the list
+      reads as a priority and the same agent always sends the same prompt.</p>
+    <div class="table-wrap"><table>
+      <tr><th>Skill</th><th>What it holds</th><th>Agents that name it</th></tr>
+      <tr><td><code>concise</code></td><td>answer first, cut the hedging and the preamble</td><td>all seven specialists (<code>ai</code> carries its own instructions inline)</td></tr>
+      <tr><td><code>planning</code></td><td>smallest checkable steps, name the acceptance check, say what is out of scope</td><td><code>planner</code> · <code>coder</code></td></tr>
+      <tr><td><code>research</code></td><td>a snippet is not a source — open it; cross-check; record dates and versions</td><td><code>researcher</code> · <code>planner</code></td></tr>
+      <tr><td><code>writing</code></td><td>lead with the answer, concrete over abstract, never describe behaviour you have not checked</td><td><code>writer</code> · <code>researcher</code> · <code>reviewer</code></td></tr>
+      <tr><td><code>verification</code></td><td>reproduce before fixing, re-run after changing, never weaken a check to make it pass</td><td><code>tester</code> · <code>coder</code> · <code>reviewer</code></td></tr>
+      <tr><td><code>testing</code></td><td>cover the edges, keep tests hermetic, add a regression test for every bug</td><td><code>tester</code> · <code>coder</code></td></tr>
+      <tr><td><code>debugging</code></td><td>reproduce → isolate → root cause, not the first plausible guess</td><td><code>tester</code> · <code>coder</code></td></tr>
+      <tr><td><code>code-review</code></td><td>correctness, then security, then tests, then design — with <code>file:line</code></td><td><code>reviewer</code> · <code>coder</code></td></tr>
+      <tr><td><code>security-review</code></td><td>the classes worth looking for, and what silence about them means</td><td><code>reviewer</code></td></tr>
+      <tr><td><code>orchestration</code></td><td>when to delegate breadth to a sub-agent and when it is slower</td><td><code>coder</code> · <code>planner</code></td></tr>
+      <tr><td><code>git</code></td><td>the commands and the conventions around a change</td><td><code>coder</code></td></tr>
+      <tr><td><code>refactoring</code></td><td>behaviour-preserving change, one thing at a time</td><td>none by default — attach it yourself</td></tr>
+    </table></div>
+    <p>Add your own by dropping a file in <code>ai/skills/</code> and naming it in an agent's
+      <code>skills = [...]</code>. <code>@agent &lt;name&gt;</code> prints the skills an agent
+      carries, in the order they splice.</p>
     <p>Every agent's frontmatter is checked at build time: a tool it declares must exist in the
       capability registry, a skill or prompt it names must be installed, and its
       <code>max_steps</code> must be sane. A misspelled tool used to reach the model with a
