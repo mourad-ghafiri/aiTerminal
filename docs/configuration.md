@@ -31,7 +31,9 @@ ai/                    everything AI:
   loops/<id>/            @loop run records: loop.toml + iterations/<n>.md
   sessions/<id>/         per-folder AI memory: session.md (recent-run digest),
                          memory/ (folder-scoped), meta.toml — restored on return
-cache/                 regenerable caches (cloned repos for web.read)
+cache/                 regenerable caches (cloned repos for web.read;
+                       offload/<run>/ — tool output compaction lifted out of
+                       context, re-readable with fs.read)
 logs/                  daily diagnostic logs
 shell/                 the generated shell integration + live theme colors
 ```
@@ -47,7 +49,7 @@ AI works for you.
 | --- | --- |
 | `[appearance]` | `theme`, `locale` (i18n — see below), `font_family`, `font_size`, `cursor_style` (`block` \| `bar` \| `underline`) |
 | `[behavior]` | `zoom`, `tab_bar` (top/bottom/left/right), `shell`, `scrollback` |
-| `[ai]` | `share_terminal_context`, `memory`, `show_reasoning` (show the model's thinking text; default off), `mode` (manual/auto), `network`, `budget` (USD cost soft-cap, advisory); then `[ai.balance] strategy` and the `[[ai.model]]` pool blocks — see [ai.md](ai.md#models--pools) |
+| `[ai]` | `share_terminal_context`, `memory`, `show_reasoning` (show the model's thinking text; default off), `mode` (manual/auto), `network`, `budget` (USD cost soft-cap, advisory), `context_window` (tokens to budget against; `0` = the serving model's own), `compact_at` (fraction of the window that triggers compaction; default `0.75`); then `[ai.balance] strategy` and the `[[ai.model]]` pool blocks — see [ai.md](ai.md#models--pools) |
 | `[gates]` | `enabled`, `require_pairing`, `plain_text` (run/ignore), `screenshot` (document/photo), `max_reply_messages`, `idle_timeout_minutes`; then a `[gates.<channel>]` table per gateway — see [gate.md](gate.md) |
 | `[md]` | `syntax` (highlight code fences), `image_max_rows`, `remote_images` (fetch `https://` images; off by default) — see [markdown.md](markdown.md) |
 | `[jobs]` | `max_concurrent` (jobs running at once), `keep_runs` (per-occurrence logs kept), `max_log_bytes` (cap per run log) — see [ai.md](ai.md#job--say-what-to-do-and-when) |

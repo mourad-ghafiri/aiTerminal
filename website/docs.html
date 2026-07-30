@@ -71,7 +71,8 @@
     <a href="#models">Models &amp; providers</a>
     <a href="#agents">Agents, skills &amp; prompts</a>
     <a href="#attachments">Attachments</a>
-    <a href="#memory">Sessions, memory &amp; MCP</a>
+    <a href="#context">Context &amp; compaction</a>
+      <a href="#memory">Sessions, memory &amp; MCP</a>
     <a href="#tools">The tool catalog</a>
     <b>Trust</b>
     <a href="#security">Security</a>
@@ -241,6 +242,13 @@ The fix: the parser dropped the final line …
       difference.</p>
     <p>Live chrome rides stderr, content rides stdout — so piping stays clean:
       <code>@explorer "map the auth flow" &gt; auth-map.md</code> works.</p>
+    <p><b>A cheap model is a first-class target.</b> An agent run sends its instructions in the
+      request's <em>system</em> slot and the conversation as real role-tagged turns, because role
+      separation is the strongest structural signal a model gets about who said what — and the
+      weaker the model, the more of the work that signal does. A turn that botches the tool-call
+      format is corrected and retried rather than accepted as the answer; three identical calls in a
+      row stop the run; and the context is measured against the model's own window and
+      <a href="#context">compacted</a> before that model would refuse a turn.</p>
 
     <h2 id="cmd-flow">@flow — a workflow declared as a graph</h2>
     <pre><code><span class="p">❯</span> @flow                            <span class="c"># the installed flows</span>
@@ -842,7 +850,7 @@ action = <span class="s">"zoom_pane"</span></code></pre>
       <tr><th>Section</th><th>Keys</th></tr>
       <tr><td><code>[appearance]</code></td><td><code>theme</code> · <code>locale</code> · <code>font_family</code> (default Menlo) · <code>font_size</code> (default 15) · <code>cursor_style</code> (block / bar / underline)</td></tr>
       <tr><td><code>[behavior]</code></td><td><code>zoom</code> · <code>tab_bar</code> = top|bottom|left|right · <code>shell</code> · <code>scrollback</code> (default 10000)</td></tr>
-      <tr><td><code>[ai]</code></td><td><code>share_terminal_context</code> · <code>memory</code> · <code>show_reasoning</code> (show thinking text; default off) · <code>mode</code> = manual|auto · <code>network</code> · <code>budget</code> (USD cost soft-cap) — then <code>[ai.balance] strategy</code> + the <code>[[ai.model]]</code> blocks, last</td></tr>
+      <tr><td><code>[ai]</code></td><td><code>share_terminal_context</code> · <code>memory</code> · <code>show_reasoning</code> (show thinking text; default off) · <code>mode</code> = manual|auto · <code>network</code> · <code>budget</code> (USD cost soft-cap) · <code>context_window</code> (tokens to budget against; <code>0</code> = the serving model's own) · <code>compact_at</code> (fraction of the window that triggers compaction; default <code>0.75</code>) — then <code>[ai.balance] strategy</code> + the <code>[[ai.model]]</code> blocks, last</td></tr>
       <tr><td><code>[[ai.model]]</code></td><td><code>provider</code> · <code>id</code> · <code>api_key</code> · <code>weight</code> · <code>temperature</code> · <code>top_p</code> · <code>top_k</code> · <code>max_tokens</code> · <code>thinking</code></td></tr>
       <tr><td><code>[gates]</code></td><td><code>enabled</code> · <code>require_pairing</code> · <code>plain_text</code> = run|ignore · <code>screenshot</code> = document|photo · <code>max_reply_messages</code> · <code>idle_timeout_minutes</code> — then a <code>[gates.&lt;channel&gt;]</code> table (<code>token</code> · <code>allow</code>), last</td></tr>
       <tr><td><code>[jobs]</code></td><td><code>max_concurrent</code> · <code>keep_runs</code> · <code>max_log_bytes</code></td></tr>
@@ -990,6 +998,56 @@ strategy = <span class="s">"weighted"</span>       <span class="c"># weighted (d
       vision blocks; PDFs as document blocks; text files inline fenced (≤48&nbsp;KB, truncated
       beyond); up to 16 per prompt; everything passes redaction first.</p>
 
+    <h2 id="context">Context &amp; compaction</h2>
+    <p><b>Needs a model.</b> Every run measures its own context against the window of the model
+      <em>serving that run</em>, and gives context back before that model would refuse the turn. The
+      window comes from the model's own <code>context_window</code> in
+      <code>ai/models/*.toml</code> — so a 32k local model gets a 32k budget and a 1M model gets a
+      1M one, out of the same code. Nothing here is per-vendor.</p>
+    <pre><code><span class="k">[ai]</span>
+context_window = <span class="n">0</span>      <span class="c"># 0 = use the serving model's own; &gt;0 overrides it</span>
+compact_at     = <span class="n">0.75</span>   <span class="c"># fraction of the usable window that triggers compaction</span></code></pre>
+    <p><code>context_window</code> is for the case a model file cannot know about: a local model
+      served with a <b>smaller</b> window than its card claims. For a mixed pool, set it on the
+      entry instead, so a 32k local model and a 200k hosted one each budget against their own:</p>
+    <pre><code><span class="k">[[ai.model]]</span>
+id             = <span class="s">"my-local-model"</span>
+context_window = <span class="n">16000</span></code></pre>
+
+    <h3>The ladder — cheapest rung first</h3>
+    <div class="table-wrap"><table>
+      <tr><th>Rung</th><th>What it does</th><th>Costs</th></tr>
+      <tr><td><b>offload</b></td><td>The largest tool results are written to <code>cache/offload/&lt;run&gt;/</code> and replaced by their first ~20 lines plus the path.</td><td><b>nothing</b> — no model call</td></tr>
+      <tr><td><b>summarize</b></td><td>The oldest turns fold into one <code>## Earlier work (compacted)</code> block, sized from the budget so the result actually fits.</td><td>one model call</td></tr>
+    </table></div>
+    <p>Offloading is lossless in the way that matters: the full text is on disk at a path the agent
+      was handed, and <code>fs.read</code> fetches it back on demand. Almost every run stops at that
+      rung — which is what keeps a cheap model cheap, since compaction that spent a call every time
+      would undo the saving it exists to make. A run that compacts <b>says so</b>; it never shrinks
+      its own history silently.</p>
+    <pre><code><span class="p">❯</span> @coder "why is the build failing?"
+<span class="a">✦ @coder · qwen2.5-coder</span>
+<span class="c">  ⚙ sys.run {"cmd":"cargo build"} · 2.4s · 412KB</span>
+<span class="c">  ℹ compacted: 7940 → 2180 tokens (−5760) via offload</span>
+<span class="c">  ⚙ fs.read {"path":"src/parser.rs"} · 12ms · 8KB</span>
+
+The build fails on an unterminated string literal at <span class="ab">src/parser.rs:88</span>.</code></pre>
+
+    <h3><code>ctx.*</code> — an agent managing its own context</h3>
+    <p>Two tools <b>every agent has</b>, answered by the run loop itself rather than by a capability
+      (they read and rewrite the run's transcript, which is loop state). An agent does not declare
+      them, and they never reach the tool runner.</p>
+    <div class="table-wrap"><table>
+      <tr><th>Tool</th><th>Does</th></tr>
+      <tr><td><code>ctx.status {}</code></td><td><code>{used, window, usable, pct, turns}</code> — check before a big read</td></tr>
+      <tr><td><code>ctx.compact {"keep": "…"}</code></td><td>run the ladder now; <code>keep</code> names what must survive</td></tr>
+    </table></div>
+    <p><b><code>@ai</code> has no transcript</b> — it is a single turn — so it gets no
+      <code>ctx.*</code> tool. What it gets is the budget: its grounding preamble is trimmed to fit
+      before egress, dropping whole blocks from the least valuable end (the terminal snapshot, then
+      the session digest, then recalled memory). Your standing instructions and the files you
+      attached are the last things to go, and a trim is announced rather than silent.</p>
+
     <h2 id="memory">Sessions, memory &amp; MCP</h2>
     <p><b>Folder sessions</b>: every AI feature (<code>@ai</code>, <code>@&lt;agent&gt;</code>,
       <code>@flow</code>, <code>@loop</code>, <code>@job</code>) persists a session for the folder it
@@ -1005,6 +1063,21 @@ strategy = <span class="s">"weighted"</span>       <span class="c"># weighted (d
       <code>[ai] memory = true</code>, relevant memories auto-inject each run — <b>folder-first,
       then global</b> — and agents curate their own via <code>memory.*</code> tools, writing to the
       folder store during a folder run.</p>
+    <p><b>One fact, one memory.</b> <code>memory.add</code> reinforces instead of duplicating. An
+      agent re-learns the same thing constantly — it reads a config, saves what it found, and does
+      it again next run. When what it is saving already exists, the stored note is reinforced
+      (salience up, tags merged) and returned, rather than a near-copy being written; two files
+      saying the same thing both ranked and both got recalled, so the model paid twice to be told
+      once.</p>
+    <p><b>Links.</b> A note can name related ones — <code>links = ["…"]</code> in the frontmatter,
+      or <code>[[id]]</code> written in the body, both read and merged — and <b>recall follows them
+      one hop</b>. This is what lexical ranking structurally cannot do alone: a decision ranks
+      because it shares words with your question, while the <em>reason</em> it was made usually
+      shares none. <code>memory.link {from, to}</code> relates two notes in both directions.</p>
+    <p><b>Ranking</b> is Okapi BM25 over body + tags + kind, re-ranked by <b>salience</b>
+      (reinforced on every recall and re-learn), <b>recency</b> (decayed per day), and an
+      <b>exact-tag boost</b> — a tag is a deliberate act, while the same word in a body may be an
+      aside, and flat BM25 cannot tell them apart.</p>
     <p><b>MCP</b>: declare Model-Context-Protocol servers under <code>ai/mcp/</code>; agent runs
       launch them and expose their tools as <code>mcp.&lt;server&gt;.&lt;tool&gt;</code> beside the
       native catalog.</p>
@@ -1015,7 +1088,8 @@ strategy = <span class="s">"weighted"</span>       <span class="c"># weighted (d
       directory) · <code>sys.run</code> (through the guard, output capped) · <code>diag.check</code>
       (native <code>cargo check</code>/<code>ruff</code> → structured <code>file:line</code>
       diagnostics) · <code>web/net/http</code> (SSRF-guarded, off with <code>[ai] network=false</code>) ·
-      <code>git.*</code> · <code>memory.*</code> · <code>todo.*</code> · <code>task.run</code>
+      <code>git.*</code> · <code>memory.*</code> (incl. <code>memory.link</code>) ·
+      <code>todo.*</code> · <code>task.run</code>
       (parallel read-only sub-agents) · <code>data.*</code>/<code>queue.*</code>/<code>store.*</code>
       (a sandboxed scratch database, queues and KV for agents) · <code>codec.*</code> (hash, uuid,
       base64/hex/url, JSON, CSV) · <code>time.*</code> date math · clipboard.</p>

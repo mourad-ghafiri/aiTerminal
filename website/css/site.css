@@ -287,6 +287,8 @@ footer { border-top: 1px solid var(--border); margin-top: 70px; padding: 40px 0 
 .docs-main pre .s { color: var(--mark-green); }   /* string */
 .docs-main pre .p { color: var(--accent); }       /* prompt */
 .docs-main pre .n { color: var(--accent2); }      /* literal / number */
+.docs-main pre .a { color: var(--accent2); }      /* an agent's run header */
+.docs-main pre .ab { color: var(--accent); font-weight: 700; }  /* the thing being acted on */
 .docs-main pre .w { color: var(--warn, #FF9F0A); }  /* a secret, in the clear */
 .docs-main pre .ok { color: var(--mark-green); }  /* redacted / safe */
 .docs-main table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }

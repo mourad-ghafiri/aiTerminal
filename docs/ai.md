@@ -658,6 +658,48 @@ one with the same id). Agents curate their own memory mid-run via the `memory.*`
 tools — in a folder run those writes land in that folder's store, so the project
 remembers them next time.
 
+### One fact, one memory
+
+`memory.add` **reinforces instead of duplicating**. An agent re-learns the same thing
+constantly — it reads a config, saves what it found, and does it again next run. When
+what you are saving already exists (high token overlap with a stored note), the
+existing note is reinforced (salience up, tags merged) and returned, rather than a
+near-copy being written. Two files saying the same thing both ranked and both got
+recalled, so the model paid twice to be told once.
+
+### Links
+
+A memory can name related ones, and **recall follows them one hop**:
+
+```toml
+---
+kind  = "decision"
+tags  = ["release", "ci"]
+links = ["1785371201-ship-script"]
+---
+Deploys go through `make ship`, never a push to main.
+
+The reason: [[1785371201-ship-script]]
+```
+
+Both forms work and are merged — `links = [...]` in the frontmatter, and `[[id]]`
+written in the body — so editing a note by hand does not mean keeping two lists in
+step. `memory.link {from, to}` relates two existing notes in both directions.
+
+This is what lexical ranking structurally cannot do on its own: a decision ranks
+because it shares words with your question, while the *reason* it was made usually
+shares none. Following the relation retrieves it anyway.
+
+### Ranking
+
+Okapi BM25 over the note's body, tags and kind, re-ranked by **salience** (reinforced
+each time a memory is recalled or re-learned), **recency** (decayed per day since it
+was last touched), and an **exact-tag boost** — a tag is a deliberate act, while the
+same word in a body may be an aside, and flat BM25 cannot tell them apart.
+
+`memory.consolidate` still exists for duplicates that arrive another way: a file
+written by hand, or notes that predate the check.
+
 ## MCP
 
 Declare MCP servers under `~/.aiTerminal/ai/mcp/`. Agent runs launch them and
@@ -764,6 +806,62 @@ and key variable. Each model's catalog entry declares its capabilities —
 only what it supports.
 
 
+## Context, budget & compaction
+
+Every run measures its own context against the window of the model **serving that
+run**, and gives context back before that model would refuse the turn. The window
+comes from the model's own `context_window` in `~/.aiTerminal/ai/models/*.toml` — so
+a 32k local model gets a 32k budget and a 1M model gets a 1M one, from the same code.
+
+```toml
+[ai]
+context_window = 0      # 0 = use the serving model's own; >0 overrides it
+compact_at     = 0.75   # fraction of the usable window that triggers compaction
+```
+
+`context_window` is for the case a model file cannot know about: a local model served
+with a **smaller** window than its card claims. For a mixed pool, set it on the entry
+rather than globally, so each member budgets against its own window:
+
+```toml
+[[ai.model]]
+id             = "my-local-model"
+context_window = 16000
+```
+
+### The ladder
+
+Compaction runs **cheapest rung first** and stops as soon as the transcript fits.
+
+| Rung | What it does | Costs |
+| --- | --- | --- |
+| **offload** | The largest tool results are written to `~/.aiTerminal/cache/offload/<run>/` and replaced by their first ~20 lines plus the path. | nothing — no model call |
+| **summarize** | The oldest turns fold into one `## Earlier work (compacted)` block, sized from the budget so the result actually fits. | one model call |
+
+Offloading is **lossless in the way that matters**: the full text is on disk at a path
+the agent was handed, and `fs.read` fetches it back on demand. Almost every run stops
+at that rung, which is what keeps a cheap model cheap — compaction that spent a call
+every time would undo the saving it exists to make.
+
+A run that compacts says so; it never shrinks its own history silently.
+
+### `ctx.*` — an agent managing its own context
+
+Two tools every agent has, answered by the loop itself rather than by a capability
+(they read and rewrite the run's transcript, which is loop state). An agent does not
+declare them, and they never reach the tool runner.
+
+| Tool | Does |
+| --- | --- |
+| `ctx.status {}` | `{used, window, usable, pct, turns}` — check before a big read |
+| `ctx.compact {"keep": "…"}` | run the ladder now; `keep` names what must survive |
+
+**`@ai` has no transcript** — it is a single turn — so it gets no `ctx.*` tool. What it
+gets is the budget: its grounding preamble is trimmed to fit before egress, dropping
+whole blocks from the least valuable end (terminal snapshot, then session digest, then
+recalled memory). Your standing instructions and the files you attached are the last
+things to go, and a trim is announced rather than silent.
+
 ## Context & privacy
 
 Each run's context is assembled in order: the global `aiTerminal.md` instructions,
@@ -795,9 +893,10 @@ hold a curated subset (below) — write your own `ai/agents/<name>.md` to grant 
 | `sys` | run (through the command guard) | exec |
 | `diag` | check — native `cargo check`/`ruff` → structured `file:line` diagnostics (workspace-confined) | safe |
 | `web` / `net` / `http` | read (page → markdown, incl. git repos/READMEs), get, post | network (`[ai] network` + SSRF rules) |
-| `memory` | search, get, add, update, forget, recall, list, consolidate, stats | safe/write |
+| `memory` | search, get, add, update, forget, link, recall, list, consolidate, stats | safe/write |
 | `data` / `queue` / `store` | structured tables, queues, KV — an agent's sandboxed scratch database | write |
 | `todo` | set, add, done, list, clear — the live plan | safe |
+| `ctx` | status, compact — the run's own context (answered by the loop, granted to every agent) | safe |
 | `task` | run — sub-agent delegation | safe (delegates are read-only) |
 | `codec` / `time` | hash, uuid, base64/hex/url, JSON, CSV; date now/add/diff/format | safe |
 | `git` / `sec` / `clock` / `clip` | repo browsing (via `web.read`), guard checks, clock, clipboard | mostly safe |

@@ -67,7 +67,7 @@ The rules that keep an idle terminal at ~0% CPU and every input bounded:
 | Module | Role |
 | --- | --- |
 | `gui` | The window: tabs/splits of PTY panes, input routing, tab switcher, status bar, ⌘-click links, per-profile state persistence (layout + pane content + window size), live follow of profile switches and config edits. No AI code — the window is a pure terminal. |
-| `ai` | The engine: streaming `Client` over a `Transport` seam, the agent loop (`run_agent` + `ToolRunner`/`AgentObserver`), the `aiTerminal.md` instruction base, BM25 memory, MCP hub, model catalog + weighted pools (vision/document/thinking caps), redaction-aware context capture. Fully offline-testable (`MockTransport`/`ScriptedTransport`). |
+| `ai` | The engine: streaming `Client` over a `Transport` seam, the agent loop (`run_agent` + `ToolRunner`/`AgentObserver`), the context budget + compaction ladder (below), the `aiTerminal.md` instruction base, BM25 memory, MCP hub, model catalog + weighted pools (vision/document/thinking caps), redaction-aware context capture. Fully offline-testable (`MockTransport`/`ScriptedTransport`). |
 | `caps` | The native tool catalog agents call (fs/sys/web/memory/data/todo/task/…): a registry of `NativeObject`s, pure over `CapCtx` (policy + data dirs + the write sandbox = the invocation directory). |
 | `cli` | The headless subcommands: `ai` (Q&A / command / agent / flow / loop / job), `profile`, `plugin`, `config`, `theme`. This is what the `@`-commands invoke. |
 | `flow` | The `@flow` graph: the model + parser, the `when` language, the static verifier that proves a graph before it spends, and the diagram it draws. |
@@ -78,6 +78,22 @@ The rules that keep an idle terminal at ~0% CPU and every input bounded:
 | `i18n` | The locale catalog behind every user-facing string (bundled en/fr + user overrides, `[appearance] locale`). |
 | `shell` | Shell integration: generates the zsh/bash init (aliases, completions, trusted plugin snippets, non-destructive via ZDOTDIR / --rcfile) and the live `colors.sh` running shells re-source on theme switches. |
 | `render` | Headless renderers (terminal frame, chrome, switcher, icon) for visual proofs without a GUI session. |
+
+## How a run stays inside the model's window
+
+Four small modules, each replaceable on its own, because "how much context is left"
+and "what to drop" are different questions with different right answers.
+
+| Module | Role |
+| --- | --- |
+| `ai::transcript` | The conversation as `Vec<Turn>`, rendered to role-tagged `Vec<Message>`. Append-only, so a provider's prefix cache keeps matching as a run grows. Merges consecutive same-role turns, because several providers reject two user messages in a row and a tool result followed by a correction produces exactly that. |
+| `ai::budget` | `TokenEstimator` (a Strategy — character classes, no vocabulary, no crate) and `ContextBudget`, which finally reads the `context_window` every model file has always declared. The estimate deliberately errs HIGH: an over-estimate compacts slightly early, an under-estimate loses the turn. |
+| `ai::compact` | The ladder — a Chain of Responsibility over `CompactionStage`. `OffloadToolResults` (free) then `SummarizeOldest` (one call, behind a `Summarizer` trait so it is mock-testable). Adding a rung is one `impl` and one vector entry; `agent.rs` does not change. |
+| `ai::agent` | Owns the transcript, so it — not `caps` — answers `ctx.status` / `ctx.compact`. Every `caps` family is pure over disk; putting context tools there would mean a globally mutable transcript for no gain. |
+
+The budget is resolved against the model the run **pins**, not the pool's
+representative: under a weighted or round-robin strategy those differ, and a budget
+built ahead of time would belong to a model that is not answering.
 
 ## How the AI stays out of the window
 
