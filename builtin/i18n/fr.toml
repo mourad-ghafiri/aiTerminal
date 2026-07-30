@@ -4,6 +4,23 @@
 [switcher]
 placeholder = "tapez un numéro ou un nom…"
 
+[confirm]
+pane_title = "Fermer cette division ?"
+pane_button = "Fermer la division"
+tab_title = "Fermer cet onglet ?"
+tab_button = "Fermer l'onglet"
+quit_title = "Quitter aiTerminal ?"
+quit_button = "Quitter"
+cancel = "Annuler"
+tabs_one = "1 onglet"
+tabs_other = "{n} onglets"
+splits_one = "1 division"
+splits_other = "{n} divisions"
+stake_quit = "{0} · {1} seront fermés"
+stake_tab = "{0} de cet onglet seront fermées"
+stake_pane = "le shell qui s'y exécute sera arrêté"
+hint = "échap annuler · ←→ déplacer · ↵ choisir"
+
 [profile]
 list_header = "profils dans {0} ({1}) :"
 switch_hint = "changer :  @profile <id>   ·  réglages :  @profile edit   (une fenêtre ouverte suit en direct)"

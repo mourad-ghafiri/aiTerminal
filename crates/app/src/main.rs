@@ -27,6 +27,7 @@ struct Args {
     unknown: Vec<String>,
     render_ppm: Option<String>,
     render_switcher: bool,
+    render_confirm: bool,
     render_chrome: Option<String>,
     render_icon: Option<String>,
     gen_themes: Option<String>,
@@ -43,6 +44,7 @@ fn parse_args() -> Args {
         unknown: Vec::new(),
         render_ppm: None,
         render_switcher: false,
+        render_confirm: false,
         render_chrome: None,
         render_icon: None,
         gen_themes: None,
@@ -58,6 +60,7 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--render-ppm" => a.render_ppm = it.next(),
             "--render-switcher" => a.render_switcher = true,
+            "--render-confirm" => a.render_confirm = true,
             "--render-chrome" => a.render_chrome = it.next(),
             "--render-icon" => a.render_icon = it.next(),
             "--gen-themes" => a.gen_themes = it.next(),
@@ -133,6 +136,13 @@ fn main() {
     if args.render_switcher {
         let out = args.render_ppm.clone().unwrap_or_else(|| "/tmp/switcher.ppm".into());
         guard(framework::gui::render_switcher_proof(&out), "switcher render failed");
+        return;
+    }
+
+    // `--render-confirm [--render-ppm <out>]` renders the close-confirmation modal.
+    if args.render_confirm {
+        let out = args.render_ppm.clone().unwrap_or_else(|| "/tmp/confirm.ppm".into());
+        guard(framework::gui::render_confirm_proof(&out), "confirm render failed");
         return;
     }
 

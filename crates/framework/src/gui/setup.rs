@@ -129,6 +129,7 @@ impl GuiApp {
             default_zoom,
             policy,
             switcher: TabSwitcher::new(),
+            confirm: Confirm::new(),
             session_ctx: String::new(),
             session_ctx_gen: 0,
             session_ctx_at: Instant::now() - Duration::from_secs(60),

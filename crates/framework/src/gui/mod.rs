@@ -8,6 +8,7 @@
 // helper fns are `pub(crate)`.
 pub(crate) mod action;
 mod boot;
+mod confirm;
 mod focus;
 mod frame;
 mod handlers;
@@ -23,6 +24,8 @@ mod termlink;
 mod workspace;
 
 pub(crate) use boot::{build_keymap, start_status_worker};
+pub use confirm::render_confirm_proof;
+use confirm::{draw_confirm, CloseIntent, Confirm};
 pub use switcher::render_switcher_proof;
 use switcher::{draw_switcher, SwitcherEntry, TabSwitcher};
 
@@ -487,6 +490,9 @@ pub struct GuiApp {
     policy: Arc<crate::security::Policy>,
     /// The tab quick-switcher overlay (Cmd+P / Cmd+K), if open.
     switcher: TabSwitcher,
+    /// The close confirmation, if open. Above the switcher in every sense: it takes
+    /// input first, draws last, and opening it dismisses the switcher.
+    confirm: Confirm,
     /// The last redacted session context written to `Config::session_context_path()`
     /// for `@ai`/agents — cached so we only rewrite the file when the focused terminal
     /// actually changed (never per-frame).

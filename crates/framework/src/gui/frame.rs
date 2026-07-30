@@ -129,6 +129,7 @@ impl GuiApp {
         };
         let full = fresh_surface
             || self.switcher.state_mut().is_some()
+            || self.confirm.state_mut().is_some()
             || self.tab_drag.is_some()
             || chrome_stamp != self.frame_chrome;
 
@@ -213,6 +214,11 @@ impl GuiApp {
         // The switcher overlay draws above the panes (open switcher → full frame).
         if let Some(s) = self.switcher.state_mut() {
             draw_switcher(surface, cache, theme, base_px, w, h, s);
+        }
+        // The confirmation draws LAST, over everything — it is the only thing on
+        // screen that the user must answer.
+        if let Some(s) = self.confirm.state_mut() {
+            draw_confirm(surface, cache, theme, base_px, w, h, s);
         }
         if full {
             let _ = surface.take_damage();

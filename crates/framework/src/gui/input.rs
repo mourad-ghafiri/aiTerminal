@@ -12,6 +12,53 @@ impl EventHandler for GuiApp {
     }
 
     fn handle(&mut self, ev: Event, win: &dyn Window, gpu: &mut dyn Gpu) {
+        // The close confirmation is modal ABOVE everything, including the switcher: it
+        // is a question the user has to answer before anything else can happen. Checked
+        // first so no key can slip past it to a pane or an overlay underneath.
+        if self.confirm.is_open() {
+            match &ev {
+                Event::KeyDown { code: KeyCode::Escape, .. } => {
+                    self.confirm.dismiss();
+                    self.dirty.set();
+                }
+                Event::KeyDown { code: KeyCode::Enter, .. } => {
+                    if let Some(intent) = self.confirm.take_focused() {
+                        self.perform_close(intent);
+                    }
+                    self.dirty.set();
+                }
+                // ←/→/Tab all flip between the two buttons — whichever the hand reaches
+                // for, it works.
+                Event::KeyDown { code: KeyCode::Left | KeyCode::Right | KeyCode::Tab, .. } => {
+                    self.confirm.move_focus();
+                    self.dirty.set();
+                }
+                Event::MouseDown { button: MouseButton::Left, pos, .. } => {
+                    let s = self.scale as f32;
+                    if let Some(answer) = self.confirm.click_at(Point::new(pos.x * s, pos.y * s)) {
+                        if let Some(intent) = answer {
+                            self.perform_close(intent);
+                        }
+                    }
+                    self.dirty.set();
+                }
+                Event::RedrawRequested => self.render(gpu),
+                Event::Resized { width_px, height_px, scale } => {
+                    self.ensure_cache(*scale);
+                    self.win_px = (*width_px, *height_px);
+                    self.relayout();
+                }
+                // ⌘Q again while being asked about quitting: the same intent, stated
+                // twice. Nothing ambiguous to protect the user from.
+                Event::CloseRequested => {
+                    if let Some(intent) = self.confirm.take_confirmed() {
+                        self.perform_close(intent);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         // The tab quick-switcher is modal: while open it captures typing (number or
         // filter), arrow navigation, Enter to jump, and Esc to close.
         if self.switcher.is_open() {
@@ -55,8 +102,8 @@ impl EventHandler for GuiApp {
                     self.relayout();
                 }
                 Event::CloseRequested => {
-                    self.save_workspace_now();
-                    std::process::exit(0)
+                    self.switcher.dismiss();
+                    self.request_close(CloseIntent::Quit);
                 }
                 _ => {}
             }
@@ -171,10 +218,11 @@ impl EventHandler for GuiApp {
                 }
             }
             Event::RedrawRequested => self.render(gpu),
-            Event::CloseRequested => {
-                self.save_workspace_now();
-                std::process::exit(0)
-            }
+            // ⌘Q, or the run loop noticing the window is gone. `request_close` either
+            // asks (and this returns, leaving the process alive to draw the question)
+            // or performs the quit itself. The platform no longer forces the exit
+            // behind us — that is what makes the question possible at all.
+            Event::CloseRequested => self.request_close(CloseIntent::Quit),
             _ => {
                 let _ = win;
             }

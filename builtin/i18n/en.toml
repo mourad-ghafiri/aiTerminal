@@ -8,6 +8,28 @@
 # The quick-switcher's empty-filter placeholder.
 placeholder = "type a number or name…"
 
+[confirm]
+# The close-confirmation modal. Titles are questions; the confirm button says what it
+# does rather than "OK", so a glance is enough to answer correctly.
+pane_title = "Close this split?"
+pane_button = "Close split"
+tab_title = "Close this tab?"
+tab_button = "Close tab"
+quit_title = "Quit aiTerminal?"
+quit_button = "Quit"
+cancel = "Cancel"
+# Counted fragments, composed into the stake lines below. A count is a real plural,
+# not "tab(s)".
+tabs_one = "1 tab"
+tabs_other = "{n} tabs"
+splits_one = "1 split"
+splits_other = "{n} splits"
+# What is at stake, counted from the live window — never guessed.
+stake_quit = "{0} · {1} will close"
+stake_tab = "{0} in this tab will close"
+stake_pane = "the shell running in it will end"
+hint = "esc cancel · ←→ move · ↵ choose"
+
 [profile]
 list_header = "profiles in {0} ({1}):"
 switch_hint = "switch:  @profile <id>   ·  settings:  @profile edit   (a running window follows live)"
