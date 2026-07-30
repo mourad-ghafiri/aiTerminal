@@ -6,6 +6,11 @@
 //! Tools are executed through a host-supplied [`ToolRunner`] — the gui backs it
 //! with the native capability families (consent-gated); tests inject a mock.
 
+use std::path::PathBuf;
+
+use crate::ai::budget::{ContextBudget, HeuristicEstimator, TokenEstimator, DEFAULT_COMPACT_AT};
+use crate::ai::compact::{CompactCtx, CompactionReport, Ladder, Summarizer};
+use crate::ai::transcript::{Transcript, Turn};
 use crate::ai::Client;
 use platform::transport::Transport;
 
@@ -24,11 +29,29 @@ pub struct AgentSpec {
     pub tools: Vec<ToolSpec>,
     /// Hard cap on tool-call iterations (bounded autonomy).
     pub max_steps: u32,
+    /// `[ai] context_window` — `0` means "use whatever the model serving this run
+    /// declares". Kept as the raw setting rather than a finished budget because the
+    /// pool does not decide which model serves a run until the run starts: under a
+    /// weighted or round-robin strategy, a budget built ahead of time would be the
+    /// budget of a DIFFERENT model than the one that ends up answering.
+    pub context_window: u32,
+    /// `[ai] compact_at` — the fraction of the usable window that triggers compaction.
+    pub compact_at: f32,
+    /// Where offloaded tool results are written. Each run gets its own directory so
+    /// two concurrent flow nodes cannot overwrite each other's output.
+    pub scratch: PathBuf,
 }
 
 impl Default for AgentSpec {
     fn default() -> Self {
-        AgentSpec { system: String::new(), tools: Vec::new(), max_steps: 6 }
+        AgentSpec {
+            system: String::new(),
+            tools: Vec::new(),
+            max_steps: 6,
+            context_window: 0,
+            compact_at: DEFAULT_COMPACT_AT,
+            scratch: std::env::temp_dir(),
+        }
     }
 }
 
@@ -99,6 +122,10 @@ pub trait AgentObserver {
     fn on_step_start(&mut self, _i: usize, _n: usize, _label: &str) {}
     /// A flow/orchestration step finished (`ok` = completed normally).
     fn on_step_end(&mut self, _label: &str, _ok: bool) {}
+    /// The run compacted its context. Reported rather than done silently: a run that
+    /// shrinks its own history underneath the user, with no way to tell, is how a
+    /// later "it forgot what I said" becomes unexplainable.
+    fn on_compact(&mut self, _report: &CompactionReport) {}
 }
 
 /// An [`AgentObserver`] that ignores everything — for non-streaming callers
@@ -152,9 +179,6 @@ fn prose_before_tool(text: &str) -> String {
 /// megabytes is clipped (head + tail, the middle elided) before it is stored or
 /// re-sent to the model every remaining turn.
 const TOOL_RESULT_MAX: usize = 48 * 1024;
-/// The transcript's soft ceiling: past it, the OLDEST tool-result bodies are
-/// elided (assistant text is kept) before the next turn is sent.
-const TRANSCRIPT_SOFT_MAX: usize = 512 * 1024;
 
 /// Clip `s` to ≤ `max` bytes as head + `…[N bytes elided]…` + tail, on char
 /// boundaries. The head dominates (¾) — that's where commands echo their intent;
@@ -177,25 +201,130 @@ fn clip_middle(s: &str, max: usize) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(format!("{}\n…[{} bytes elided]…\n{}", &s[..head_end], elided, &s[tail_start..]))
 }
 
-/// Shrink an over-cap transcript by replacing the OLDEST `tool_result:` bodies
-/// with an elision marker until it fits (or none are left). Assistant text —
-/// the model's own reasoning trail — is always kept.
-fn elide_old_tool_results(transcript: &mut String) {
-    const MARK: &str = "\ntool_result: ";
-    const ELIDED: &str = "[earlier tool result elided]";
-    let mut from = 0;
-    while transcript.len() > TRANSCRIPT_SOFT_MAX {
-        let Some(at) = transcript[from..].find(MARK).map(|i| i + from) else { break };
-        let body_start = at + MARK.len();
-        let body_end = transcript[body_start..]
-            .find("\n\nassistant:")
-            .map(|i| i + body_start)
-            .unwrap_or(transcript.len());
-        if &transcript[body_start..body_end] != ELIDED {
-            transcript.replace_range(body_start..body_end, ELIDED);
+/// Summarizes a folded span by asking the model — the paid rung of the compaction
+/// ladder, wired to the run's own client so it uses the same pinned candidate.
+struct ClientSummarizer<'a, T: Transport> {
+    client: &'a Client<T>,
+    model: &'a crate::ai::ModelDef,
+    /// Tokens spent summarizing, folded into the run's totals — compaction is not
+    /// free and a run's cost must say so.
+    input_tokens: u32,
+    output_tokens: u32,
+}
+
+impl<T: Transport> Summarizer for ClientSummarizer<'_, T> {
+    fn summarize(&mut self, turns: &[Turn], keep: &str) -> Result<String, String> {
+        let mut body = String::from(
+            "Summarize the work below so it can replace the original in an agent's context. \
+             Keep: the goal, decisions made and why, what was tried and failed, file paths, \
+             commands run and their outcomes, and anything still unresolved. Drop restatements \
+             and tool output that is no longer needed. Write compact Markdown bullets, no preamble.",
+        );
+        if !keep.trim().is_empty() {
+            body.push_str("\n\nPreserve above all: ");
+            body.push_str(keep.trim());
         }
-        from = body_start + ELIDED.len();
+        body.push_str("\n\n--- work so far ---\n");
+        for t in turns {
+            let who = match t {
+                Turn::User(_) => "user",
+                Turn::Assistant(_) => "assistant",
+                Turn::ToolResult { name, .. } => name,
+            };
+            body.push_str(&format!("\n[{who}]\n{}\n", clip_middle(t.text(), 4_096)));
+        }
+        let req = crate::ai::request::agent_request(
+            self.model,
+            "You compress an agent's working context without losing what it needs to continue.",
+            vec![crate::ai::Message::user(body)],
+        );
+        let out = self.client.complete(&req)?;
+        // `complete` does not report usage, so charge the estimate rather than
+        // pretending the call was free.
+        let est = HeuristicEstimator;
+        self.output_tokens += est.estimate(&out) as u32;
+        self.input_tokens += turns.iter().map(|t| est.estimate(t.text()) as u32).sum::<u32>();
+        Ok(out)
     }
+}
+
+/// The context-management tools, answered by the loop itself.
+///
+/// These are the harness's own, not capabilities: `caps` families are pure functions
+/// over disk, and these two read and rewrite the run's transcript. Every agent gets
+/// them the way it gets the `@tool` protocol — an agent that can call a tool that
+/// fills its context should be able to see that happening and do something about it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CtxTool {
+    /// `ctx.status {}` — how full the context is.
+    Status,
+    /// `ctx.compact {"keep": "…"}` — compact now, preserving what `keep` names.
+    Compact,
+}
+
+/// The `ctx.*` tools as an agent sees them. Appended to every agent's tool list.
+pub(crate) const CTX_TOOLS: &[(&str, &str)] = &[
+    ("ctx.status", "How full your context is: {used, window, pct, turns} (no args)"),
+    ("ctx.compact", "Free context now by offloading and summarizing (arg: keep — what must survive)"),
+];
+
+impl CtxTool {
+    fn parse(name: &str) -> Option<CtxTool> {
+        match name {
+            "ctx.status" => Some(CtxTool::Status),
+            "ctx.compact" => Some(CtxTool::Compact),
+            _ => None,
+        }
+    }
+
+    /// Answer the call. Returns the text the model reads back.
+    #[allow(clippy::too_many_arguments)]
+    fn run(
+        self,
+        args: &str,
+        transcript: &mut Transcript,
+        est: &dyn TokenEstimator,
+        budget: &ContextBudget,
+        agent: &AgentSpec,
+        ladder: &Ladder,
+        summarizer: &mut dyn Summarizer,
+        observer: &mut dyn AgentObserver,
+    ) -> String {
+        let used = transcript.tokens(est);
+        match self {
+            CtxTool::Status => format!(
+                "{{\"used\":{used},\"window\":{},\"usable\":{},\"pct\":{},\"turns\":{}}}",
+                budget.window(),
+                budget.usable(),
+                (budget.pressure(used) * 100.0).round() as i64,
+                transcript.len()
+            ),
+            CtxTool::Compact => {
+                let keep = keep_arg(args);
+                let report = {
+                    let mut cctx = CompactCtx { scratch: agent.scratch.clone(), keep: &keep, summarizer: Some(summarizer) };
+                    ladder.run(transcript, est, budget, &mut cctx)
+                };
+                if report.is_empty() {
+                    return format!("nothing to compact \u{2014} {used} tokens used of {} usable", budget.usable());
+                }
+                observer.on_compact(&report);
+                report.summary()
+            }
+        }
+    }
+}
+
+/// The `keep` argument of `ctx.compact`, tolerating the shapes a model actually
+/// emits: `{"keep":"…"}`, a bare string, or nothing at all.
+fn keep_arg(args: &str) -> String {
+    if let Ok(corelib::wire::Json::Obj(fields)) = corelib::wire::Json::parse(args) {
+        if let Some(v) = fields.iter().find(|(k, _)| k == "keep").and_then(|(_, v)| v.as_str()) {
+            return v.to_string();
+        }
+        return String::new();
+    }
+    args.trim().trim_matches('"').to_string()
 }
 
 /// Run the agentic loop, **streaming** each model turn's tokens to `observer` as they
@@ -208,15 +337,24 @@ pub fn run_agent<T: Transport>(
     runner: &mut dyn ToolRunner,
     observer: &mut dyn AgentObserver,
 ) -> AgentRun {
-    let mut transcript = String::new();
+    // The agent's instructions and the tool protocol are BOTH system material — the
+    // model is being told who it is and how to act, not being conversed with. The
+    // grounding context (terminal state, recalled memory) is the first user turn,
+    // because it is information about the world rather than instruction.
+    let mut system = String::new();
     if !agent.system.trim().is_empty() {
-        transcript.push_str(agent.system.trim());
-        transcript.push_str("\n\n");
+        system.push_str(agent.system.trim());
+        system.push_str("\n\n");
     }
-    transcript.push_str(&tool_instructions(&agent.tools));
-    transcript.push_str("\n\nuser: ");
-    transcript.push_str(user_prompt);
-    transcript.push_str("\n\nassistant:");
+    system.push_str(&tool_instructions(&agent.tools));
+
+    let task = match context.trim().is_empty() {
+        true => user_prompt.to_string(),
+        false => format!("{}\n\n{user_prompt}", context.trim()),
+    };
+    let mut transcript = Transcript::new(system, task);
+    let est = HeuristicEstimator;
+    let ladder = Ladder::default();
 
     let mut steps = Vec::new();
     let (mut tin, mut tout) = (0u32, 0u32);
@@ -237,12 +375,32 @@ pub fn run_agent<T: Transport>(
         outcome,
         model_used,
     };
+    // The model the run is pinned to — and therefore the window the run budgets
+    // against. Resolved HERE, not by the caller, so the budget always belongs to the
+    // model that is actually answering.
+    let turn_model = candidates.first().cloned().unwrap_or_default();
+    let budget = ContextBudget::for_model(&turn_model, agent.context_window, agent.compact_at);
     for _ in 0..max {
         // Honor a host cancellation between turns: stop cleanly rather than starting a
         // new (billable) model turn. A mid-stream cancel kills curl, so `ask_streaming`
         // below also returns promptly; this guard prevents the NEXT turn.
         if client.is_cancelled() {
             return finish("_(stopped)_".into(), steps, tin, tout, RunOutcome::Cancelled, model_used);
+        }
+        // Compact BEFORE spending a turn, never after: the point is to send a prompt
+        // the model can accept, and a check that runs afterwards has already lost the
+        // turn it was meant to save.
+        if budget.needs_compaction(transcript.tokens(&est)) {
+            let mut summarizer = ClientSummarizer { client, model: &turn_model, input_tokens: 0, output_tokens: 0 };
+            let report = {
+                let mut cctx = CompactCtx { scratch: agent.scratch.clone(), keep: "", summarizer: Some(&mut summarizer) };
+                ladder.run(&mut transcript, &est, &budget, &mut cctx)
+            };
+            tin += summarizer.input_tokens;
+            tout += summarizer.output_tokens;
+            if !report.is_empty() {
+                observer.on_compact(&report);
+            }
         }
         observer.on_turn_start();
         // Stream the turn's tokens to the observer as they arrive (answer vs. reasoning);
@@ -254,7 +412,9 @@ pub fn run_agent<T: Transport>(
                 observer.on_delta(s)
             }
         };
-        let res = client.ask_streaming_on(&candidates, &transcript, context, &mut on_part);
+        let messages = transcript.messages();
+        let sys = transcript.system().to_string();
+        let res = client.stream_request(&candidates, &|m| crate::ai::request::agent_request(m, &sys, messages.clone()), &mut on_part);
         drop(on_part);
         let (answer, ti, to, used) = match res {
             Ok(v) => v,
@@ -278,9 +438,18 @@ pub fn run_agent<T: Transport>(
                 if !prose.trim().is_empty() {
                     observer.on_commit(&prose);
                 }
-                // Only allow declared tools; anything else is reported back inert.
-                let allowed = agent.tools.iter().any(|t| t.name == name);
-                let result = if allowed {
+                // The `ctx.*` family is answered by the LOOP, not the runner. It reads
+                // and rewrites the transcript, which is loop state — routing it through
+                // `caps` (whose families are all pure over disk) would mean a globally
+                // mutable transcript for no gain.
+                let result = if let Some(ctx_tool) = CtxTool::parse(&name) {
+                    let mut summarizer = ClientSummarizer { client, model: &turn_model, input_tokens: 0, output_tokens: 0 };
+                    let out = ctx_tool.run(&args, &mut transcript, &est, &budget, agent, &ladder, &mut summarizer, observer);
+                    tin += summarizer.input_tokens;
+                    tout += summarizer.output_tokens;
+                    out
+                } else if agent.tools.iter().any(|t| t.name == name) {
+                    // Only allow declared tools; anything else is reported back inert.
                     runner.run(&name, &args).unwrap_or_else(|e| format!("error: {e}"))
                 } else {
                     format!("error: tool '{name}' is not available to this agent")
@@ -288,6 +457,7 @@ pub fn run_agent<T: Transport>(
                 // Clip BEFORE storing/forwarding: the clipped text is what the model
                 // sees, so the step record keeps the same view.
                 let result = clip_middle(&result, TOOL_RESULT_MAX).into_owned();
+                let last_name = name.clone();
                 steps.push(ToolStep { name, args, result: result.clone() });
                 // Stuck-loop guard: if the last 3 tool calls are byte-identical (same name + args),
                 // the model is spinning (e.g. retrying a failing call) — stop with a clear message
@@ -299,12 +469,11 @@ pub fn run_agent<T: Transport>(
                     }
                 }
                 // Record the assistant's call + the (tainted) result, then continue.
-                transcript.push_str(&answer);
-                transcript.push_str("\ntool_result: ");
-                transcript.push_str(&result);
-                transcript.push_str("\n\nassistant:");
-                // A long run must not grow (and re-send) an unbounded transcript.
-                elide_old_tool_results(&mut transcript);
+                // Append-only: the prefix a provider already cached stays byte-identical,
+                // which is what makes a long run cheap. Compaction is the one thing that
+                // rewrites history, and it runs only when the window demands it.
+                transcript.push(Turn::Assistant(answer));
+                transcript.push(Turn::ToolResult { name: last_name, text: result });
             }
             None => {
                 let empty = answer.trim().is_empty();
@@ -315,10 +484,13 @@ pub fn run_agent<T: Transport>(
                 if (empty || looks_like_tool_attempt(&answer)) && corrections < MAX_CORRECTIONS {
                     corrections += 1;
                     observer.on_commit("");
-                    transcript.push_str(&answer);
-                    transcript.push_str("\n\n");
-                    transcript.push_str(if empty { CORRECTION_EMPTY } else { CORRECTION_TOOL });
-                    transcript.push_str("\n\nassistant:");
+                    if !empty {
+                        transcript.push(Turn::Assistant(answer));
+                    }
+                    // The nudge is a USER turn, not narration inside the model's own
+                    // words. A model correcting itself reads very differently from
+                    // being corrected, and the weaker it is the more that matters.
+                    transcript.push(Turn::User((if empty { CORRECTION_EMPTY } else { CORRECTION_TOOL }).to_string()));
                     continue;
                 }
                 // No tool call and no prose → a friendly hint instead of a blank bubble.
@@ -332,11 +504,11 @@ pub fn run_agent<T: Transport>(
 }
 
 /// The nudge appended after a botched tool call — restates the exact `@tool` form.
-const CORRECTION_TOOL: &str = "system: That last message looked like a tool call but could not be parsed. \
+const CORRECTION_TOOL: &str = "That last message looked like a tool call but could not be parsed. \
 To call a tool, output EXACTLY one line: @tool <name> {json-args}  — for example: @tool fs.list {\"path\":\".\"} . \
 If you are finished, reply in plain Markdown with NO tool line.";
 /// The nudge appended after an empty turn.
-const CORRECTION_EMPTY: &str = "system: You returned nothing. Either call a tool with a single line \
+const CORRECTION_EMPTY: &str = "You returned nothing. Either call a tool with a single line \
 @tool <name> {json-args}, or give your final answer in plain Markdown.";
 
 fn tool_instructions(tools: &[ToolSpec]) -> String {
@@ -353,6 +525,9 @@ fn tool_instructions(tools: &[ToolSpec]) -> String {
          Paths are workspace-relative unless absolute; prefer fs.* for files and sys.run for shell commands.\n\
          When you have the final answer, reply in Markdown WITHOUT an @tool line.\n\nTools:\n",
     );
+    for (name, describe) in CTX_TOOLS {
+        s.push_str(&format!("- {name} — {describe}\n"));
+    }
     for t in tools {
         s.push_str(&format!("- {} — {}\n", t.name, t.describe));
     }
@@ -806,6 +981,7 @@ mod tests {
             system: "You are helpful.".into(),
             tools: vec![ToolSpec { name: "sys.run".into(), describe: "run a command".into() }],
             max_steps: 4,
+            ..Default::default()
         };
         let mut runner = MockRunner { calls: Vec::new() };
         let run = run_agent(&client, &agent, "what's the date?", "", &mut runner, &mut NoopObserver);
@@ -850,6 +1026,7 @@ mod tests {
             system: String::new(),
             tools: vec![ToolSpec { name: "sys.run".into(), describe: "run".into() }],
             max_steps: 4,
+            ..Default::default()
         };
         let mut runner = MockRunner { calls: Vec::new() };
         let run = run_agent(&client, &agent, "hi", "", &mut runner, &mut NoopObserver);
@@ -870,6 +1047,7 @@ mod tests {
             system: String::new(),
             tools: vec![ToolSpec { name: "fs.list".into(), describe: "list".into() }],
             max_steps: 4,
+            ..Default::default()
         };
         let mut runner = MockRunner { calls: Vec::new() };
         let run = run_agent(&client, &agent, "hi", "", &mut runner, &mut NoopObserver);
@@ -885,7 +1063,7 @@ mod tests {
             text_sse("ok, done.", 1, 1),
         ]);
         let client = Client::new(keyed_settings(), transport);
-        let agent = AgentSpec { system: String::new(), tools: Vec::new(), max_steps: 3 };
+        let agent = AgentSpec { system: String::new(), tools: Vec::new(), max_steps: 3, ..Default::default() };
         let mut runner = MockRunner { calls: Vec::new() };
         let run = run_agent(&client, &agent, "hi", "", &mut runner, &mut NoopObserver);
         assert!(runner.calls.is_empty(), "undeclared tool must never reach the runner");
@@ -905,6 +1083,7 @@ mod tests {
             system: String::new(),
             tools: vec![ToolSpec { name: "sys.run".into(), describe: "x".into() }],
             max_steps: 5,
+            ..Default::default()
         };
         let mut runner = MockRunner { calls: Vec::new() };
         let run = run_agent(&client, &agent, "go", "", &mut runner, &mut NoopObserver);
@@ -928,6 +1107,7 @@ mod tests {
             system: String::new(),
             tools: vec![ToolSpec { name: "sys.run".into(), describe: "x".into() }],
             max_steps: 3,
+            ..Default::default()
         };
         let mut runner = MockRunner { calls: Vec::new() };
         let run = run_agent(&client, &agent, "loop", "", &mut runner, &mut NoopObserver);
@@ -946,6 +1126,7 @@ mod tests {
             system: String::new(),
             tools: vec![ToolSpec { name: "sys.run".into(), describe: "x".into() }],
             max_steps: 20,
+            ..Default::default()
         };
         let mut runner = MockRunner { calls: Vec::new() };
         let run = run_agent(&client, &agent, "spin", "", &mut runner, &mut NoopObserver);
@@ -994,6 +1175,7 @@ mod tests {
             system: String::new(),
             tools: vec![ToolSpec { name: "fs.read".into(), describe: "read".into() }],
             max_steps: 4,
+            ..Default::default()
         };
         let mut runner = MockRunner { calls: Vec::new() };
         let mut obs = RecordObserver::default();
@@ -1045,6 +1227,7 @@ mod tests {
             system: String::new(),
             tools: vec![ToolSpec { name: "sys.run".into(), describe: "x".into() }],
             max_steps: 5,
+            ..Default::default()
         };
         let mut runner = HugeRunner;
         let run = run_agent(&client, &agent, "go", "", &mut runner, &mut NoopObserver);
@@ -1057,18 +1240,132 @@ mod tests {
     }
 
     #[test]
-    fn old_tool_results_are_elided_once_the_transcript_overflows() {
-        let mut t = String::from("sys\n\nassistant: first");
-        t.push_str("\ntool_result: ");
-        t.push_str(&"a".repeat(TRANSCRIPT_SOFT_MAX));
-        t.push_str("\n\nassistant: second");
-        t.push_str("\ntool_result: fresh-result");
-        t.push_str("\n\nassistant:");
-        elide_old_tool_results(&mut t);
-        assert!(t.len() < TRANSCRIPT_SOFT_MAX, "shrunk under the cap: {}", t.len());
-        assert!(t.contains("[earlier tool result elided]"));
-        assert!(t.contains("fresh-result"), "the newest result survives");
-        assert!(t.contains("assistant: first") && t.contains("assistant: second"), "assistant text kept");
+    fn a_small_window_compacts_mid_run_instead_of_overflowing_it() {
+        // The case the whole change exists for: a cheap model with a small window.
+        // The run must finish, and it must do so by giving context back rather than
+        // by sending a prompt the provider would reject.
+        struct BigRunner;
+        impl ToolRunner for BigRunner {
+            fn run(&mut self, _n: &str, _a: &str) -> Result<String, String> {
+                Ok("result line\n".repeat(4_000))
+            }
+        }
+        #[derive(Default)]
+        struct Watcher {
+            reports: Vec<CompactionReport>,
+        }
+        impl AgentObserver for Watcher {
+            fn on_compact(&mut self, r: &CompactionReport) {
+                self.reports.push(r.clone());
+            }
+        }
+
+        let scratch = std::env::temp_dir().join(format!("aiterm-agent-compact-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let transport = ScriptedTransport::new(vec![
+            text_sse("@tool sys.run {\"cmd\":\"a\"}", 1, 1),
+            text_sse("@tool sys.run {\"cmd\":\"b\"}", 1, 1),
+            text_sse("@tool sys.run {\"cmd\":\"c\"}", 1, 1),
+            text_sse("done.", 1, 1),
+        ]);
+        let client = Client::new(keyed_settings(), transport);
+        let agent = AgentSpec {
+            system: "You are terse.".into(),
+            tools: vec![ToolSpec { name: "sys.run".into(), describe: "x".into() }],
+            max_steps: 6,
+            // A deliberately tiny window — the floor, which is what a cheap local
+            // model actually offers.
+            context_window: 8_192,
+            compact_at: 0.75,
+            scratch: scratch.clone(),
+        };
+        let mut obs = Watcher::default();
+        let run = run_agent(&client, &agent, "go", "", &mut BigRunner, &mut obs);
+
+        assert_eq!(run.outcome, RunOutcome::Completed, "the run finished under a small window");
+        assert_eq!(run.answer, "done.");
+        assert!(!obs.reports.is_empty(), "it compacted rather than sailing past the window");
+        let last = obs.reports.last().unwrap();
+        assert!(last.tokens_after < last.tokens_before, "{}", last.summary());
+        assert!(last.offloaded > 0, "the free rung did the work");
+        assert!(!last.summarized, "no model call was spent — offloading was enough");
+        // The lifted bytes are on disk where the agent was told to look.
+        let files: Vec<_> = std::fs::read_dir(&scratch).map(|d| d.filter_map(|e| e.ok()).collect()).unwrap_or_default();
+        assert!(!files.is_empty(), "offloaded output was written to the scratch dir");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn an_agent_can_read_and_free_its_own_context() {
+        // `ctx.*` is answered by the loop, so it works without the agent declaring it
+        // and without any tool runner being involved at all.
+        struct NeverCalled;
+        impl ToolRunner for NeverCalled {
+            fn run(&mut self, n: &str, _a: &str) -> Result<String, String> {
+                panic!("the runner must never see a ctx.* call, got {n}")
+            }
+        }
+        let scratch = std::env::temp_dir().join(format!("aiterm-ctxtool-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let transport = ScriptedTransport::new(vec![
+            text_sse("@tool ctx.status {}", 1, 1),
+            text_sse("@tool ctx.compact {\"keep\":\"the failing test\"}", 1, 1),
+            text_sse("done.", 1, 1),
+        ]);
+        let client = Client::new(keyed_settings(), transport);
+        let agent = AgentSpec {
+            system: "You are terse.".into(),
+            tools: Vec::new(), // declares NOTHING — ctx.* is the harness's, not the agent's
+            max_steps: 5,
+            context_window: 8_192,
+            compact_at: 0.75,
+            scratch: scratch.clone(),
+        };
+        let run = run_agent(&client, &agent, "go", "", &mut NeverCalled, &mut NoopObserver);
+
+        assert_eq!(run.outcome, RunOutcome::Completed);
+        assert_eq!(run.steps.len(), 2);
+        // `ctx.status` reports the real window, not a placeholder.
+        let status = &run.steps[0].result;
+        assert!(status.contains("\"window\":8192"), "status: {status}");
+        assert!(status.contains("\"used\":"), "status: {status}");
+        assert!(status.contains("\"pct\":"), "status: {status}");
+        // `ctx.compact` on a small transcript honestly says there was nothing to do,
+        // rather than claiming work it did not perform.
+        assert!(run.steps[1].result.contains("nothing to compact"), "compact: {}", run.steps[1].result);
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn the_keep_argument_survives_the_shapes_a_model_actually_emits() {
+        // Weak models are inconsistent about argument shape; the harness meets them.
+        assert_eq!(keep_arg(r#"{"keep":"the failing test"}"#), "the failing test");
+        assert_eq!(keep_arg(r#""just a string""#), "just a string");
+        assert_eq!(keep_arg("bare words"), "bare words");
+        assert_eq!(keep_arg("{}"), "");
+        assert_eq!(keep_arg(""), "");
+    }
+
+    #[test]
+    fn an_agent_turn_carries_its_own_system_prompt_and_real_roles() {
+        // Agent runs used to be served the @ai teacher persona ("use a diagram
+        // whenever a picture makes the idea clearer") while the agent's own
+        // instructions sat in user text. The request must now say the opposite.
+        let model = crate::ai::ModelDef { max_tokens: 1_000, ..Default::default() };
+        let mut t = Transcript::new("You are a careful engineer.", "fix the test");
+        t.push(Turn::Assistant("@tool fs.read {\"path\":\"a\"}".into()));
+        t.push(Turn::ToolResult { name: "fs.read".into(), text: "contents".into() });
+
+        let req = crate::ai::request::agent_request(&model, t.system(), t.messages());
+        let system = req.system.clone().expect("an agent's prompt IS the system prompt");
+        assert!(system.contains("careful engineer"));
+        assert!(!system.contains("mermaid"), "no teacher persona: {system}");
+        assert!(!system.contains("teacher"), "no teacher persona: {system}");
+        assert_eq!(req.messages.len(), 3, "roles alternate rather than collapsing into one blob");
+        assert_eq!(req.messages[0].role, crate::ai::Role::User);
+        assert_eq!(req.messages[1].role, crate::ai::Role::Assistant);
+        assert_eq!(req.messages[2].role, crate::ai::Role::User);
+        assert!(req.messages[2].content.starts_with("tool_result(fs.read):"));
     }
 
     #[test]
@@ -1076,7 +1373,7 @@ mod tests {
         // An empty script feeds an empty SSE stream → the transport reports an
         // error, and the run must carry it as control flow, not just answer text.
         let client = Client::new(keyed_settings(), ScriptedTransport::new(vec![]));
-        let agent = AgentSpec { system: String::new(), tools: Vec::new(), max_steps: 3 };
+        let agent = AgentSpec { system: String::new(), tools: Vec::new(), max_steps: 3, ..Default::default() };
         let mut runner = MockRunner { calls: Vec::new() };
         let run = run_agent(&client, &agent, "hi", "", &mut runner, &mut NoopObserver);
         assert!(matches!(run.outcome, RunOutcome::Error(_)), "{:?}", run.outcome);

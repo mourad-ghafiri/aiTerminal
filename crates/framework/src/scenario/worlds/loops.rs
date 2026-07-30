@@ -203,7 +203,7 @@ impl LoopsWorld {
         };
         let turns: Vec<String> = answers.iter().map(|a| ai::provider::text_sse(a, 10, 4)).collect();
         let client = Client::new(settings(), ScriptedTransport::new(turns));
-        let maker = ai::AgentSpec { system: "You fix things.".into(), tools: Vec::new(), max_steps: 2 };
+        let maker = ai::AgentSpec { system: "You fix things.".into(), tools: Vec::new(), max_steps: 2, ..Default::default() };
 
         let observations = self.observations.clone();
         let mut used = 0usize;

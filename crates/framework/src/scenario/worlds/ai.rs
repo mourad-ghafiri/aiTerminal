@@ -17,7 +17,7 @@ use platform::transport::ScriptedTransport;
 
 use super::super::world::{self, World};
 use crate::ai::{
-    self, AgentSpec, Client, CommandReply, NoopObserver, ReplySink, RunOutcome, ToolRunner, ToolSpec,
+    self, AgentSpec, Client, CommandReply, ReplySink, RunOutcome, ToolRunner, ToolSpec,
 };
 use crate::security::Policy;
 
@@ -28,6 +28,11 @@ pub struct AiWorld {
     turns: Vec<String>,
     tools: Vec<ToolSpec>,
     max_steps: u32,
+    /// The context window an agent run budgets against. A scenario sets it small to
+    /// put a run under real compaction pressure without a megabyte of fixture.
+    context_window: usize,
+    /// Where offloaded tool output lands — a per-run temp dir, cleaned by the OS.
+    scratch: std::path::PathBuf,
     /// Scripted tool outcomes: `Ok` is what the tool returned, `Err` is how it failed.
     tool_results: HashMap<String, Result<String, String>>,
     /// The guard `@ai --command` runs a suggested command past.
@@ -36,6 +41,14 @@ pub struct AiWorld {
     command_mode: String,
     /// What the last action produced.
     last: Outcome,
+}
+
+impl Drop for AiWorld {
+    fn drop(&mut self) {
+        // A scenario that offloaded leaves files behind; a suite that ran a thousand
+        // of them should not.
+        let _ = std::fs::remove_dir_all(&self.scratch);
+    }
 }
 
 /// Everything an assertion can look at, from whichever action ran last.
@@ -51,6 +64,10 @@ struct Outcome {
     run_outcome: Option<RunOutcome>,
     step_answers: Vec<String>,
     tokens: (u32, u32),
+    /// What the run's compaction passes did, in order — empty when it never needed to.
+    compactions: Vec<crate::ai::CompactionReport>,
+    /// Tool results that were lifted out of context to a file, by tool name.
+    offloaded_files: Vec<std::path::PathBuf>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -77,6 +94,9 @@ pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
         turns: Vec::new(),
         tools: Vec::new(),
         max_steps: world::int(setup, "max_steps").unwrap_or(6).clamp(1, 50) as u32,
+        // Big enough that an ordinary scenario never compacts by accident.
+        context_window: world::int(setup, "context_window").unwrap_or(200_000).max(0) as usize,
+        scratch: std::env::temp_dir().join(format!("aiterm-scenario-{}-{:p}", std::process::id(), &policy)),
         tool_results: HashMap::new(),
         policy,
         command_mode: world::text(setup, "command_mode").unwrap_or_else(|| "manual".into()),
@@ -118,6 +138,18 @@ impl World for AiWorld {
         }
         if let Some(pairs) = world::list(step, "tool_fails") {
             return self.script_tools(&pairs, Err);
+        }
+        // A tool that really does return a lot. Written as one line and a repeat count
+        // so the fixture stays readable — a scenario about a 40 000-character build log
+        // should not BE 40 000 characters.
+        if let Some(pairs) = world::list(step, "tool_returns_many_lines") {
+            let times = world::int(step, "times").unwrap_or(1000).clamp(1, 200_000) as usize;
+            for p in &pairs {
+                let (name, line) = p.split_once('=').ok_or_else(|| format!("tool entry {p:?} needs name=line"))?;
+                let body = format!("{}\n", line.trim()).repeat(times);
+                self.tool_results.insert(name.trim().to_string(), Ok(body));
+            }
+            return Ok(());
         }
 
         // ── what the user does ───────────────────────────────────────────────
@@ -180,6 +212,44 @@ impl World for AiWorld {
             let got: Vec<String> =
                 self.last.step_answers.iter().map(|s| s.split_once('=').map_or(s.clone(), |(l, _)| l.into())).collect();
             return world::expect_lines(&got, &want, "the flow steps that ran");
+        }
+        // ── what the harness did about its context ───────────────────────────
+        if world::flag(step, "expect_compacted") == Some(true) {
+            return match self.last.compactions.is_empty() {
+                true => Err("the run never compacted \u{2014} it stayed within the window".into()),
+                false => Ok(()),
+            };
+        }
+        if world::flag(step, "expect_no_compaction") == Some(true) {
+            return match self.last.compactions.first() {
+                Some(r) => Err(format!("the run compacted when it did not need to: {}", r.summary())),
+                None => Ok(()),
+            };
+        }
+        if world::flag(step, "expect_compacted_without_a_model_call") == Some(true) {
+            let Some(r) = self.last.compactions.last() else {
+                return Err("the run never compacted".into());
+            };
+            if r.summarized {
+                return Err(format!("a model call was spent summarizing: {}", r.summary()));
+            }
+            return match r.offloaded {
+                0 => Err("nothing was offloaded".into()),
+                _ => Ok(()),
+            };
+        }
+        if world::flag(step, "expect_offloaded_output_is_readable") == Some(true) {
+            if self.last.offloaded_files.is_empty() {
+                return Err("nothing was offloaded, so there is no file to read back".into());
+            }
+            for path in &self.last.offloaded_files {
+                let read = std::fs::read_to_string(path)
+                    .map_err(|e| format!("the agent was handed {} but it cannot be read: {e}", path.display()))?;
+                if read.trim().is_empty() {
+                    return Err(format!("{} was written empty", path.display()));
+                }
+            }
+            return Ok(());
         }
         if let Some(want) = world::int(step, "expect_input_tokens") {
             return expect_count(self.last.tokens.0, want, "input token(s)");
@@ -246,11 +316,34 @@ impl AiWorld {
     }
 
     fn agent(&mut self, task: &str) -> Result<(), String> {
-        let spec = AgentSpec { system: String::new(), tools: self.tools.clone(), max_steps: self.max_steps };
+        let spec = AgentSpec {
+            system: String::new(),
+            tools: self.tools.clone(),
+            max_steps: self.max_steps,
+            context_window: self.context_window as u32,
+            compact_at: ai::DEFAULT_COMPACT_AT,
+            scratch: self.scratch.clone(),
+        };
         let mut runner = ScriptedRunner { results: self.tool_results.clone(), calls: Vec::new() };
         let client = self.client();
-        let run = ai::run_agent(&client, &spec, task, "", &mut runner, &mut NoopObserver);
+        // Watches what the harness did about its own context, so a scenario can assert
+        // on compaction the same way it asserts on a tool call.
+        #[derive(Default)]
+        struct Watcher {
+            reports: Vec<crate::ai::CompactionReport>,
+        }
+        impl ai::AgentObserver for Watcher {
+            fn on_compact(&mut self, r: &crate::ai::CompactionReport) {
+                self.reports.push(r.clone());
+            }
+        }
+        let mut obs = Watcher::default();
+        let run = ai::run_agent(&client, &spec, task, "", &mut runner, &mut obs);
 
+        // Whatever was lifted out of context is on disk in the run's scratch dir.
+        let offloaded_files: Vec<std::path::PathBuf> = std::fs::read_dir(&self.scratch)
+            .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect())
+            .unwrap_or_default();
         self.last = Outcome {
             answer: run.answer,
             tool_calls: runner.calls,
@@ -260,6 +353,8 @@ impl AiWorld {
                 _ => None,
             },
             tokens: (run.input_tokens, run.output_tokens),
+            compactions: obs.reports,
+            offloaded_files,
             ..Outcome::default()
         };
         Ok(())

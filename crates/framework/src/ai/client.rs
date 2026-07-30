@@ -133,6 +133,33 @@ impl<T: Transport> Client<T> {
     /// list, so a multi-turn agent run pins ONE model (the list head) across turns
     /// and only fails over to a later candidate on a hard error before any token.
     pub fn ask_streaming_on(&self, candidates: &[ModelDef], prompt: &str, context: &str, on_part: &mut dyn FnMut(bool, &str)) -> Result<(String, u32, u32, ModelDef), String> {
+        self.stream_with(candidates, &|model| qa_request(model, prompt, context), on_part)
+    }
+
+    /// Stream a request the CALLER built, with the same retry + failover behaviour.
+    ///
+    /// The agent loop needs this: its turn carries the agent's own system prompt and a
+    /// role-tagged conversation, neither of which [`qa_request`] can express. `build`
+    /// takes the candidate because a failover model may have different sampling
+    /// params and a different id.
+    pub fn stream_request(
+        &self,
+        candidates: &[ModelDef],
+        build: &dyn Fn(&ModelDef) -> ChatRequest,
+        on_part: &mut dyn FnMut(bool, &str),
+    ) -> Result<(String, u32, u32, ModelDef), String> {
+        self.stream_with(candidates, build, on_part)
+    }
+
+    /// The one implementation of "try each candidate, retry a transient blip, never
+    /// re-run after a token has streamed". Both public entry points delegate here so
+    /// the failover rules can only ever be written down once.
+    fn stream_with(
+        &self,
+        candidates: &[ModelDef],
+        build: &dyn Fn(&ModelDef) -> ChatRequest,
+        on_part: &mut dyn FnMut(bool, &str),
+    ) -> Result<(String, u32, u32, ModelDef), String> {
         let mut last_err = String::from("no model candidates");
         for (i, model) in candidates.iter().enumerate() {
             // Per-candidate retry: a TRANSIENT error before any output (a 429/503/overloaded
@@ -141,7 +168,7 @@ impl<T: Transport> Client<T> {
             // never attempted (output would duplicate); a cancel short-circuits the wait.
             let mut attempt = 0u32;
             let (candidate_err, emitted) = loop {
-                let rx = self.run(model, qa_request(model, prompt, context));
+                let rx = self.run(model, build(model));
                 let mut emitted = false;
                 let res = {
                     let mut sink = |thinking: bool, s: &str| {

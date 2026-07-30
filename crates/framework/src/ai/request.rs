@@ -135,6 +135,28 @@ pub fn qa_request(model: &ModelDef, prompt: &str, context: &str) -> ChatRequest 
     }
 }
 
+/// Build an **agent turn's** request: the agent's own system prompt, and the run's
+/// role-tagged conversation.
+///
+/// Deliberately not [`qa_request`]. That one carries the teacher persona — *"use a
+/// diagram whenever a picture makes the idea clearer"* — which is right for `@ai` and
+/// actively wrong for a tool-calling agent, whose instructions would then be
+/// competing with the system slot for the model's attention. An agent's prompt IS the
+/// system prompt.
+pub fn agent_request(model: &ModelDef, system: &str, messages: Vec<Message>) -> ChatRequest {
+    ChatRequest {
+        model: model.id.clone(),
+        max_tokens: model.max_tokens,
+        system: (!system.trim().is_empty()).then(|| system.to_string()),
+        messages,
+        temperature: model.temperature,
+        top_p: model.top_p,
+        top_k: model.top_k,
+        thinking: model.caps.enable_thinking,
+        images: Vec::new(),
+    }
+}
+
 /// Build a natural-language → command request. Deterministic (temperature 0), no thinking;
 /// room for a short prose answer when the request is a question.
 pub fn command_request(model: &ModelDef, nl: &str, context: &str) -> ChatRequest {

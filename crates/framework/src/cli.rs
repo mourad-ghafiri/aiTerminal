@@ -114,11 +114,20 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
     // The global aiTerminal.md instructions lead, then this folder's recent-activity
     // digest, auto-recalled memories (folder-first then global, gated by `[ai] memory`),
     // the terminal grounding, and any attached files. Everything is redacted before egress.
-    let ctx = format!(
-        "{}{}{}{term}{file_ctx}",
-        instructions_preamble(),
-        session_preamble(session.as_ref()),
-        memory_preamble(&cfg, prompt, folder_mem.as_deref()),
+    // Trimmed to the model's window before it is sent. The preamble is assembled from
+    // sources that grow on their own — a session digest, a terminal scrollback — and
+    // on a small-window model the grounding could otherwise crowd out the question it
+    // was meant to ground.
+    let ctx = fit_context(
+        &crate::ai::ContextBudget::for_model(&settings.primary(), cfg.ai_context_window, cfg.ai_compact_at),
+        prompt,
+        &[
+            ("instructions", instructions_preamble()),
+            ("attachments", file_ctx.clone()),
+            ("memory", memory_preamble(&cfg, prompt, folder_mem.as_deref())),
+            ("session", session_preamble(session.as_ref())),
+            ("terminal", term.clone()),
+        ],
     );
     // Apply the user's AI-scope redaction rules (config + plugins) before egress.
     let registry = crate::plugin::load_registry(&cfg);
@@ -1430,11 +1439,73 @@ struct SubAgentCtx {
     agents_dir: std::path::PathBuf,
     skills_dir: std::path::PathBuf,
     prompts_dir: std::path::PathBuf,
+    /// The same context settings the parent run uses — a delegate that ignored the
+    /// window would fail on exactly the models the delegation was meant to help.
+    context: (u32, f32),
 }
 
 /// How many levels of `task.run` delegation are allowed (the orchestrating agent
 /// may fan out sub-agents; a sub-agent may not delegate further).
 const MAX_DELEGATION_DEPTH: u8 = 1;
+
+/// The two context settings a run carries: the `[ai] context_window` override (`0` =
+/// use the serving model's own) and the `[ai] compact_at` threshold.
+///
+/// Deliberately NOT a finished budget. The pool picks which model serves a run when
+/// the run starts, so a budget resolved here would belong to whichever model happened
+/// to be representative — not to the one answering. `run_agent` resolves it against
+/// the model it pins.
+///
+/// ONE place reads these, so `@agent`, `@flow`, `@loop`, `@job` and sub-agents can
+/// never drift into budgeting differently from one another.
+fn context_settings(cfg: &crate::config::Config) -> (u32, f32) {
+    (cfg.ai_context_window, cfg.ai_compact_at)
+}
+
+/// A private directory for one run's offloaded tool output.
+///
+/// The counter is not decoration. `record::new_id()` is `<unix-secs>-<pid>`, which is
+/// the SAME string for four `@flow` nodes that start in the same second inside one
+/// process — and offloaded files are named by turn index, so two nodes would each
+/// write `003-fs-read.txt` into the same directory and one would read back the
+/// other's output. The suffix is what makes the isolation real.
+fn run_scratch() -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    crate::config::Config::offload_dir().join(format!("{}-{n}", crate::record::new_id()))
+}
+
+/// Assemble the grounding preamble, dropping whole blocks from the END of `blocks`
+/// until it fits alongside `prompt`.
+///
+/// `blocks` is ordered **most valuable first**, and that order is the design: the
+/// user's standing instructions and the files they explicitly attached are the last
+/// things to go, while the terminal scrollback — which grows on its own and which
+/// nobody asked for — is the first. A block goes whole rather than being cut in half,
+/// because half a session digest is a misleading digest.
+///
+/// Dropping is announced on stderr. Grounding that vanishes silently is how "why
+/// didn't it know that?" becomes unanswerable.
+fn fit_context(budget: &crate::ai::ContextBudget, prompt: &str, blocks: &[(&str, String)]) -> String {
+    use crate::ai::TokenEstimator;
+    let est = crate::ai::HeuristicEstimator;
+    let mut kept: Vec<&(&str, String)> = blocks.iter().filter(|(_, text)| !text.trim().is_empty()).collect();
+    let mut dropped: Vec<&str> = Vec::new();
+    let room = budget.compact_threshold().saturating_sub(est.estimate(prompt));
+    while !kept.is_empty() {
+        let used: usize = kept.iter().map(|(_, t)| est.estimate(t)).sum();
+        if used <= room {
+            break;
+        }
+        // Safe: the loop only runs while `kept` is non-empty.
+        dropped.push(kept.pop().expect("non-empty").0);
+    }
+    if !dropped.is_empty() {
+        dropped.reverse();
+        eprintln!("{}  \u{2139} context trimmed to fit the model's window \u{2014} dropped: {}{}", muted(), dropped.join(", "), reset());
+    }
+    kept.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join("")
+}
 
 /// A pure agent tool runner: routes a model tool call to `caps::run` (no live host),
 /// intercepts `task.run` (sub-agent delegation), and redacts every result before it
@@ -1564,6 +1635,9 @@ fn run_sub_agent(sub: &SubAgentCtx, ctx: crate::caps::CapCtx, depth: u8, name: &
         system,
         tools: tools.into_iter().map(|n| crate::ai::ToolSpec { describe: crate::caps::describe(&n).to_string(), name: n }).collect(),
         max_steps: 12,
+        context_window: sub.context.0,
+        compact_at: sub.context.1,
+        scratch: run_scratch(),
     };
     let client = crate::ai::Client::new(sub.settings.clone(), crate::ai::CurlTransport::default());
     let mut runner = CliToolRunner { ctx, mcp: None, sub: sub.clone(), depth, trace: None };
@@ -1613,6 +1687,7 @@ fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::AiSettings, w
             agents_dir: crate::config::Config::agents_dir(),
             skills_dir: crate::config::Config::skills_dir(),
             prompts_dir: crate::config::Config::prompts_dir(),
+            context: context_settings(cfg),
         },
         depth: 0,
     }
@@ -1739,12 +1814,12 @@ fn available_agents_hint() -> String {
 /// Build a full [`AgentSpec`](crate::ai::AgentSpec) for the named on-disk agent
 /// (tool descriptions injected from `caps`, the global `aiTerminal.md`
 /// instructions prepended to the system prompt), or `None` when it doesn't exist.
-fn build_agent_spec(name: &str) -> Option<crate::ai::AgentSpec> {
+fn build_agent_spec(name: &str, context: (u32, f32)) -> Option<crate::ai::AgentSpec> {
     let raw = crate::ai::defs::build_agent(&crate::config::Config::agents_dir(), &crate::config::Config::skills_dir(), &crate::config::Config::prompts_dir(), name)?;
     let tools = raw.tools.into_iter().map(|n| crate::ai::ToolSpec { describe: crate::caps::describe(&n).to_string(), name: n }).collect();
     let global = instructions();
     let system = if global.is_empty() { raw.system } else { format!("{global}\n\n{}", raw.system) };
-    Some(crate::ai::AgentSpec { system, tools, max_steps: raw.max_steps })
+    Some(crate::ai::AgentSpec { system, tools, max_steps: raw.max_steps, context_window: context.0, compact_at: context.1, scratch: run_scratch() })
 }
 
 /// Wire Ctrl+C to a [`CancelToken`](crate::ai::CancelToken): installs the
@@ -1808,7 +1883,7 @@ impl std::io::Write for Tee {
 /// (+ an optional tee into a job log), reasoning → stderr, tool calls → an
 /// stderr trace), with the header/footer chrome.
 fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::ai::AiSettings, name: &str, prompt: &str, ctx: &str, workspace_root: Option<std::path::PathBuf>, policy: std::sync::Arc<crate::security::Policy>, media: Vec<crate::ai::ImageData>, log: Option<std::fs::File>) -> i32 {
-    let Some(mut agent) = build_agent_spec(name) else {
+    let Some(mut agent) = build_agent_spec(name, context_settings(cfg)) else {
         eprintln!("aiTerminal: no agent '{name}' — {}", available_agents_hint());
         return 2;
     };
@@ -2531,7 +2606,7 @@ impl FlowDriver<'_> {
     /// One agent run, on its own client and its own tool runner — the shape
     /// `task.run` already uses for parallel sub-agents.
     fn one_agent(&self, name: &str, prompt: &str, node: &crate::flow::Node) -> NodeOut {
-        let Some(mut spec) = build_agent_spec(name) else {
+        let Some(mut spec) = build_agent_spec(name, context_settings(self.cfg)) else {
             return NodeOut { ok: false, output: format!("no agent '{name}'"), ..NodeOut::default() };
         };
         if let Some(max) = node.max_steps {
@@ -3592,7 +3667,7 @@ fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
         || spec.agent.clone().unwrap_or_else(|| "coder".into()),
         |p| p.agent.clone(),
     );
-    let Some(mut maker) = build_agent_spec(&agent_name) else {
+    let Some(mut maker) = build_agent_spec(&agent_name, context_settings(&cfg)) else {
         eprintln!("aiTerminal: no agent '{agent_name}' — {}", available_agents_hint());
         return 2;
     };
@@ -4053,7 +4128,7 @@ fn run_prompt_as_agent(agent: &str, prompt: &str, mut log: Option<std::fs::File>
     if settings.resolve_key().is_none() {
         return job_setup_error(&mut log, &crate::ai::setup_hint(&settings));
     }
-    if build_agent_spec(agent).is_none() {
+    if build_agent_spec(agent, context_settings(&cfg)).is_none() {
         return job_setup_error(&mut log, &format!("no agent '{agent}' \u{2014} {}", available_agents_hint()));
     }
     let registry = crate::plugin::load_registry(&cfg);
@@ -5712,7 +5787,7 @@ mod tests {
     }
 
     fn maker() -> crate::ai::AgentSpec {
-        crate::ai::AgentSpec { system: "You fix things.".into(), tools: Vec::new(), max_steps: 3 }
+        crate::ai::AgentSpec { system: "You fix things.".into(), tools: Vec::new(), max_steps: 3, ..Default::default() }
     }
 
     /// A scripted client with one canned answer per expected iteration.
@@ -6088,6 +6163,7 @@ mod tests {
             system: "You check things.".into(),
             tools: vec![crate::ai::ToolSpec { name: "fs.read".into(), describe: "read".into() }],
             max_steps: 3,
+            ..Default::default()
         };
         let mut obs = super::CliObserver::new(Vec::new());
         let run = crate::ai::run_agent(&client, &spec, "check x", "", &mut NoTools, &mut obs);
@@ -6200,14 +6276,70 @@ mod tests {
         let (_h, _home) = crate::test_home::lock_home("cli-instructions");
         crate::config::Config::ensure_default();
         std::fs::write(crate::config::Config::instructions_path(), "Always answer in haiku.").unwrap();
-        let spec = super::build_agent_spec("coder").expect("bundled coder agent");
+        let spec = super::build_agent_spec("coder", (0, crate::ai::DEFAULT_COMPACT_AT)).expect("bundled coder agent");
         assert!(spec.system.starts_with("Always answer in haiku."), "instructions lead the system prompt");
         assert!(super::instructions_preamble().contains("Always answer in haiku."));
         assert!(super::instructions_preamble().contains("aiTerminal.md"), "the preamble names its source");
         std::fs::write(crate::config::Config::instructions_path(), "   ").unwrap();
         assert!(super::instructions_preamble().is_empty(), "blank file → no preamble");
-        let spec = super::build_agent_spec("coder").unwrap();
+        let spec = super::build_agent_spec("coder", (0, crate::ai::DEFAULT_COMPACT_AT)).unwrap();
         assert!(!spec.system.starts_with("##"), "blank instructions add nothing");
+    }
+
+    #[test]
+    fn two_runs_never_share_a_scratch_directory() {
+        // `record::new_id()` is `<unix-secs>-<pid>`, so four @flow nodes starting in
+        // the same second inside one process get the same id — and offloaded files are
+        // named by turn index, so two nodes would each write `003-fs-read.txt` into
+        // the same directory and one would read back the other's output.
+        let dirs: std::collections::HashSet<_> = (0..64).map(|_| super::run_scratch()).collect();
+        assert_eq!(dirs.len(), 64, "64 runs, 64 directories");
+    }
+
+    #[test]
+    fn grounding_is_trimmed_from_the_least_valuable_end() {
+        // On a small-window model the preamble could otherwise crowd out the question
+        // it exists to ground. What goes first is the part that grows on its own and
+        // nobody asked for; what survives is what the user actually said.
+        let big = |n: usize| "x ".repeat(n);
+        let blocks = |n: usize| {
+            [
+                ("instructions", "## Instructions\nAlways answer in haiku.".to_string()),
+                ("attachments", "## Attached\nthe file they picked".to_string()),
+                ("memory", big(n)),
+                ("session", big(n)),
+                ("terminal", big(n)),
+            ]
+        };
+
+        // A large window keeps everything.
+        let roomy = super::fit_context(&crate::ai::ContextBudget::new(200_000, 4_096, 0.75), "why?", &blocks(200));
+        for want in ["haiku", "the file they picked"] {
+            assert!(roomy.contains(want), "kept with room to spare: {want}");
+        }
+
+        // A small one drops terminal first, then session, then memory — and never the
+        // instructions or the user's own attachment.
+        let tight = super::fit_context(&crate::ai::ContextBudget::new(8_192, 7_000, 0.75), "why?", &blocks(4_000));
+        assert!(tight.contains("haiku"), "standing instructions survive: {tight:?}");
+        assert!(tight.contains("the file they picked"), "an explicit attachment survives: {tight:?}");
+        assert!(tight.len() < 4_000, "the bulky blocks went: {}", tight.len());
+
+        // Blocks go WHOLE — half a digest is a misleading digest.
+        let one = super::fit_context(
+            &crate::ai::ContextBudget::new(8_192, 7_000, 0.75),
+            "why?",
+            &[("session", "## Session\ncomplete or absent".to_string())],
+        );
+        assert!(one.is_empty() || one.contains("complete or absent"), "never half a block: {one:?}");
+
+        // Empty blocks are not counted, and nothing is fabricated.
+        let none = super::fit_context(
+            &crate::ai::ContextBudget::new(200_000, 4_096, 0.75),
+            "why?",
+            &[("session", String::new()), ("terminal", "   ".into())],
+        );
+        assert!(none.is_empty(), "no grounding means no preamble: {none:?}");
     }
 
     #[test]
