@@ -22,6 +22,9 @@ const DEFAULT_SCRIPT: &str = concat!(
 );
 
 struct Args {
+    /// Arguments we did not recognise. Non-empty is a hard error: the alternative is
+    /// opening a window nobody asked for.
+    unknown: Vec<String>,
     render_ppm: Option<String>,
     render_switcher: bool,
     render_chrome: Option<String>,
@@ -37,6 +40,7 @@ struct Args {
 
 fn parse_args() -> Args {
     let mut a = Args {
+        unknown: Vec::new(),
         render_ppm: None,
         render_switcher: false,
         render_chrome: None,
@@ -67,10 +71,25 @@ fn parse_args() -> Args {
             }
             "--plugins" => a.plugins = it.next(),
             "--theme" => a.theme = it.next(),
-            _ => {}
+            // Anything unrecognised is an error, not a window.
+            //
+            // This used to fall through and end at `gui::run`, so a mistyped flag — or any
+            // spawned child whose argv the CLI did not know — silently opened a terminal
+            // window. Each window then spawns login shells, which is how one bad argv
+            // turned into a wall of them.
+            other => a.unknown.push(other.to_string()),
         }
     }
     a
+}
+
+/// Print what we did not understand and how to get somewhere useful.
+fn unknown_args(bad: &[String]) -> ! {
+    let plural = if bad.len() == 1 { "argument" } else { "arguments" };
+    eprintln!("aiTerminal: unknown {plural} {}", bad.iter().map(|a| format!("'{a}'")).collect::<Vec<_>>().join(", "));
+    eprintln!("  subcommands: ai · md · gate · plugin · config · theme · profile");
+    eprintln!("  or run `aiTerminal` with no arguments to open the window");
+    std::process::exit(2);
 }
 
 fn main() {
@@ -98,6 +117,9 @@ fn main() {
     }
 
     let args = parse_args();
+    if !args.unknown.is_empty() {
+        unknown_args(&args.unknown);
+    }
 
     // `--render-chrome <pos> [--render-ppm <out>] [--theme <name>]` renders the window
     // chrome (status + tab bar) in a tab-bar orientation: top | bottom | left | right.
