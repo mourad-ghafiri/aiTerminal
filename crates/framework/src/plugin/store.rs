@@ -99,14 +99,23 @@ impl PluginStore {
         out
     }
 
-    /// Enabled installed manifests, for loading into a running registry. Uses
-    /// `load_from` so a plugin's `shell.zsh`/`shell.bash` snippet is loaded too.
-    pub fn enabled_manifests(&self) -> Vec<Manifest> {
+    /// Every installed manifest with whether it is on, for loading into a running
+    /// registry. Uses `load_from` so a plugin's `shell.zsh`/`shell.bash` snippet is
+    /// loaded too.
+    ///
+    /// Disabled plugins are RETURNED, not filtered out. A registry that never hears
+    /// about them cannot list them, describe them, or turn them back on — which is how
+    /// `@plugin disable x` became a one-way door. Enablement is state to carry, not a
+    /// reason to forget something exists.
+    pub fn manifests(&self) -> Vec<(Manifest, bool)> {
         let disabled = self.disabled_set();
         self.manifest_paths()
             .into_iter()
             .filter_map(|p| Manifest::load_from(&p).ok())
-            .filter(|m| !disabled.contains(&m.name))
+            .map(|m| {
+                let on = !disabled.contains(&m.name);
+                (m, on)
+            })
             .collect()
     }
 
@@ -203,17 +212,20 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "hello");
         assert!(list[0].enabled);
-        assert_eq!(store.enabled_manifests().len(), 1);
+        assert_eq!(store.manifests().len(), 1);
+        assert!(store.manifests()[0].1, "and it is on");
 
-        // disable → still listed but not enabled, and not loaded
+        // disable → still listed, still RETURNED, just marked off. It has to stay
+        // visible: a plugin the loader forgets about cannot be turned back on.
         store.set_enabled("hello", false).unwrap();
         assert!(!store.is_enabled("hello"));
         assert!(!store.installed()[0].enabled);
-        assert_eq!(store.enabled_manifests().len(), 0);
+        assert_eq!(store.manifests().len(), 1, "still known");
+        assert!(!store.manifests()[0].1, "and reported off");
 
         // re-enable
         store.set_enabled("hello", true).unwrap();
-        assert_eq!(store.enabled_manifests().len(), 1);
+        assert!(store.manifests()[0].1);
 
         // remove
         assert!(store.remove("hello"));

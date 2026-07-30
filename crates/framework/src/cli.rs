@@ -5368,11 +5368,15 @@ pub fn plugin(args: &[String]) -> i32 {
             let registry = crate::plugin::load_registry(&cfg);
             let installed = store.installed();
             let names: Vec<String> = installed.iter().map(|p| p.name.clone()).collect();
-            let bundled: Vec<(String, String, String, bool)> =
-                registry.loaded().into_iter().filter(|(n, _, _, _)| !names.contains(n)).collect();
+            let bundled: Vec<(String, String, String, bool, bool)> =
+                registry.loaded().into_iter().filter(|(n, ..)| !names.contains(n)).collect();
             println!("plugins ({} bundled · {} installed):", bundled.len(), installed.len());
-            for (name, version, description, _) in &bundled {
-                println!("  \u{25CF} {name:<18} {version:<8} {description}");
+            for (name, version, description, _, enabled) in &bundled {
+                // Marked from the real state, exactly as the installed rows are. A
+                // hardcoded ● reported every bundled plugin as running, including the
+                // ones the user had just turned off.
+                let mark = if *enabled { "\u{25CF}" } else { "\u{25CB}" };
+                println!("  {mark} {name:<18} {version:<8} {description}");
             }
             for p in &installed {
                 let mark = if p.enabled { "\u{25CF}" } else { "\u{25CB}" };
@@ -5460,9 +5464,9 @@ pub fn plugin(args: &[String]) -> i32 {
                 None => {
                     let cfg = crate::config::Config::load();
                     let registry = crate::plugin::load_registry(&cfg);
-                    match registry.loaded().into_iter().find(|(n, _, _, _)| n == name) {
-                        Some((n, v, d, _)) => {
-                            println!("{n}  v{v}\n{d}\nbundled with the app \u{b7} enabled: {}", store.is_enabled(&n));
+                    match registry.loaded().into_iter().find(|(n, ..)| n == name) {
+                        Some((n, v, d, _, enabled)) => {
+                            println!("{n}  v{v}\n{d}\nbundled with the app \u{b7} enabled: {enabled}");
                             0
                         }
                         None => {

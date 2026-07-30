@@ -303,6 +303,75 @@ fn load_registry_is_ui_free_and_honours_config() {
 }
 
 #[test]
+fn turning_a_plugin_off_stops_it_without_losing_it() {
+    // `@plugin disable git` REMOVED git from the product: the registry skipped disabled
+    // plugins at load, so it left `names()`, the listing dropped from 31 to 30,
+    // `@plugin info` said it did not exist, and `@plugin enable` had nothing to enable.
+    // The only way back was hand-editing a file nobody had been told about.
+    //
+    // `git` is the subject because it contributes BOTH aliases and a shell snippet — a
+    // plugin that contributes neither would let every "it really stopped" assertion
+    // below pass without proving anything.
+    let (_h, _home) = crate::test_home::lock_home("plugin-disable-round-trip");
+    crate::config::Config::ensure_default();
+    let cfg = crate::config::Config::default();
+    let store = crate::plugin::store::PluginStore::at(crate::config::Config::plugins_dir());
+
+    let reg = crate::plugin::load_registry(&cfg);
+    let before = reg.loaded().len();
+    assert!(reg.aliases().iter().any(|(k, _)| k == "gst"), "git contributes `gst` while on");
+    assert!(reg.shell_snippets(false).iter().any(|(n, _)| n == "git"), "and a zsh snippet");
+
+    store.set_enabled("git", false).expect("disable");
+    let reg = crate::plugin::load_registry(&cfg);
+
+    // Still there, still countable, and honestly marked.
+    assert_eq!(reg.loaded().len(), before, "the count does not move when one is turned off");
+    let row = reg.loaded().into_iter().find(|(n, ..)| n == "git").expect("git is still known");
+    assert!(!row.4, "…and reported as off");
+
+    // The half that MUST hold: off means off. Losing this would trade a visible bug for
+    // a silent one — a plugin the user turned off still reaching their shell.
+    assert!(!reg.aliases().iter().any(|(k, _)| k == "gst"), "a disabled plugin contributes no alias");
+    assert!(!reg.shell_snippets(false).iter().any(|(n, _)| n == "git"), "and no shell snippet");
+    assert!(!reg.completions().iter().any(|c| c.command == "git"), "and no completion");
+
+    // And it comes back.
+    store.set_enabled("git", true).expect("enable");
+    let reg = crate::plugin::load_registry(&cfg);
+    assert!(reg.loaded().into_iter().any(|(n, _, _, _, on)| n == "git" && on), "re-enabled");
+    assert!(reg.aliases().iter().any(|(k, _)| k == "gst"), "and contributing again");
+}
+
+#[test]
+fn both_ways_of_turning_a_plugin_off_agree() {
+    // Two routes existed with opposite defects: `@plugin disable` hid the plugin
+    // entirely, while `[plugins] disabled` left it listed as though it were running.
+    // Whichever a user reaches for, the answer has to be the same one.
+    let (_h, _home) = crate::test_home::lock_home("plugin-disable-routes");
+    crate::config::Config::ensure_default();
+    let store = crate::plugin::store::PluginStore::at(crate::config::Config::plugins_dir());
+    let look = |reg: &crate::plugin::PluginRegistry| {
+        (
+            reg.loaded().len(),
+            reg.loaded().into_iter().find(|(n, ..)| n == "git").map(|r| r.4),
+            reg.aliases().iter().any(|(k, _)| k == "gst"),
+        )
+    };
+
+    let mut cfg = crate::config::Config::default();
+    cfg.plugins_disabled = vec!["git".into()];
+    let by_config = look(&crate::plugin::load_registry(&cfg));
+
+    store.set_enabled("git", false).expect("disable");
+    let by_store = look(&crate::plugin::load_registry(&crate::config::Config::default()));
+
+    assert_eq!(by_config, by_store, "the two routes must be indistinguishable");
+    assert_eq!(by_config.1, Some(false), "both report it off");
+    assert!(!by_config.2, "and both actually stop it");
+}
+
+#[test]
 fn builtin_plugins_are_complete_and_consistent() {
     // The completeness contract for every BUNDLED plugin: full metadata, shell-safe
     // alias/abbr/completion identifiers (the generator silently skips invalid ones —

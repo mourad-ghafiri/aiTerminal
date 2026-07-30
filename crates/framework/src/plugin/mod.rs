@@ -460,15 +460,27 @@ impl PluginRegistry {
         self.entries.iter().map(|e| e.manifest.name.clone()).collect()
     }
 
-    /// Every loaded plugin as `(name, version, description, trusted)`.
+    /// Every known plugin as `(name, version, description, trusted, enabled)`.
     ///
     /// The bundled plugins load from the registry root, not from the user's plugins
     /// directory — so a listing built only from that directory reports "(none)" while
     /// thirty-one of them are running.
-    pub fn loaded(&self) -> Vec<(String, String, String, bool)> {
+    ///
+    /// `enabled` is reported rather than filtered on: a listing that silently omitted
+    /// the plugins you turned off could not show you how to turn them back on, and one
+    /// that printed them all as on would be lying about half of them.
+    pub fn loaded(&self) -> Vec<(String, String, String, bool, bool)> {
         self.entries
             .iter()
-            .map(|e| (e.manifest.name.clone(), e.manifest.version.clone(), e.manifest.description.clone(), e.trusted))
+            .map(|e| {
+                (
+                    e.manifest.name.clone(),
+                    e.manifest.version.clone(),
+                    e.manifest.description.clone(),
+                    e.trusted,
+                    e.enabled,
+                )
+            })
             .collect()
     }
     pub fn set_enabled(&mut self, name: &str, on: bool) -> bool {
@@ -664,8 +676,16 @@ pub fn load_registry(config: &crate::config::Config) -> PluginRegistry {
             dirs.sort(); // deterministic snippet order in the generated shell init
             for d in dirs {
                 if let Ok(m) = Manifest::load_from(&d.join("plugin.toml")) {
-                    if store.is_enabled(&m.name) {
-                        registry.add_trusted(m);
+                    // Load it whether or not it is on, then MARK it. Skipping a
+                    // disabled plugin here removed it from the product: it left the
+                    // registry, so `@plugin list` lost it, `@plugin info` said it did
+                    // not exist, and `@plugin enable` had nothing to enable. Every
+                    // consumer already filters on `enabled`, so carrying the flag is
+                    // all that "off" has ever needed to mean.
+                    let (name, on) = (m.name.clone(), store.is_enabled(&m.name));
+                    registry.add_trusted(m);
+                    if !on {
+                        registry.set_enabled(&name, false);
                     }
                 }
             }
@@ -673,9 +693,15 @@ pub fn load_registry(config: &crate::config::Config) -> PluginRegistry {
     }
     // Then any INSTALLED (third-party) plugins not in the bundle — bundle names
     // already added above win (add() ignores duplicates).
-    for m in store.enabled_manifests() {
+    for (m, on) in store.manifests() {
+        let name = m.name.clone();
         registry.add_trusted(m);
+        if !on {
+            registry.set_enabled(&name, false);
+        }
     }
+    // `[plugins] disabled = [...]` is the second route to the same state, applied on
+    // top so both agree on what "off" looks like.
     for name in &config.plugins_disabled {
         registry.set_enabled(name, false);
     }

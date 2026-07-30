@@ -89,8 +89,12 @@ pub fn headless_render(args: &TerminalRender, out_path: &str) -> std::io::Result
     let ctx = crate::plugin::probe_context(&cwd, args.cols);
     let mut registry = crate::plugin::PluginRegistry::new();
     let store = crate::plugin::store::PluginStore::at(crate::config::Config::plugins_dir());
-    for m in store.enabled_manifests() {
+    for (m, on) in store.manifests() {
+        let name = m.name.clone();
         registry.add_trusted(m);
+        if !on {
+            registry.set_enabled(&name, false);
+        }
     }
     if let Some(dir) = &args.plugins {
         let n = registry.load_dir(Path::new(dir));
