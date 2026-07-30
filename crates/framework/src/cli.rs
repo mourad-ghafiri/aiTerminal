@@ -532,8 +532,9 @@ pub(crate) fn term_cols() -> usize {
         .unwrap_or(80)
 }
 
-/// The split's height in rows (for the live renderer's overflow guard); 0 if unknown.
-fn term_rows() -> usize {
+/// The split's height in rows (for the live renderer's overflow guard, and for the
+/// flow board deciding whether its cards will fit); 0 if unknown.
+pub(crate) fn term_rows() -> usize {
     platform::os::terminal_size().map(|(_, r)| r as usize).unwrap_or(0)
 }
 
@@ -2699,6 +2700,7 @@ fn apply_record(board: &std::sync::Arc<crate::flow::board::Board>, node: &crate:
     if !node.model.is_empty() {
         board.model(&node.id, &node.model);
     }
+    board.counted(&node.id, node.tools as u32, node.attempts);
     let tokens = node.input_tokens + node.output_tokens;
     match node.state {
         NodeState::Pending => {}

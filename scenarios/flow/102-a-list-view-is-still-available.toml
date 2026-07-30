@@ -37,11 +37,11 @@ run = true
 [[step]]
 expect_list_view_contains = ["map", "left", "right", "@explorer", "@reviewer", "3/3 done"]
 
-# What it does NOT have is the graph: no band joins, no forks, no capability line. That
-# is the trade being made, and it is the only difference between the two.
+# What it does NOT have is the picture: no cards, no connectors, no capability line.
+# That is the trade being made, and it is the only difference between the two.
 [[step]]
-expect_list_view_excludes = ["├─ ", "└─ ", "3 nodes · 2 agents"]
+expect_list_view_excludes = ["╭─", "╰─", "▸", "3 nodes · 2 agents"]
 
-# And the graph view of the same run still has all three.
+# And the graph view of the same run has every one of them.
 [[step]]
-expect_graph_view_contains = ["├─ ", "└─ ", "3 nodes"]
+expect_graph_view_contains = ["╭─", "╰─", "▸", "3 nodes"]

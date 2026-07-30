@@ -379,38 +379,44 @@ Map the code, review it three ways in parallel, then merge into one verdict
     <h3>Watching it run</h3>
     <p>A chain can narrate itself; a graph cannot. Four nodes start together and finish in whatever
       order they finish, so a stream of start/done lines hides the most useful thing about the run.
-      Every node gets <b>one line that stays where it is</b>, repainted in place — and the lines are
-      grouped into <b>bands</b>, one per wave of work, so what runs together looks like it.</p>
+      So you watch it as <b>the graph it is</b>: every node a card, joined by a solid arrow where the
+      work simply moves on and a dashed route where it wraps to the next line or loops back.</p>
     <pre><code><span class="a">▸ build · add a --json flag to the export command</span>
   <span class="c">8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time</span>
-     <span class="g">✓</span> plan         <span class="c">@planner     claude-sonnet-5    4.2s  3.1k   ⚙3</span>
-  <span class="c">│</span>
-  <span class="c">├─</span> <span class="g">✓</span> explore      <span class="c">@explorer    claude-sonnet-5    8.1s  9.4k  ⚙12</span>
-  <span class="c">└─</span> <span class="g">✓</span> conventions  <span class="c">@explorer    claude-sonnet-5    7.6s  8.8k   ⚙9</span>
-  <span class="c">│</span>
-     <span class="a">⠻ apply</span>        <span class="c">@coder       claude-opus-5     12.3s  2.1k   ⚙4  fs.edit src/cli.rs</span>
-  <span class="c">│</span>
-     ○ verify       <span class="c">@tester</span>
-  <span class="c">│</span>
-  <span class="c">├─</span> ○ fix          <span class="c">@coder                     when verify.output contains "VERDICT…</span>
-  <span class="c">└─</span> ○ review       <span class="c">@reviewer                  when verify.output contains "VERDICT…</span>
-  <span class="c">│</span>
-     ○ summary      <span class="c">@writer</span>
+  <span class="g">╭──────────────────────╮</span>    <span class="g">╭──────────────────────╮</span>    <span class="g">╭──────────────────────╮</span>    <span class="a">╭──────────────────────╮</span>
+  <span class="g">│ ✓ plan            ⚙3 │</span>    <span class="g">│ ✓ explore        ⚙12 │</span>    <span class="g">│ ✓ conventions     ⚙9 │</span>    <span class="a">│ ⠻ apply           ⚙4 │</span>
+  <span class="g">│</span> <span class="c">@planner             </span><span class="g">│</span><span class="g">───▸</span><span class="g">│</span> <span class="c">@explorer            </span><span class="g">│</span>    <span class="g">│</span> <span class="c">@explorer            </span><span class="g">│</span><span class="g">───▸</span><span class="a">│</span> <span class="c">@coder               </span><span class="a">│</span>
+  <span class="g">│</span> <span class="c">4.2s · 9.0k          </span><span class="g">│</span>    <span class="g">│</span> <span class="c">8.1s · 6.9k          </span><span class="g">│</span>    <span class="g">│</span> <span class="c">7.6s · 8.8k          </span><span class="g">│</span>    <span class="a">│</span> <span class="c">fs.edit src/cli.rs   </span><span class="a">│</span>
+  <span class="g">╰──────────────────────╯</span>    <span class="g">╰──────────────────────╯</span>    <span class="g">╰──────────────────────╯</span>    <span class="a">╰──────────────────────╯</span>
+<span class="g">              ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌▴                           ╎</span>
+<span class="g">                                          ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎</span>
+<span class="c">              ▾╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎</span>
+  <span class="c">╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮</span>
+  <span class="c">│ ○ verify             │    │ ○ fix                │    │ ○ review             │    │ ○ summary            │</span>
+  <span class="c">│ @tester              │───▸│ @coder               │    │ @reviewer            │───▸│ @writer              │</span>
+  <span class="c">│                      │    │ when verify.output … │    │ when verify.output … │    │                      │</span>
+  <span class="c">╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯</span>
+<span class="c">              ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎                           ▴</span>
+<span class="c">              ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎</span>
   <span class="c">3/8 done · 1 running · 21.3k tokens · 24.6s</span></code></pre>
-    <p>The first line is what the whole run can reach. Every row carries the agent, the model
-      actually serving it, its wall clock, its tokens and its tool calls — and the <b>running node
-      pulses</b> in the theme's accent, while finished nodes are its green, failed ones its red and
-      parked ones its amber. All five of the theme's semantic colours, so the board restyles with
-      everything else. A waiting node shows the condition holding it and the backward edge it loops
-      to; a retry is the same line with <code>×2</code> rather than a second line.</p>
-    <p>Columns give way rather than wrap as the window narrows: the model first, then the tool
-      count, then the note. The node and its state never do.</p>
+    <p>The first line is what the whole run can reach. Each card carries its state and name, the
+      agent and model behind it, its tool calls and attempts, and — while it works — the tool it is
+      in right now, which becomes what it cost once it finishes.</p>
+    <p>Nodes are laid out in <b>reading order</b>: by depth in the graph, then across and down. So
+      nodes that start together sit side by side, and the board stays a sane height instead of
+      growing a row per wave. <b>An edge takes the colour of the node it leaves once that node has
+      settled</b>, so the path that actually ran lights up behind the board and stops exactly where
+      the run did — in the theme's own green, red and amber, alongside the accent the <b>running
+      card pulses in</b>. All five of the theme's semantic colours, so the board restyles with
+      everything else.</p>
     <p><b>Two views.</b> <code>[flow] view = "list"</code> — or <code>--view list</code> for one
-      command — puts every node back on a single dense row in file order, with no band joins. It is
-      the shortest board that can exist, which is what a twenty-node flow in a six-line split wants.
-      Off a terminal — <code>--bg</code>, a pipe, CI — neither view applies: the same state machine
-      prints <code>[node] event</code> lines instead, nothing is overwritten, and the attribution a
-      plain stream could never give is still there.</p>
+      command — puts every node back on a single dense row in file order. It is the shortest board
+      that can exist, which is what a twenty-node flow in a six-line split wants; and the graph view
+      <b>hands over to it by itself</b> when the cards will not fit the window, because a picture
+      that scrolls its own header off the top is not a picture. Off a terminal —
+      <code>--bg</code>, a pipe, CI — neither view applies: the same state machine prints
+      <code>[node] event</code> lines instead, nothing is overwritten, and the attribution a plain
+      stream could never give is still there.</p>
 
     <h3>Node control</h3>
     <p><code>show</code> is the whole run and <code>log</code> is one node's text. Between them sits

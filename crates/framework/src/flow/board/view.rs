@@ -72,6 +72,10 @@ pub(crate) struct Head<'a> {
     pub elapsed: std::time::Duration,
     /// How many nodes may run at once, for the header line.
     pub concurrency: usize,
+    /// The window's height in rows, or `0` when the OS will not say. The card view is
+    /// the only thing that asks: cards cost height, and a board that does not fit the
+    /// window is not a board.
+    pub rows: usize,
     /// The id column's width, so both views line their columns up the same way.
     pub width: usize,
 }

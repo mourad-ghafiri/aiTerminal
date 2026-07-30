@@ -16,8 +16,10 @@
 //! machine prints an append-only `[node] event` line per change instead. Nothing is
 //! overwritten, everything survives in a log, and the attribution is still there.
 
+pub(crate) mod card;
 pub(crate) mod graph;
 pub(crate) mod list;
+pub(crate) mod paint;
 pub(crate) mod view;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -246,6 +248,17 @@ impl Board {
         self.update(id, |r| r.model = model.to_string());
     }
 
+    /// How much work a node has done, for a board built from a record rather than from
+    /// a run it is watching itself. A live board counts these as they happen; one
+    /// following someone else's run has to be told, or a node that made twelve tool
+    /// calls over two attempts shows as having made none.
+    pub fn counted(&self, id: &str, calls: u32, attempts: u32) {
+        self.update(id, |r| {
+            r.calls = calls;
+            r.attempts = attempts;
+        });
+    }
+
     pub fn retrying(&self, id: &str, attempt: u32, of: u32) {
         let note = format!("retry {attempt}/{of}");
         self.update(id, |r| r.note = note.clone());
@@ -311,9 +324,15 @@ impl Board {
         *painted = lines;
     }
 
-    /// The whole board as text in a `cols`-wide window — the same function the paint
-    /// writes and the tests read, so what is asserted is what is shown.
+    /// The whole board as text in a `cols`-wide window, as tall as the terminal says.
     pub fn draw(&self, cols: usize) -> String {
+        self.draw_in(cols, crate::cli::term_rows())
+    }
+
+    /// The board in a window of a stated size — the same function the paint writes and
+    /// the tests read, so what is asserted is what is shown. `rows` of `0` means "as
+    /// tall as it likes", which is what a pipe and a job log both are.
+    pub fn draw_in(&self, cols: usize, window_rows: usize) -> String {
         let Ok(rows) = self.rows.lock() else { return String::new() };
         let frame = *self.frame.lock().unwrap_or_else(|e| e.into_inner());
         let head = view::Head {
@@ -321,6 +340,7 @@ impl Board {
             elapsed: self.started.elapsed(),
             concurrency: self.concurrency,
             width: self.width,
+            rows: window_rows,
         };
         self.view.render(&rows, &head, frame, cols)
     }
@@ -596,11 +616,12 @@ pub(crate) mod tests {
                     assert!(visible <= cols, "row is {visible} wide in a {cols}-col window ({view}): {line:?}");
                 }
             }
-            // Narrow enough that there is no room for a note at all: it goes rather than
-            // wrapping — a dropped note is worth more than a broken repaint.
+            // Whatever gave way to make it fit, the NODE never does: a board you cannot
+            // find a node on has fitted itself into uselessness.
             let narrow = painted_at(&b, 40);
-            assert!(!narrow.contains("cargo test"), "the note gave way instead of wrapping ({view}):\n{narrow}");
-            assert!(narrow.contains("left"), "the row itself survives ({view}):\n{narrow}");
+            for id in ["map", "left", "right", "report"] {
+                assert!(narrow.contains(id), "{id} is missing at 40 columns ({view}):\n{narrow}");
+            }
         }
     }
 
@@ -608,6 +629,6 @@ pub(crate) mod tests {
     fn an_unknown_view_name_gives_the_better_picture_not_the_worse_one() {
         // A misspelt setting must not silently demote what you see.
         let text = painted(&fixture("grahp"));
-        assert!(text.contains("\u{251c}\u{2500} "), "it fell back to the graph:\n{text}");
+        assert!(text.contains('\u{256d}'), "it fell back to the cards:\n{text}");
     }
 }

@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 pub mod brand;
+pub mod cells;
 pub mod codec;
 pub mod datetime;
 pub mod design;

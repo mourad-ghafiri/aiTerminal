@@ -35,10 +35,16 @@ final  = true
 prompt = "Merge {{correctness.output}} and {{security.output}}"
 """
 
-# Before anything runs: the shape is already on screen, the capability surface is
-# stated, and the node that is waiting says what it is waiting on.
+# Before anything runs: every node is a card, the two that start together sit side by
+# side, the capability surface is stated, and the node that is waiting says so.
 [[step]]
-expect_graph_view_contains = ["4 nodes", "2 agents", "├─ ", "└─ ", "when correctness.passed", "0/4 done"]
+expect_graph_view_contains = ["╭─", "╰─", "○ map", "○ correctness", "@explorer", "4 nodes", "2 agents", "when correctness.passed", "0/4 done"]
+
+# And the cards are joined: a solid arrow where the work simply moves on, a dashed
+# route where it has to travel — which is the difference between a picture of a graph
+# and a list that has been told it is one.
+[[step]]
+expect_graph_view_contains = ["▸", "╌"]
 
 [[step]]
 node_says = ["map: the map", "correctness: looks right", "security: no leaks", "report: agreed"]
@@ -46,7 +52,7 @@ node_says = ["map: the map", "correctness: looks right", "security: no leaks", "
 [[step]]
 run = true
 
-# And after: the same lines, in the same places, carrying what each one cost. A node's
-# row never moves — that is what makes a repainting board readable at all.
+# And after: the same cards, in the same places, carrying what each one cost. A node's
+# card never moves — that is what makes a repainting board readable at all.
 [[step]]
-expect_graph_view_contains = ["✓ map", "✓ correctness", "✓ security", "✓ report", "4/4 done"]
+expect_graph_view_contains = ["✓ map", "✓ correctness", "✓ security", "✓ report", "3.4k", "4/4 done"]

@@ -375,43 +375,48 @@ An `approve` node asks on a terminal; detached, it parks the run as `waiting` an
 
 A chain can narrate itself; a graph cannot. Four nodes start together and finish in
 whatever order they finish, so a stream of start/done lines hides the most useful thing
-about the run. Every node gets **one line that stays where it is**, repainted in place —
-and the lines are grouped into **bands**, one per wave of work, so what runs together
-looks like it:
+about the run. So you watch it as **the graph it is**: every node a card, joined by a
+solid arrow where the work simply moves on and a dashed route where it wraps to the next
+line or loops back.
 
 ```text
 ▸ build · add a --json flag to the export command
   8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time
-     ✓ plan         @planner     claude-sonnet-5    4.2s  3.1k   ⚙3
-  │
-  ├─ ✓ explore      @explorer    claude-sonnet-5    8.1s  9.4k  ⚙12
-  └─ ✓ conventions  @explorer    claude-sonnet-5    7.6s  8.8k   ⚙9
-  │
-     ⠻ apply        @coder       claude-opus-5     12.3s  2.1k   ⚙4  fs.edit src/cli.rs
-  │
-     ○ verify       @tester
-  │
-  ├─ ○ fix          @coder                       when verify.output contains "VERDICT…
-  └─ ○ review       @reviewer                    when verify.output contains "VERDICT…
-  │
-     ○ summary      @writer
+  ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮
+  │ ✓ plan            ⚙3 │    │ ✓ explore        ⚙12 │    │ ✓ conventions     ⚙9 │    │ ⠻ apply           ⚙4 │
+  │ @planner             │───▸│ @explorer            │    │ @explorer            │───▸│ @coder               │
+  │ 4.2s · 9.0k          │    │ 8.1s · 6.9k          │    │ 7.6s · 8.8k          │    │ fs.edit src/cli.rs   │
+  ╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯
+              ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌▴                           ╎
+                                          ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎
+              ▾╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎
+  ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮
+  │ ○ verify             │    │ ○ fix                │    │ ○ review             │    │ ○ summary            │
+  │ @tester              │───▸│ @coder               │    │ @reviewer            │───▸│ @writer              │
+  │                      │    │ when verify.output … │    │ when verify.output … │    │                      │
+  ╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯
+              ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎                           ▴
+              ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎
   3/8 done · 1 running · 21.3k tokens · 24.6s
 ```
 
-The first line is what the whole run can reach. Every row carries the agent, the model
-actually serving it, its wall clock, its tokens and its tool calls, and the **running
-node pulses** in the theme's accent while the finished ones are its green, the failed
-ones its red and the parked ones its amber — all five of the theme's semantic colours,
-so the board restyles with everything else. A waiting node shows the condition holding
-it and the backward edge it loops to; a retry is the same line with `×2` rather than a
-second line.
+The first line is what the whole run can reach. Each card carries its state and name,
+the agent and model behind it, its tool calls and attempts, and — while it works — the
+tool it is in right now, which becomes what it cost once it finishes.
 
-Columns give way rather than wrap as the window narrows: the model goes first, then the
-tool count, then the note. The node and its state never do.
+Nodes are laid out in **reading order**: by depth in the graph, then across and down. So
+nodes that start together sit side by side, and the board stays a sane height instead of
+growing a row per wave. **An edge takes the colour of the node it leaves once that node
+has settled**, so the path that actually ran lights up behind the board and stops exactly
+where the run did — in the theme's own green, red and amber, alongside the accent the
+**running card pulses in**. All five of the theme's semantic colours, so the board
+restyles with everything else.
 
 **Two views.** `[flow] view = "list"` — or `--view list` for one command — puts every
-node back on a single dense row in file order, with no band joins. It is the shortest
-board that can exist, which is what a twenty-node flow in a six-line split wants.
+node back on a single dense row in file order. It is the shortest board that can exist,
+which is what a twenty-node flow in a six-line split wants. The graph view **hands over
+to it by itself** when the cards will not fit the window: a picture that scrolls its own
+header off the top is not a picture.
 
 Off a terminal — `--bg`, a pipe, CI — neither view applies: the same state machine
 prints `[node] event` lines instead. Nothing is overwritten, and the attribution a
@@ -667,16 +672,19 @@ The fix: the parser dropped the …    ← the answer, streaming
 ✓ 8.4s · 2 tools · 12.3k in / 1.8k out · ~$0.014
 ```
 
-A **`@flow`** shows a live board — one line per node, repainted in place (see
+A **`@flow`** shows a live board — the graph, drawn as cards and repainted in place (see
 [Watching it run](#watching-it-run)); a **`@loop`** shows each iteration and a footer
 with the iteration count:
 
 ```text
 ❯ @flow build "add a --json flag to the export command"
 ▸ build · add a --json flag to the export command
-  ✓ plan       @planner    4.2s  3.1k
-  ⠻ apply      @coder     12.3s        ⚙ fs.edit src/cli.rs · 12ms · 1.4KB
-  ○ verify     @tester
+  8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time
+  ╭──────────────────────╮    ╭──────────────────────╮
+  │ ✓ plan            ⚙3 │    │ ⠻ apply           ⚙4 │
+  │ @planner             │───▸│ @coder               │
+  │ 4.2s · 3.1k          │    │ fs.edit src/cli.rs   │
+  ╰──────────────────────╯    ╰──────────────────────╯
   1/8 done · 1 running · 12.5k tokens · 24.6s
 ```
 

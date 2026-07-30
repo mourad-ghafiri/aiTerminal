@@ -1,0 +1,72 @@
+name = "a board that will not fit the window becomes the dense one, not a broken one"
+tags = ["flow", "ui"]
+
+# Cards cost height: five rows each, plus a band between rows for the routes. A deep
+# graph in a short split is a picture that scrolls its own header off the top and takes
+# the prompt with it. So the graph view measures itself against the window first, and
+# hands over to the list when it will not fit — which is the whole reason two views
+# exist rather than one view with a lot of opinions.
+#
+# What it must NOT do is fit by cheating: clipping a card in half, wrapping a row, or
+# quietly dropping nodes. Every node is still there in the denser view; it is denser,
+# not smaller.
+
+[[step]]
+flow = """
+[[node]]
+id     = "map"
+agent  = "explorer"
+prompt = "Map it"
+
+[[node]]
+id     = "one"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "One of {{map.output}}"
+
+[[node]]
+id     = "two"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "Two of {{map.output}}"
+
+[[node]]
+id     = "three"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "Three of {{map.output}}"
+
+[[node]]
+id     = "four"
+agent  = "reviewer"
+needs  = ["map"]
+prompt = "Four of {{map.output}}"
+
+[[node]]
+id     = "merge"
+agent  = "reviewer"
+needs  = ["one", "two", "three", "four"]
+final  = true
+prompt = "Merge {{one.output}} {{two.output}} {{three.output}} {{four.output}}"
+"""
+
+[[step]]
+node_says = ["map: the map", "one: a", "two: b", "three: c", "four: d", "merge: all four agree"]
+
+[[step]]
+run = true
+
+# Given the room, it is the picture: cards, joined.
+[[step]]
+expect_graph_view_contains = ["╭─", "╰─", "▸", "✓ map", "✓ merge", "6/6 done"]
+
+# Given a short window, the same run is the dense board — every node still named, every
+# state still on it, and not one card drawn half off the bottom.
+[[step]]
+window_rows = 10
+
+[[step]]
+expect_graph_view_excludes = ["╭─", "╰─"]
+
+[[step]]
+expect_graph_view_contains = ["map", "one", "two", "three", "four", "merge", "6/6 done"]

@@ -8,12 +8,8 @@
 //! Characters written on top (arrowheads, labels, slanted corners) win over the mask.
 
 use super::scene::{Anchor, Cap, Item, Scene, Shape, Stroke};
+use crate::cells::Canvas;
 use crate::unicode::str_width;
-
-const UP: u8 = 1;
-const RIGHT: u8 = 2;
-const DOWN: u8 = 4;
-const LEFT: u8 = 8;
 
 /// Never draw taller than this, whatever the source claims.
 const MAX_ROWS: usize = 400;
@@ -131,106 +127,11 @@ fn glyphs(shape: Shape) -> Glyphs {
     }
 }
 
-struct Canvas {
-    w: usize,
-    h: usize,
-    /// Line directions per cell.
-    mask: Vec<u8>,
-    /// Characters that override the mask (`'\0'` = none).
-    over: Vec<char>,
-}
-
+/// The mermaid half of the shared [`Canvas`]: everything that knows what a node shape,
+/// an arrow cap or a subgraph frame is. The geometry underneath it — the direction mask
+/// and its junction glyphs — lives in [`crate::cells`], because the flow board draws its
+/// node cards on the very same primitive.
 impl Canvas {
-    fn new(w: usize, h: usize) -> Self {
-        Canvas { w, h, mask: vec![0; w * h], over: vec!['\0'; w * h] }
-    }
-
-    fn idx(&self, x: isize, y: isize) -> Option<usize> {
-        if x < 0 || y < 0 || x as usize >= self.w || y as usize >= self.h {
-            return None;
-        }
-        Some(y as usize * self.w + x as usize)
-    }
-
-    fn add(&mut self, x: isize, y: isize, bits: u8) {
-        if let Some(i) = self.idx(x, y) {
-            self.mask[i] |= bits;
-            // A solid line crossing a dashed one wins the cell, so it reads as continuous
-            // rather than pockmarked.
-            if matches!(self.over[i], '╌' | '╎') {
-                self.over[i] = '\0';
-            }
-        }
-    }
-
-    /// Write a character over whatever is there.
-    fn put(&mut self, x: isize, y: isize, ch: char) {
-        if ch == '\0' {
-            return;
-        }
-        if let Some(i) = self.idx(x, y) {
-            self.over[i] = ch;
-        }
-    }
-
-    /// Write a character only where nothing has been drawn yet.
-    fn put_free(&mut self, x: isize, y: isize, ch: char) -> bool {
-        match self.idx(x, y) {
-            Some(i) if self.over[i] == '\0' && self.mask[i] == 0 => {
-                self.over[i] = ch;
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn hline(&mut self, x0: isize, x1: isize, y: isize) {
-        let (a, b) = (x0.min(x1), x0.max(x1));
-        for x in a..=b {
-            let mut bits = 0;
-            if x > a {
-                bits |= LEFT;
-            }
-            if x < b {
-                bits |= RIGHT;
-            }
-            self.add(x, y, if a == b { LEFT | RIGHT } else { bits });
-        }
-    }
-
-    fn vline(&mut self, y0: isize, y1: isize, x: isize) {
-        let (a, b) = (y0.min(y1), y0.max(y1));
-        for y in a..=b {
-            let mut bits = 0;
-            if y > a {
-                bits |= UP;
-            }
-            if y < b {
-                bits |= DOWN;
-            }
-            self.add(x, y, if a == b { UP | DOWN } else { bits });
-        }
-    }
-
-    /// A dashed run, drawn as characters so it never merges into a solid junction.
-    fn dashed_v(&mut self, y0: isize, y1: isize, x: isize) {
-        for y in y0.min(y1)..=y0.max(y1) {
-            self.put_free(x, y, '╎');
-        }
-    }
-
-    fn dashed_h(&mut self, x0: isize, x1: isize, y: isize) {
-        for x in x0.min(x1)..=x0.max(x1) {
-            self.put_free(x, y, '╌');
-        }
-    }
-
-    fn text(&mut self, x: isize, y: isize, s: &str) {
-        for (i, ch) in s.chars().enumerate() {
-            self.put(x + i as isize, y, ch);
-        }
-    }
-
     fn anchored(&mut self, s: &str, x: isize, y: isize, anchor: Anchor) {
         for (row, line) in s.split('\n').enumerate() {
             let w = str_width(line) as isize;
@@ -385,7 +286,7 @@ impl Canvas {
     /// Put an edge label as close to `(x, y)` as a free run of cells allows, so it never
     /// lands on a node it doesn't belong to. Falls back to the line itself, padded.
     fn place_label(&mut self, label: &str, x: isize, y: isize, horizontal: bool) {
-        let text = clip(&label.replace('\n', " "), self.w.saturating_sub(2));
+        let text = clip(&label.replace('\n', " "), self.width().saturating_sub(2));
         let w = str_width(&text) as isize;
         // Above the line first (mermaid's own placement), then below, then further out —
         // and at each row, slide along the line looking for a run that is actually free.
@@ -399,8 +300,8 @@ impl Canvas {
         }
         for (sx, sy) in candidates {
             // Keep the run on the canvas: a label pushed off the edge would be cut in half.
-            let sx = sx.clamp(0, (self.w as isize - w).max(0));
-            if (0..w).all(|i| matches!(self.idx(sx + i, sy), Some(k) if self.over[k] == '\0' && self.mask[k] == 0)) {
+            let sx = sx.clamp(0, (self.width() as isize - w).max(0));
+            if (0..w).all(|i| self.is_free(sx + i, sy)) {
                 return self.text(sx, sy, &text);
             }
         }
@@ -436,44 +337,8 @@ impl Canvas {
         self.put(at.0, at.1, ch);
     }
 
-    fn rows(self) -> Vec<String> {
-        let mut out = Vec::with_capacity(self.h);
-        for y in 0..self.h {
-            let mut line = String::with_capacity(self.w);
-            for x in 0..self.w {
-                let i = y * self.w + x;
-                line.push(if self.over[i] != '\0' { self.over[i] } else { glyph(self.mask[i]) });
-            }
-            out.push(line.trim_end().to_string());
-        }
-        out
-    }
 }
 
-/// A direction mask as a box-drawing character.
-fn glyph(mask: u8) -> char {
-    if mask == 0 {
-        return ' ';
-    }
-    // Purely vertical / purely horizontal runs, including their end cells.
-    if mask & (LEFT | RIGHT) == 0 {
-        return '│';
-    }
-    if mask & (UP | DOWN) == 0 {
-        return '─';
-    }
-    match (mask & UP != 0, mask & RIGHT != 0, mask & DOWN != 0, mask & LEFT != 0) {
-        (true, true, false, false) => '└',
-        (true, false, false, true) => '┘',
-        (false, true, true, false) => '┌',
-        (false, false, true, true) => '┐',
-        (true, true, true, false) => '├',
-        (true, false, true, true) => '┤',
-        (false, true, true, true) => '┬',
-        (true, true, false, true) => '┴',
-        _ => '┼',
-    }
-}
 
 /// One cell back from `at` toward `from` — where an arrowhead sits, so the node's own
 /// border survives underneath it.
@@ -586,13 +451,5 @@ mod tests {
         let rows = render(&scene, 200).unwrap();
         let widest = rows.iter().map(|r| str_width(r)).max().unwrap_or(0);
         assert!(widest <= scene.width as usize, "{widest} > {}", scene.width);
-    }
-
-    #[test]
-    fn glyph_table_covers_every_junction() {
-        assert_eq!(glyph(UP | DOWN | LEFT | RIGHT), '┼');
-        assert_eq!(glyph(UP | RIGHT), '└');
-        assert_eq!(glyph(DOWN | LEFT), '┐');
-        assert_eq!(glyph(0), ' ');
     }
 }

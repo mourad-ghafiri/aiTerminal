@@ -72,11 +72,18 @@ agents (8):
         <p>The <code>build</code> graph plans it, maps the code <em>and</em> your conventions in parallel, edits, runs <em>your</em> tests — and if they fail, loops back through a fixer up to three times before giving up.</p>
         <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> build "add a --json flag to the export command"</span>
 <span class="a">▸ build · add a --json flag to the export command</span>
-  <span class="g">✓</span> plan         <span class="d">@planner        4.2s   3.1k</span>
-  <span class="g">✓</span> explore      <span class="d">@explorer       8.1s   9.4k</span>
-  <span class="g">✓</span> conventions  <span class="d">@explorer       7.6s   8.8k</span>
-  ⠻ apply        <span class="d">@coder         12.3s          ⚙ fs.edit src/cli.rs</span>
-  ○ verify       <span class="d">@tester</span>
+  <span class="d">8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time</span>
+  <span class="g">╭──────────────────────╮    ╭──────────────────────╮</span>
+  <span class="g">│ ✓ plan            ⚙3 │    │ ✓ explore        ⚙12 │</span>
+  <span class="g">│ @planner             │───▸│ @explorer            │</span>
+  <span class="g">│ 4.2s · 3.1k          │    │ 8.1s · 9.4k          │</span>
+  <span class="g">╰──────────────────────╯    ╰──────────────────────╯</span>
+  <span class="d">            ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌▾</span>
+  <span class="a">╭──────────────────────╮    ╭──────────────────────╮</span>
+  <span class="a">│ ⠻ apply           ⚙4 │</span>    <span class="d">│ ○ verify             │</span>
+  <span class="a">│ @coder               │</span><span class="d">───▸│ @tester              │</span>
+  <span class="a">│ fs.edit src/cli.rs   │</span>    <span class="d">│                      │</span>
+  <span class="a">╰──────────────────────╯</span>    <span class="d">╰──────────────────────╯</span>
   <span class="d">3/8 done · 1 running · 21.3k tokens · 24.6s</span></pre>
       </div>
 
@@ -162,13 +169,17 @@ Reproduced: rounding applied before the zero-check …</pre>
         <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> "Research LLM memory techniques"</span>
 <span class="a">▸ research</span> <span class="d">— the goal asks for sources and a comparison, not a code change</span>
   <span class="d">4 nodes · 3 agents · 24 tools · 6 skills · 4 at a time</span>
-     <span class="g">✓</span> plan     <span class="d">@planner    claude-sonnet-5   3.1s  1.2k   ⚙2</span>
-  <span class="d">│</span>
-     ⠻ gather   <span class="d">@researcher claude-sonnet-5              × 5 items  ⚙ web.search</span>
-  <span class="d">│</span>
-     ○ compare  <span class="d">@researcher</span>
-  <span class="d">│</span>
-     ○ report   <span class="d">@writer</span></pre>
+  <span class="g">╭──────────────────────╮    ╭──────────────────────╮</span>
+  <span class="g">│ ✓ plan            ⚙2 │    │ ⠻ gather             │</span>
+  <span class="g">│ @planner             │───▸│ @researcher × 5      │</span>
+  <span class="g">│ 3.1s · 1.2k          │    │ ⚙ web.search         │</span>
+  <span class="g">╰──────────────────────╯    ╰──────────────────────╯</span>
+  <span class="d">            ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌▾</span>
+  <span class="d">╭──────────────────────╮    ╭──────────────────────╮</span>
+  <span class="d">│ ○ compare            │    │ ○ report             │</span>
+  <span class="d">│ @researcher          │───▸│ @writer              │</span>
+  <span class="d">│                      │    │                      │</span>
+  <span class="d">╰──────────────────────╯    ╰──────────────────────╯</span></pre>
       </div>
 
       <div class="uc">

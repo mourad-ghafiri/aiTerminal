@@ -50,6 +50,8 @@ pub struct FlowWorld {
     catalogue: Vec<(String, String)>,
     /// The last routing decision, or why there was not one.
     routed: Option<Result<(String, String), String>>,
+    /// How tall the window is, for the card view's fit check. `0` = as tall as it likes.
+    window_rows: usize,
 }
 
 /// Everything an assertion can look at after a run.
@@ -91,6 +93,7 @@ pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
         routes: None,
         catalogue: Vec::new(),
         routed: None,
+        window_rows: 0,
     }))
 }
 
@@ -283,6 +286,15 @@ impl World for FlowWorld {
         if let Some(bad) = world::list(step, "expect_list_view_excludes") {
             return world::expect_missing(&self.painted("list")?, &bad, "the list view");
         }
+        if let Some(bad) = world::list(step, "expect_graph_view_excludes") {
+            return world::expect_missing(&self.painted("graph")?, &bad, "the graph view");
+        }
+        // How tall the window is. The card view is the only thing that asks, and what it
+        // does when the answer is "not very" is worth stating rather than assuming.
+        if let Some(n) = world::int(step, "window_rows") {
+            self.window_rows = n.max(0) as usize;
+            return Ok(());
+        }
         // `@flow retry <node>` — what running one node again would take with it.
         if let Some(want) = world::list(step, "expect_downstream") {
             let flow = self.flow.as_ref().ok_or("no flow declared yet")?;
@@ -420,7 +432,10 @@ impl FlowWorld {
                 }
             }
         }
-        Ok(board.draw(120))
+        // A wide window, so what a scenario asserts is the board's own doing rather than
+        // a column budget: at a narrow width every view clips, and clipping is not the
+        // behaviour under test here.
+        Ok(board.draw_in(160, self.window_rows))
     }
 
     fn run(&mut self) -> Result<(), String> {
