@@ -213,21 +213,34 @@ impl Board {
     // ── painting ───────────────────────────────────────────────────────────
 
     fn paint(&self) {
+        self.paint_to(&mut std::io::stderr());
+    }
+
+    /// Erase the previous block and draw the current one.
+    ///
+    /// Takes the writer so a test can read the actual bytes — the cursor arithmetic is
+    /// the part that broke, and it is invisible in the rendered text alone.
+    fn paint_to(&self, w: &mut dyn std::io::Write) {
         let Ok(rows) = self.rows.lock() else { return };
         let frame = *self.frame.lock().unwrap();
         let text = self.render(&rows, frame);
         let lines = text.lines().count();
         let mut painted = self.painted.lock().unwrap();
-        eprint!("{}{text}", crate::cli::erase_seq(*painted));
-        let _ = std::io::Write::flush(&mut std::io::stderr());
+        let _ = write!(w, "{}{text}", crate::cli::erase_seq(*painted));
+        let _ = w.flush();
         *painted = lines;
     }
 
     /// The whole board as text — the same function the tests read, so what is asserted
     /// is what is shown.
+    ///
+    /// Newline-**separated**, never newline-terminated. [`crate::cli::erase_seq`] climbs
+    /// `painted - 1` rows because it assumes the cursor is still ON the last painted
+    /// line; a trailing newline puts it one line lower, so the erase would start one row
+    /// too far down and leave the board's first row behind on every repaint.
     fn render(&self, rows: &[Row], frame: usize) -> String {
         let (dim, r) = (crate::cli::muted(), crate::cli::reset());
-        let mut out = String::new();
+        let mut lines: Vec<String> = Vec::with_capacity(rows.len() + 1);
         for row in rows {
             let elapsed = row.started.map(|s| s.elapsed().as_millis() as u64).unwrap_or(row.ms);
             let time = if elapsed >= 100 { format!("{:>6.1}s", elapsed as f64 / 1000.0) } else { "       ".into() };
@@ -251,8 +264,7 @@ impl Board {
             );
             // Trimmed, so the padding that aligns the columns does not become trailing
             // whitespace in somebody's scrollback for the rest of time.
-            out.push_str(line.trim_end());
-            out.push('\n');
+            lines.push(line.trim_end().to_string());
         }
         let done = rows.iter().filter(|r| r.state == State::Done).count();
         let running = rows.iter().filter(|r| r.state == State::Running).count();
@@ -265,8 +277,8 @@ impl Board {
             parts.push(format!("{} tokens", human_tokens(tokens)));
         }
         parts.push(format!("{:.1}s", self.started.elapsed().as_secs_f64()));
-        out.push_str(&format!("  {dim}{}{r}\n", parts.join(" · ")));
-        out
+        lines.push(format!("  {dim}{}{r}", parts.join(" · ")));
+        lines.join("\n")
     }
 }
 
@@ -406,6 +418,87 @@ mod tests {
         // Nothing was overwritten: the rows still hold the final state.
         let text = painted(&b);
         assert!(text.contains("4.2s") && text.contains("3.1k"));
+    }
+
+    #[test]
+    fn the_painted_block_matches_what_the_erase_sequence_expects() {
+        // The repaint bug this pins: `erase_seq(n)` climbs n-1 rows because it assumes
+        // the cursor is still ON the last painted line. A trailing newline puts it one
+        // line lower, so the erase started one row too far down and the board's FIRST
+        // row survived every repaint — leaking one line per tick. A four-node run
+        // spinning for three seconds left ~30 copies of its first row on screen.
+        let b = board();
+        let text = painted(&b);
+        assert!(!text.ends_with('\n'), "newline-separated, not terminated:\n{text:?}");
+
+        // The count `paint` records must equal the rows actually on screen, or the
+        // cursor arithmetic is wrong by exactly that difference.
+        assert_eq!(text.lines().count(), text.matches('\n').count() + 1);
+        assert_eq!(text.lines().count(), 5, "four nodes plus the summary");
+
+        // And it holds once rows carry state, which is when the leak was visible.
+        b.running("plan", "@planner");
+        b.settled("plan", State::Done, 3300, 4200, "");
+        let text = painted(&b);
+        assert!(!text.ends_with('\n'), "still terminated after updates:\n{text:?}");
+        assert_eq!(text.lines().count(), 5, "the same block, repainted in place");
+    }
+
+    #[test]
+    fn a_repaint_lands_back_on_the_first_row_and_leaves_nothing_behind() {
+        // The bug, at the level it actually happened: bytes on a terminal.
+        //
+        // Every tick the board wrote its block and recorded the line count; the next
+        // tick climbed `count - 1` rows to erase it. With a newline-terminated block the
+        // cursor sat one row BELOW the last line, so climbing count-1 landed on row 2 —
+        // and row 1 was never erased. One leaked line per tick: a 3-second spinner left
+        // ~30 copies of the first node on screen, which is exactly what was reported.
+        let b = Board::new(
+            "research · LLM memory".into(),
+            vec![
+                ("plan".into(), "@planner".into(), String::new()),
+                ("gather".into(), "@researcher".into(), String::new()),
+            ],
+            true, // live: the repainting path
+        );
+
+        let mut out: Vec<u8> = Vec::new();
+        b.paint_to(&mut out);
+        let first = String::from_utf8(out.clone()).unwrap();
+        // Nothing painted yet → no cursor movement, just the block.
+        assert!(!first.contains("\x1b["), "the first paint erases nothing: {first:?}");
+        let rows_painted = first.lines().count();
+        assert_eq!(rows_painted, 3, "two nodes plus the summary");
+
+        out.clear();
+        b.paint_to(&mut out);
+        let second = String::from_utf8(out).unwrap();
+        // It must return to column 0, climb back over the block, and clear downward.
+        // Climbing `rows_painted - 1` is right ONLY because the cursor is still on the
+        // last painted line — which is what the no-trailing-newline rule guarantees.
+        assert!(second.starts_with(&crate::cli::erase_seq(rows_painted)), "second paint: {second:?}");
+        assert!(second.starts_with(&format!("\r\x1b[{}A\x1b[0J", rows_painted - 1)), "{second:?}");
+        // And it redraws the same number of rows, so the block never grows.
+        assert_eq!(second.lines().count(), rows_painted, "no leaked line: {second:?}");
+        // THE one that distinguishes fixed from broken. `lines().count()` is 3 either
+        // way — a trailing newline is invisible to it. What matters is where the cursor
+        // is left: on the last row (climb count-1 works) or one row below it (climb
+        // count-1 lands on row 2, and row 1 survives forever).
+        assert!(!second.ends_with('\n'), "the cursor must be left ON the last row: {second:?}");
+
+        // Still true once a node finishes — the state the leak was most visible in.
+        b.settled("plan", State::Done, 3300, 4200, "");
+        let mut out: Vec<u8> = Vec::new();
+        b.paint_to(&mut out);
+        let third = String::from_utf8(out).unwrap();
+        assert!(third.starts_with(&format!("\r\x1b[{}A\x1b[0J", rows_painted - 1)), "{third:?}");
+        assert_eq!(third.lines().count(), rows_painted, "still three rows: {third:?}");
+        // Exactly one line IS the plan row (substring-counting would also match the
+        // `@planner` beside it — the leak showed up as repeated whole lines).
+        // A token match, not a substring one: the first line also carries the escape
+        // prefix, and `@planner` sits beside the id.
+        let plan_rows = third.lines().filter(|l| l.split_whitespace().any(|t| t == "plan")).count();
+        assert_eq!(plan_rows, 1, "the finished row appears ONCE: {third:?}");
     }
 
     #[test]
