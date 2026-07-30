@@ -29,6 +29,20 @@ scrollback = 10000         # terminal history lines kept for scrollback (Shift+P
                            # Home scroll up; the mouse wheel scrolls too; typing snaps
                            # back to the live bottom)
 
+# Ask before closing. The dialog is keyboard- and mouse-driven: esc cancels, ←/→ (or
+# Tab) move between the buttons, ↵ chooses the focused one, and a click works on both.
+# CANCEL holds focus when it opens — a hand that hit ⌘Q by accident hits ↵ next, and
+# that has to keep the session rather than end it.
+#
+# Closing the LAST split, or the last tab, ends the session — so it asks the quit
+# question and obeys confirm_quit, whatever the other two say.
+confirm_close_pane = false # a split is cheap to reopen, and closing one is deliberate
+confirm_close_tab  = true  # a tab can hold several splits and their running shells
+confirm_quit       = true  # ⌘Q sits beside ⌘W and takes everything with it
+                           # NOTE: the red close button and the menu's Quit item are
+                           # NOT covered — macOS tears the window down before the app
+                           # can ask, so those two stay immediate.
+
 [md]
 # How Markdown renders (`@md render`, `@md edit`, and every AI answer).
 syntax         = true      # syntax-highlight fenced code blocks

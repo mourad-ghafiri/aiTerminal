@@ -85,6 +85,17 @@ pub struct Config {
     pub tab_bar: String,
     pub shell: String,
     pub scrollback: usize,
+    /// `[behavior] confirm_close_pane` — ask before closing a split. Default **false**:
+    /// a split is cheap to reopen and closing one is usually deliberate, so a prompt
+    /// here would be the kind that teaches people to dismiss prompts.
+    pub confirm_close_pane: bool,
+    /// `[behavior] confirm_close_tab` — ask before closing a tab. Default **true**: a
+    /// tab can hold several splits and their running shells.
+    pub confirm_close_tab: bool,
+    /// `[behavior] confirm_quit` — ask before ⌘Q, and before any close that would end
+    /// the session (the last tab, the last split). Default **true**: ⌘Q sits beside ⌘W
+    /// and takes everything with it.
+    pub confirm_quit: bool,
     /// `[md] remote_images` — fetch `https://` images (badges, screenshots) when rendering
     /// Markdown. Off by default: displaying a document should never reach the network on
     /// its own. Local files always draw.
@@ -256,6 +267,9 @@ impl Default for Config {
             md_image_max_rows: 20,
             md_syntax: true,
             scrollback: 10_000,
+            confirm_close_pane: false,
+            confirm_close_tab: true,
+            confirm_quit: true,
             ai_pool: Vec::new(),
             ai_strategy: String::new(),
             ai_share_terminal_context: true,
@@ -782,6 +796,15 @@ impl Config {
                 // Clamp BOTH ends: a config typo (`scrollback = 999999999999`) must not drive a
                 // multi-gigabyte buffer allocation. 1M lines is already far beyond any real use.
                 c.scrollback = v.clamp(0, 1_000_000) as usize;
+            }
+            if let Some(v) = b.get("confirm_close_pane").and_then(|v| v.as_bool()) {
+                c.confirm_close_pane = v;
+            }
+            if let Some(v) = b.get("confirm_close_tab").and_then(|v| v.as_bool()) {
+                c.confirm_close_tab = v;
+            }
+            if let Some(v) = b.get("confirm_quit").and_then(|v| v.as_bool()) {
+                c.confirm_quit = v;
             }
         }
         if let Some(md) = doc.get("md") {
