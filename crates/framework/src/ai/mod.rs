@@ -9,7 +9,9 @@
 #![forbid(unsafe_code)]
 
 pub(crate) mod agent;
+pub mod budget;
 mod client;
+pub mod compact;
 mod context;
 pub mod defs;
 pub mod diff;
@@ -26,10 +28,14 @@ pub mod session;
 mod setup;
 mod stream;
 mod tools;
+pub mod transcript;
 
 // Curated flat surface — callers write `framework::ai::Client`, `…::run_agent`, …
 pub use agent::{run_agent, AgentObserver, AgentRun, AgentSpec, NoopObserver, RunOutcome, ToolRunner, ToolSpec, ToolStep};
+pub use budget::{ContextBudget, HeuristicEstimator, TokenEstimator, DEFAULT_COMPACT_AT};
 pub use client::Client;
+pub use compact::{CompactionReport, CompactionStage, Ladder, Summarizer};
+pub use transcript::{Transcript, Turn};
 pub use context::{capture_context, TermContext};
 pub use mcp::{load_servers, McpHub, McpServer};
 pub use model::{key_env_name, AiSettings};
