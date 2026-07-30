@@ -155,6 +155,9 @@ pub fn load_skills(dir: &Path) -> Vec<Skill> {
             }
         }
     }
+    // Sorted, like every other loader here. `read_dir` yields whatever order the
+    // filesystem feels like, which made listings differ between machines.
+    out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
 
@@ -268,18 +271,31 @@ pub fn build_agent_in(agents_dirs: &[PathBuf], skills_dirs: &[PathBuf], prompts_
     let fm = Frontmatter::parse(&text);
     let mut system = fm.body.trim().to_string();
 
+    // Skills are spliced in the order the AGENT declared them, not the order the directory
+    // happened to yield.
+    //
+    // Two things were wrong with the old way. It was non-deterministic — `read_dir` order
+    // differs between machines and shifts as files are touched — so the same agent sent a
+    // different system prompt on two machines, and prompt caching missed for a reason
+    // nobody could see. And it threw away intent: `coder` declares
+    // `["concise", "orchestration", "code-review", …]`, and that order reads as a priority.
     let want_skills = field_list(&fm, "skills");
     if !want_skills.is_empty() {
-        for s in load_skills_in(skills_dirs).iter().filter(|s| want_skills.contains(&s.name)) {
+        let have = load_skills_in(skills_dirs);
+        for want in &want_skills {
+            let Some(s) = have.iter().find(|s| &s.name == want) else { continue };
             system.push_str("\n\n## Skill: ");
             system.push_str(&s.name);
             system.push('\n');
             system.push_str(&s.body);
         }
     }
+    // Declared order here too, for the same reasons.
     let want_prompts = field_list(&fm, "prompts");
     if !want_prompts.is_empty() {
-        for p in load_prompts_in(prompts_dirs).iter().filter(|p| want_prompts.contains(&p.name)) {
+        let have = load_prompts_in(prompts_dirs);
+        for want in &want_prompts {
+            let Some(p) = have.iter().find(|p| &p.name == want) else { continue };
             system.push_str("\n\n## Prompt: ");
             system.push_str(&p.name);
             system.push('\n');
@@ -303,6 +319,45 @@ mod tests {
     }
 
     
+
+    #[test]
+    fn skills_are_spliced_in_the_order_the_agent_declared() {
+        // Two things this pins. The prompt must be IDENTICAL every build — `read_dir` order
+        // differs between machines and shifts as files are touched, so the same agent used
+        // to send a different system prompt on two laptops and miss prompt caching for a
+        // reason nobody could see. And the order is the AUTHOR's: `["b", "a"]` means the
+        // author wanted b first, not whatever the directory yielded.
+        let root = std::env::temp_dir().join(format!("tt-aidefs-order-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (agents, skills, prompts) = (root.join("agents"), root.join("skills"), root.join("prompts"));
+        write(&skills, "alpha.md", "ALPHA BODY");
+        write(&skills, "beta.md", "BETA BODY");
+        write(&skills, "gamma.md", "GAMMA BODY");
+        std::fs::create_dir_all(&prompts).unwrap();
+        // Declared out of alphabetical order, and not naming every installed skill.
+        write(&agents, "s.md", "---\nskills = [\"gamma\", \"alpha\"]\n---\nBODY");
+
+        let built = build_agent(&agents, &skills, &prompts, "s").expect("builds");
+        let gamma = built.system.find("## Skill: gamma").expect("gamma is spliced");
+        let alpha = built.system.find("## Skill: alpha").expect("alpha is spliced");
+        assert!(gamma < alpha, "declared order wins:\n{}", built.system);
+        assert!(!built.system.contains("beta"), "an undeclared skill is not spliced");
+
+        // Same inputs, same bytes — every time.
+        for _ in 0..5 {
+            let again = build_agent(&agents, &skills, &prompts, "s").unwrap();
+            assert_eq!(again.system, built.system, "the system prompt must be deterministic");
+        }
+        // And a skill that is not installed is skipped rather than breaking the build.
+        write(&agents, "t.md", "---\nskills = [\"alpha\", \"nope\"]\n---\nBODY");
+        let t = build_agent(&agents, &skills, &prompts, "t").expect("builds anyway");
+        assert!(t.system.contains("ALPHA BODY") && !t.system.contains("nope"));
+
+        // Listings are sorted, whatever the filesystem says.
+        let names: Vec<String> = load_skills(&skills).into_iter().map(|s| s.name).collect();
+        assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn agent_declaring_no_tools_shows_the_default_safe_set() {
