@@ -1,0 +1,40 @@
+name = "an agent's tools reach the same memory the harness wrote"
+tags = ["memory", "caps"]
+
+# The two routes have to be one store. An agent saves with `memory.add` mid-loop and
+# the run after it recalls through the harness — if those were different stores, the
+# whole feature would be an illusion that only ever worked inside one run.
+
+[[step]]
+in_folder = "checkout-service"
+
+[[step]]
+call = "memory.add"
+args = ["text=Deploys go through make ship, never a direct push to main", "kind=rule", "tags=deploy"]
+
+[[step]]
+expect_accepted = true
+
+# Written by the tool, found by the harness.
+[[step]]
+recall = "how do I deploy this"
+
+[[step]]
+expect_recalled = ["make ship"]
+
+# And the other way round: written by the harness, found by the tool.
+[[step]]
+remember = "Database migrations run with sqlx migrate run"
+
+[[step]]
+call = "memory.recall"
+args = ["context=how do I apply a migration"]
+
+[[step]]
+expect_recalled = ["sqlx migrate run"]
+
+[[step]]
+call = "memory.list"
+
+[[step]]
+expect_recalled = ["make ship", "sqlx migrate run"]

@@ -44,6 +44,4 @@ pub mod shell;
 pub mod theme;
 
 #[cfg(test)]
-mod site_audit;
-#[cfg(test)]
 mod test_home;

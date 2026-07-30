@@ -198,7 +198,7 @@ Three CI gates keep it honest: 🚫 **zero external crates**, 🧱 **strict laye
 
 ## 🧪 Tested
 
-**854 unit tests** and **173 scenarios**, in a few seconds, with no network and no API key.
+**1275 unit tests** and **268 scenarios**, in a few seconds, with no network and no API key.
 
 A unit test proves a function; a **scenario** proves a *product*. Scenarios are real user
 journeys written as TOML and played against the real code — *a destructive suggestion is

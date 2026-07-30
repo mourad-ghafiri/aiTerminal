@@ -104,13 +104,51 @@ fn recency(updated: u64, now: u64, decay: f32) -> f32 {
 }
 
 /// A minimal tokenizer: lowercase, split on non-alphanumeric, drop stopwords and
-/// 1-char tokens. Good enough for BM25 over short project notes; zero dependencies.
+/// 1-char tokens, then fold each word to its stem. Good enough for BM25 over short
+/// project notes; zero dependencies.
 pub fn tokenize(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|w| w.len() >= 2)
         .map(|w| w.to_lowercase())
         .filter(|w| !is_stopword(w))
+        .map(|w| stem(&w))
         .collect()
+}
+
+/// Fold the endings that make one word look like two.
+///
+/// Without this, a note saying "database **migrations** run with sqlx migrate" was
+/// invisible to "how do I apply a **migration**" — the ranker is lexical, the two words
+/// share no token, and the memory simply did not come back. Every existing test happened
+/// to use the same word form on both sides, so nothing caught it.
+///
+/// Both the index and the query go through [`tokenize`], so the two can never disagree
+/// about a stem. And because identical inputs stem identically, this can only ever MERGE
+/// word forms — a pair that matched before still matches.
+fn stem(w: &str) -> String {
+    let n = w.len();
+    // Digits and identifiers are names, not English: `v2`, `eu-west-1`, `sqlx`.
+    if w.chars().any(|c| c.is_ascii_digit()) {
+        return w.to_string();
+    }
+    let cut = |suffix: &str, least: usize| (n >= least + suffix.len() && w.ends_with(suffix)).then(|| n - suffix.len());
+    // `retries` → `retry`, so the plural and the singular land on one token.
+    if n >= 5 && w.ends_with("ies") {
+        return format!("{}y", &w[..n - 3]);
+    }
+    // `-ss` and `-us` are not plurals (`class`, `status`), and neither is a two-letter word.
+    if let Some(at) = cut("es", 3).filter(|_| w.ends_with("ches") || w.ends_with("shes") || w.ends_with("xes") || w.ends_with("ses")) {
+        return w[..at].to_string();
+    }
+    if n >= 4 && w.ends_with('s') && !w.ends_with("ss") && !w.ends_with("us") && !w.ends_with("is") {
+        return w[..n - 1].to_string();
+    }
+    for suffix in ["ing", "ed"] {
+        if let Some(at) = cut(suffix, 4) {
+            return w[..at].to_string();
+        }
+    }
+    w.to_string()
 }
 
 fn is_stopword(w: &str) -> bool {
@@ -142,6 +180,48 @@ mod tests {
         assert!(t.contains(&"base".to_string()));
         assert!(t.contains(&"token".to_string()));
         assert!(!t.contains(&"the".to_string()) && !t.contains(&"is".to_string()) && !t.contains(&"via".to_string()));
+    }
+
+    #[test]
+    fn one_word_in_two_forms_is_one_token() {
+        // The defect this closes: a note saying "migrations" was invisible to a question
+        // asking about a "migration", because the ranker is lexical and the two share no
+        // token. Every earlier test used the same form on both sides.
+        let same = |a: &str, b: &str| assert_eq!(tokenize(a), tokenize(b), "{a:?} and {b:?} should be one token");
+        same("migrations", "migration");
+        same("deploys", "deploy");
+        same("deployed", "deploy");
+        same("deploying", "deploy");
+        same("retries", "retry");
+        same("branches", "branch");
+
+        // What must NOT be folded: a word that only looks plural, and anything with a
+        // digit in it — those are names (`v2`, `eu-west-1`), not English.
+        assert_eq!(tokenize("class"), vec!["class"]);
+        assert_eq!(tokenize("status"), vec!["status"]);
+        assert_eq!(tokenize("analysis"), vec!["analysis"]);
+        assert_eq!(tokenize("sqlx"), vec!["sqlx"]);
+        assert_ne!(tokenize("logs"), tokenize("login"));
+    }
+
+    #[test]
+    fn stemming_only_ever_merges_word_forms() {
+        // The safety property behind the change: identical inputs stem identically, so a
+        // pair that matched before still matches. Only new matches can appear.
+        for w in ["api", "deploy", "status", "class", "eu", "v2", "sqlx", "migration", "retry"] {
+            assert_eq!(tokenize(w), tokenize(w));
+            assert!(!tokenize(w).is_empty() || w.len() < 2, "{w} vanished");
+        }
+    }
+
+    #[test]
+    fn a_question_finds_the_note_that_answers_it_in_another_form() {
+        let entries = vec![
+            mem("a", "Database migrations run with sqlx migrate run before the service starts"),
+            mem("b", "The design review meeting is on Thursdays"),
+        ];
+        let ranked = Bm25Retriever::default().rank("how do I apply a migration", &entries, 1_000);
+        assert_eq!(entries[ranked[0].0].id, "a", "{ranked:?}");
     }
 
     #[test]

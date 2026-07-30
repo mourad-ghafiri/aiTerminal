@@ -1,0 +1,53 @@
+name = "a plain command job is made, inspected, and cleared"
+tags = ["cli", "jobs"]
+
+# `@job -- <command>` is the one job form that needs no model: it runs a command and
+# keeps its output. So it is also the only part of the job surface somebody without a
+# key can use, which makes it the part most likely to be tried first.
+
+[setup]
+home = "job-life"
+
+[[step]]
+run = "@job -- echo hello"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_jobs = 1
+
+[[step]]
+run = "@job"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@job show last"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@job log last"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@job clear"
+
+[[step]]
+expect_exit = 0
+
+# And once it is gone, the verbs that read one say so rather than reporting on
+# nothing.
+[[step]]
+expect_jobs = 0
+
+[[step]]
+run = "@job show last"
+
+[[step]]
+expect_exit = 2

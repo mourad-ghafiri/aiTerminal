@@ -97,10 +97,11 @@ pub fn run(args: &[String]) -> i32 {
             println!("{}", usage());
             0
         }
-        None => {
-            eprintln!("{}", usage());
-            2
-        }
+        // Bare `@gate` shows what is running, because bare `@flow`, `@job`, `@plugin`,
+        // `@profile`, `@theme` and `@agent` all show you the current state. Printing
+        // usage to stderr and exiting 2 made this the one command in the product where
+        // asking "what have I got" is an error.
+        None => status(),
         Some("status") | Some("list") => status(),
         Some("stop") => stop(args.get(1).map(String::as_str)),
         Some(channel) => match args.get(1).map(String::as_str) {

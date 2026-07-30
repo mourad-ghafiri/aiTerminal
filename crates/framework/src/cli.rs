@@ -7225,6 +7225,57 @@ mod tests {
     }
 
     #[test]
+    fn every_usage_line_is_a_command_somebody_could_type() {
+        // Usage text is the one documentation a person reads at the moment they are
+        // stuck, and it drifts silently: a verb gets added, renamed or removed and the
+        // help still lists the old one. So every verb the parser accepts must appear in
+        // the usage, and every `@flow` line in the usage must start with `@flow`.
+        let usage = super::flow_usage();
+        for verb in ["check", "graph", "runs", "show", "nodes", "node", "watch", "log", "resume", "retry", "clear"] {
+            assert!(usage.contains(&format!("@flow {verb}")), "`{verb}` is not in the usage:\n{usage}");
+        }
+        for line in usage.lines() {
+            let body = line.trim_start_matches("usage:").trim();
+            assert!(body.starts_with("@flow"), "a usage line that is not a command: {line:?}");
+        }
+        // And the flags, which are the part people guess at.
+        for flag in ["--bg", "--dry-run", "--timeout", "--budget", "--concurrency", "--view"] {
+            assert!(usage.contains(flag), "`{flag}` is not in the usage:\n{usage}");
+        }
+    }
+
+    #[test]
+    fn a_refused_flag_says_what_it_would_have_accepted() {
+        // A model never reads these; a person does, at the moment they typed something
+        // slightly wrong. "invalid value" costs them a second guess.
+        let err = super::view_word("tree").unwrap_err();
+        assert!(err.contains("graph") && err.contains("list"), "{err}");
+        assert!(err.contains("tree"), "it repeats what was typed: {err}");
+        // Case and surrounding space are a person's, not a mistake.
+        assert_eq!(super::view_word(" GRAPH ").unwrap(), "graph");
+        assert_eq!(super::view_word("List").unwrap(), "list");
+    }
+
+    #[test]
+    fn a_node_that_did_not_run_is_told_why_in_one_place() {
+        // Two commands report this — `@flow log` and `@flow node` — and they used to
+        // carry two copies of the same match. One decision, so they cannot come to
+        // disagree about what a blocked node is.
+        use crate::flowruns::NodeState;
+        assert_eq!(super::why_not_run(NodeState::Skipped), "its condition was false");
+        assert_eq!(super::why_not_run(NodeState::Blocked), "something it needed failed");
+        assert_eq!(super::why_not_run(NodeState::Waiting), "it is waiting for an answer");
+        assert_eq!(super::why_not_run(NodeState::Pending), "it has not run yet");
+        // Every reason reads as a clause that finishes "nothing to show — …", so both
+        // callers can wrap it in their own sentence.
+        for state in [NodeState::Skipped, NodeState::Blocked, NodeState::Waiting, NodeState::Pending, NodeState::Done] {
+            let why = super::why_not_run(state);
+            assert!(!why.is_empty() && why.chars().next().is_some_and(|c| c.is_lowercase()), "{state:?}: {why:?}");
+            assert!(!why.ends_with('.'), "{state:?} ends a sentence the caller has not finished: {why:?}");
+        }
+    }
+
+    #[test]
     fn a_node_with_no_log_is_told_why_not_suggested_back_to_itself() {
         // `@flow log last b` on a node that WAS skipped used to answer
         //   run … has no output for node 'b' — did you mean 'b'?

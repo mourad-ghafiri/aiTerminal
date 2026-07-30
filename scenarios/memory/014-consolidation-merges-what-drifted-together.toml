@@ -1,0 +1,39 @@
+name = "consolidation merges what drifted together, and says how much"
+tags = ["memory", "lifecycle"]
+
+# Deduplication on write catches the obvious case. Over a long project, notes still
+# converge — two people's phrasing of one rule, written weeks apart. Consolidation
+# is the sweep, and it has to REPORT what it did: a store that quietly halved itself
+# is a store nobody will trust again.
+
+[[step]]
+in_folder = "checkout-service"
+
+[[step]]
+remember = "The staging environment lives in eu-west-1"
+
+[[step]]
+remember = "Feature flags are read from the config service at boot"
+
+[[step]]
+remember = "Database migrations run with sqlx migrate run"
+
+[[step]]
+expect_count = 3
+
+# Nothing here is a duplicate, so a sweep changes nothing at all — the sweep is not
+# allowed to be lossy just because it ran.
+[[step]]
+consolidate = true
+
+[[step]]
+expect_merged = 0
+
+[[step]]
+expect_count = 3
+
+[[step]]
+recall = "where does staging run"
+
+[[step]]
+expect_recalled = ["eu-west-1"]

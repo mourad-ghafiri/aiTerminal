@@ -1,0 +1,47 @@
+name = "a theme is switched, and a theme dropped in the directory is selectable"
+tags = ["cli", "theme"]
+
+# Themes are TOML files in a directory. The bundled ones are seeded there, so
+# "switch to a bundled theme" and "switch to one you wrote" are the same operation —
+# which is the whole reason a theme is a file rather than an entry in a list.
+
+[setup]
+home = "theme-switch"
+
+[[step]]
+expect_theme = "midnight"
+
+[[step]]
+run = "@theme nebula"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_theme = "nebula"
+
+[[step]]
+run = "@theme midnight"
+
+[[step]]
+expect_theme = "midnight"
+
+# A file of your own, in the same directory, is chosen the same way.
+[[step]]
+write_file = ".aiTerminal/themes/mine.toml"
+body = """
+name = "Mine"
+is_dark = true
+bg = "#101014"
+fg = "#e6e6ea"
+accent = "#7aa2f7"
+"""
+
+[[step]]
+run = "@theme mine"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_theme = "mine"

@@ -1,0 +1,54 @@
+name = "a flow is listed, proved and drawn without a model or a token"
+tags = ["cli", "flow"]
+
+# The three verbs that cost nothing are the ones a person uses before they trust the
+# thing with a task. They must work on a machine with no key configured at all —
+# which is exactly the machine somebody evaluating this is sitting at.
+
+[setup]
+home = "flow-offline"
+
+[[step]]
+run = "@flow"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@flow check"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@flow check build"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@flow graph build"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@flow graph review"
+
+[[step]]
+expect_exit = 0
+
+# A name nobody installed is an error with a suggestion, never a different flow run
+# by falling through — a misspelling that quietly ran a code-editing graph over
+# somebody's repository is the failure this guards.
+[[step]]
+run = "@flow graph biuld"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@flow check biuld"
+
+[[step]]
+expect_exit = 2

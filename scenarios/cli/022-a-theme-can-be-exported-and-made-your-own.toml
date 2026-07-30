@@ -1,0 +1,21 @@
+name = "a theme can be exported, edited, and selected as your own"
+tags = ["cli", "theme"]
+
+# The documented way to write a theme is to export one and edit it. That is only true
+# if what comes out is a file the resolver will accept back — an export that produced
+# something unloadable would be a dead end nobody discovers until they have edited it.
+
+[setup]
+home = "theme-export"
+
+[[step]]
+run = "@theme export nebula"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@theme export not-a-theme"
+
+[[step]]
+expect_exit = 2

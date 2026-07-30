@@ -1,0 +1,58 @@
+name = "a fact learned in one project is recalled there, and is invisible in another"
+tags = ["memory", "scoping"]
+
+# The whole argument for folder-scoped memory. "Deploys go through make ship" is true
+# of ONE repository, and an agent that carried it into somebody else's would be
+# confidently wrong. So a memory written while working somewhere belongs to
+# somewhere — and the global store, which is for things true everywhere, still
+# reaches both.
+
+[[step]]
+in_folder = "checkout-service"
+
+[[step]]
+remember = "Deploys go through make ship, never a direct push to main"
+kind = "rule"
+tags = ["deploy"]
+
+[[step]]
+recall = "how do I deploy this"
+
+[[step]]
+expect_recalled = ["make ship"]
+
+# The same question, in a different project: the answer is not there.
+[[step]]
+in_folder = "billing-api"
+
+[[step]]
+recall = "how do I deploy this"
+
+[[step]]
+expect_not_recalled = ["make ship"]
+
+# What IS true everywhere is written globally, and both projects see it.
+[[step]]
+globally = true
+
+[[step]]
+remember = "Prefer small pull requests: one reviewable change each"
+kind = "preference"
+
+[[step]]
+in_folder = "billing-api"
+
+[[step]]
+recall = "should a pull request be large or small"
+
+[[step]]
+expect_recalled = ["small pull requests"]
+
+[[step]]
+in_folder = "checkout-service"
+
+[[step]]
+recall = "should a pull request be large or small"
+
+[[step]]
+expect_recalled = ["small pull requests"]

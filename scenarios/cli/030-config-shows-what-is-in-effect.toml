@@ -1,0 +1,33 @@
+name = "config shows what is in effect, and refuses a word it does not know"
+tags = ["cli", "config"]
+
+# `@config` is how you find out whether a profile overlay is overriding what you
+# think it is, so it has to print the EFFECTIVE value and it has to be impossible to
+# mistake a typo for a setting.
+
+[setup]
+home = "config-surface"
+
+[[step]]
+run = "@config"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@config path"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_file = ".aiTerminal/config.toml"
+
+# An unknown subcommand is refused rather than silently treated as `show` — a
+# `@config st theme nebula` that printed the config and changed nothing is worse
+# than an error, because it looks like it worked.
+[[step]]
+run = "@config nonsense"
+
+[[step]]
+expect_exit = 2

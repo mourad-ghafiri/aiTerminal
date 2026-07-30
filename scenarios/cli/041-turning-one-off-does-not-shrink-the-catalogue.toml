@@ -1,0 +1,37 @@
+name = "turning one off does not shrink the catalogue"
+tags = ["cli", "plugin"]
+
+# The count is the tell. When a disabled plugin was dropped at load, the header
+# went from "31 bundled" to "30 bundled" and back — so the number on screen was a
+# different number depending on what you had switched off, which is how nobody
+# noticed that switching off meant deleting.
+
+[setup]
+home = "plugin-catalogue"
+
+[[step]]
+run = "@plugin disable weather"
+
+[[step]]
+run = "@plugin disable git"
+
+[[step]]
+expect_plugins_listed = ["weather", "git"]
+
+[[step]]
+expect_plugin_disabled = "weather"
+
+[[step]]
+expect_plugin_disabled = "git"
+
+[[step]]
+run = "@plugin enable weather"
+
+[[step]]
+run = "@plugin enable git"
+
+[[step]]
+expect_plugin_enabled = "weather"
+
+[[step]]
+expect_plugin_enabled = "git"

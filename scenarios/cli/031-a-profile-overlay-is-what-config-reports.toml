@@ -1,0 +1,67 @@
+name = "each profile keeps its own look, and switching profiles switches it"
+tags = ["cli", "config", "profile"]
+
+# A profile is a whole terminal identity, and `@theme` writes into the ACTIVE
+# profile's overlay rather than the global config — which is what makes "work" and
+# "personal" different-looking terminals rather than one terminal with a setting.
+#
+# The property that matters is that the two do not leak into each other: a theme
+# chosen in one profile must not follow you into another, and coming back must find
+# what you left.
+
+[setup]
+home = "config-overlay"
+
+[[step]]
+run = "@theme nebula"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_theme = "nebula"
+
+[[step]]
+run = "@profile create Work"
+
+[[step]]
+run = "@profile work"
+
+[[step]]
+expect_active_profile = "work"
+
+# A fresh profile has its own look to choose, and has not inherited the one next
+# door. Every profile owns an overlay from the moment it exists.
+[[step]]
+expect_file = ".aiTerminal/profiles/work/config.toml"
+
+[[step]]
+run = "@theme sunset"
+
+[[step]]
+expect_theme = "sunset"
+
+# Back to the other one, and it is exactly as it was left.
+[[step]]
+run = "@profile default"
+
+[[step]]
+expect_active_profile = "default"
+
+[[step]]
+expect_theme = "nebula"
+
+# And forward again — the switch is a switch, not a one-way write.
+[[step]]
+run = "@profile work"
+
+[[step]]
+expect_theme = "sunset"
+
+# `@config` reads through the overlay in effect, which is the whole reason it
+# reports the EFFECTIVE value rather than the file's.
+[[step]]
+run = "@config"
+
+[[step]]
+expect_exit = 0

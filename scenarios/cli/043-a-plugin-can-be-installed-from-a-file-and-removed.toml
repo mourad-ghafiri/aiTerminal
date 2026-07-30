@@ -1,0 +1,57 @@
+name = "a plugin is installed from a file, used, and removed"
+tags = ["cli", "plugin"]
+
+# A plugin is a TOML file. Installing one has to make it a first-class member of the
+# registry — listed, describable, switchable — and removing it has to leave nothing
+# behind, including any disabled flag, or the name would come back haunted.
+
+[setup]
+home = "plugin-install"
+
+[[step]]
+write_file = "hello.toml"
+body = """
+name = "hello"
+version = "0.1.0"
+description = "says hello"
+[aliases]
+hi = "echo hi"
+"""
+
+[[step]]
+run = "@plugin install {home}/hello.toml"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_plugin_enabled = "hello"
+
+[[step]]
+run = "@plugin disable hello"
+
+[[step]]
+expect_plugin_disabled = "hello"
+
+# Removing a DISABLED plugin has to forget the flag too. Otherwise reinstalling the
+# same name later would arrive switched off for a reason nobody could find.
+[[step]]
+run = "@plugin remove hello"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@plugin install {home}/hello.toml"
+
+[[step]]
+expect_plugin_enabled = "hello"
+
+[[step]]
+run = "@plugin remove hello"
+
+[[step]]
+run = "@plugin info hello"
+
+[[step]]
+expect_exit = 1

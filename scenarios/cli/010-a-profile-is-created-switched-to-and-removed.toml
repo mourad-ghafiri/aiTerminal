@@ -1,0 +1,60 @@
+name = "a profile is created, switched to, and removed"
+tags = ["cli", "profile"]
+
+# A profile is a whole terminal identity: its own config overlay and its own saved
+# tabs and splits. Every verb is here in the order somebody actually uses them,
+# because the value of this journey is that the END state is right — not that each
+# command printed something.
+
+[setup]
+home = "profile-life"
+
+[[step]]
+run = "@profile create Work 💼"
+
+[[step]]
+expect_exit = 0
+
+# The id is a slug of the name, and the overlay exists from the moment it does — a
+# profile you cannot configure is a profile in name only.
+[[step]]
+expect_profiles = ["default", "work"]
+
+[[step]]
+expect_file = ".aiTerminal/profiles/work/config.toml"
+
+[[step]]
+run = "@profile work"
+
+[[step]]
+expect_active_profile = "work"
+
+[[step]]
+run = "@profile rename work \"Work Stuff\""
+
+[[step]]
+expect_exit = 0
+
+# Renaming changes the display name, never the id — the id is what the active
+# pointer, the overlay path and the saved workspace are all keyed on.
+[[step]]
+expect_profiles = ["default", "work"]
+
+[[step]]
+run = "@profile default"
+
+[[step]]
+expect_active_profile = "default"
+
+[[step]]
+run = "@profile delete work"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_profiles = ["default"]
+
+# And its data goes with it, rather than lingering as an orphan the next `list` picks up.
+[[step]]
+expect_no_file = ".aiTerminal/profiles/work/config.toml"

@@ -1,0 +1,41 @@
+name = "a profile that is not there is named, not guessed at"
+tags = ["cli", "profile"]
+
+# `@profile <word>` switches directly, which makes every typo a potential switch to
+# something. It has to be an error instead — and an error that leaves the active
+# profile exactly where it was.
+
+[setup]
+home = "profile-unknown"
+
+[[step]]
+run = "@profile wrok"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+expect_active_profile = "default"
+
+[[step]]
+run = "@profile delete wrok"
+
+[[step]]
+expect_exit = 1
+
+[[step]]
+run = "@profile rename wrok Whatever"
+
+[[step]]
+expect_exit = 1
+
+# A name with nothing usable in it still has to produce a usable id rather than a
+# directory called "" — the slug falls back rather than failing.
+[[step]]
+run = "@profile create ---"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_profiles = ["default", "profile"]

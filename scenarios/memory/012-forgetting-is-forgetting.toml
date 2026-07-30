@@ -1,0 +1,47 @@
+name = "forgetting is permanent, and revising keeps the same memory"
+tags = ["memory", "lifecycle"]
+
+# Two things a person needs to be able to trust: that something they told it to
+# forget is gone, and that correcting something changes the note rather than leaving
+# two notes that disagree.
+
+[[step]]
+in_folder = "checkout-service"
+
+[[step]]
+remember = "The retry budget is three attempts"
+
+[[step]]
+remember = "The staging environment lives in eu-west-1"
+
+[[step]]
+expect_count = 2
+
+[[step]]
+revise = "retry budget"
+body = "The retry budget is five attempts, raised after the incident in March"
+
+# Still two: a correction is an edit, not a second opinion.
+[[step]]
+expect_count = 2
+
+[[step]]
+recall = "how many retries do we allow"
+
+[[step]]
+expect_recalled = ["five attempts"]
+
+[[step]]
+expect_not_recalled = ["three attempts"]
+
+[[step]]
+forget = "retry budget"
+
+[[step]]
+expect_count = 1
+
+[[step]]
+recall = "how many retries do we allow"
+
+[[step]]
+expect_not_recalled = ["retry budget", "five attempts"]

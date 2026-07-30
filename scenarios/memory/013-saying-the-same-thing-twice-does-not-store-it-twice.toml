@@ -1,0 +1,33 @@
+name = "saying the same thing twice does not store it twice"
+tags = ["memory", "lifecycle"]
+
+# An agent that saves a fact at the end of every run would otherwise accumulate
+# forty copies of it, and every recall would then return the same sentence forty
+# times instead of forty useful things. Writing a near-duplicate reinforces what is
+# already there.
+
+[[step]]
+in_folder = "checkout-service"
+
+[[step]]
+remember = "Deploys go through make ship, never a direct push to main"
+
+[[step]]
+remember = "Deploys go through make ship, never a direct push to main"
+
+[[step]]
+expect_count = 1
+
+# Nearly the same, in slightly different words, is still the same fact.
+[[step]]
+remember = "Deploys go through make ship — never a direct push to main"
+
+[[step]]
+expect_count = 1
+
+# Something genuinely different is genuinely new.
+[[step]]
+remember = "The staging environment lives in eu-west-1"
+
+[[step]]
+expect_count = 2

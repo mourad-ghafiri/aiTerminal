@@ -1,0 +1,50 @@
+name = "a plugin turned off is still there, and comes back on"
+tags = ["cli", "plugin"]
+
+# THE bug that started all of this. `@plugin disable weather` did not disable a
+# plugin — it removed it from the product. It vanished from the list, from `info`,
+# and from `enable`, and the only way back was hand-editing a file nobody had been
+# told about.
+#
+# The cause was that enablement was decided at LOAD time instead of carried as
+# state, so anything that consumed the registry simply never heard of a disabled
+# plugin. Which is why this asserts against the loaded registry rather than the
+# store's file: a plugin can be marked enabled on disk and still be missing from
+# everything that uses it.
+
+[setup]
+home = "plugin-round-trip"
+
+[[step]]
+run = "@plugin list"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_plugin_enabled = "weather"
+
+[[step]]
+run = "@plugin disable weather"
+
+[[step]]
+expect_exit = 0
+
+# Off — and still known. That is the whole distinction.
+[[step]]
+expect_plugin_disabled = "weather"
+
+[[step]]
+run = "@plugin info weather"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@plugin enable weather"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_plugin_enabled = "weather"

@@ -1,0 +1,49 @@
+name = "a memory tool call that makes no sense is refused with what was missing"
+tags = ["memory", "caps"]
+
+# Every argument here arrives from a model, which means every argument arrives
+# occasionally wrong. A refusal has to name what was missing, because the model
+# reads it and is expected to try again — an error it cannot act on costs a whole
+# iteration.
+
+[[step]]
+in_folder = "checkout-service"
+
+[[step]]
+call = "memory.add"
+args = ["kind=rule"]
+
+[[step]]
+expect_refused = ["text"]
+
+[[step]]
+call = "memory.get"
+args = ["id=nothing-like-this"]
+
+[[step]]
+expect_refused = ["no memory"]
+
+[[step]]
+call = "memory.forget"
+args = ["id=nothing-like-this"]
+
+[[step]]
+expect_refused = ["no memory"]
+
+[[step]]
+call = "memory.link"
+args = ["from=something"]
+
+[[step]]
+expect_refused = ["from", "to"]
+
+[[step]]
+call = "memory.remembr"
+args = ["text=hello"]
+
+[[step]]
+expect_refused = ["unknown"]
+
+# None of that wrote anything.
+[[step]]
+expect_count = 0

@@ -1,0 +1,31 @@
+name = "a plugin nobody installed is refused, in either direction"
+tags = ["cli", "plugin"]
+
+# The guard that makes the round trip above meaningful: `enable` has to tell a real
+# name from a typo. It used to answer "disabled plugin 'wether'" for anything at
+# all, which is how a misspelling looked exactly like success.
+
+[setup]
+home = "plugin-unknown"
+
+[[step]]
+run = "@plugin enable wether"
+
+[[step]]
+expect_exit = 1
+
+[[step]]
+run = "@plugin disable wether"
+
+[[step]]
+expect_exit = 1
+
+[[step]]
+run = "@plugin info wether"
+
+[[step]]
+expect_exit = 1
+
+# And the real one beside it is untouched by any of that.
+[[step]]
+expect_plugin_enabled = "weather"

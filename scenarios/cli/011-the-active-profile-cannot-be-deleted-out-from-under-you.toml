@@ -1,0 +1,51 @@
+name = "the active profile, and the last one, refuse to be deleted"
+tags = ["cli", "profile"]
+
+# Both refusals exist for the same reason: the terminal always has to have a profile
+# to be in. Deleting the one you are using would leave the active pointer naming a
+# directory that is gone, and deleting the last one would leave nothing to point at.
+
+[setup]
+home = "profile-refusals"
+
+[[step]]
+run = "@profile create Work"
+
+[[step]]
+run = "@profile work"
+
+[[step]]
+expect_active_profile = "work"
+
+[[step]]
+run = "@profile delete work"
+
+[[step]]
+expect_exit = 1
+
+# Refused, and nothing was half-done: it is still there and still active.
+[[step]]
+expect_profiles = ["default", "work"]
+
+[[step]]
+expect_active_profile = "work"
+
+# Switch away and it goes. The refusal is a sequencing rule, not a prohibition.
+[[step]]
+run = "@profile default"
+
+[[step]]
+run = "@profile delete work"
+
+[[step]]
+expect_exit = 0
+
+# Now one remains, and it stays: there is no state in which a terminal has no profile.
+[[step]]
+run = "@profile delete default"
+
+[[step]]
+expect_exit = 1
+
+[[step]]
+expect_profiles = ["default"]

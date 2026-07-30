@@ -369,6 +369,69 @@ mod tests {
     }
 
     #[test]
+    fn an_active_pointer_at_a_profile_that_is_gone_heals() {
+        // A profile directory can vanish without going through `delete` — a `git clean`,
+        // a sync tool, somebody tidying `~`. The pointer then names nothing, and every
+        // read after it would resolve to a directory that is not there. It has to fall
+        // back to a real profile rather than hand out a broken id forever.
+        let (_h, _home) = lock_home("profiles-heal");
+        ensure_default();
+        let p = create("Work", "\u{1f4bc}").unwrap();
+        set_active(&p.id).unwrap();
+        assert_eq!(active_id(), "work");
+
+        std::fs::remove_dir_all(profile_dir("work").unwrap()).unwrap();
+        assert_eq!(active_id(), DEFAULT_ID, "it fell back to a profile that exists");
+        // And the pointer file itself is still the stale one — healing is a READ-time
+        // rule, so nothing has to be repaired before the terminal can start.
+        assert!(read_profile("work").is_none());
+    }
+
+    #[test]
+    fn an_id_can_never_reach_outside_the_profiles_directory() {
+        // `profiles/<id>` is joined from a value that reaches this from a config file, a
+        // pointer file and a command line. A traversal here would delete or overwrite an
+        // arbitrary directory, so the charset is the whole defence and it is checked at
+        // the ONE place a path is built.
+        for bad in ["..", ".", "../etc", "a/b", "a\\b", "Work", "work stuff", "", "wörk", "a:b"] {
+            assert!(profile_dir(bad).is_none(), "{bad:?} produced a path");
+            assert!(config_path(bad).is_none(), "{bad:?} produced a config path");
+            assert!(workspace_path(bad).is_none(), "{bad:?} produced a workspace path");
+        }
+        for good in ["work", "work-stuff", "side_project", "p2"] {
+            assert!(profile_dir(good).is_some(), "{good:?} was refused");
+        }
+    }
+
+    #[test]
+    fn switching_to_something_that_is_not_a_profile_changes_nothing() {
+        let (_h, _home) = lock_home("profiles-switch-bogus");
+        ensure_default();
+        for bad in ["nope", "..", "work"] {
+            assert!(set_active(bad).is_err(), "{bad:?} was accepted");
+            assert_eq!(active_id(), DEFAULT_ID, "after {bad:?}");
+        }
+        // And renaming or deleting one that is not there is an error, not a silent no-op
+        // that leaves somebody believing it worked.
+        assert!(update("nope", "Whatever", "").is_err());
+        assert!(delete("nope").is_err());
+    }
+
+    #[test]
+    fn a_name_with_nothing_usable_in_it_still_gets_a_usable_id() {
+        // The id is a slug of a name a person typed, and people type emoji, punctuation
+        // and non-Latin scripts. A directory called "" is not a thing.
+        let (_h, _home) = lock_home("profiles-odd-names");
+        ensure_default();
+        assert_eq!(create("---", "").unwrap().id, "profile");
+        assert_eq!(create("!!!", "").unwrap().id, "profile-2");
+        assert_eq!(create("  Work  ", "").unwrap().id, "work", "surrounding space is not part of a name");
+        // An empty name is refused outright: there is nothing to call it.
+        assert!(create("   ", "").is_err());
+        assert!(create("", "").is_err());
+    }
+
+    #[test]
     fn duplicate_names_get_unique_ids() {
         let (_h, _home) = lock_home("profiles-dup");
         ensure_default();

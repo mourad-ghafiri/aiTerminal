@@ -30,6 +30,7 @@ use world::{Factory, World};
 /// Feature folder → the world that gives its verbs meaning.
 const REGISTRY: &[(&str, Factory)] = &[
     ("ai", worlds::ai::build),
+    ("cli", worlds::cli::build),
     ("config", worlds::config::build),
     ("flow", worlds::flow::build),
     ("gate", worlds::gate::build),
@@ -37,6 +38,7 @@ const REGISTRY: &[(&str, Factory)] = &[
     ("keymap", worlds::keymap::build),
     ("loop", worlds::loops::build),
     ("markdown", worlds::markdown::build),
+    ("memory", worlds::memory::build),
     ("plugins", worlds::plugins::build),
     ("security", worlds::security::build),
     ("shell", worlds::shell::build),
@@ -118,6 +120,16 @@ mod tests {
     #[test]
     fn ai_scenarios() {
         check("ai", 21);
+    }
+
+    #[test]
+    fn cli_scenarios() {
+        check("cli", 14);
+    }
+
+    #[test]
+    fn memory_scenarios() {
+        check("memory", 8);
     }
 
     #[test]

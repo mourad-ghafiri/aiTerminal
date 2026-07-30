@@ -2,6 +2,7 @@
 //! own verb vocabulary.
 
 pub mod ai;
+pub mod cli;
 pub mod config;
 pub mod flow;
 pub mod gate;
@@ -10,6 +11,7 @@ pub mod jobs;
 pub mod keymap;
 pub mod loops;
 pub mod markdown;
+pub mod memory;
 mod plugin_step;
 pub mod plugins;
 pub mod security;

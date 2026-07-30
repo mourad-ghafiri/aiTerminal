@@ -1,0 +1,50 @@
+name = "a gate that ships off explains how to turn it on"
+tags = ["cli", "gate"]
+
+# Gates ship disabled, so the FIRST thing anybody meets is the refusal. It has to be
+# the setup instructions rather than a bare "disabled" — this is the one place a
+# user cannot look anything up, because they are here to find out what to look up.
+
+[setup]
+home = "gate-off"
+
+[[step]]
+run = "@gate"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@gate status"
+
+[[step]]
+expect_exit = 0
+
+# Starting one while they are off declines rather than half-starting something —
+# with 2, the product's code for "this is not set up", the same one an unconfigured
+# model or a missing agent returns.
+[[step]]
+run = "@gate telegram start"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@gate nosuchchannel start"
+
+[[step]]
+expect_exit = 2
+
+# Stopping one that is not running is a different thing from a setup problem: there
+# is nothing wrong with the configuration, there is simply nothing to stop.
+[[step]]
+run = "@gate telegram stop"
+
+[[step]]
+expect_exit = 1
+
+[[step]]
+run = "@gate stop"
+
+[[step]]
+expect_exit = 1

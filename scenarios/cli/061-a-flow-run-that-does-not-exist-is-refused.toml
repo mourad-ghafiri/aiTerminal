@@ -1,0 +1,58 @@
+name = "inspecting a run that does not exist is refused, not invented"
+tags = ["cli", "flow"]
+
+# Every `@flow` verb that reads a run resolves `last` when you do not name one. On a
+# machine with no runs at all that resolution has to fail cleanly — the alternative
+# is a command that reports on a run it made up.
+
+[setup]
+home = "flow-no-runs"
+
+[[step]]
+run = "@flow runs"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@flow show last"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@flow nodes last"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@flow node last verify"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@flow log last"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@flow resume last"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@flow retry last verify"
+
+[[step]]
+expect_exit = 2
+
+# Clearing nothing is not an error — it is a no-op with an honest count.
+[[step]]
+run = "@flow clear"
+
+[[step]]
+expect_exit = 0

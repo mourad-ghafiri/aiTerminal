@@ -85,6 +85,10 @@ pub fn agent(dir: &Path, name: &str) -> Option<Agent> {
     load_agents(dir).into_iter().find(|a| a.name == name)
 }
 
+/// The most tool-calling turns an agent file may ask for. Past this it is not an agent
+/// with a lot to do, it is a typo with a credit card.
+const MAX_STEPS_CEILING: u32 = 60;
+
 /// Everything wrong with the installed agents, one problem per line.
 ///
 /// An agent is a file somebody edits, and until now nothing checked it. A misspelled
@@ -127,11 +131,12 @@ pub fn validate(
                 out.push(at(format!("names prompt '{p}', which is not installed")));
             }
         }
-        // A tool loop needs room to work and a ceiling it cannot run past. Both ends
-        // are failure modes: one step is a agent that can never use its tools, and a
-        // hundred is a bill nobody agreed to.
-        if a.max_steps == 0 || a.max_steps > 60 {
-            out.push(at(format!("max_steps = {} — expected 1..=60", a.max_steps)));
+        // The ceiling a tool loop cannot run past. Only the upper end is checkable here:
+        // `resolved_max_steps` floors the declared value at 1, so a zero has already
+        // become a one by the time this sees it — a check for it would be a branch that
+        // can never run, which is worse than no check because it reads like one.
+        if a.max_steps > MAX_STEPS_CEILING {
+            out.push(at(format!("max_steps = {} — more than {MAX_STEPS_CEILING} is a bill nobody agreed to", a.max_steps)));
         }
     }
     out
@@ -319,6 +324,61 @@ mod tests {
     }
 
     
+
+    /// An agent file, with everything valid unless a test says otherwise.
+    fn agent_file(front: &str, body: &str) -> String {
+        format!("---\n{front}\n---\n{body}")
+    }
+
+    #[test]
+    fn an_agent_file_that_would_not_work_is_reported_rather_than_run() {
+        // Agent files are user-editable Markdown, which means they will be edited wrongly:
+        // a renamed tool, a skill nobody installed, a `max_steps` somebody meant as a
+        // token budget. Every one of these RUNS otherwise — the loop silently refuses the
+        // tool mid-flight, or the agent has nothing to say — and the person is left with a
+        // bad run instead of a message.
+        let root = std::env::temp_dir().join(format!("tt-aidefs-validate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (agents, skills, prompts) = (root.join("agents"), root.join("skills"), root.join("prompts"));
+        write(&skills, "testing.md", "How to test.");
+        write(&prompts, "concise.md", "Be brief.");
+
+        write(&agents, "good.md", &agent_file("description = \"fine\"\ntools = [\"fs.read\"]\nskills = [\"testing\"]\nprompts = [\"concise\"]\nmax_steps = 8", "You are fine."));
+        write(&agents, "no-desc.md", &agent_file("description = \"\"\nmax_steps = 8", "A body."));
+        write(&agents, "no-body.md", &agent_file("description = \"has one\"\nmax_steps = 8", "   "));
+        write(&agents, "bad-tool.md", &agent_file("description = \"d\"\ntools = [\"fs.reed\"]\nmax_steps = 8", "Body."));
+        write(&agents, "bad-skill.md", &agent_file("description = \"d\"\nskills = [\"testign\"]\nmax_steps = 8", "Body."));
+        write(&agents, "bad-prompt.md", &agent_file("description = \"d\"\nprompts = [\"concice\"]\nmax_steps = 8", "Body."));
+        write(&agents, "runaway.md", &agent_file("description = \"d\"\nmax_steps = 500", "Body."));
+
+        // An agent that declares no tools is granted the default safe set, so the
+        // validator has to know those too or every such file looks broken.
+        let known = |t: &str| t == "fs.read" || crate::ai::tools::DEFAULT_SAFE_TOOLS.contains(&t);
+        let problems = validate(&agents, &skills, &prompts, &known);
+        let all = problems.join("\n");
+        for (agent, why) in [
+            ("no-desc", "no description"),
+            ("no-body", "no body"),
+            ("bad-tool", "'fs.reed', which does not exist"),
+            ("bad-skill", "'testign', which is not installed"),
+            ("bad-prompt", "'concice', which is not installed"),
+            ("runaway", "max_steps = 500"),
+        ] {
+            assert!(all.contains(&format!("agent '{agent}'")) && all.contains(why), "{agent}: {why} is missing from:\n{all}");
+        }
+        // Every complaint names the agent it is about — a list of problems you cannot
+        // attribute is a list nobody can act on.
+        assert!(problems.iter().all(|p| p.starts_with("agent '")), "{problems:?}");
+        assert!(!all.contains("agent 'good'"), "a valid agent is not complained about:\n{all}");
+
+        // `max_steps = 0` is floored to 1 at load rather than reported, so an agent is
+        // never built that cannot call a tool at all. The validator does not pretend to
+        // catch what it cannot see.
+        write(&agents, "zero.md", &agent_file("description = \"d\"\nmax_steps = 0", "Body."));
+        assert_eq!(load_agents(&agents).iter().find(|a| a.name == "zero").unwrap().max_steps, 1);
+        assert!(!validate(&agents, &skills, &prompts, &known).join("\n").contains("agent 'zero'"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn skills_are_spliced_in_the_order_the_agent_declared() {

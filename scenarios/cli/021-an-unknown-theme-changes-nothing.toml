@@ -1,0 +1,37 @@
+name = "an unknown theme is refused, and leaves the one you had"
+tags = ["cli", "theme"]
+
+# The failure mode worth preventing is not the error — it is a half-applied switch
+# that leaves the config naming a theme with no file, so every later load silently
+# falls back and nobody knows why.
+
+[setup]
+home = "theme-unknown"
+
+[[step]]
+run = "@theme nebula"
+
+[[step]]
+expect_theme = "nebula"
+
+[[step]]
+run = "@theme not-a-theme"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+expect_theme = "nebula"
+
+# The read-only verbs answer whatever the state.
+[[step]]
+run = "@theme"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@theme path"
+
+[[step]]
+expect_exit = 0

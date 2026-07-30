@@ -1,6 +1,6 @@
 # Testing
 
-aiTerminal has **854 unit tests** and **173 scenarios**, and the whole suite runs in a
+aiTerminal has **1275 unit tests** and **268 scenarios**, and the whole suite runs in a
 few seconds with no network, no API key, no window, and no changes to your machine.
 
 ```sh
@@ -105,22 +105,32 @@ scenario must never pass silently.
 
 ### Coverage
 
-173 journeys across every feature. Each folder's test asserts a minimum count, so
+268 journeys across every feature. Each folder's test asserts a minimum count, so
 coverage cannot silently shrink.
 
 | Folder | # | What a journey drives |
 | --- | --- | --- |
 | `gate/` | 35 | pairing, remote commands, the guard, attaching to interactive CLIs |
-| `ai/` | 21 | model reply → command or answer, the guard, the agent tool loop |
-| `flow/` | 21 | the graph: verification before it spends, parallel branches, conditions, bounded loops, fan-out, approvals, retries, routing a bare goal, and what a run looks like in a pipe |
+| `markdown/` | 28 | rendering, streaming, diagrams, the pager |
+| `flow/` | 27 | the graph: verification before it spends, parallel branches, conditions, bounded loops, fan-out, approvals, retries, routing a bare goal, node control, and the two ways of watching a run |
+| `ai/` | 24 | model reply → command or answer, the guard, the agent tool loop |
 | `terminal/` | 22 | the VT engine — grid, colour, wide glyphs, scrollback, DEC modes |
-| `markdown/` | 20 | rendering, streaming, diagrams, the pager |
+| `jobs/` | 20 | scheduling, occurrence logs, and what a job reports when it stops |
+| `cli/` | 18 | the `@`-command surface: profiles, themes, config, plugins, documents, offline flow verbs, jobs, gates |
 | `config/` | 16 | config parsing and the profile overlay |
 | `security/` | 15 | the command guard and the redactor |
 | `plugins/` | 14 | what a `plugin.toml` composes into, and what trust gates |
+| `loop/` | 13 | the verifier, the bounds, and the one escalation |
 | `shell/` | 10 | the init script sourced into your shell |
 | `keymap/` | 10 | chords, actions, and which binding wins |
 | `theme/` | 8 | tokens, round-trip, fallback |
+| `memory/` | 8 | what an agent remembers, where, and what it forgets |
+
+The `cli/` folder is where a **command** is proved rather than the machinery behind it.
+Its steps are lines a person types, run through the same dispatch the shell calls — and
+what they assert afterwards is *what changed*, never what was printed. A message is
+words, and words are pinned by unit tests where they are built; "the profile exists and
+is now the active one" is the behaviour.
 
 ### How it is built
 

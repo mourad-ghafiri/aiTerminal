@@ -1,0 +1,66 @@
+name = "a document renders, and everything that is not one is refused cleanly"
+tags = ["cli", "md"]
+
+# `@md render` takes a path from a person, which means it will be handed a typo, a
+# directory, and a binary — and it has to say so rather than print rubbish or fall
+# over. None of these three had ever been run.
+
+[setup]
+home = "md-render"
+
+[[step]]
+write_file = "notes.md"
+body = """
+# Notes
+
+A paragraph, a `code span`, and a list:
+
+- one
+- two
+"""
+
+[[step]]
+run = "@md render {home}/notes.md"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@md render {home}/nothing-here.md"
+
+[[step]]
+expect_exit = 1
+
+[[step]]
+make_dir = "adirectory"
+
+[[step]]
+run = "@md render {home}/adirectory"
+
+[[step]]
+expect_exit = 1
+
+# Bytes that are not UTF-8 at all — a PNG header. It must be refused, not decoded
+# into nonsense and not panicked over.
+[[step]]
+write_bytes = "logo.png"
+bytes = "137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13"
+
+[[step]]
+run = "@md render {home}/logo.png"
+
+[[step]]
+expect_exit = 1
+
+# And the usage paths: no argument, and a verb it does not have.
+[[step]]
+run = "@md"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@md rendre {home}/notes.md"
+
+[[step]]
+expect_exit = 2

@@ -1,0 +1,36 @@
+name = "recall answers the question asked, not whatever was written last"
+tags = ["memory", "retrieval"]
+
+# A memory store that returns the newest thing is a log. What makes it memory is
+# that asking about migrations brings back the migration note even though three
+# unrelated things were written after it.
+
+[[step]]
+in_folder = "checkout-service"
+
+[[step]]
+remember = "Database migrations run with sqlx migrate run before the service starts"
+kind = "rule"
+
+[[step]]
+remember = "The staging environment lives in eu-west-1"
+
+[[step]]
+remember = "Feature flags are read from the config service at boot"
+
+[[step]]
+remember = "The design review meeting is on Thursdays"
+
+[[step]]
+recall = "how do I apply a database migration"
+
+[[step]]
+expect_first_recalled = "sqlx migrate run"
+
+# And a question about something nobody wrote down brings back nothing rather than
+# the closest unrelated thing — a confident wrong answer is worse than none.
+[[step]]
+recall = "what is the on-call rotation for the payments team"
+
+[[step]]
+expect_not_recalled = ["sqlx migrate run", "eu-west-1"]

@@ -1,0 +1,46 @@
+name = "a scheduled job waits for its time instead of running immediately"
+tags = ["cli", "jobs"]
+
+# The bug this pins ran the command the moment you scheduled it: `@job tomorrow at 9
+# -- ./deploy.sh` deployed on the spot. A schedule that fires immediately is worse
+# than one that never fires, because you find out afterwards.
+
+[setup]
+home = "job-schedule"
+
+[[step]]
+run = "@job --in 30m -- echo later"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_jobs = 1
+
+# Nothing has run: the record is there and its log is not.
+[[step]]
+run = "@job show last"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@job cancel last"
+
+[[step]]
+expect_exit = 0
+
+# Cancelling ends the SCHEDULE, and keeps the record: a job that fired at three in
+# the morning and a job you stopped are both things you want to be able to look at
+# afterwards. What must be gone is the next occurrence.
+[[step]]
+expect_job_status = "cancelled"
+
+[[step]]
+expect_job_unscheduled = true
+
+[[step]]
+run = "@job clear"
+
+[[step]]
+expect_jobs = 0

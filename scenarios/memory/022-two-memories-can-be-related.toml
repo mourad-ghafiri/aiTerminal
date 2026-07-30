@@ -1,0 +1,35 @@
+name = "two memories can be related, and recall follows the relation"
+tags = ["memory", "retrieval"]
+
+# The reason a decision was made rarely shares enough words with the question to
+# rank on its own. Linking is what makes "why do we do it that way" answerable:
+# recall follows a relation one hop, so retrieving the rule brings the reason.
+
+[[step]]
+in_folder = "checkout-service"
+
+[[step]]
+remember = "Deploys go through make ship, never a direct push to main"
+kind = "rule"
+
+[[step]]
+remember = "A direct push bypassed the migration check and took checkout down for an hour in March"
+kind = "decision"
+
+[[step]]
+link = ["make ship", "bypassed the migration check"]
+
+[[step]]
+recall = "how do I deploy this"
+
+# The rule, and the reason behind it — which was never phrased as a deploy question.
+[[step]]
+expect_recalled = ["make ship", "took checkout down"]
+
+# Relating something to itself is not a relation.
+[[step]]
+call = "memory.link"
+args = ["from=same", "to=same"]
+
+[[step]]
+expect_refused = ["cannot link"]
