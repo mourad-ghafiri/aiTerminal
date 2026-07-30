@@ -21,18 +21,6 @@ A terminal written **from scratch in Rust** — **zero external crates**, no Ele
 
 ---
 
-<div align="center">
-
-## 🎬 See it in action
-
-![aiTerminal in action](demo.gif)
-
-**[▶️ Watch in full quality](video.mp4)** — 90 seconds. Your prompt is about to get *superpowers*. ✨
-
-</div>
-
----
-
 It is a *terminal*, full stop: PTY panes, tabs and splits, themes, keymaps, plugins,
 profiles. The AI is woven into the shell itself through one idea:
 
@@ -142,11 +130,6 @@ are kept unless you add `--purge`:
 ```sh
 curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh -s -- remove
 ```
-
-Or [download a build](https://github.com/mourad-ghafiri/aiTerminal/releases) —
-[Apple Silicon](https://github.com/mourad-ghafiri/aiTerminal/releases/latest/download/aiTerminal-macos-arm64.zip) ·
-[Intel](https://github.com/mourad-ghafiri/aiTerminal/releases/latest/download/aiTerminal-macos-x86_64.zip) ·
-[Universal](https://github.com/mourad-ghafiri/aiTerminal/releases/latest/download/aiTerminal-macos-universal.zip).
 
 ## 🚀 Build & run
 

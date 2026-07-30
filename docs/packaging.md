@@ -49,9 +49,10 @@ The script checks for it and tells you the exact command instead of failing deep
 inside cargo. Ad-hoc signatures are per-slice, so a universal bundle is `lipo`'d
 first and signed after — never the reverse.
 
-The website links the three zips by name
-(`releases/latest/download/aiTerminal-macos-<arch>.zip`), so a release must
-publish them under exactly those names.
+Nothing links these zips any more: `install.sh` clones the source and builds it, and
+neither the website nor the README offers a download. Publishing them is optional —
+name them what you like, or skip them. What the installer needs is the *source*, so a
+release is a tag, not an artifact.
 
 ## Why both architectures matter beyond packaging
 
