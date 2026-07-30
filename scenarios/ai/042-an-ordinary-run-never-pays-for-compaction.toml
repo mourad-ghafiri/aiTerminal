@@ -1,0 +1,34 @@
+name = "an ordinary run never pays for compaction"
+tags = ["ai", "context"]
+
+# The other half of the contract, and the easier one to get wrong. A harness that
+# compacts eagerly costs every run a rewrite it did not need — and rewriting history
+# is exactly what breaks a provider's prefix cache, so an over-eager harness makes
+# ordinary runs MORE expensive, not less.
+#
+# Under a normal window, with normal tool output, nothing should happen at all.
+
+[setup]
+context_window = 200000
+max_steps = 6
+
+[[step]]
+tool = "fs.read"
+
+[[step]]
+tool_returns = ["fs.read=fn main() { println!(\"hi\"); }"]
+
+[[step]]
+model_says_in_turn = ["@tool fs.read {\"path\":\"src/main.rs\"}", "It prints `hi` and returns nothing."]
+
+[[step]]
+agent = "what does main.rs do?"
+
+[[step]]
+expect_answer = "It prints `hi` and returns nothing."
+
+[[step]]
+expect_outcome = "completed"
+
+[[step]]
+expect_no_compaction = true

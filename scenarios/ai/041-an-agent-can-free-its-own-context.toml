@@ -1,0 +1,40 @@
+name = "an agent can free its own context"
+tags = ["ai", "context"]
+
+# `ctx.status` and `ctx.compact` are the harness's own tools, answered by the loop
+# rather than by any capability — they read and rewrite the run's transcript, which is
+# loop state. So they work without the agent declaring them, and the tool runner is
+# never consulted for them.
+#
+# This matters for a weak model: it can call a tool that fills its context, so it
+# should be able to see that happening and do something about it, rather than only
+# discovering the problem when a turn is refused.
+
+[setup]
+context_window = 8192
+max_steps = 6
+
+[[step]]
+tool = "sys.run"
+
+[[step]]
+tool_returns_many_lines = ["sys.run=[2026-07-30T09:14:22Z] worker 3 retrying batch 118"]
+times = 4000
+
+[[step]]
+model_says_in_turn = ["@tool sys.run {\"cmd\":\"tail -n 100000 build.log\"}", "@tool ctx.status {}", "@tool ctx.compact {\"keep\":\"the failing assertion in parser.rs\"}", "The parser test fails on an unterminated string."]
+
+[[step]]
+agent = "find why the build fails"
+
+[[step]]
+expect_answer = "The parser test fails on an unterminated string."
+
+[[step]]
+expect_outcome = "completed"
+
+# The agent called three tools, but only ONE of them was a capability. `ctx.status`
+# and `ctx.compact` were answered by the loop and never reached the runner — which is
+# the whole reason they can touch the transcript at all.
+[[step]]
+expect_tool_calls = ["sys.run {\"cmd\":\"tail -n 100000 build.log\"}"]

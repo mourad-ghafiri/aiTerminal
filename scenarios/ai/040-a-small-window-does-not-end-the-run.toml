@@ -1,0 +1,50 @@
+name = "a small window does not end the run"
+tags = ["ai", "context"]
+
+# The reason the harness budgets in tokens at all. A cheap model with an 8k window is
+# the case that used to break: the transcript was measured in BYTES against one
+# constant sized for a 128k model, so a run would grow past the window and the
+# provider would refuse the turn — with nothing in the code able to notice.
+#
+# Here the tool hands back far more than the window can hold, three times over, and
+# the run still finishes.
+
+[setup]
+context_window = 8192
+max_steps = 6
+
+[[step]]
+tool = "sys.run"
+
+# One tool result far larger than the whole window: 4000 lines of build output, which
+# is an ordinary `cargo build` on a real project.
+[[step]]
+tool_returns_many_lines = ["sys.run=   Compiling framework v0.0.0 (/work/crates/framework)"]
+times = 4000
+
+[[step]]
+model_says_in_turn = ["@tool sys.run {\"cmd\":\"cargo build\"}", "@tool sys.run {\"cmd\":\"cargo test\"}", "@tool sys.run {\"cmd\":\"cargo clippy\"}", "Build, tests and lints all ran."]
+
+[[step]]
+agent = "check the build"
+
+[[step]]
+expect_answer = "Build, tests and lints all ran."
+
+[[step]]
+expect_outcome = "completed"
+
+# It got there by giving context back, not by luck.
+[[step]]
+expect_compacted = true
+
+# And the free rung was enough: no model call was spent on a summary. This is what
+# keeps a cheap model cheap — compaction that costs a call on every turn would undo
+# the saving it was meant to make.
+[[step]]
+expect_compacted_without_a_model_call = true
+
+# Nothing was lost. The full output is on disk at the path the agent was handed, and
+# `fs.read` can fetch it back when it turns out to matter.
+[[step]]
+expect_offloaded_output_is_readable = true
