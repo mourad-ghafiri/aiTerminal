@@ -100,6 +100,13 @@ pub(crate) fn open_log(dir: &Path, sub: &str, keep: usize) -> Option<(PathBuf, s
 /// the tail, so a prefix-only match would refuse the most natural input. Ambiguity is an
 /// error, never a guess.
 pub(crate) fn resolve(ids: &[String], reference: &str, what: &str) -> Result<String, String> {
+    // An empty reference is not a wildcard. Without this it falls through to the
+    // `contains` match below, where EVERY id contains "" — so a bare `show` silently
+    // picked one when there was a single record and errored with "matches 2" as soon as
+    // there were two. Callers that mean "the newest" say `last`.
+    if reference.trim().is_empty() {
+        return Err(format!("which {what}? name one, or `last` for the newest"));
+    }
     if reference == "last" {
         return ids.first().cloned().ok_or_else(|| format!("no {what}s yet"));
     }
@@ -172,6 +179,9 @@ mod tests {
         assert_eq!(resolve(&ids, "60", "loop").unwrap(), "600-2", "a prefix");
         assert_eq!(resolve(&ids, "2", "loop").unwrap(), "600-2", "the tail people retype");
         assert!(resolve(&ids, "nope", "loop").unwrap_err().contains("no such loop"));
+        // Empty is a question, not a match-everything.
+        assert!(resolve(&ids, "", "loop").unwrap_err().contains("which loop?"));
+        assert!(resolve(&ids, "  ", "loop").unwrap_err().contains("which loop?"));
         assert!(resolve(&ids, "0", "loop").unwrap_err().contains("matches 2"));
         assert!(resolve(&[], "last", "loop").unwrap_err().contains("no loops yet"));
     }

@@ -3981,14 +3981,19 @@ fn join_excluding(words: &[&str], start: usize, end: usize) -> String {
 
 /// Run `prompt` through `agent` with the full live chrome; when `log` is set the
 /// streamed answer is ALSO written there (the foreground-tracked job's record).
-fn run_prompt_as_agent(agent: &str, prompt: &str, log: Option<std::fs::File>) -> i32 {
+fn run_prompt_as_agent(agent: &str, prompt: &str, mut log: Option<std::fs::File>) -> i32 {
     let (prompt, media, file_ctx) = collect_attachments(prompt);
     let cfg = crate::config::Config::load();
     crate::i18n::install(cfg.i18n_catalog());
     let settings = cfg.ai_settings();
+    // Every early exit is written into the run log as well as stderr. A detached job has
+    // nobody watching stderr — it lands in `spawn.log`, which no command shows — so a
+    // reason that only goes there is a reason nobody ever reads.
     if settings.resolve_key().is_none() {
-        eprintln!("aiTerminal: {}", crate::ai::setup_hint(&settings));
-        return 2;
+        return job_setup_error(&mut log, &crate::ai::setup_hint(&settings));
+    }
+    if build_agent_spec(agent).is_none() {
+        return job_setup_error(&mut log, &format!("no agent '{agent}' \u{2014} {}", available_agents_hint()));
     }
     let registry = crate::plugin::load_registry(&cfg);
     let policy = std::sync::Arc::new(crate::security::build_policy(&cfg, &registry));
@@ -4009,6 +4014,16 @@ fn run_prompt_as_agent(agent: &str, prompt: &str, log: Option<std::fs::File>) ->
     code
 }
 
+
+/// Report a job's setup failure to both places that matter, and exit 2.
+fn job_setup_error(log: &mut Option<std::fs::File>, reason: &str) -> i32 {
+    use std::io::Write;
+    eprintln!("aiTerminal: {reason}");
+    if let Some(f) = log.as_mut() {
+        let _ = writeln!(f, "aiTerminal: {reason}");
+    }
+    2
+}
 
 // ===== @job ==================================================================
 
@@ -4056,8 +4071,12 @@ pub(crate) fn parse_job_args(args: &[String]) -> JobCmd {
         None => return JobCmd::List,
         Some("clear") if args.len() == 1 => return JobCmd::Clear,
         Some("help") | Some("--help") | Some("-h") => return JobCmd::Help,
-        Some("cancel") | Some("stop") => return JobCmd::Cancel(args.get(1).cloned().unwrap_or_default()),
-        Some("show") => return JobCmd::Show(args.get(1).cloned().unwrap_or_default()),
+        // `last` by default, like `@job log`, `@flow show` and `@loop show`. These used to
+        // default to "", which `record::resolve` matched against every id.
+        Some("cancel") | Some("stop") => {
+            return JobCmd::Cancel(args.get(1).cloned().unwrap_or_else(|| "last".into()))
+        }
+        Some("show") => return JobCmd::Show(args.get(1).cloned().unwrap_or_else(|| "last".into())),
         Some("log") | Some("logs") => {
             let follow = args.iter().any(|a| a == "-f" || a == "--follow");
             let id = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| "last".into());
@@ -4622,14 +4641,50 @@ fn execute_occurrence(id: &str, foreground: bool) -> i32 {
         eprintln!("aiTerminal: no such job '{id}'");
         return 2;
     };
-    let log = crate::jobs::open_run_log(id, keep_runs());
+    let opened = crate::jobs::open_run_log(id, keep_runs());
+    // A run always writes down that it happened, before and after.
+    //
+    // An EMPTY log reads as "nothing went wrong", which is the exact opposite of the truth
+    // when a run died before it produced a line — and that is the common case, because
+    // "no model configured" is decided before any agent starts. The header and footer are
+    // written here, around every task kind, so no failure path can leave a silent log.
+    let mut note = opened.as_ref().and_then(|(_, f)| f.try_clone().ok());
+    run_log_header(&mut note, &job);
+    let log = opened.map(|(_, f)| f);
     crate::jobs::mark_running(id, std::process::id());
     let code = match &job.task {
-        crate::jobs::Task::Agent { text, agent } => run_prompt_as_agent(agent, text, log.map(|(_, f)| f)),
-        crate::jobs::Task::Shell(cmd) => run_shell_job(cmd, &job.cwd, log.map(|(_, f)| f), foreground),
+        crate::jobs::Task::Agent { text, agent } => run_prompt_as_agent(agent, text, log),
+        crate::jobs::Task::Shell(cmd) => run_shell_job(cmd, &job.cwd, log, foreground),
     };
+    run_log_footer(&mut note, code);
     crate::jobs::finish(id, code);
     code
+}
+
+/// Open a run log with what is about to happen.
+fn run_log_header(log: &mut Option<std::fs::File>, job: &crate::jobs::Job) {
+    use std::io::Write;
+    let Some(f) = log.as_mut() else { return };
+    let what = match &job.task {
+        crate::jobs::Task::Agent { agent, text } => format!("@{agent} {text}"),
+        crate::jobs::Task::Shell(cmd) => cmd.display(),
+    };
+    let when =
+        corelib::datetime::format(crate::jobs::now() as i64, "%Y-%m-%d %H:%M", platform::os::utc_offset_secs());
+    let _ = writeln!(f, "# {what}\n# in {} at {when}\n", job.cwd);
+}
+
+/// Close it with the outcome, so `@job log` always ends with the answer to "did it work".
+fn run_log_footer(log: &mut Option<std::fs::File>, code: i32) {
+    use std::io::Write;
+    let Some(f) = log.as_mut() else { return };
+    let verdict = match code {
+        0 => "\u{2713} done".to_string(),
+        2 => "\u{2717} setup error (exit 2) \u{2014} see the reason above".to_string(),
+        130 => "\u{23f9} cancelled".to_string(),
+        n => format!("\u{2717} failed (exit {n})"),
+    };
+    let _ = writeln!(f, "\n{verdict}");
 }
 
 /// Why a job's command must not run, or `None` when it may.
@@ -4784,9 +4839,22 @@ fn job_log(id: &str, follow: bool) -> i32 {
     };
     let Some(job) = crate::jobs::read(&id) else { return 2 };
     let Some(path) = job.latest_log() else {
-        println!("job {id} has not produced any output yet");
+        println!("job {id} has not run yet");
         return 0;
     };
+    // A log that exists but is empty used to print nothing at all — which reads as "it went
+    // fine and said nothing", the opposite of the truth. Say so, and point at the one place
+    // a message could still be hiding.
+    if std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) == 0 {
+        let (dim, r) = (muted(), reset());
+        println!("job {id} ran but wrote nothing to its log");
+        if let Some(spawn) = crate::jobs::dir(&id).map(|d| d.join("spawn.log")) {
+            if std::fs::metadata(&spawn).map(|m| m.len()).unwrap_or(0) > 0 {
+                println!("{dim}anything it printed before starting is in {}{r}", spawn.display());
+            }
+        }
+        return 0;
+    }
     use std::io::{Read, Seek, Write};
     let Ok(mut f) = std::fs::File::open(&path) else {
         eprintln!("aiTerminal: can't read {}", path.display());
@@ -4856,10 +4924,26 @@ fn job_show(id: &str) -> i32 {
         let last = job.last_exit.map(|c| if c == 0 { "ok".to_string() } else { format!("exit {c}") }).unwrap_or_default();
         println!("  {dim}runs{r}     {} \u{b7} last {last}", job.runs);
     }
+    // Why it failed, not just that it did. `exit 2` on its own sends people to read a log
+    // they have to be told exists; the reason is one line and it belongs here.
+    if let Some(reason) = job.latest_log().and_then(|p| failure_reason(&p)) {
+        println!("  {dim}reason{r}   {reason}");
+    }
     if let Some(p) = job.latest_log() {
         println!("  {dim}log{r}      {}", p.display());
     }
     0
+}
+
+/// The first real complaint in a run log — the `aiTerminal: …` line a failing run writes.
+///
+/// Deliberately narrow: it looks for the line the run itself emitted about why it stopped,
+/// not for anything that merely resembles an error in a model's prose.
+fn failure_reason(log: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(log).ok()?;
+    text.lines()
+        .find_map(|l| l.trim().strip_prefix("aiTerminal: "))
+        .map(|l| clip_tail(l, 72))
 }
 
 /// `aiTerminal ai job [clear]` — list jobs (newest first), or prune the finished ones.
@@ -6178,6 +6262,68 @@ mod tests {
         let nowhere = crate::caps::CapCtx { app_data: None, ..ctx.clone() };
         let err = crate::caps::run("todo.list", &[], &nowhere).expect_err("refused");
         assert!(err.contains("only available to installed apps"), "{err}");
+    }
+
+    #[test]
+    fn a_job_run_is_never_silent_about_what_happened() {
+        // The bug: a job that died before producing a line left a 0-byte log, so
+        // `@job log` printed nothing and `@job show` said only "exit 2". The reason was
+        // real and recoverable — no model configured — and there was no way to see it.
+        let dir = std::env::temp_dir().join(format!("tt-joblog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("1.md");
+
+        let job = crate::jobs::Job {
+            id: "1-1".into(),
+            status: "running".into(),
+            cmd: "get me the weather".into(),
+            says: String::new(),
+            task: crate::jobs::Task::Agent { agent: "coder".into(), text: "get me the weather".into() },
+            cwd: "/tmp".into(),
+            started: 0,
+            finished: None,
+            exit: None,
+            pid: 0,
+            schedule: None,
+            next_at: None,
+            runs: 0,
+            last_exit: None,
+        };
+        let mut log = Some(std::fs::File::create(&path).unwrap());
+        super::run_log_header(&mut log, &job);
+        super::job_setup_error(&mut log, "AI isn't set up yet. Add a model to config.toml");
+        super::run_log_footer(&mut log, 2);
+        drop(log);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.trim().is_empty(), "a run that happened leaves a log");
+        assert!(text.contains("@coder get me the weather"), "what ran: {text}");
+        assert!(text.contains("AI isn't set up yet"), "why it stopped: {text}");
+        assert!(text.contains("setup error (exit 2)"), "and the verdict: {text}");
+
+        // …and `@job show` can name the reason without anybody opening the file.
+        let reason = super::failure_reason(&path).expect("a reason");
+        assert!(reason.starts_with("AI isn't set up yet"), "{reason}");
+
+        // A log with no complaint in it yields no reason — it does not invent one.
+        let clean = dir.join("2.md");
+        std::fs::write(&clean, format!("# a job\n\nall good\n\n✓ done\n")).unwrap();
+        assert_eq!(super::failure_reason(&clean), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_bare_job_subcommand_means_the_newest_one() {
+        // `show` and `cancel` defaulted to "", which `record::resolve` matched against every
+        // id: it silently picked one with a single job and errored with "matches 2" as soon
+        // as there were two.
+        use super::JobCmd;
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(super::parse_job_args(&a(&["show"])), JobCmd::Show("last".into()));
+        assert_eq!(super::parse_job_args(&a(&["cancel"])), JobCmd::Cancel("last".into()));
+        assert_eq!(super::parse_job_args(&a(&["show", "17-3"])), JobCmd::Show("17-3".into()));
+        assert_eq!(super::parse_job_args(&a(&["log"])), JobCmd::Log { id: "last".into(), follow: false });
     }
 
     #[test]
