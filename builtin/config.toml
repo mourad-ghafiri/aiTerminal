@@ -99,6 +99,27 @@ memory = true
 # Set true to see the full chain-of-thought.
 show_reasoning = false
 
+# ── Context ───────────────────────────────────────────────────────────────────
+# Every run measures its context against the window of the model serving it and
+# compacts before that model would refuse the turn. Compaction is a ladder: big tool
+# results are written to a file and replaced by a preview + the path (free — no model
+# call, and `fs.read` fetches the full text back on demand); only if that is not
+# enough does it spend one call folding the oldest turns into a summary. Agents can
+# also drive it themselves with `ctx.status` and `ctx.compact`.
+#
+# context_window — the window to budget against, in tokens. 0 (default) uses whatever
+# the serving model declares in ~/.aiTerminal/ai/models/*.toml. Set it when the model
+# file cannot know the truth — a local model served with a smaller window than its
+# card claims. For a MIXED pool, set `context_window` on the individual model entry
+# instead (see the pool examples below), so a 32k local model and a 200k hosted one
+# each budget against their own window.
+context_window = 0
+
+# compact_at — the fraction of the usable window that triggers compaction. Lower
+# compacts sooner (safer on a small window, more summaries); higher runs closer to the
+# edge. Anything outside 0.1–0.95 falls back to the default.
+compact_at = 0.75
+
 # How a shell `@ai <request>` suggestion is applied:
 #   "manual" (default) — preload the command for review; press Enter (or edit) to run.
 #   "auto"             — run a guard-ALLOWED suggestion immediately. A guard-*confirm*

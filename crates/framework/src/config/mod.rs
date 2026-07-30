@@ -49,6 +49,9 @@ pub struct AiModelSpec {
     pub top_p: Option<f32>,
     pub top_k: Option<u32>,
     pub max_tokens: Option<u32>,
+    /// `[[ai.model]] context_window` — this entry's real window, overriding the
+    /// catalog's for this deployment only.
+    pub context_window: Option<u32>,
     /// Force extended thinking on/off for this model (overrides the catalog cap).
     pub thinking: Option<bool>,
 }
@@ -147,6 +150,16 @@ pub struct Config {
     /// preload the command for review, then Enter) or `"auto"` (run a guard-allowed
     /// suggestion immediately; a guard-*confirm* command still drops to review).
     pub ai_command_mode: String,
+    /// `[ai] context_window` — override the context window every run budgets against,
+    /// in tokens. `0` (default) uses the value the chosen model declares in its
+    /// `ai/models/*.toml`. Set it when the model file cannot know the truth: a local
+    /// model served with a smaller window than its card claims, where the file is
+    /// right about the model and wrong about *this* deployment.
+    pub ai_context_window: u32,
+    /// `[ai] compact_at` — the fraction of the usable window at which a run compacts
+    /// its context. Default `0.75`. Lower compacts sooner (safer on a small window,
+    /// more summaries); higher runs closer to the edge. Clamped to a sane range.
+    pub ai_compact_at: f32,
 
     // ---- feature toggles (maximum customization) ----
     /// Master switch for the whole declarative plugin system.
@@ -250,6 +263,8 @@ impl Default for Config {
             ai_show_reasoning: false,
             ai_budget: None,
             ai_command_mode: "manual".into(),
+            ai_context_window: 0, // 0 = use whatever the chosen model declares
+            ai_compact_at: crate::ai::budget::DEFAULT_COMPACT_AT,
             plugins_enabled: true,
             plugins_disabled: Vec::new(),
             ai_network: true,
@@ -487,6 +502,17 @@ impl Config {
     /// the folder's project root (git top-level, else cwd) — see `ai::session`.
     pub fn sessions_dir() -> PathBuf {
         Self::ai_dir().join("sessions")
+    }
+
+    /// Offloaded tool output (`cache/offload/<run-id>/<n>-<tool>.txt`) — the full text
+    /// of a tool result that compaction lifted out of the context, kept so the agent
+    /// can `fs.read` it back on demand.
+    ///
+    /// Under `cache/` deliberately: it is regenerable (re-run the tool) and it is the
+    /// one place the layout already promises may be deleted at any time. A run only
+    /// ever loses a convenience by its removal, never a record.
+    pub fn offload_dir() -> PathBuf {
+        Self::cache_dir().join("offload")
     }
 
     /// Live `@gate` session records (`gates/<id>.toml`) — one per running gateway.
@@ -833,6 +859,18 @@ impl Config {
             if let Some(v) = ai.get("network").and_then(|v| v.as_bool()) {
                 c.ai_network = v;
             }
+            // `[ai] context_window` — a positive token count overrides the model's own;
+            // 0 or nonsense means "trust the model file", which is the default.
+            if let Some(v) = ai.get("context_window").and_then(|v| v.as_int()) {
+                c.ai_context_window = u32::try_from(v).unwrap_or(0);
+            }
+            // `[ai] compact_at` — the fraction of the window that triggers compaction.
+            // Out-of-range values fall back to the default rather than producing a
+            // harness that either never compacts or compacts on every turn.
+            if let Some(v) = ai.get("compact_at").and_then(|v| v.as_num()) {
+                let v = v as f32;
+                c.ai_compact_at = if v.is_finite() && (0.1..=0.95).contains(&v) { v } else { crate::ai::budget::DEFAULT_COMPACT_AT };
+            }
             // `[ai] mode = "manual" | "auto"` for shell `@ai` suggestions; anything
             // else falls back to the safe default.
             if let Some(v) = ai.get("mode").and_then(|v| v.as_str()) {
@@ -865,6 +903,7 @@ impl Config {
                         top_p: unit("top_p"),
                         top_k: posu32("top_k"),
                         max_tokens: m.get("max_tokens").and_then(|v| v.as_int()).map(|n| n.clamp(1, 200_000) as u32),
+                        context_window: m.get("context_window").and_then(|v| v.as_int()).map(|n| n.clamp(1, 10_000_000) as u32),
                         thinking: m.get("thinking").and_then(|v| v.as_bool()),
                     });
                 }
@@ -1039,6 +1078,7 @@ impl Config {
                         top_p: spec.top_p,
                         top_k: spec.top_k,
                         max_tokens: spec.max_tokens,
+                        context_window: spec.context_window,
                         thinking: spec.thinking,
                     };
                     entries.push(PoolEntry::new(model, spec.weight, overrides));
@@ -1126,6 +1166,7 @@ mod tests {
             top_p: None,
             top_k: None,
             max_tokens: None,
+            context_window: None,
             thinking: None,
         }
     }
@@ -1166,6 +1207,34 @@ mod tests {
         assert_eq!(c.zoom, Config::default().zoom, "inf zoom ignored");
         assert!(c.zoom.is_finite());
         assert_eq!(c.scrollback, 1_000_000, "scrollback clamped to the upper bound");
+    }
+
+    #[test]
+    fn context_window_and_compact_at_parse_and_clamp() {
+        // The number every `ai/models/*.toml` has always carried and nothing consumed.
+        assert_eq!(Config::default().ai_context_window, 0, "unset means: trust the model file");
+        assert_eq!(Config::from_toml("[ai]\ncontext_window = 16000\n").ai_context_window, 16_000);
+        assert_eq!(Config::from_toml("[ai]\ncontext_window = -5\n").ai_context_window, 0, "nonsense falls back");
+
+        assert!((Config::default().ai_compact_at - crate::ai::budget::DEFAULT_COMPACT_AT).abs() < f32::EPSILON);
+        assert!((Config::from_toml("[ai]\ncompact_at = 0.5\n").ai_compact_at - 0.5).abs() < 0.001);
+        // Out of range falls back rather than producing a harness that never compacts
+        // (or one that compacts on every turn).
+        for bad in ["5", "0", "-1"] {
+            let c = Config::from_toml(&format!("[ai]\ncompact_at = {bad}\n"));
+            assert!((c.ai_compact_at - crate::ai::budget::DEFAULT_COMPACT_AT).abs() < f32::EPSILON, "compact_at = {bad}");
+        }
+    }
+
+    #[test]
+    fn a_pool_entry_can_override_its_own_context_window() {
+        // A local model served with a smaller window than its card claims. Per-entry,
+        // because a mixed pool would be wrong for one member under a single number.
+        let c = Config::from_toml(
+            "[ai]\n\n[[ai.model]]\nid = \"claude-opus-4-8\"\ncontext_window = 24000\n",
+        );
+        assert_eq!(c.ai_pool[0].context_window, Some(24_000));
+        assert_eq!(c.ai_settings().primary().context_window, 24_000, "the override reaches the resolved model");
     }
 
     #[test]

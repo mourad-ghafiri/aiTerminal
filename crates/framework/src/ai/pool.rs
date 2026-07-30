@@ -69,12 +69,22 @@ pub struct ModelOverrides {
     pub max_tokens: Option<u32>,
     /// Force extended thinking on/off for this model (overrides the catalog cap).
     pub thinking: Option<bool>,
+    /// This model's real context window, when the catalog is wrong about THIS
+    /// deployment — a local model served with a smaller window than its card claims.
+    /// Per-entry, because a mixed pool can hold a 32k local model beside a 200k
+    /// hosted one and a single global number would be wrong for one of them.
+    pub context_window: Option<u32>,
 }
 
 impl ModelOverrides {
     /// `true` when no override is set (so an entry can skip cloning work).
     pub fn is_empty(&self) -> bool {
-        self.temperature.is_none() && self.top_p.is_none() && self.top_k.is_none() && self.max_tokens.is_none() && self.thinking.is_none()
+        self.temperature.is_none()
+            && self.top_p.is_none()
+            && self.top_k.is_none()
+            && self.max_tokens.is_none()
+            && self.thinking.is_none()
+            && self.context_window.is_none()
     }
 
     /// Apply the set overrides onto `m` in place.
@@ -90,6 +100,9 @@ impl ModelOverrides {
         }
         if let Some(mt) = self.max_tokens {
             m.max_tokens = mt;
+        }
+        if let Some(cw) = self.context_window {
+            m.context_window = cw;
         }
         if let Some(th) = self.thinking {
             m.caps.enable_thinking = th;
