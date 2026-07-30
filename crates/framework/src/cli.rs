@@ -4082,7 +4082,7 @@ fn parse_schedule(prompt: &str, now: u64) -> (Option<crate::jobs::Schedule>, Str
             }
         } else if kw == "in" || kw == "after" {
             if let Some((secs, used)) = parse_delay(&words[i + 1..]) {
-                return (Some(crate::jobs::Schedule::Once(now + secs)), join_excluding(&words, i, i + 1 + used));
+                return (Some(crate::jobs::Schedule::Once(now.saturating_add(secs))), join_excluding(&words, i, i + 1 + used));
             }
         } else if kw == "at" {
             if let Some(word) = words.get(i + 1) {
@@ -4116,7 +4116,12 @@ fn split_num_unit(w: &str) -> Option<(u64, &str)> {
     Some((n, &w[split..]))
 }
 
-/// Seconds for `n` of a time unit (`s/sec/min/m/hour/h/day/d`, plural OK); `None` if unknown.
+/// Seconds for `n` of a time unit (`s/sec/min/m/hour/h/day/d`, plural OK); `None` if the
+/// unit is unknown **or the span is absurd**.
+///
+/// The multiply is checked: `in 999999999999999999 days` overflowed `u64` and wrapped to
+/// a small, entirely different time — silently in release, as a panic in debug. A span
+/// nobody could mean is refused rather than turned into one they did not ask for.
 fn unit_secs(unit: &str, n: u64) -> Option<u64> {
     let mult = match unit.to_ascii_lowercase().as_str() {
         "s" | "sec" | "secs" | "second" | "seconds" => 1,
@@ -4125,7 +4130,10 @@ fn unit_secs(unit: &str, n: u64) -> Option<u64> {
         "d" | "day" | "days" => 86400,
         _ => return None,
     };
-    Some(n * mult)
+    // A century is past every real use and still far from the edge, so the arithmetic
+    // downstream (`now + secs`) has room too.
+    const MAX_SPAN_SECS: u64 = 100 * 365 * 86_400;
+    n.checked_mul(mult).filter(|s| *s <= MAX_SPAN_SECS)
 }
 
 /// Parse a clock time (`17:30`, `5pm`, `9`, `9am`) → the next unix time it occurs (today,
@@ -4290,7 +4298,7 @@ pub(crate) fn parse_job_args(args: &[String]) -> JobCmd {
             "--every" => spec.schedule = it.next().and_then(|s| every_flag(s)),
             "--cron" => spec.schedule = it.next().and_then(|s| crate::jobs::Cron::parse(s)).map(crate::jobs::Schedule::Cron),
             "--at" => spec.schedule = it.next().and_then(|s| parse_clock_at(s, unix_now())).map(crate::jobs::Schedule::Once),
-            "--in" => spec.schedule = it.next().and_then(|s| parse_delay(&[s.as_str()]).map(|(secs, _)| crate::jobs::Schedule::Once(unix_now() + secs))),
+            "--in" => spec.schedule = it.next().and_then(|s| parse_delay(&[s.as_str()]).map(|(secs, _)| crate::jobs::Schedule::Once(unix_now().saturating_add(secs)))),
             "--bg" => spec.bg = true,
             "--dry-run" | "--plan" => spec.dry_run = true,
             "--run" => record = it.next().cloned(),
@@ -4753,6 +4761,12 @@ pub(crate) fn resolve_spec(
     // Explicit flags are unambiguous, so they win outright and no model is consulted.
     match (spec.schedule.clone(), spec.cmd.clone()) {
         (sched, Some(cmd)) => {
+            // A command with no schedule FLAG still gets the word parser run over
+            // whatever was typed before the `--`. Without this, `@job tomorrow at 9 --
+            // ./deploy.sh` deployed immediately: the words were captured, echoed back as
+            // the request, and then silently dropped — the worst shape a bug can take,
+            // because the user was shown their schedule being understood.
+            let sched = sched.or_else(|| parse_schedule(&spec.request, now).0);
             let says = describe(&sched, &cmd.display());
             (sched, crate::jobs::Task::Shell(cmd), says)
         }
@@ -6412,6 +6426,63 @@ mod tests {
         assert!(!spec.bg && spec.schedule.is_none() && !spec.dry_run);
         // `--dry-run` asks for the plan without creating anything.
         assert!(run(&["check the logs at midnight", "--dry-run"]).dry_run);
+    }
+
+    #[test]
+    fn a_command_job_honours_the_schedule_typed_before_the_dashes() {
+        use crate::jobs::{Cmd, Schedule, Task};
+        // `@job tomorrow at 9 -- ./deploy.sh` DEPLOYED IMMEDIATELY: the words before
+        // `--` were captured, echoed back as the request, and then dropped, because the
+        // command path took the flag schedule and never fell back to the word parser.
+        // Being shown your schedule and having it ignored is the worst shape this can
+        // take — silently running now is not a smaller mistake than running late.
+        let no_model = |_: &str, _: u64| None;
+        let spec = |request: &str| super::RunSpec {
+            request: request.into(),
+            cmd: Some(Cmd::Line("./deploy.sh".into())),
+            ..Default::default()
+        };
+
+        let (sched, task, says) = super::resolve_spec(&spec("in 2 minutes"), 1_000, &no_model);
+        assert_eq!(sched, Some(Schedule::Once(1_120)), "the typed delay is honoured: {says}");
+        assert!(matches!(task, Task::Shell(_)), "still a command job, not an agent one");
+
+        assert_eq!(super::resolve_spec(&spec("every hour"), 0, &no_model).0, Some(Schedule::Every(3600)));
+        assert!(matches!(super::resolve_spec(&spec("at 9"), 0, &no_model).0, Some(Schedule::Once(_))));
+
+        // A flag still wins over the words — it is the unambiguous form.
+        let mut flagged = spec("in 2 minutes");
+        flagged.schedule = Some(Schedule::Every(60));
+        assert_eq!(super::resolve_spec(&flagged, 1_000, &no_model).0, Some(Schedule::Every(60)));
+
+        // And words that are not a schedule still mean "now", exactly as before.
+        let (sched, _, says) = super::resolve_spec(&spec("deploy the api"), 0, &no_model);
+        assert_eq!(sched, None, "no schedule in those words: {says}");
+        assert!(says.starts_with("now"), "{says}");
+
+        // A bare `@job -- <cmd>` is unchanged: run it now.
+        let bare = super::RunSpec { cmd: Some(Cmd::Line("echo hi".into())), ..Default::default() };
+        assert_eq!(super::resolve_spec(&bare, 0, &no_model).0, None);
+    }
+
+    #[test]
+    fn an_absurd_span_is_refused_rather_than_wrapped_into_a_different_one() {
+        // `in 999999999999999999 days` multiplied out past u64 and WRAPPED — silently in
+        // release (a specific, wrong, far-off time), as a panic in debug. Either way the
+        // user got something they did not ask for.
+        assert_eq!(super::unit_secs("days", 999_999_999_999_999_999), None, "no wraparound");
+        assert_eq!(super::unit_secs("hours", 99_999_999_999), None);
+        assert_eq!(super::parse_schedule("in 999999999999999999 days", 0).0, None);
+
+        // Everything a person could actually mean still parses.
+        assert_eq!(super::unit_secs("days", 50), Some(50 * 86_400));
+        assert_eq!(super::unit_secs("s", 30), Some(30));
+        assert_eq!(super::unit_secs("hours", 12), Some(12 * 3600));
+        // The boundary: a century in, a century-and-a-day out.
+        assert!(super::unit_secs("days", 365 * 100).is_some());
+        assert!(super::unit_secs("days", 365 * 100 + 1).is_none());
+        // And the clock never wraps when the span is added to it.
+        assert_eq!(super::parse_schedule("in 50 days", u64::MAX).0, Some(crate::jobs::Schedule::Once(u64::MAX)));
     }
 
     #[test]
