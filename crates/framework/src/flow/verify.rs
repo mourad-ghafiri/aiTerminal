@@ -55,8 +55,13 @@ impl Report {
         self.errors.is_empty()
     }
 
-    /// `0` clean · `1` warnings only · `2` errors.
-    pub fn exit(&self) -> i32 {
+    /// How bad it is: `0` clean · `1` warnings only · `2` errors.
+    ///
+    /// NOT an exit code, despite the shape. `@flow check` maps this to one, and a
+    /// warning must not become a failing status: the published contract says `1` means
+    /// *failed*, and `@flow check x && @flow x "…"` has to run a flow that is merely
+    /// worth a second look.
+    pub fn severity(&self) -> i32 {
         if !self.errors.is_empty() {
             2
         } else if !self.warnings.is_empty() {
@@ -586,7 +591,7 @@ prompt = "Report on {{build.output}}"
     fn a_correct_graph_passes_clean() {
         let r = check(GOOD);
         assert!(r.ok(), "unexpected errors: {:?}", r.errors);
-        assert_eq!(r.exit(), 0, "and nothing worth warning about: {:?}", r.warnings);
+        assert_eq!(r.severity(), 0, "and nothing worth warning about: {:?}", r.warnings);
     }
 
     #[test]
@@ -711,7 +716,7 @@ prompt = "Report on {{build.output}}"
         let r = check("[[node]]\nid=\"a\"\nagent=\"coder\"\nprompt=\"x\"\n\n[[node]]\nid=\"b\"\nagent=\"tester\"\nprompt=\"y\"\n");
         assert!(r.ok(), "nothing is blocked: {:?}", r.errors);
         assert!(r.warnings.iter().any(|w| w.contains("can run at the same time and both write")), "{:?}", r.warnings);
-        assert_eq!(r.exit(), 1, "warnings alone exit 1");
+        assert_eq!(r.severity(), 1, "warnings alone are severity 1 \u{2014} but see `flow_check`: they do NOT fail the command");
 
         // Read-only agents in parallel are the normal, safe fan-out — no warning.
         let safe = check("[[node]]\nid=\"a\"\nagent=\"explorer\"\nprompt=\"x\"\n\n[[node]]\nid=\"b\"\nagent=\"reviewer\"\nprompt=\"y\"\n");

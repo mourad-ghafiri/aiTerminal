@@ -2317,7 +2317,13 @@ fn flow_check(name: Option<&str>) -> i32 {
         match checked_flow(n) {
             Ok((flow, report)) => {
                 print_report(n, &report, flow.nodes.len());
-                worst = worst.max(report.exit());
+                // Errors fail the check; warnings are printed and do NOT. A warning
+                // ("this node fans out, so it costs one run per item") describes a
+                // graph that is valid and worth a look — returning a failing status for
+                // it broke `@flow check x && @flow x "…"` for a flow with nothing
+                // wrong, and contradicted the published table where 1 means *failed*.
+                // `@flow graph` has always treated warnings this way; now they agree.
+                worst = worst.max(if report.severity() >= 2 { 2 } else { 0 });
             }
             Err(e) => {
                 eprintln!("aiTerminal: {e}");
@@ -5509,9 +5515,18 @@ fn unknown_plugin(store: &crate::plugin::store::PluginStore, name: &str) -> Opti
 pub fn config(args: &[String]) -> i32 {
     let created = crate::config::Config::ensure_default();
     let path = crate::config::Config::path();
-    if args.first().map(String::as_str) == Some("path") {
-        println!("{}", path.display());
-        return 0;
+    match args.first().map(String::as_str) {
+        None => {}
+        Some("path") => {
+            println!("{}", path.display());
+            return 0;
+        }
+        // Anything else is a typo, and printing the config anyway taught people the
+        // word they used was a real one. `@config paht` looked like it worked.
+        Some(other) => {
+            eprintln!("aiTerminal: '{other}' is not a config subcommand \u{2014} try `@config` or `@config path`");
+            return 2;
+        }
     }
     let c = crate::config::Config::load();
     if created {
@@ -6376,6 +6391,35 @@ mod tests {
         // An unknown name is rejected with the available list, and changes nothing.
         assert_eq!(super::theme_set("no-such-theme"), 2);
         assert_eq!(crate::config::Config::load().theme, "graphite");
+    }
+
+    #[test]
+    fn a_warning_does_not_fail_flow_check() {
+        // `@flow check research` exited 1 — the published code for *failed* — because
+        // the graph carried a warning ("this node fans out, so it costs one run per
+        // item"). The flow is valid; the warning is advice. Returning a failing status
+        // broke `@flow check x && @flow x "…"` for a flow with nothing wrong, and
+        // disagreed with `@flow graph`, which has always drawn a warned graph happily.
+        let (_h, _home) = crate::test_home::lock_home("cli-flow-check-warn");
+        crate::config::Config::ensure_default();
+
+        // `research` fans out, so it warns; `build` does not. Both are valid.
+        assert_eq!(super::flow_check(Some("research")), 0, "a warned flow still passes");
+        assert_eq!(super::flow_check(Some("build")), 0);
+        assert_eq!(super::flow_check(None), 0, "and so does checking them all");
+        // A name that is not a flow is still an error.
+        assert_eq!(super::flow_check(Some("no-such-flow")), 2);
+    }
+
+    #[test]
+    fn config_refuses_a_word_it_does_not_know() {
+        // `@config paht` printed the whole config and exited 0, so the typo looked like
+        // a real subcommand.
+        let (_h, _home) = crate::test_home::lock_home("cli-config-subcommand");
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(super::config(&a(&[])), 0, "bare shows the config");
+        assert_eq!(super::config(&a(&["path"])), 0);
+        assert_eq!(super::config(&a(&["paht"])), 2, "a typo is refused, not ignored");
     }
 
     #[test]
