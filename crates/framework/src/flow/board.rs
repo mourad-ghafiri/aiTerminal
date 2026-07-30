@@ -74,6 +74,12 @@ struct Row {
 }
 
 /// The live display for one flow run.
+///
+/// Every lock here recovers from poisoning (`unwrap_or_else(|e| e.into_inner())`) rather
+/// than unwrapping. The board is a *display*: it is written from the ticker thread and
+/// from every node's worker at once, and a panic in any one of them must not turn the
+/// next repaint into a second panic that takes the whole run with it. The worst a
+/// recovered lock can cost is one frame drawn from slightly stale state.
 pub(crate) struct Board {
     rows: Mutex<Vec<Row>>,
     /// The flow and what it was asked to do, for the header.
@@ -124,26 +130,26 @@ impl Board {
         let handle = std::thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
                 {
-                    let mut f = me.frame.lock().unwrap();
+                    let mut f = me.frame.lock().unwrap_or_else(|e| e.into_inner());
                     *f = f.wrapping_add(1);
                 }
                 me.paint();
                 std::thread::sleep(std::time::Duration::from_millis(120));
             }
         });
-        *self.ticker.lock().unwrap() = Some(handle);
+        *self.ticker.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
     }
 
     /// Stop repainting and leave the finished board on screen.
     pub fn finish(self: &Arc<Board>) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(h) = self.ticker.lock().unwrap().take() {
+        if let Some(h) = self.ticker.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = h.join();
         }
         if self.live {
             self.paint();
             // The next thing printed starts on its own line rather than inside ours.
-            *self.painted.lock().unwrap() = 0;
+            *self.painted.lock().unwrap_or_else(|e| e.into_inner()) = 0;
             eprintln!();
         }
     }
@@ -222,10 +228,10 @@ impl Board {
     /// the part that broke, and it is invisible in the rendered text alone.
     fn paint_to(&self, w: &mut dyn std::io::Write) {
         let Ok(rows) = self.rows.lock() else { return };
-        let frame = *self.frame.lock().unwrap();
-        let text = self.render(&rows, frame);
+        let frame = *self.frame.lock().unwrap_or_else(|e| e.into_inner());
+        let text = self.render(&rows, frame, crate::cli::term_cols());
         let lines = text.lines().count();
-        let mut painted = self.painted.lock().unwrap();
+        let mut painted = self.painted.lock().unwrap_or_else(|e| e.into_inner());
         let _ = write!(w, "{}{text}", crate::cli::erase_seq(*painted));
         let _ = w.flush();
         *painted = lines;
@@ -238,7 +244,10 @@ impl Board {
     /// `painted - 1` rows because it assumes the cursor is still ON the last painted
     /// line; a trailing newline puts it one line lower, so the erase would start one row
     /// too far down and leave the board's first row behind on every repaint.
-    fn render(&self, rows: &[Row], frame: usize) -> String {
+    /// `cols` is the window width to fit into, passed in rather than read from the
+    /// terminal so this stays a pure function of its inputs — a test that had to set
+    /// `$COLUMNS` would be mutating process-global state under every other test.
+    fn render(&self, rows: &[Row], frame: usize, cols: usize) -> String {
         let (dim, r) = (crate::cli::muted(), crate::cli::reset());
         let mut lines: Vec<String> = Vec::with_capacity(rows.len() + 1);
         for row in rows {
@@ -253,8 +262,25 @@ impl Board {
                 (_, false) => row.note.clone(),
                 _ => String::new(),
             };
-            let tail = if note.is_empty() { String::new() } else { format!("  {dim}{}{r}", clip(&note, 44)) };
+            let attempts_plain = if row.attempts > 1 { format!(" ×{}", row.attempts) } else { String::new() };
             let attempts = if row.attempts > 1 { format!(" {dim}×{}{r}", row.attempts) } else { String::new() };
+            // Measure the row WITHOUT its colors, then give the note whatever visible
+            // width is left. A row wider than the window wraps to two visual rows, and
+            // the repaint — which counts logical lines — then climbs one row short and
+            // leaks, exactly like a trailing newline does. Escape bytes are invisible to
+            // the terminal but not to `chars()`, so the budget is computed on plain text.
+            let head_plain = format!(
+                "  {} {:<width$}  {:<14}{time}{tokens}{attempts_plain}",
+                row.state.glyph(frame),
+                row.id,
+                clip(&row.what, 14),
+                width = self.width
+            );
+            let room = cols.saturating_sub(head_plain.chars().count() + 2);
+            let tail = match note.is_empty() || room < 8 {
+                true => String::new(),
+                false => format!("  {dim}{}{r}", clip(&note, room.min(44))),
+            };
             let line = format!(
                 "  {} {:<width$}  {dim}{:<14}{r}{time}{tokens}{attempts}{tail}",
                 row.state.glyph(frame),
@@ -277,7 +303,7 @@ impl Board {
             parts.push(format!("{} tokens", human_tokens(tokens)));
         }
         parts.push(format!("{:.1}s", self.started.elapsed().as_secs_f64()));
-        lines.push(format!("  {dim}{}{r}", parts.join(" · ")));
+        lines.push(format!("  {dim}{}{r}", clip(&parts.join(" · "), cols.saturating_sub(2))));
         lines.join("\n")
     }
 }
@@ -353,8 +379,13 @@ mod tests {
     }
 
     fn painted(b: &Arc<Board>) -> String {
+        painted_at(b, 200)
+    }
+
+    /// The board as it would look in a `cols`-wide window.
+    fn painted_at(b: &Arc<Board>, cols: usize) -> String {
         let rows = b.rows.lock().unwrap();
-        b.render(&rows, 0)
+        b.render(&rows, 0, cols)
     }
 
     #[test]
@@ -516,5 +547,49 @@ mod tests {
         for line in painted(&b).lines() {
             assert!(line.chars().count() < 120, "a line ran away: {line:?}");
         }
+    }
+
+    #[test]
+    fn no_row_is_wider_than_the_window_it_paints_into() {
+        // Same failure as a trailing newline, by a different route: a row wider than the
+        // terminal WRAPS to two visual rows, while the repaint counts logical lines — so
+        // it climbs one short and leaks a line per tick, forever. The board must fit the
+        // window it is painting into.
+        let b = board();
+        b.running("apply", "@coder");
+        b.tool("apply", "\u{2699} sys.run {\"cmd\":\"cargo test --workspace --all-features\"} \u{b7} 12ms \u{b7} 1.4KB");
+        b.settled("verify", State::Done, 12_300, 6_200, "a very long settled note that would otherwise run past the edge");
+
+        for cols in [40, 60, 80, 120] {
+            for line in painted_at(&b, cols).lines() {
+                // Escapes are invisible to the terminal, so measure what it measures.
+                let visible = strip_ansi(line).chars().count();
+                assert!(visible <= cols, "row is {visible} wide in a {cols}-col window: {line:?}");
+            }
+        }
+        // Narrow enough that there is no room for a note at all: it goes rather than
+        // wrapping — a dropped note is worth more than a broken repaint.
+        let narrow = painted_at(&b, 40);
+        assert!(!narrow.contains("cargo test"), "the note gave way instead of wrapping:\n{narrow}");
+        assert!(narrow.contains("apply"), "the row itself survives:\n{narrow}");
+    }
+
+    /// Drop CSI escape sequences so a line can be measured the way a terminal sees it.
+    fn strip_ansi(s: &str) -> String {
+        let mut out = String::new();
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c != '\u{1b}' {
+                out.push(c);
+                continue;
+            }
+            // `ESC [ … <final>` — skip through the terminating byte.
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        }
+        out
     }
 }

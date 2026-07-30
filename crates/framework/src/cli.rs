@@ -495,11 +495,19 @@ pub(crate) fn md_style() -> corelib::md::Style {
 /// doesn't export `$COLUMNS` to us), minus a small right margin. Falls back to `$COLUMNS`, then
 /// 80. No low cap: wide splits are used fully (a generous 400 ceiling just guards absurd sizes).
 fn md_width() -> usize {
-    let cols = platform::os::terminal_size()
+    term_cols().saturating_sub(2).clamp(24, 400)
+}
+
+/// The terminal's width in columns — `TIOCGWINSZ`, then `$COLUMNS`, then 80.
+///
+/// ONE definition, because anything that repaints in place has to agree with the
+/// terminal about where a line ends: a row wider than the window wraps to two VISUAL
+/// rows, and a cursor-up count measured in logical lines then climbs too few of them.
+pub(crate) fn term_cols() -> usize {
+    platform::os::terminal_size()
         .map(|(c, _)| c as usize)
         .or_else(|| std::env::var("COLUMNS").ok().and_then(|c| c.trim().parse::<usize>().ok()))
-        .unwrap_or(80);
-    cols.saturating_sub(2).clamp(24, 400)
+        .unwrap_or(80)
 }
 
 /// The split's height in rows (for the live renderer's overflow guard); 0 if unknown.
