@@ -11,21 +11,30 @@
    ========================================================================== */
 /* Build the `@md edit` split view directly as DOM (a real two-column layout, so it stays
    pixel-aligned at any window width — no box-drawing to drift). Left = Markdown source with a
-   line-number gutter; right = the live rendered preview, native diagram included. */
+   line-number gutter and the divider column `mdedit.rs` draws; right = the live rendered
+   preview.
+
+   The two halves must agree: the preview renders THIS source, boxed `A ──▶ B ──▶ C` from the
+   `flowchart LR` beside it, exactly as `@md render` prints it. A preview that drew something
+   its own Markdown does not describe would be a drawing of a feature, not the feature.
+
+   The chrome is the production chrome (`mdedit.rs::render`): a full-width status bar
+   ` <path> ●  (<n>L)` with the last status message right-aligned, `~` for rows past the end of
+   the buffer, and the real help line. */
 function buildMdEditor(w) {
   const pane = w.pane();
   pane.innerHTML = "";
   const root = el("div", "rw-md");
 
+  // Status bar: " release.md ●  (9L)" … "saved release.md"
   const bar = el("div", "rw-md-bar");
-  bar.append(spanEl(S("t-fg", "release.md")), spanEl(S("t-error", " ●")),
-    spanEl(S("t-muted", "  (10L)")));
-  const barR = el("span", "rw-md-bar-r", "saved ✓");
-  bar.appendChild(barR);
+  bar.append(spanEl(S("t-fg", " release.md")), spanEl(S("t-error", " ●")),
+    spanEl(S("t-muted", "  (9L)")));
+  bar.appendChild(el("span", "rw-md-bar-r", "saved release.md"));
 
   const bodyRow = el("div", "rw-md-body");
 
-  // Left: raw Markdown source with a gutter.
+  // Left: the raw Markdown source, with the gutter. Nine lines, then `~` past the end.
   const ed = el("div", "rw-md-ed");
   const src = [
     ["# Release plan", "h1"], ["", ""],
@@ -38,33 +47,38 @@ function buildMdEditor(w) {
       el("span", "rw-md-" + (k || "code"), t || " "));
     ed.appendChild(row);
   });
+  const tilde = el("div", "rw-md-row");
+  tilde.append(el("span", "rw-md-gutter", ""), el("span", "rw-md-tilde", "~"));
+  ed.appendChild(tilde);
 
-  // Right: the rendered preview.
+  // Right: the rendered preview — the same document, drawn.
   const pv = el("div", "rw-md-pv");
   pv.appendChild(el("div", "rw-md-title", "Release plan"));
-  pv.appendChild(el("div", "rw-md-rule", "────────────"));
+  pv.appendChild(el("div", "rw-md-rule", "──────────────────────"));
   pv.appendChild(el("div", "rw-md-gap", ""));
   ["cut the branch", "run the suite"].forEach((s) => {
     const li = el("div", "rw-md-bullet");
-    li.append(el("span", "mk", "•"), el("span", null, " " + s));
+    li.append(el("span", "mk", "\u2022"), el("span", null, " " + s));
     pv.appendChild(li);
   });
+  pv.appendChild(el("div", "rw-md-gap", ""));
   const dg = el("div", "rw-md-diagram");
-  ["branch", "test", "ship"].forEach((n, i) => {
-    if (i) dg.appendChild(el("span", "rw-md-arrow", "→"));
+  ["A", "B", "C"].forEach((n, i) => {
+    if (i) dg.appendChild(el("span", "rw-md-arrow", "\u2500\u2500\u25b6"));
     dg.appendChild(el("span", "rw-md-node", n));
   });
   pv.appendChild(dg);
 
   bodyRow.append(ed, pv);
 
+  // The real help line, verbatim.
   const help = el("div", "rw-md-help");
-  [["^S", "save"], ["^W", "focus"], ["^Q", "quit"]].forEach(([k, v]) => {
+  [["^S", "save"], ["^W", "focus:editor"], ["^Q", "quit"]].forEach(([k, v]) => {
     const g = el("span", "rw-md-key");
     g.append(el("b", null, k), el("span", null, " " + v));
     help.appendChild(g);
   });
-  help.appendChild(el("span", "rw-md-hint", "· scroll ↑↓ ←→ · mouse wheel"));
+  help.appendChild(el("span", "rw-md-hint", "\u00b7 scroll: \u2191\u2193 \u2190\u2192 \u00b7 wheel \u00b7 shift+wheel = horizontal"));
 
   root.append(bar, bodyRow, help);
   pane.appendChild(root);

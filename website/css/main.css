@@ -419,6 +419,7 @@ kbd {
 .rw-md-pv { flex: 1; min-width: 0; padding: 2px 4px 2px 16px; overflow: hidden; }
 .rw-md-row { display: flex; white-space: pre; }
 .rw-md-gutter { flex: none; width: 1.6em; margin-right: 12px; text-align: right; color: var(--t-muted); opacity: .5; }
+.rw-md-tilde { color: var(--t-muted); opacity: .45; }
 .rw-md-h1, .rw-md-fence { color: var(--t-accent2); }
 .rw-md-li { color: var(--t-fg); }
 .rw-md-code { color: var(--t-muted); }

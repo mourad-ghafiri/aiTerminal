@@ -420,12 +420,29 @@ document.addEventListener("DOMContentLoaded", () => {
     },
 
     md: {
-      opts: { title: "release.md — @md edit", tabs: [{ title: "release.md [@md edit]", active: true }] },
+      opts: { title: "release.md — @md", tabs: [{ title: "release.md [@md]", active: true }] },
       caption: () => caption("<code>@md</code> — read &amp; live-edit Markdown",
-        "<code>@md render</code> pretty-prints a file (long files open a scrollable pager); <code>@md edit</code> is a split editor — Markdown source on the left, a live rendered preview on the right, with native diagrams and keyboard + mouse scroll."),
+        "Two commands, both shown here. <code>@md render</code> pretty-prints a file to the terminal \u2014 headings, bullets, tables and <code>mermaid</code> diagrams drawn natively, no browser; a file longer than the window opens a scrollable pager. <code>@md edit</code> opens the same document as a split editor: source on the left with a line gutter, the live preview on the right, <kbd>^S</kbd> to save and <kbd>^W</kbd> to move focus between the halves."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 250 },
+          /* First half: `@md render` — what the file looks like read, not edited. This is the
+             binary's own output for the very document the editor opens next. */
+          { do: "cmd", text: "@md render release.md" },
+          { do: "out", spans: [FG("Release plan")] },
+          { do: "out", spans: [MUT("\u2500".repeat(48))] },
+          { do: "out", spans: [] },
+          { do: "out", spans: [ACC("\u2022 "), FG("cut the branch")] },
+          { do: "out", spans: [ACC("\u2022 "), FG("run the suite")] },
+          { do: "out", spans: [] },
+          { do: "out", spans: [ACC(" \u250c\u2500\u2500\u2500\u2510   \u250c\u2500\u2500\u2500\u2510   \u250c\u2500\u2500\u2500\u2510")] },
+          { do: "out", spans: [ACC(" \u2502 A \u2502"), MUT("\u2500\u2500\u25b6"), ACC("\u2524 B \u2502"), MUT("\u2500\u2500\u25b6"), ACC("\u2524 C \u2502")] },
+          { do: "out", spans: [ACC(" \u2514\u2500\u2500\u2500\u2518   \u2514\u2500\u2500\u2500\u2518   \u2514\u2500\u2500\u2500\u2518")] },
+          { do: "out", spans: [] },
+          { do: "out", spans: [MUT("  \u2190 a file longer than the window opens a scrollable pager instead")] },
+          { do: "pause", ms: 1500 },
+          /* Second half: the same document, live. The preview on the right renders the
+             source on the left — including the diagram. */
           { do: "cmd", text: "@md edit release.md" },
           { do: "pause", ms: 350 },
           { do: "call", fn: async (t) => buildMdEditor(t) },
