@@ -1319,6 +1319,13 @@ impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
             self.emit("\n");
         }
     }
+    fn on_compact(&mut self, report: &crate::ai::CompactionReport) {
+        // The docs promise a run that compacts says so. Without this the trait's no-op
+        // ran and the history shrank in silence — which is exactly how a later "why did
+        // it forget what I told it?" becomes unanswerable.
+        self.wake();
+        eprintln!("{}  \u{2139} {}{}", muted(), report.summary(), reset());
+    }
     fn on_step_start(&mut self, i: usize, n: usize, label: &str) {
         // A live flow step header on stderr (chrome), so the user watches steps advance.
         self.wake();
@@ -2519,6 +2526,22 @@ enum NodeWork {
     Replay(Box<NodeOut>),
 }
 
+/// One flow node's end of the [`Board`](crate::flow::board::Board) as an agent observer.
+///
+/// Only `on_compact` does anything: token streaming belongs on a single agent run, but
+/// "this node just gave context back" is exactly the kind of thing a run is unreadable
+/// without.
+struct NodeObserver {
+    board: std::sync::Arc<crate::flow::board::Board>,
+    node: String,
+}
+
+impl crate::ai::AgentObserver for NodeObserver {
+    fn on_compact(&mut self, report: &crate::ai::CompactionReport) {
+        self.board.tool(&self.node, &format!("\u{2139} {}", report.summary()));
+    }
+}
+
 /// Runs one flow's graph.
 struct FlowDriver<'a> {
     flow: &'a crate::flow::Flow,
@@ -2646,7 +2669,14 @@ impl FlowDriver<'_> {
             }
         }
         let started = std::time::Instant::now();
-        let run = crate::ai::run_agent(&client, &spec, prompt, "", &mut runner, &mut crate::ai::NoopObserver);
+        // A node that compacts reports it on its OWN row rather than into the void: a
+        // `NoopObserver` here meant a flow's history could shrink with nothing on screen
+        // to say so, and a board is the one place attribution is already solved.
+        let mut obs = NodeObserver {
+            board: self.board.clone(),
+            node: node.id.clone(),
+        };
+        let run = crate::ai::run_agent(&client, &spec, prompt, "", &mut runner, &mut obs);
         self.spent.fetch_add((run.input_tokens + run.output_tokens) as u64, std::sync::atomic::Ordering::Relaxed);
         NodeOut {
             ok: run.outcome == crate::ai::RunOutcome::Completed,
