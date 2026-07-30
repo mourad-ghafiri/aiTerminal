@@ -48,7 +48,7 @@ AI works for you.
 | Section | Keys |
 | --- | --- |
 | `[appearance]` | `theme`, `locale` (i18n — see below), `font_family`, `font_size`, `cursor_style` (`block` \| `bar` \| `underline`) |
-| `[behavior]` | `zoom`, `tab_bar` (top/bottom/left/right), `shell`, `scrollback` |
+| `[behavior]` | `zoom`, `tab_bar` (top/bottom/left/right), `shell`, `scrollback`, `confirm_close_pane` (default `false`), `confirm_close_tab` / `confirm_quit` (default `true`) — see [keybindings.md](keybindings.md#closing-things) |
 | `[ai]` | `share_terminal_context`, `memory`, `show_reasoning` (show the model's thinking text; default off), `mode` (manual/auto), `network`, `budget` (USD cost soft-cap, advisory), `context_window` (tokens to budget against; `0` = the serving model's own), `compact_at` (fraction of the window that triggers compaction; default `0.75`); then `[ai.balance] strategy` and the `[[ai.model]]` pool blocks — see [ai.md](ai.md#models--pools) |
 | `[gates]` | `enabled`, `require_pairing`, `plain_text` (run/ignore), `screenshot` (document/photo), `max_reply_messages`, `idle_timeout_minutes`; then a `[gates.<channel>]` table per gateway — see [gate.md](gate.md) |
 | `[md]` | `syntax` (highlight code fences), `image_max_rows`, `remote_images` (fetch `https://` images; off by default) — see [markdown.md](markdown.md) |

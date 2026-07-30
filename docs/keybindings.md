@@ -21,9 +21,42 @@ your `~/.aiTerminal/keymaps/*.toml` files → `[[keybinding]]` tables in
 | `Enter` (with a mouse selection) | copy the selection instead of running the command |
 | `Cmd+=` / `Cmd+-` / `Cmd+0` | pane font zoom in / out / reset |
 | `Cmd+,` | reload config live |
+| `Cmd+Q` | quit — asks first (see below) |
 | `Shift+PageUp/PageDown` | scroll page up / down |
 | `Shift+↑/↓` | scroll line up / down |
 | `Shift+Home/End` | scroll to top / bottom |
+
+## Closing things
+
+`Cmd+W`, `Cmd+Shift+W` and `Cmd+Q` can ask before they act. The dialog takes both
+keyboard and mouse: `esc` cancels, `←`/`→` (or `Tab`) move between the buttons, `↵`
+chooses the focused one, and either button is clickable. A click on the backdrop
+cancels, and `Cmd+Q` pressed again while it is open confirms.
+
+**Cancel holds focus when it opens.** A hand that hit `Cmd+Q` by accident hits `↵`
+next, and that has to keep the session rather than end it.
+
+```toml
+[behavior]
+confirm_close_pane = false   # a split is cheap to reopen
+confirm_close_tab  = true
+confirm_quit       = true
+```
+
+Closing the **last** split, or the last tab, ends the session — so it asks the quit
+question and obeys `confirm_quit`, whatever the other two say.
+
+> **The red close button and the menu's Quit item are not covered.** macOS tears the
+> window down before the app is asked, so those two remain immediate. The chord is
+> the one that gets hit by accident; a click on the red button is deliberate.
+
+## Layouts
+
+A chord follows the **keycap**, not the position. Bindings resolve through the
+character a key types in your active layout, so `Cmd+Q` is the key marked *Q*
+wherever your layout puts it, and a binding on `Cmd+Shift+M` matches the *M* key on
+any layout. Digits are shift-insensitive for the same reason: on layouts where a
+digit needs Shift, `Cmd+Shift+1` still matches a `cmd+1` binding.
 
 ## Command-line editing (the lineedit plugin)
 

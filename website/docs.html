@@ -62,6 +62,7 @@
     <a href="#profiles">Profiles &amp; session restore</a>
     <a href="#themes">Themes</a>
     <a href="#keys">Keybindings</a>
+      <a href="#closing">Closing things</a>
     <a href="#i18n">Languages (i18n)</a>
     <a href="#shell">Shell integration</a>
     <b>Configuration</b>
@@ -826,7 +827,35 @@ bundled with the app · enabled: true</code></pre>
     <pre><code><span class="k">[[keybinding]]</span>
 key = <span class="s">"cmd+shift+enter"</span>
 action = <span class="s">"zoom_pane"</span></code></pre>
-    <p>Chords are layout-correct (an AZERTY <kbd>⌘⇧M</kbd> matches the M keycap). <kbd>⌘⇧←/→</kbd> are deliberately unbound at the window level — they reach the shell as select-to-line-edge, like every macOS text field. The full action list ships in the docs folder of the repo.</p>
+    <p>Chords follow the <b>keycap</b>, not the position: a binding on <kbd>⌘⇧M</kbd> matches whichever key types <em>M</em> on your layout. <kbd>⌘⇧←/→</kbd> are deliberately unbound at the window level — they reach the shell as select-to-line-edge, like every macOS text field. The full action list ships in the docs folder of the repo.</p>
+
+    <h2 id="closing">Closing things</h2>
+    <p><b>Needs nothing.</b> <kbd>⌘W</kbd>, <kbd>⌘⇧W</kbd> and <kbd>⌘Q</kbd> can ask before they
+      act — because <kbd>⌘Q</kbd> sits beside <kbd>⌘W</kbd> and takes every tab, split and running
+      shell with it.</p>
+    <pre><code><span class="k">[behavior]</span>
+confirm_close_pane = <span class="s">false</span>   <span class="c"># a split is cheap to reopen</span>
+confirm_close_tab  = <span class="s">true</span>
+confirm_quit       = <span class="s">true</span></code></pre>
+    <p>The dialog takes keyboard <em>and</em> mouse: <kbd>esc</kbd> cancels, <kbd>←</kbd>/<kbd>→</kbd>
+      (or <kbd>Tab</kbd>) move between the buttons, <kbd>↵</kbd> chooses the focused one, and either
+      button is clickable. A click on the backdrop cancels; <kbd>⌘Q</kbd> pressed again while it is
+      open confirms.</p>
+    <p><b>Cancel holds focus when it opens.</b> A hand that hit <kbd>⌘Q</kbd> by accident hits
+      <kbd>↵</kbd> next, and that has to keep the session rather than end it. Confirming is
+      deliberate — <kbd>→</kbd>, a click, or the chord again.</p>
+    <p>Closing the <b>last</b> split, or the last tab, ends the session — so it asks the quit
+      question and obeys <code>confirm_quit</code>, whatever the other two say. It tells you what is
+      at stake, counted from the live window rather than guessed:</p>
+    <pre><code>  <span class="a">Quit aiTerminal?</span>
+  <span class="c">3 tabs · 5 splits will close</span>
+
+                          <span class="ab">[ Cancel ]</span>   [  Quit  ]
+  <span class="c">esc cancel · ←→ move · ↵ choose</span></code></pre>
+    <div class="callout"><b>The red close button and the menu's Quit item are not covered.</b>
+      macOS tears the window down before the app is asked, so those two stay immediate. The chord is
+      the one that gets hit by accident; a click on the red button is deliberate.</div>
+
 
     <h2 id="i18n">Languages (i18n)</h2>
     <p>English and French ship; select with <code>[appearance] locale = "fr"</code> — per profile if
@@ -849,7 +878,7 @@ action = <span class="s">"zoom_pane"</span></code></pre>
     <div class="table-wrap"><table>
       <tr><th>Section</th><th>Keys</th></tr>
       <tr><td><code>[appearance]</code></td><td><code>theme</code> · <code>locale</code> · <code>font_family</code> (default Menlo) · <code>font_size</code> (default 15) · <code>cursor_style</code> (block / bar / underline)</td></tr>
-      <tr><td><code>[behavior]</code></td><td><code>zoom</code> · <code>tab_bar</code> = top|bottom|left|right · <code>shell</code> · <code>scrollback</code> (default 10000)</td></tr>
+      <tr><td><code>[behavior]</code></td><td><code>zoom</code> · <code>tab_bar</code> = top|bottom|left|right · <code>shell</code> · <code>scrollback</code> (default 10000) · <code>confirm_close_pane</code> (default <code>false</code>) · <code>confirm_close_tab</code> · <code>confirm_quit</code> (default <code>true</code>) — see <a href="#closing">Closing things</a></td></tr>
       <tr><td><code>[ai]</code></td><td><code>share_terminal_context</code> · <code>memory</code> · <code>show_reasoning</code> (show thinking text; default off) · <code>mode</code> = manual|auto · <code>network</code> · <code>budget</code> (USD cost soft-cap) · <code>context_window</code> (tokens to budget against; <code>0</code> = the serving model's own) · <code>compact_at</code> (fraction of the window that triggers compaction; default <code>0.75</code>) — then <code>[ai.balance] strategy</code> + the <code>[[ai.model]]</code> blocks, last</td></tr>
       <tr><td><code>[[ai.model]]</code></td><td><code>provider</code> · <code>id</code> · <code>api_key</code> · <code>weight</code> · <code>temperature</code> · <code>top_p</code> · <code>top_k</code> · <code>max_tokens</code> · <code>thinking</code></td></tr>
       <tr><td><code>[gates]</code></td><td><code>enabled</code> · <code>require_pairing</code> · <code>plain_text</code> = run|ignore · <code>screenshot</code> = document|photo · <code>max_reply_messages</code> · <code>idle_timeout_minutes</code> — then a <code>[gates.&lt;channel&gt;]</code> table (<code>token</code> · <code>allow</code>), last</td></tr>
