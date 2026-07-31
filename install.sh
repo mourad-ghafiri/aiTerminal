@@ -5,9 +5,14 @@
 #   curl -fsSL .../install.sh | sh -s -- update
 #   curl -fsSL .../install.sh | sh -s -- remove
 #
-# It clones (or updates) the source, makes sure Rust is present, builds the macOS app
-# with `tools/bundle-macos.sh`, and installs it to /Applications — asking first when it
-# has a terminal to ask on, and telling you exactly where things went either way.
+# It clones (or updates) the source at the **newest release tag**, makes sure Rust is
+# present, builds the macOS app with `tools/bundle-macos.sh`, and installs it to
+# /Applications — asking first when it has a terminal to ask on, and telling you exactly
+# where things went either way.
+#
+# A release here IS a tag (nothing publishes binaries), so that is what "install
+# aiTerminal" means. Set AITERMINAL_REF to build something else — an older tag, a branch,
+# a commit.
 #
 # Nothing here needs `sudo`: if /Applications isn't writable the app is installed to
 # ~/Applications instead, which Spotlight and the Dock treat the same.
@@ -29,7 +34,7 @@
 # Environment
 #   AITERMINAL_SRC       where the source lives (default ~/.local/share/aiTerminal/src)
 #   AITERMINAL_REPO      the git remote to clone (default the official GitHub repo)
-#   AITERMINAL_BRANCH    the branch to track (default main)
+#   AITERMINAL_REF       tag/branch/commit to build (default: the newest release tag)
 #   AITERMINAL_INSTALL_URL  where this script lives (only for the hints it prints)
 set -eu
 
@@ -39,7 +44,9 @@ REPO="${AITERMINAL_REPO:-https://github.com/mourad-ghafiri/aiTerminal.git}"
 # root. Only used for the "how to update / remove" hints it prints at the end.
 INSTALL_URL="${AITERMINAL_INSTALL_URL:-https://mourad-ghafiri.github.io/aiTerminal/install.sh}"
 SRC="${AITERMINAL_SRC:-$HOME/.local/share/aiTerminal/src}"
-BRANCH="${AITERMINAL_BRANCH:-main}"
+# Empty means "whatever the newest release tag is" — resolved against the remote below,
+# because the answer changes between runs and this script is usually piped from the web.
+REF="${AITERMINAL_REF:-}"
 
 CMD="install"
 ARCH_ARG=""
@@ -72,10 +79,11 @@ aiTerminal installer — install, update and remove, from one command.
   curl -fsSL .../install.sh | sh -s -- update
   curl -fsSL .../install.sh | sh -s -- remove
 
-It clones (or updates) the source, makes sure Rust is present, builds the macOS app with
-tools/bundle-macos.sh, and installs it to /Applications — asking first when it has a
-terminal to ask on, and telling you exactly where things went either way. Nothing here
-needs sudo: if /Applications isn't writable the app goes to ~/Applications instead.
+It clones (or updates) the source at the newest release tag, makes sure Rust is present,
+builds the macOS app with tools/bundle-macos.sh, and installs it to /Applications —
+asking first when it has a terminal to ask on, and telling you exactly where things went
+either way. Nothing here needs sudo: if /Applications isn't writable the app goes to
+~/Applications instead.
 
 Commands
   install   (default)  clone/update the source, build, install the app
@@ -94,8 +102,10 @@ Options
 Environment
   AITERMINAL_SRC       where the source lives (default ~/.local/share/aiTerminal/src)
   AITERMINAL_REPO      the git remote to clone (default the official GitHub repo)
-  AITERMINAL_BRANCH    the branch to track (default main)
+  AITERMINAL_REF       tag/branch/commit to build (default: the newest release tag)
   AITERMINAL_INSTALL_URL  where this script lives (only for the hints it prints)
+
+  AITERMINAL_REF=v0.4.0 installs that release; AITERMINAL_REF=main builds the tip.
 USAGE
 }
 
@@ -119,6 +129,27 @@ confirm() {
 }
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# The newest release tag on the remote, or nothing when the repo has none.
+#
+# Asked of the REMOTE, not of a local clone: this script usually arrives through a pipe
+# with no checkout to consult, and even with one the local tags are as old as the last
+# fetch. Only plain `vN.N.N` tags count — a release candidate is not a release, and a
+# tag that is not a version is not a thing to install.
+#
+# The version sort is done here rather than with `--sort=-v:refname` (git ≥ 2.18) or
+# `sort -V` (not in BSD sort, so not on macOS): pad each field to a fixed width and an
+# ordinary reverse sort puts v0.10.0 above v0.9.0, everywhere.
+latest_tag() {
+    git ls-remote --tags --refs "$REPO" 2>/dev/null \
+        | sed 's#.*refs/tags/##' \
+        | grep -E '^v?[0-9]+(\.[0-9]+)*$' \
+        | awk '{ v = $0; sub(/^v/, "", v); split(v, p, ".")
+                 printf "%010d%010d%010d\t%s\n", p[1], p[2], p[3], $0 }' \
+        | sort -r \
+        | head -n1 \
+        | cut -f2
+}
 
 # ── arguments ────────────────────────────────────────────────────────────────
 while [ $# -gt 0 ]; do
@@ -243,18 +274,46 @@ here="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || here="$PWD"
 if [ -f "$here/tools/bundle-macos.sh" ] && [ -f "$here/Cargo.toml" ]; then
     SRC="$here"
     say "building the checkout at $SRC"
-elif [ -d "$SRC/.git" ]; then
-    say "updating $SRC"
-    git -C "$SRC" fetch --quiet origin "$BRANCH"
-    # Merge FETCH_HEAD, not the tracking ref: a shallow clone may not keep one. `--ff-only`
-    # never rewrites local work — it fails, and we build what is there.
-    if ! git -C "$SRC" merge --ff-only --quiet FETCH_HEAD 2>/dev/null; then
-        warn "the checkout has local changes; leaving them alone and building as-is"
-    fi
 else
-    say "cloning $REPO"
-    mkdir -p "$(dirname "$SRC")"
-    git clone --depth 1 --branch "$BRANCH" "$REPO" "$SRC"
+    if [ -z "$REF" ]; then
+        REF="$(latest_tag)"
+        if [ -n "$REF" ]; then
+            say "latest release: $REF"
+        else
+            # A fork with no releases yet, or a remote we could not reach. Building the
+            # default branch is the useful thing to do — but say so, because "installed
+            # the latest release" and "installed whatever was on main" are not the same
+            # claim and nobody should have to guess which one they got.
+            warn "no release tag on $REPO — building its default branch instead"
+            REF="HEAD"
+        fi
+    fi
+
+    if [ -d "$SRC/.git" ]; then
+        say "updating $SRC to $REF"
+        # Fetch the tag ITSELF when there is one, so `git describe` in this directory
+        # answers "which release is this?" rather than naming an older tag the shallow
+        # clone happens to still have. A branch or a commit has no tag to fetch, so that
+        # first attempt just fails and the plain fetch behind it does the work.
+        git -C "$SRC" fetch --quiet origin "+refs/tags/$REF:refs/tags/$REF" 2>/dev/null \
+            || git -C "$SRC" fetch --quiet origin "$REF" \
+            || die "could not fetch '$REF' from $REPO"
+        # Check out FETCH_HEAD, not a tracking ref: a tag is not a branch, and a shallow
+        # clone may keep no tracking ref anyway. Detached is right — this directory
+        # follows releases, it is not somewhere to develop. Without `--force`, so local
+        # work is never destroyed: the checkout fails and we build what is there.
+        if ! git -C "$SRC" checkout --quiet --detach FETCH_HEAD 2>/dev/null; then
+            warn "the checkout has local changes; leaving them alone and building as-is"
+        fi
+    else
+        say "cloning $REPO at $REF"
+        mkdir -p "$(dirname "$SRC")"
+        if [ "$REF" = "HEAD" ]; then
+            git clone --depth 1 "$REPO" "$SRC"
+        else
+            git clone --depth 1 --branch "$REF" "$REPO" "$SRC"
+        fi
+    fi
 fi
 
 ensure_rust

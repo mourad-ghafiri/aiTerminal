@@ -100,11 +100,15 @@
       is a TOML file — there is no settings UI. This page is the complete reference.</p>
 
     <h2 id="install">Install &amp; first launch</h2>
-    <p>One command installs aiTerminal on macOS 12+ — it clones the source, installs Rust if you
-      don't have it, builds the app and puts <code>aiTerminal.app</code> in <code>/Applications</code>:</p>
+    <p>One command installs aiTerminal on macOS 12+ — it clones the source at the <b>newest release
+      tag</b>, installs Rust if you don't have it, builds the app and puts <code>aiTerminal.app</code>
+      in <code>/Applications</code>:</p>
     <pre><code><span class="p">❯</span> curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh</code></pre>
-    <p>The <b>same command updates</b> it later. To uninstall, add <code>-s -- remove</code>
-      (your settings in <code>~/.aiTerminal</code> are kept unless you add <code>--purge</code>):</p>
+    <p>The <b>same command updates</b> it later, to whatever the newest release is by then. Set
+      <code>AITERMINAL_REF</code> to build something else — <code>AITERMINAL_REF=v0.4.0</code> for an
+      older release, <code>AITERMINAL_REF=main</code> for the tip. To uninstall, add
+      <code>-s -- remove</code> (your settings in <code>~/.aiTerminal</code> are kept unless you add
+      <code>--purge</code>):</p>
     <pre><code><span class="c"># update</span>
 curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh
 

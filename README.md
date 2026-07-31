@@ -117,15 +117,18 @@ AZERTY and friends.
 
 ## ⬇️ Install (macOS)
 
-One command — it clones the source, installs Rust if you don't have it, builds the app,
-and puts `aiTerminal.app` in `/Applications`:
+One command — it clones the source at the **newest release tag**, installs Rust if you
+don't have it, builds the app, and puts `aiTerminal.app` in `/Applications`:
 
 ```sh
 curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh
 ```
 
-The **same command updates** it later. To uninstall — your settings in `~/.aiTerminal`
-are kept unless you add `--purge`:
+The **same command updates** it later, to whatever the newest release is by then. Set
+`AITERMINAL_REF` to build something else — `AITERMINAL_REF=v0.4.0` for an older release,
+`AITERMINAL_REF=main` for the tip.
+
+To uninstall — your settings in `~/.aiTerminal` are kept unless you add `--purge`:
 
 ```sh
 curl -fsSL https://mourad-ghafiri.github.io/aiTerminal/install.sh | sh -s -- remove

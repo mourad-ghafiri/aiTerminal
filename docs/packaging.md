@@ -1,8 +1,13 @@
 # Packaging (macOS)
 
-For users there is one command — `install.sh` clones the source, installs Rust if needed,
-runs the bundler below, and installs the app (see [the README](../README.md#-install-macos)).
-This page is about the bundler it calls.
+For users there is one command — `install.sh` clones the source **at the newest release
+tag**, installs Rust if needed, runs the bundler below, and installs the app (see
+[the README](../README.md#-install-macos)). This page is about the bundler it calls.
+
+Which tag is "newest" is asked of the remote on every run (`git ls-remote --tags`), and
+only plain `vN.N.N` tags count — a release candidate is not a release. So **tagging is
+publishing**: push a `vN.N.N` and the next `install.sh` run picks it up. `AITERMINAL_REF`
+overrides it with any tag, branch or commit.
 
 `tools/bundle-macos.sh` builds a self-contained `aiTerminal.app`:
 
