@@ -1,6 +1,6 @@
 # Testing
 
-aiTerminal has **1341 unit tests** and **274 scenarios**, and the whole suite runs in a
+aiTerminal has **1350 unit tests** and **275 scenarios**, and the whole suite runs in a
 few seconds with no network, no API key, no window, and no changes to your machine.
 
 ```sh
@@ -39,7 +39,7 @@ So the suite has both, and they are aimed at different targets.
 
 ## Unit tests
 
-1341 of them (879 in `framework`, 332 in `corelib`, 130 in `platform`), beside the code
+1350 of them (888 in `framework`, 332 in `corelib`, 130 in `platform`), beside the code
 they test. Named as sentences, so a failure reads as a statement about the product rather
 than a symbol that broke:
 
@@ -131,7 +131,7 @@ scenario must never pass silently.
 
 ### Coverage
 
-274 journeys across every feature. Each folder's test asserts a minimum count, so
+275 journeys across every feature. Each folder's test asserts a minimum count, so
 coverage cannot silently shrink.
 
 | Folder | # | What a journey drives |
@@ -139,7 +139,7 @@ coverage cannot silently shrink.
 | `gate/` | 35 | pairing, remote commands, the guard, attaching to interactive CLIs |
 | `markdown/` | 28 | rendering, streaming, diagrams, the pager |
 | `flow/` | 29 | the graph: verification before it spends, parallel branches, conditions, bounded loops, fan-out, approvals, retries, routing a bare goal, node control, the two ways of watching a run, and the board's own geometry — depth as columns, edges the graph implies left undrawn, a block that never changes height |
-| `ai/` | 27 | model reply → command or answer, the guard, the agent tool loop |
+| `ai/` | 28 | model reply → command or answer, the guard, the agent tool loop |
 | `terminal/` | 22 | the VT engine — grid, colour, wide glyphs, scrollback, DEC modes |
 | `jobs/` | 20 | scheduling, occurrence logs, and what a job reports when it stops |
 | `cli/` | 19 | the `@`-command surface: profiles, themes, config, plugins, documents, offline flow verbs, jobs, gates |

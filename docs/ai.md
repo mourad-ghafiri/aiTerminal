@@ -118,7 +118,6 @@ An **agent** is a Markdown file with TOML frontmatter:
 description = "Implements changes end-to-end"
 tools = ["fs.read", "fs.search", "fs.edit", "fs.write", "sys.run", "task.run", "todo.set"]
 skills = ["refactoring", "testing"]
-prompts = ["concise"]
 max_steps = 40
 ---
 You are a careful senior engineer. …
@@ -155,12 +154,16 @@ You are a careful senior engineer. …
   family**, so "it can read files and run commands but not reach the network" is
   one glance rather than twelve lines read one at a time — then the output
   contract a flow node chains on, and the file's own path.
-- **Skills** (`ai/skills/*.md`) and **prompts** (`ai/prompts/*.md`) are reusable
-  Markdown blocks spliced into an agent's system prompt by name, **in the order
-  the agent declared them** — so the list reads as a priority, and the same agent
-  always builds a byte-identical prompt. **12 skills** ship: `code-review`,
-  `concise`, `debugging`, `git`, `orchestration`, `planning`, `refactoring`,
-  `research`, `security-review`, `testing`, `verification`, `writing`.
+- **Skills** (`ai/skills/*.md`) are reusable Markdown blocks spliced into an
+  agent's system prompt by name, **in the order the agent declared them** — so the
+  list reads as a priority, and the same agent always builds a byte-identical
+  prompt. **12 ship**: `code-review`, `concise`, `debugging`, `git`,
+  `orchestration`, `planning`, `refactoring`, `research`, `security-review`,
+  `testing`, `verification`, `writing`. An agent declares them with
+  `skills = ["testing", "git"]`.
+- **`prompts = [...]`** (`ai/prompts/*.md`) is the same mechanism under a second
+  name, for your own blocks. Nothing ships in it: one bundled answer to "how do I
+  reuse a block of prompt" is enough, and the two registries behave identically.
 - An agent file is **validated**: a tool it names must exist in the capability
   registry, a skill or prompt it names must be installed, its description must be
   non-empty and `max_steps` sane. `@agent` marks a file that fails with `⚠` and
@@ -175,6 +178,15 @@ The agent loop is provider-agnostic: the model calls tools with a `@tool <name>
 and feeds the result back. Every tool result is redacted before it re-enters the
 loop; `sys.run` re-enters the command guard; file writes are confined to the
 directory the run was invoked from (the sandbox).
+
+**A turn may carry several calls** — one `@tool` line each, up to eight. They run in the
+order written and every result comes back together. This is the difference between four
+file reads costing four model round trips and costing one, and a round trip is the
+expensive part: each one re-sends the whole transcript, which is longer than the last.
+The only rule is that a batch must be *independent* — a call whose arguments come from
+an earlier call's result belongs on the next turn. Eight other dialects are accepted for
+models that will not emit ours (`<tool_call>`, `[TOOL_CALLS]`, fenced blocks, Llama
+pythonic), and each is read for **every** call it carries rather than the first.
 
 ### Sub-agent delegation — `task.run`
 

@@ -1,0 +1,44 @@
+name = "several tools in one turn cost one round trip, not one each"
+tags = ["ai", "agent"]
+
+# A tool call used to be a whole model turn, and a turn re-sends the entire transcript. So
+# an agent that knew it needed three files paid three round trips for work it could have
+# asked for once — and the transcript it re-sent got longer each time.
+#
+# Now a turn may carry several calls. They run in the order the model wrote them and every
+# result comes back together. The saving is the round trip, which is the expensive part;
+# the calls themselves run locally.
+
+[[step]]
+tool = "fs.read"
+describe = "read a file"
+
+[[step]]
+tool = "fs.list"
+describe = "list a directory"
+
+[[step]]
+tool_returns = ["fs.read=fn main() {}", "fs.list=src/ tests/"]
+
+# ONE turn asking for three things, then the answer.
+[[step]]
+model_says_in_turn = ["@tool fs.list {\"path\":\".\"}\n@tool fs.read {\"path\":\"src/main.rs\"}\n@tool fs.read {\"path\":\"src/lib.rs\"}", "Three files, one round trip."]
+
+[[step]]
+agent = "what is in this project?"
+
+# All three ran, in the order they were written.
+[[step]]
+expect_tool_calls = ["fs.list {\"path\":\".\"}", "fs.read {\"path\":\"src/main.rs\"}", "fs.read {\"path\":\"src/lib.rs\"}"]
+
+# And the whole run cost TWO requests: the batch, and the answer. Before the change this
+# same script would have needed four — which is the number this scenario exists to hold at
+# two, because nothing about the output would tell you the difference.
+[[step]]
+expect_requests = 2
+
+[[step]]
+expect_answer = "Three files, one round trip."
+
+[[step]]
+expect_outcome = "completed"

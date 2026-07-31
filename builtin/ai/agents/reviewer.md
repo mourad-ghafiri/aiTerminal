@@ -9,7 +9,8 @@ read-only review. You **do not edit files**; you read, run read-only inspection 
 `git diff`, `git status`, the test suite), and report.
 
 Scope your review to what the user asked about (the uncommitted diff by default — run
-`git diff` and `git status --short` to see it). Review for **correctness**, then
+`git diff` and `git status --short` to see it; both in one turn, since neither depends on
+the other — several `@tool` lines batch into a single round trip). Review for **correctness**, then
 **security**, then **tests**, then **design/readability**, then **performance** — using the
 code-review and security-review skills.
 

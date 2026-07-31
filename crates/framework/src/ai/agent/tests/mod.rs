@@ -24,89 +24,96 @@ fn keyed_settings() -> AiSettings {
     AiSettings { pool: ModelPool::single(primary) }
 }
 
+/// The first call in a turn, or `None` — the shape these dialect tests were written
+/// against, before a turn could carry several. Every one of them still has to hold: a
+/// batch is a new capability, not a new way of reading a single call.
+fn first_call(text: &str) -> Option<(String, String)> {
+    parse_tool_calls(text).into_iter().next()
+}
+
 #[test]
 fn parse_marker() {
     assert_eq!(
-        parse_tool_call("sure!\n@tool sys.run {\"cmd\":\"ls\"}\nok"),
+        first_call("sure!\n@tool sys.run {\"cmd\":\"ls\"}\nok"),
         Some(("sys.run".into(), "{\"cmd\":\"ls\"}".into()))
     );
-    assert_eq!(parse_tool_call("no tools here"), None);
+    assert_eq!(first_call("no tools here"), None);
     // A bare `@tool name` with no args → empty object.
-    assert_eq!(parse_tool_call("@tool fs.home"), Some(("fs.home".into(), "{}".into())));
+    assert_eq!(first_call("@tool fs.home"), Some(("fs.home".into(), "{}".into())));
 }
 
 #[test]
 fn parse_tool_call_is_model_agnostic() {
     // XML `<tool_call>` with BARE args (the reported ling-3.0 failure) — args kept verbatim.
     assert_eq!(
-        parse_tool_call("Let me look.\n<tool_call>fs.list .</tool_call>"),
+        first_call("Let me look.\n<tool_call>fs.list .</tool_call>"),
         Some(("fs.list".into(), ".".into()))
     );
     // XML wrapping a function-call JSON object → name + stringified arguments.
-    let (n, a) = parse_tool_call("<tool_call>{\"name\":\"fs.read\",\"arguments\":{\"path\":\"x\"}}</tool_call>").unwrap();
+    let (n, a) = first_call("<tool_call>{\"name\":\"fs.read\",\"arguments\":{\"path\":\"x\"}}</tool_call>").unwrap();
     assert_eq!(n, "fs.read");
     assert!(a.contains("\"path\"") && a.contains("\"x\""), "args carried: {a}");
     // Alternate JSON keys (`tool`/`args`).
     assert_eq!(
-        parse_tool_call("{\"tool\":\"fs.home\",\"args\":{}}"),
+        first_call("{\"tool\":\"fs.home\",\"args\":{}}"),
         Some(("fs.home".into(), "{}".into()))
     );
     // A fenced ```tool block.
     assert_eq!(
-        parse_tool_call("```tool\nfs.list {\"path\":\".\"}\n```"),
+        first_call("```tool\nfs.list {\"path\":\".\"}\n```"),
         Some(("fs.list".into(), "{\"path\":\".\"}".into()))
     );
     // Prose that merely mentions a tool name is NOT a call.
-    assert_eq!(parse_tool_call("I could use fs.list here but won't."), None);
+    assert_eq!(first_call("I could use fs.list here but won't."), None);
 }
 
 #[test]
 fn parse_tool_call_handles_more_model_dialects() {
     // Mistral `[TOOL_CALLS]` with a JSON array (take the first call).
-    let (n, a) = parse_tool_call("[TOOL_CALLS] [{\"name\":\"fs.read\",\"arguments\":{\"path\":\"x\"}}]").unwrap();
+    let (n, a) = first_call("[TOOL_CALLS] [{\"name\":\"fs.read\",\"arguments\":{\"path\":\"x\"}}]").unwrap();
     assert_eq!(n, "fs.read");
     assert!(a.contains("\"path\"") && a.contains("\"x\""), "mistral args: {a}");
     // Mistral `[TOOL_CALLS] name{args}` (no space before the brace).
     assert_eq!(
-        parse_tool_call("[TOOL_CALLS] fs.list{\"path\":\".\"}"),
+        first_call("[TOOL_CALLS] fs.list{\"path\":\".\"}"),
         Some(("fs.list".into(), "{\"path\":\".\"}".into()))
     );
     // Llama `<|python_tag|>` prefix wrapping a JSON call.
     assert_eq!(
-        parse_tool_call("<|python_tag|>{\"name\":\"fs.home\",\"arguments\":{}}"),
+        first_call("<|python_tag|>{\"name\":\"fs.home\",\"arguments\":{}}"),
         Some(("fs.home".into(), "{}".into()))
     );
     // Llama pythonic — kwargs become named args.
     assert_eq!(
-        parse_tool_call("fs.read(path=\"src/main.rs\")"),
+        first_call("fs.read(path=\"src/main.rs\")"),
         Some(("fs.read".into(), "{\"path\":\"src/main.rs\"}".into()))
     );
     // Llama pythonic — a bare positional arg becomes index 0.
-    assert_eq!(parse_tool_call("fs.list(\".\")"), Some(("fs.list".into(), "{\"0\":\".\"}".into())));
+    assert_eq!(first_call("fs.list(\".\")"), Some(("fs.list".into(), "{\"0\":\".\"}".into())));
     // Llama pythonic — mixed value types.
-    let (n, a) = parse_tool_call("fs.read(path=\"x\", max=100)").unwrap();
+    let (n, a) = first_call("fs.read(path=\"x\", max=100)").unwrap();
     assert_eq!(n, "fs.read");
     assert!(a.contains("\"path\":\"x\"") && a.contains("\"max\":100"), "pythonic mix: {a}");
     // JSON call-object using the `parameters` key (Llama JSON form).
-    let (n, a) = parse_tool_call("{\"name\":\"fs.read\",\"parameters\":{\"path\":\"x\"}}").unwrap();
+    let (n, a) = first_call("{\"name\":\"fs.read\",\"parameters\":{\"path\":\"x\"}}").unwrap();
     assert_eq!(n, "fs.read");
     assert!(a.contains("\"path\"") && a.contains("\"x\""), "parameters key: {a}");
     // A fenced ```json block whose body is a STRICT call-object (name + arguments).
     assert_eq!(
-        parse_tool_call("Sure:\n```json\n{\"name\":\"fs.list\",\"arguments\":{\"path\":\".\"}}\n```"),
+        first_call("Sure:\n```json\n{\"name\":\"fs.list\",\"arguments\":{\"path\":\".\"}}\n```"),
         Some(("fs.list".into(), "{\"path\":\".\"}".into()))
     );
     // NEGATIVE: a ```json block that is a plain ANSWER (name only, no arguments) must NOT match.
-    assert_eq!(parse_tool_call("Here is the data:\n```json\n{\"name\":\"Ada\",\"age\":36}\n```"), None);
+    assert_eq!(first_call("Here is the data:\n```json\n{\"name\":\"Ada\",\"age\":36}\n```"), None);
     // NEGATIVE: prose that mentions a dotted name with parens is not a pythonic call
     // unless the whole line is the call.
-    assert_eq!(parse_tool_call("You can call fs.list(here) to see files, but let's not."), None);
+    assert_eq!(first_call("You can call fs.list(here) to see files, but let's not."), None);
 }
 
 #[test]
 fn parse_tool_call_handles_arg_key_value_tags() {
     // The `<arg_key>/<arg_value>` dialect inside <tool_call> (the reported sys.run blob).
-    let (n, a) = parse_tool_call(
+    let (n, a) = first_call(
         "<tool_call>sys.run\n<arg_key>command</arg_key>\n<arg_value>echo hi > f</arg_value>\n</tool_call>",
     )
     .unwrap();
@@ -566,4 +573,124 @@ fn a_transport_error_is_an_error_outcome() {
     let run = run_agent(&client, &agent, "hi", "", &mut runner, &mut NoopObserver);
     assert!(matches!(run.outcome, RunOutcome::Error(_)), "{:?}", run.outcome);
     assert!(run.steps.is_empty());
+}
+
+#[test]
+fn a_turn_can_carry_several_calls_in_the_order_they_were_written() {
+    // The reason for the change: a tool call is a full model round trip that re-sends the
+    // whole transcript, so four file reads used to cost four turns. Order is the model's,
+    // because a batch is only safe when the calls are independent — and if it got that
+    // wrong, running them as written is the behaviour it can reason about.
+    let calls = parse_tool_calls(
+        "Reading the three files.\n\
+         @tool fs.read {\"path\":\"a.rs\"}\n\
+         @tool fs.read {\"path\":\"b.rs\"}\n\
+         @tool fs.list {\"path\":\".\"}",
+    );
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert_eq!(calls[0], ("fs.read".into(), "{\"path\":\"a.rs\"}".into()));
+    assert_eq!(calls[1], ("fs.read".into(), "{\"path\":\"b.rs\"}".into()));
+    assert_eq!(calls[2].0, "fs.list");
+    // And the prose before the first marker is still the turn's prose, committed once.
+    assert_eq!(prose_before_tool("Reading the three files.\n@tool fs.read {}\n@tool fs.list {}"), "Reading the three files.");
+}
+
+#[test]
+fn a_mistral_array_of_calls_keeps_all_of_them() {
+    // THE regression. `[TOOL_CALLS]` parsed a JSON **array** and then took `.first()`, so a
+    // model that had already done the work of emitting three calls had two silently thrown
+    // away and re-asked on the next two turns — paying twice for what it sent once.
+    let calls = parse_tool_calls(
+        "[TOOL_CALLS][{\"name\":\"fs.read\",\"arguments\":{\"path\":\"a\"}},\
+         {\"name\":\"fs.read\",\"arguments\":{\"path\":\"b\"}}]",
+    );
+    assert_eq!(calls.len(), 2, "both survive: {calls:?}");
+    assert_eq!(calls[0].0, "fs.read");
+    assert!(calls[0].1.contains("\"a\""), "{:?}", calls[0]);
+    assert!(calls[1].1.contains("\"b\""), "{:?}", calls[1]);
+}
+
+#[test]
+fn several_xml_blocks_and_several_fences_are_all_collected() {
+    let xml = parse_tool_calls("<tool_call>fs.list .</tool_call>\n<tool_call>fs.home</tool_call>");
+    assert_eq!(xml.len(), 2, "{xml:?}");
+    let fenced = parse_tool_calls("```tool\nfs.list {\"path\":\".\"}\n```\n```tool\nfs.home\n```");
+    assert_eq!(fenced.len(), 2, "{fenced:?}");
+}
+
+#[test]
+fn a_turn_that_emits_fifty_calls_is_bounded() {
+    // A model doing this is malfunctioning, and a step budget measured in TURNS has to
+    // keep meaning something — an unbounded batch would let one turn spend a whole run.
+    let many: String = (0..50).map(|i| format!("@tool fs.read {{\"path\":\"f{i}\"}}\n")).collect();
+    assert_eq!(parse_tool_calls(&many).len(), MAX_CALLS_PER_TURN);
+}
+
+/// A run over a scripted transport: one SSE turn per string, the named tools declared.
+fn batched_run(turns: &[&str], tools: &[&str]) -> (crate::ai::AgentRun, Vec<(String, String)>) {
+    let transport = ScriptedTransport::new(turns.iter().map(|t| text_sse(t, 10, 5)).collect());
+    let client = Client::new(keyed_settings(), transport);
+    let agent = AgentSpec {
+        system: "You are helpful.".into(),
+        tools: tools.iter().map(|t| ToolSpec { name: (*t).into(), describe: "a tool".into() }).collect(),
+        max_steps: 4,
+        ..Default::default()
+    };
+    let mut runner = MockRunner { calls: Vec::new() };
+    let run = run_agent(&client, &agent, "go", "", &mut runner, &mut NoopObserver);
+    (run, runner.calls)
+}
+
+#[test]
+fn one_bad_name_in_a_batch_does_not_discard_the_rest() {
+    // The whole batch is the turn's work. Refusing the undeclared call and abandoning the
+    // others would make a single typo cost everything the model got right.
+    let (run, ran) = batched_run(
+        &["@tool fs.home {}\n@tool nope.thing {}\n@tool fs.list {\"path\":\".\"}", "done"],
+        &["fs.home", "fs.list"],
+    );
+    assert_eq!(run.steps.len(), 3, "all three were attempted: {:?}", run.steps);
+    assert!(run.steps[1].result.contains("not available"), "the bad one is inert: {:?}", run.steps[1]);
+    assert_eq!(ran.len(), 2, "and only the declared two reached the runner: {ran:?}");
+}
+
+#[test]
+fn a_batch_costs_one_model_turn() {
+    // The point of the change, stated as the thing that is cheaper: three tool calls used
+    // to be three requests, each re-sending the whole transcript. Two scripted turns are
+    // enough for the whole run — a third would be needed if each call cost its own turn.
+    let (run, ran) = batched_run(
+        &["@tool fs.home {}\n@tool fs.home {\"a\":1}\n@tool fs.home {\"b\":2}", "done"],
+        &["fs.home"],
+    );
+    assert_eq!(ran.len(), 3, "three tools ran: {ran:?}");
+    assert_eq!(run.answer, "done", "on the SECOND turn, not the fourth");
+    assert_eq!(run.outcome, RunOutcome::Completed);
+    // Two turns' tokens, not four.
+    assert_eq!((run.usage.input, run.usage.output), (20, 10));
+}
+
+#[test]
+fn three_identical_calls_inside_one_batch_still_trips_the_stall_guard() {
+    // A model spinning on a failing call spins just as hard inside a batch, and the guard
+    // is checked per call rather than per turn so it catches that too.
+    let (run, _) = batched_run(&["@tool fs.home {}\n@tool fs.home {}\n@tool fs.home {}", "unreachable"], &["fs.home"]);
+    assert!(matches!(run.outcome, RunOutcome::ToolStall), "{:?}", run.outcome);
+    assert!(run.answer.contains("no progress"), "{}", run.answer);
+}
+
+#[test]
+fn the_tool_contract_the_model_is_given_matches_the_loop_that_reads_it() {
+    // The loop accepts several calls per turn now. A prompt still saying "at most one"
+    // would leave the whole saving on the table — and a prompt promising a capability the
+    // loop does NOT have is the same class of bug, so both directions are checked here,
+    // beside the parser they describe.
+    let tools = vec![ToolSpec { name: "fs.read".into(), describe: "read a file".into() }];
+    let s = tool_instructions(&tools).to_lowercase();
+    assert!(!s.contains("at most one tool"), "the one-per-turn instruction is gone:\n{s}");
+    assert!(s.contains("several tools in one turn"), "and the batch instruction is there:\n{s}");
+    assert!(s.contains(&format!("up to {MAX_CALLS_PER_TURN}")), "with the real bound, not a guess:\n{s}");
+    // The one thing a batch cannot do, stated — a model that batches a call depending on an
+    // earlier call's result gets a wrong answer, not an error.
+    assert!(s.contains("depend"), "and the dependency caveat:\n{s}");
 }

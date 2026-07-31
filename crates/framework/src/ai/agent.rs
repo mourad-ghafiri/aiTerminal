@@ -454,59 +454,70 @@ pub fn run_agent<T: Transport>(
             model_used = used.id.clone();
         }
         usage.add(turn_usage);
-        match parse_tool_call(&answer) {
-            Some((name, args)) => {
-                // Commit the turn's prose (before the tool marker) to the transcript first,
-                // so the user reads it while the tool runs.
+        let calls = parse_tool_calls(&answer);
+        match calls.is_empty() {
+            false => {
+                // Commit the turn's prose (before the FIRST tool marker) to the transcript
+                // once, so the user reads it while the batch runs.
                 let prose = prose_before_tool(&answer);
                 if !prose.trim().is_empty() {
                     observer.on_commit(&prose);
                 }
-                // The `ctx.*` family is answered by the LOOP, not the runner. It reads
-                // and rewrites the transcript, which is loop state — routing it through
-                // `caps` (whose families are all pure over disk) would mean a globally
-                // mutable transcript for no gain.
-                let result = if let Some(ctx_tool) = CtxTool::parse(&name) {
-                    let mut summarizer = ClientSummarizer { client, model: &turn_model, input_tokens: 0, output_tokens: 0 };
-                    let out = ctx_tool.run(&args, &mut transcript, &est, &budget, agent, &ladder, &mut summarizer, observer);
-                    usage.input += summarizer.input_tokens;
-                    usage.output += summarizer.output_tokens;
-                    out
-                } else if agent.tools.iter().any(|t| t.name == name) {
-                    // Only allow declared tools; anything else is reported back inert.
-                    runner.run(&name, &args).unwrap_or_else(|e| format!("error: {e}"))
-                } else {
-                    format!("error: tool '{name}' is not available to this agent")
-                };
-                // Bound it BEFORE storing or forwarding: what the model sees is what the
-                // step record keeps, and what a later turn re-sends. A big result goes to
-                // a file the moment it arrives — carrying it inline would cost its tokens
-                // again on every remaining turn of the run — and clipping is the fallback
-                // for when the disk will not take it.
-                let result = match result.len() > TOOL_INLINE_MAX && !crate::ai::compact::is_offloaded(&result) {
-                    true => crate::ai::compact::offload(&agent.scratch, steps.len(), &name, &result, TOOL_PREVIEW_LINES)
-                        .unwrap_or_else(|| clip_middle(&result, TOOL_RESULT_MAX).into_owned()),
-                    false => clip_middle(&result, TOOL_RESULT_MAX).into_owned(),
-                };
-                let last_name = name.clone();
-                steps.push(ToolStep { name, args, result: result.clone() });
-                // Stuck-loop guard: if the last 3 tool calls are byte-identical (same name + args),
-                // the model is spinning (e.g. retrying a failing call) — stop with a clear message
-                // rather than burning the whole step budget. Deterministic; catches any tool.
-                if let [.., c, b, a] = steps.as_slice() {
-                    if a.name == b.name && b.name == c.name && a.args == b.args && b.args == c.args {
-                        let msg = format!("[stopped — the tool `{}` was called repeatedly with no progress]", a.name);
-                        return finish(msg, steps, usage, RunOutcome::ToolStall, model_used);
+                // The assistant turn goes in BEFORE its results, and once however many
+                // calls it carried — the transcript's shape is "what was said, then what
+                // came back", and a batch does not change that.
+                transcript.push(Turn::Assistant(answer));
+                // In the order the model wrote them: a batch is only safe to write when
+                // the calls do not depend on each other, and if the model got that wrong,
+                // running them in its stated order is the behaviour it can reason about.
+                for (name, args) in calls {
+                    // The `ctx.*` family is answered by the LOOP, not the runner. It reads
+                    // and rewrites the transcript, which is loop state — routing it through
+                    // `caps` (whose families are all pure over disk) would mean a globally
+                    // mutable transcript for no gain.
+                    let result = if let Some(ctx_tool) = CtxTool::parse(&name) {
+                        let mut summarizer = ClientSummarizer { client, model: &turn_model, input_tokens: 0, output_tokens: 0 };
+                        let out = ctx_tool.run(&args, &mut transcript, &est, &budget, agent, &ladder, &mut summarizer, observer);
+                        usage.input += summarizer.input_tokens;
+                        usage.output += summarizer.output_tokens;
+                        out
+                    } else if agent.tools.iter().any(|t| t.name == name) {
+                        // Only allow declared tools; anything else is reported back inert.
+                        runner.run(&name, &args).unwrap_or_else(|e| format!("error: {e}"))
+                    } else {
+                        // Inert, and only for THIS call: one bad name in a batch must not
+                        // discard the work the other calls in it would have done.
+                        format!("error: tool '{name}' is not available to this agent")
+                    };
+                    // Bound it BEFORE storing or forwarding: what the model sees is what the
+                    // step record keeps, and what a later turn re-sends. A big result goes to
+                    // a file the moment it arrives — carrying it inline would cost its tokens
+                    // again on every remaining turn of the run — and clipping is the fallback
+                    // for when the disk will not take it.
+                    let result = match result.len() > TOOL_INLINE_MAX && !crate::ai::compact::is_offloaded(&result) {
+                        true => crate::ai::compact::offload(&agent.scratch, steps.len(), &name, &result, TOOL_PREVIEW_LINES)
+                            .unwrap_or_else(|| clip_middle(&result, TOOL_RESULT_MAX).into_owned()),
+                        false => clip_middle(&result, TOOL_RESULT_MAX).into_owned(),
+                    };
+                    let last_name = name.clone();
+                    steps.push(ToolStep { name, args, result: result.clone() });
+                    // Append-only: the prefix a provider already cached stays byte-identical,
+                    // which is what makes a long run cheap. Compaction is the one thing that
+                    // rewrites history, and it runs only when the window demands it.
+                    transcript.push(Turn::ToolResult { name: last_name, text: result });
+                    // Stuck-loop guard: if the last 3 tool calls are byte-identical (same name
+                    // + args), the model is spinning (e.g. retrying a failing call) — stop with
+                    // a clear message rather than burning the whole step budget. Checked per
+                    // call, so three identical calls inside ONE batch is caught too.
+                    if let [.., c, b, a] = steps.as_slice() {
+                        if a.name == b.name && b.name == c.name && a.args == b.args && b.args == c.args {
+                            let msg = format!("[stopped — the tool `{}` was called repeatedly with no progress]", a.name);
+                            return finish(msg, steps, usage, RunOutcome::ToolStall, model_used);
+                        }
                     }
                 }
-                // Record the assistant's call + the (tainted) result, then continue.
-                // Append-only: the prefix a provider already cached stays byte-identical,
-                // which is what makes a long run cheap. Compaction is the one thing that
-                // rewrites history, and it runs only when the window demands it.
-                transcript.push(Turn::Assistant(answer));
-                transcript.push(Turn::ToolResult { name: last_name, text: result });
             }
-            None => {
+            true => {
                 let empty = answer.trim().is_empty();
                 // A botched tool attempt (or an empty turn) is NOT a final answer while we
                 // still have correction budget: nudge the model with the exact format and
@@ -547,12 +558,15 @@ fn tool_instructions(tools: &[ToolSpec]) -> String {
         return "Answer directly in Markdown.".into();
     }
     let mut s = String::from(
-        "You can call tools. To call one, output EXACTLY one line in THIS form and nothing else:\n\
+        "You can call tools. To call one, output a line in THIS form and nothing else on it:\n\
          @tool <name> <json-args>\n\
          Example: @tool fs.list {\"path\":\".\"}\n\
          Use ONLY this `@tool` form — do NOT use XML like <tool_call>, function-call JSON, or \
          fenced ``` blocks. Emit the line raw, not inside backticks.\n\
-         Call at most one tool per turn; you will receive its result, then continue.\n\
+         You may call SEVERAL tools in one turn — one per line, up to 8. They run in the order \
+         you write them and you receive every result together, so batching independent calls \
+         (reading four files, say) costs one turn instead of four. Do NOT batch a call whose \
+         arguments depend on an earlier call's result: ask for that one on the next turn.\n\
          Paths are workspace-relative unless absolute; prefer fs.* for files and sys.run for shell commands.\n\
          When you have the final answer, reply in Markdown WITHOUT an @tool line.\n\nTools:\n",
     );
@@ -577,80 +591,116 @@ fn tool_instructions(tools: &[ToolSpec]) -> String {
 ///   7. a bare top-level function-call JSON object.
 /// A leading Llama `<|python_tag|>` is stripped first. Call-objects use `name`|`tool` +
 /// `arguments`|`args`|`parameters`. `args` is returned verbatim; the runner coerces it.
-fn parse_tool_call(text: &str) -> Option<(String, String)> {
+/// Every tool call in one turn, in the order the model wrote them.
+///
+/// A turn used to yield at most ONE call, and the model was told to emit at most one. Both
+/// halves were expensive: a tool call is a full model round trip that re-sends the whole
+/// transcript, so six file reads cost six turns — and a model that emitted several anyway
+/// had the rest silently discarded and re-asked. The `[TOOL_CALLS]` branch was the clearest
+/// case: it parsed a JSON **array** of calls and then took `.first()`.
+///
+/// The dialects are still tried in priority order and the FIRST one that yields anything
+/// wins — that precedence is what stops a plain JSON *answer* being read as a call. What
+/// changed is that within the winning dialect, every call is collected rather than the head.
+///
+/// Bounded by [`MAX_CALLS_PER_TURN`]: a model emitting fifty is malfunctioning, and a step
+/// budget measured in turns has to keep meaning something.
+fn parse_tool_calls(text: &str) -> Vec<(String, String)> {
+    let mut out = collect(text);
+    out.truncate(MAX_CALLS_PER_TURN);
+    out
+}
+
+/// How many calls one turn may carry.
+pub(crate) const MAX_CALLS_PER_TURN: usize = 8;
+
+fn collect(text: &str) -> Vec<(String, String)> {
     // Strip a leading Llama `<|python_tag|>` marker — what follows is the real call.
     let scan = match text.find("<|python_tag|>") {
         Some(i) => &text[i + "<|python_tag|>".len()..],
         None => text,
     };
-    // 1. XML `<tool_call> … </tool_call>` (body may span lines).
-    if let Some(body) = slice_between(scan, "<tool_call>", "</tool_call>") {
-        if let Some(call) = parse_call_body(body) {
-            return Some(call);
-        }
+    // 1. XML `<tool_call> … </tool_call>` (body may span lines), every block of them.
+    let xml: Vec<(String, String)> = slices_between(scan, "<tool_call>", "</tool_call>").iter().filter_map(|b| parse_call_body(b)).collect();
+    if !xml.is_empty() {
+        return xml;
     }
-    // 2. Mistral `[TOOL_CALLS]` — a JSON array of calls (take the first), or `name{args}`.
+    // 2. Mistral `[TOOL_CALLS]` — a JSON array of calls (ALL of them), or `name{args}`.
     if let Some(after) = scan.find("[TOOL_CALLS]").map(|i| i + "[TOOL_CALLS]".len()) {
         let rest = scan[after..].trim();
-        let body = if rest.starts_with('[') {
+        let bodies: Vec<String> = if rest.starts_with('[') {
             corelib::wire::Json::parse(rest)
                 .ok()
-                .and_then(|a| a.as_array().and_then(|xs| xs.first()).map(|c| c.to_string()))
+                .and_then(|a| a.as_array().map(|xs| xs.iter().map(|c| c.to_string()).collect()))
+                .unwrap_or_default()
         } else {
-            Some(rest.to_string())
+            vec![rest.to_string()]
         };
-        if let Some(call) = body.as_deref().and_then(parse_call_body) {
-            return Some(call);
+        let calls: Vec<(String, String)> = bodies.iter().filter_map(|b| parse_call_body(b)).collect();
+        if !calls.is_empty() {
+            return calls;
         }
     }
-    // 3. A fenced ```tool / ```tool_call block.
+    // 3. Fenced ```tool / ```tool_call blocks.
     for fence in ["```tool_call", "```tool"] {
-        if let Some(after) = scan.find(fence).map(|i| i + fence.len()) {
-            if let Some(end) = scan[after..].find("```") {
-                if let Some(call) = parse_call_body(&scan[after..after + end]) {
-                    return Some(call);
-                }
-            }
+        let calls: Vec<(String, String)> = fenced(scan, fence).iter().filter_map(|b| parse_call_body(b)).collect();
+        if !calls.is_empty() {
+            return calls;
         }
     }
-    // 4. A fenced ```json / bare ``` block whose body is a STRICT call-object (has a
+    // 4. Fenced ```json / bare ``` blocks whose body is a STRICT call-object (has a
     //    name/tool key AND an arguments/args/parameters key) — the dual-key rule keeps a
     //    plain JSON *answer* fenced by the model from being mistaken for a call.
     for fence in ["```json", "```"] {
-        if let Some(after) = scan.find(fence).map(|i| i + fence.len()) {
-            if let Some(end) = scan[after..].find("```") {
-                let body = scan[after..after + end].trim();
-                if is_strict_call_object(body) {
-                    if let Some(call) = parse_call_body(body) {
-                        return Some(call);
-                    }
-                }
-            }
+        let calls: Vec<(String, String)> = fenced(scan, fence)
+            .iter()
+            .filter(|b| is_strict_call_object(b.trim()))
+            .filter_map(|b| parse_call_body(b.trim()))
+            .collect();
+        if !calls.is_empty() {
+            return calls;
         }
     }
-    // 5. Our `@tool <name> <args>` marker (one per line).
-    for line in scan.lines() {
-        let line = line.trim();
-        if line == "@tool" {
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("@tool ") {
-            if let Some(call) = parse_call_body(rest) {
-                return Some(call);
-            }
-        }
+    // 5. Our `@tool <name> <args>` marker — one per line, and now several lines.
+    let ours: Vec<(String, String)> = scan
+        .lines()
+        .map(str::trim)
+        .filter_map(|l| l.strip_prefix("@tool "))
+        .filter_map(parse_call_body)
+        .collect();
+    if !ours.is_empty() {
+        return ours;
     }
-    // 6. Llama pythonic `family.method(...)` on its own line.
-    if let Some(call) = parse_pythonic(scan) {
-        return Some(call);
+    // 6. Llama pythonic `family.method(...)`, one per line.
+    let py = parse_pythonic_all(scan);
+    if !py.is_empty() {
+        return py;
     }
     // 7. The whole reply is a bare function-call JSON object (some models emit only that).
     // `parse_call_body` requires a name/tool key, so a plain JSON answer won't false-match.
     let t = scan.trim();
     if t.starts_with('{') {
-        return parse_call_body(t);
+        return parse_call_body(t).into_iter().collect();
     }
-    None
+    Vec::new()
+}
+
+/// Every `open … close` body in `text`, in order.
+fn slices_between<'a>(text: &'a str, open: &str, close: &str) -> Vec<&'a str> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(i) = rest.find(open) {
+        let after = &rest[i + open.len()..];
+        let Some(j) = after.find(close) else { break };
+        out.push(&after[..j]);
+        rest = &after[j + close.len()..];
+    }
+    out
+}
+
+/// Every ```` ```fence ```` block body in `text`, in order.
+fn fenced<'a>(text: &'a str, fence: &str) -> Vec<&'a str> {
+    slices_between(text, fence, "```")
 }
 
 /// A JSON object with BOTH a call name (`name`|`tool`) AND an argument bag
@@ -664,17 +714,15 @@ fn is_strict_call_object(body: &str) -> bool {
     has_name && has_args
 }
 
-/// Parse a Llama-style pythonic call `family.method(k="v", 1.5, "positional")` from the
-/// first line that has the `family.method(...)` shape. Kwargs map to named args; bare
-/// positional args map to `"0"`, `"1"`, … The result is a JSON object string, so the
-/// existing arg coercion (`cli::tool_args_to_pairs` + `caps::arg`) handles it unchanged.
-fn parse_pythonic(text: &str) -> Option<(String, String)> {
+/// Every Llama-style pythonic call `family.method(k="v", 1.5, "positional")` in `text`,
+/// one per line. Kwargs map to named args; bare positional args map to `"0"`, `"1"`, …
+/// The result is a JSON object string, so the existing arg coercion
+/// (`cli::tool_args_to_pairs` + `caps::arg`) handles it unchanged.
+fn parse_pythonic_all(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
     for line in text.lines() {
         let l = line.trim();
-        let open = match l.find('(') {
-            Some(i) => i,
-            None => continue,
-        };
+        let Some(open) = l.find('(') else { continue };
         if !l.ends_with(')') {
             continue;
         }
@@ -688,9 +736,9 @@ fn parse_pythonic(text: &str) -> Option<(String, String)> {
             continue;
         }
         let inner = &l[open + 1..l.len() - 1];
-        return Some((name.to_string(), pythonic_args_to_json(inner)));
+        out.push((name.to_string(), pythonic_args_to_json(inner)));
     }
-    None
+    out
 }
 
 /// Convert a pythonic argument list body into a JSON object string.

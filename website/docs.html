@@ -246,6 +246,13 @@ The fix: the parser dropped the final line …
       <tr><td><code>@writer</code></td><td>Documentation and reports for the person who will read them — and saves the file.</td></tr>
       <tr><td><code>@ai</code></td><td>General assistant — proposes a command to review/run, or answers a question.</td></tr>
     </table></div>
+    <p><b>A turn may carry several tool calls</b> — one <code>@tool</code> line each, up to
+      eight. They run in the order written and every result comes back together, so four file
+      reads cost one model round trip instead of four. A round trip is the expensive part: each
+      one re-sends the whole transcript, which is longer than the last. The one rule is that a
+      batch must be <em>independent</em> — a call whose arguments come from an earlier call's
+      result belongs on the next turn. Eight other dialects are accepted for models that will
+      not emit ours, and each is read for <em>every</em> call it carries rather than the first.</p>
     <p><b>Every agent ends by stating what it returns.</b> That is not a style rule: a flow node
       chains on that text, so <code>{{explore.output}}</code> is only as good as the agent's
       discipline. <code>@tester</code> and <code>@reviewer</code> go further and promise a final
@@ -1101,7 +1108,7 @@ strategy = <span class="s">"weighted"</span>       <span class="c"># weighted (d
     <h2 id="agents">Agents, skills &amp; prompts</h2>
     <p>All plain files under <code>ai/</code>. <b>8 agents</b> are Markdown + frontmatter (tools,
       <code>max_steps</code>, skills) — run <code>@agent</code> to see them, <code>@agent
-      &lt;name&gt;</code> for one in full. <b>12 skills</b> ship; 3 prompt templates ship. The global
+      &lt;name&gt;</code> for one in full. <b>12 skills</b> ship. The global
       <code>ai/aiTerminal.md</code> is the system-prompt base for <em>every</em> run — edit it to
       change the persona. Project-local <code>ai/</code> folders shadow the global set, so a repo
       can ship its own agents and flows.</p>
@@ -1126,7 +1133,9 @@ strategy = <span class="s">"weighted"</span>       <span class="c"># weighted (d
     </table></div>
     <p>Add your own by dropping a file in <code>ai/skills/</code> and naming it in an agent's
       <code>skills = [...]</code>. <code>@agent &lt;name&gt;</code> prints the skills an agent
-      carries, in the order they splice.</p>
+      carries, in the order they splice. <code>prompts = [...]</code> (<code>ai/prompts/</code>)
+      is the same mechanism under a second name, for your own blocks — nothing ships in it,
+      because one bundled answer to "how do I reuse a block of prompt" is enough.</p>
     <p>Every agent's frontmatter is checked at build time: a tool it declares must exist in the
       capability registry, a skill or prompt it names must be installed, and its
       <code>max_steps</code> must be sane. A misspelled tool used to reach the model with a
@@ -1403,7 +1412,7 @@ scope   = <span class="s">"ai"</span></code></pre>
       its child; the regex engine is step-budgeted; a panic degrades to one dropped frame.</p>
 
     <h2 id="testing">Testing</h2>
-    <p><b>1341 unit tests</b> and <b>274 scenarios</b>, running in a few seconds with no network and
+    <p><b>1350 unit tests</b> and <b>275 scenarios</b>, running in a few seconds with no network and
       no API key. A unit test proves a function; a <b>scenario</b> proves a product — a real user
       journey written as TOML and played against the real code.</p>
     <pre><code><span class="p">❯</span> cargo test --workspace                          <span class="c"># everything</span>

@@ -332,3 +332,42 @@ fn a_description_is_wrapped_rather_than_cut_at_the_window() {
     assert!(long.iter().any(|l| l.contains("supercali")), "{long:?}");
     assert!(wrap("", 40).is_empty(), "nothing in, nothing out");
 }
+
+#[test]
+fn no_bundled_prompt_promises_a_feature_this_product_does_not_have() {
+    // `coder.md` shipped an entire `## Plan mode` section — "all writes and commands are
+    // blocked", "the user clicks **Approve & run** to switch you to Auto". There is no plan
+    // mode in aiTerminal and there never was. Two more in the same file: a risky command
+    // "pauses for approval" (a guard `Confirm` is a hard REFUSAL on the agent path, so the
+    // model waited for a prompt that never came instead of handing the command back), and
+    // the user "watches the plan update live" (nothing displays `todo.*`).
+    //
+    // Fifteen lines re-sent on every turn of every run, teaching the model a workflow it
+    // cannot perform. A tool that does not exist is caught by `defs::validate`; a FEATURE
+    // that does not exist was caught by nothing, which is why it survived so long.
+    let (_h, _home) = crate::test_home::lock_home("cli-agents-claims");
+    crate::config::Config::ensure_default();
+    let agents = crate::ai::defs::load_agents(&crate::config::Config::agents_dir());
+    assert!(!agents.is_empty(), "agents ship with the app");
+
+    // Each phrase, and what it would be claiming. Add a line here when a prompt starts
+    // describing a mode, a pane or a gesture — not when it describes a tool.
+    const FICTION: [(&str, &str); 6] = [
+        ("plan mode", "there is no plan mode — no run is read-only by request"),
+        ("approve & run", "there is no approval gesture; nothing switches a run's mode"),
+        ("pauses for approval", "a guard `Confirm` is refused inside a run, never queued for a person"),
+        ("pause for the user's approval", "same — the agent path has nobody to ask"),
+        ("watches the plan", "`todo.*` is the agent's own checklist; nothing renders it live"),
+        ("auto mode", "`[ai] mode` governs @ai command suggestions, not what an agent may run"),
+    ];
+    let mut found: Vec<String> = Vec::new();
+    for a in &agents {
+        let lower = a.system.to_lowercase();
+        for (phrase, why) in FICTION {
+            if lower.contains(phrase) {
+                found.push(format!("{}: says {phrase:?} — {why}", a.name));
+            }
+        }
+    }
+    assert!(found.is_empty(), "a shipped prompt promises what this product cannot do:\n  {}", found.join("\n  "));
+}
