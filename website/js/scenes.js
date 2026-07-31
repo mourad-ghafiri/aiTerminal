@@ -11,14 +11,14 @@
    ========================================================================== */
 /* Build the `@md edit` split view directly as DOM (a real two-column layout, so it stays
    pixel-aligned at any window width — no box-drawing to drift). Left = Markdown source with a
-   line-number gutter and the divider column `mdedit.rs` draws; right = the live rendered
+   line-number gutter and the divider column `mdedit/editor.rs` draws; right = the live rendered
    preview.
 
    The two halves must agree: the preview renders THIS source, boxed `A ──▶ B ──▶ C` from the
    `flowchart LR` beside it, exactly as `@md render` prints it. A preview that drew something
    its own Markdown does not describe would be a drawing of a feature, not the feature.
 
-   The chrome is the production chrome (`mdedit.rs::render`): a full-width status bar
+   The chrome is the production chrome (`mdedit/editor.rs`): a full-width status bar
    ` <path> ●  (<n>L)` with the last status message right-aligned, `~` for rows past the end of
    the buffer, and the real help line. */
 function buildMdEditor(w) {

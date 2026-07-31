@@ -8,7 +8,7 @@ crates/app        the `aiTerminal` binary: argv → framework. Nothing else.
 crates/framework  the product: gui (window runtime), ai (the AI engine), caps (agent
                   tools), plugin, security, config, profile, shell, theme, keymap,
                   render (headless proofs), cli (the subcommands)
-crates/platform   the OS seam: os/ (macOS FFI — the ONLY unsafe), term (VT engine),
+crates/platform   the OS seam: os/ (macOS FFI — the ONLY unsafe), term/ (VT engine),
                   transport (HTTP/SSE via system curl), log, orchestrator
 crates/corelib    pure + OS-free: wire (JSON/TOML/frontmatter), gfx (CPU rasterizer),
                   types, theme tokens, unicode, datetime, brand
@@ -21,9 +21,31 @@ crates/corelib    pure + OS-free: wire (JSON/TOML/frontmatter), gfx (CPU rasteri
   depends on `framework` only.
 - `tools/check_unsafe.sh` — `unsafe` exists only under `crates/platform/src/os/`;
   every other crate root is `#![forbid(unsafe_code)]`.
+- `tools/check_file_size.sh` — no source file over 1000 lines.
 
 There are no facade crates: callers name real paths (`framework::ai::Client`,
 `platform::term::Term`, `corelib::wire::Json`).
+
+## How the tree is laid out
+
+Two conventions, both mechanically enforced, both aimed at the same thing: a file you
+can read in one sitting is a file you can change without fear.
+
+- **No source file over 1000 lines.** A module that outgrows the limit has taken on a
+  second job; the fix is to give that job its own file, along a boundary the code
+  already has. `cli/` is the worked example — one 6000-line file became `run`, `style`,
+  `live`, `media`, `format`, `observe`, `runner`, `agents`, plus a directory each for
+  `flow/`, `agentloop/` and `jobs/`. `cli/mod.rs` re-exports the names the rest of the
+  crate uses, so a split changes where an item lives, never what a caller writes.
+- **Tests live in `<module>/tests/`,** not inline. See
+  [testing.md](testing.md#where-they-live) for why a child module rather than a
+  crate-level `tests/` directory.
+
+The same shape recurs: `caps/backends/` by tool family, `config/` by what a config file
+is used for (`paths` · `bootstrap` · `load` · `apply` · `settings`), `term/` by what the
+VT engine does (`state` · `view` · `edit` · `resize` · `perform`), `mdedit/` by the
+editor's pure pieces. Long functions get the same treatment as long files: `apply_toml`
+is a table of `[section]` → function, and the `fs` family is one function per method.
 
 ## Performance model
 
@@ -68,12 +90,12 @@ The rules that keep an idle terminal at ~0% CPU and every input bounded:
 | --- | --- |
 | `gui` | The window: tabs/splits of PTY panes, input routing, tab switcher, status bar, ⌘-click links, per-profile state persistence (layout + pane content + window size), live follow of profile switches and config edits. No AI code — the window is a pure terminal. |
 | `ai` | The engine: streaming `Client` over a `Transport` seam, the agent loop (`run_agent` + `ToolRunner`/`AgentObserver`), the context budget + compaction ladder (below), the `aiTerminal.md` instruction base, BM25 memory, MCP hub, model catalog + weighted pools (vision/document/thinking caps), redaction-aware context capture. Fully offline-testable (`MockTransport`/`ScriptedTransport`). |
-| `caps` | The native tool catalog agents call (fs/sys/web/memory/data/todo/task/…): a registry of `NativeObject`s, pure over `CapCtx` (policy + data dirs + the write sandbox = the invocation directory). |
-| `cli` | The headless subcommands: `ai` (Q&A / command / agent / flow / loop / job), `profile`, `plugin`, `config`, `theme`. This is what the `@`-commands invoke. |
+| `caps` | The native tool catalog agents call (fs/sys/web/memory/data/todo/task/…): a registry of `NativeObject`s, pure over `CapCtx` (policy + data dirs + the write sandbox = the invocation directory). The implementations sit in `caps/backends/`, one file per family. |
+| `cli` | The headless subcommands: `ai` (Q&A / command / agent / flow / loop / job), `profile`, `plugin`, `config`, `theme`. This is what the `@`-commands invoke. One file per surface, with `flow/`, `agentloop/` and `jobs/` each a directory. |
 | `flow` | The `@flow` graph: the model + parser, the `when` language, the static verifier that proves a graph before it spends, the Markdown+mermaid document it draws (`doc`), and the live board — one state machine, two interchangeable `View`s (`board/graph`, `board/list`). |
 | `plugin` | Declarative plugins: manifest parsing, the registry (aliases/abbr/completions/segments/security rules/snippets), the store. |
 | `security` | The command guard (allow/confirm/deny, regex over the in-house `re` engine) + scoped redaction. Deny wins. |
-| `config` | `~/.aiTerminal/config.toml` load/bootstrap/seeding + the profile overlay layering. |
+| `config` | `~/.aiTerminal/config.toml` load/bootstrap/seeding + the profile overlay layering. Every `[section]` is applied by its own function, dispatched from one table. |
 | `profile` | Named profiles: per-profile `config.toml` overlay + saved window state + the active pointer. |
 | `i18n` | The locale catalog behind every user-facing string (bundled en/fr + user overrides, `[appearance] locale`). |
 | `shell` | Shell integration: generates the zsh/bash init (aliases, completions, trusted plugin snippets, non-destructive via ZDOTDIR / --rcfile) and the live `colors.sh` running shells re-source on theme switches. |
@@ -128,7 +150,8 @@ loop simple and every AI interaction scriptable.
 ```sh
 cargo build --workspace --all-targets
 cargo test  --workspace                 # hermetic: mock transports, temp HOMEs
-bash tools/check_no_crates.sh && bash tools/check_layers.sh && bash tools/check_unsafe.sh
+bash tools/check_no_crates.sh && bash tools/check_layers.sh \
+  && bash tools/check_unsafe.sh && bash tools/check_file_size.sh
 ```
 
 Useful headless proofs (no window needed):

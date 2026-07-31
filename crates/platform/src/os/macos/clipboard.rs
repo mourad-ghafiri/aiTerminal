@@ -46,20 +46,4 @@ pub fn read() -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn round_trips_through_the_system_pasteboard() {
-        // Save whatever the USER has on the pasteboard first and restore it after —
-        // a test must never clobber real clipboard contents.
-        let saved = read();
-        let val = "aiTerminal-clipboard-test-世界-🚀";
-        write(val);
-        let got = read();
-        if let Some(prev) = saved {
-            write(&prev);
-        }
-        assert_eq!(got.as_deref(), Some(val));
-    }
-}
+mod tests;

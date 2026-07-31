@@ -1348,16 +1348,23 @@ scope   = <span class="s">"ai"</span></code></pre>
 
     <h2 id="architecture">Architecture</h2>
     <p>A four-layer Rust workspace — <code>corelib &lt; platform &lt; framework &lt; app</code> —
-      with three CI gates: <b>zero external crates</b> in the lockfile, strict layer edges, and
+      with four CI gates: <b>zero external crates</b> in the lockfile, strict layer edges,
       <code>unsafe</code> confined to <code>platform/src/os/</code> (every other crate root forbids
-      it). ~52k lines of Rust, and a test suite covered in <a href="#testing">Testing</a> below.</p>
+      it), and <b>no source file over 1000 lines</b>. ~78k lines of Rust, and a test suite covered
+      in <a href="#testing">Testing</a> below.</p>
+    <p>That last gate is aimed at contributors rather than at the binary. A file nobody reads end to
+      end is a file nobody can change safely, so a module that outgrows the limit is split along a
+      boundary it already has — <code>cli/</code> into one file per surface, <code>caps/backends/</code>
+      by tool family, <code>term/</code> by what the VT engine does. Unit tests live in
+      <code>&lt;module&gt;/tests/</code> beside the code, never inline, so reading the production
+      source means reading only the production source.</p>
     <p>The performance model: the event loop <b>idles</b> (~0% CPU, one wake per real change,
       renders paced to 60&nbsp;Hz and damage-tracked to the GPU); every stream, subprocess and
       transcript carries a named byte cap with an over-cap regression test; every deadline kills
       its child; the regex engine is step-budgeted; a panic degrades to one dropped frame.</p>
 
     <h2 id="testing">Testing</h2>
-    <p><b>854 unit tests</b> and <b>173 scenarios</b>, running in a few seconds with no network and
+    <p><b>1305 unit tests</b> and <b>271 scenarios</b>, running in a few seconds with no network and
       no API key. A unit test proves a function; a <b>scenario</b> proves a product — a real user
       journey written as TOML and played against the real code.</p>
     <pre><code><span class="p">❯</span> cargo test --workspace                          <span class="c"># everything</span>
@@ -1366,14 +1373,15 @@ scope   = <span class="s">"ai"</span></code></pre>
   ai scenarios
   <span class="ok">✓</span> a destructive suggestion is blocked before it can reach the shell
   <span class="ok">✓</span> a chatty model cannot smuggle a second command into your shell
-  22/23 passed</code></pre>
+  27/27 passed</code></pre>
     <p>The distinction earns its keep. When <code>@gate</code> shipped with a large unit suite and
       users still hit bugs, 35 scenarios against that same code found <b>22 defects</b> — failures
       of product behaviour that a unit test is structurally unable to see. There is now a folder of
-      scenarios per feature: <code>gate</code> 35 · <code>ai</code> 23 · <code>terminal</code> 22 ·
-      <code>markdown</code> 20 · <code>config</code> 16 · <code>security</code> 15 ·
-      <code>plugins</code> 14 · <code>shell</code> 10 · <code>keymap</code> 10 ·
-      <code>theme</code> 8. Each folder asserts a minimum count, so coverage cannot silently shrink.</p>
+      scenarios per feature: <code>gate</code> 35 · <code>markdown</code> 28 · <code>flow</code> 27 ·
+      <code>ai</code> 27 · <code>terminal</code> 22 · <code>jobs</code> 20 · <code>cli</code> 18 ·
+      <code>config</code> 16 · <code>security</code> 15 · <code>plugins</code> 14 ·
+      <code>loop</code> 13 · <code>shell</code> 10 · <code>keymap</code> 10 · <code>theme</code> 8 ·
+      <code>memory</code> 8. Each folder asserts a minimum count, so coverage cannot silently shrink.</p>
     <p>The suite is <b>hermetic and harmless by design</b>. All AI is mocked — scenarios write what
       the model replies, encode it as the provider's real SSE wire format and decode it with the
       real decoder, so the streaming path runs with no socket and no key. Nothing spawns a process,

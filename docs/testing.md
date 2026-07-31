@@ -1,6 +1,6 @@
 # Testing
 
-aiTerminal has **1275 unit tests** and **268 scenarios**, and the whole suite runs in a
+aiTerminal has **1305 unit tests** and **271 scenarios**, and the whole suite runs in a
 few seconds with no network, no API key, no window, and no changes to your machine.
 
 ```sh
@@ -29,7 +29,7 @@ So the suite has both, and they are aimed at different targets.
 
 | | Unit tests | Scenarios |
 | --- | --- | --- |
-| Live in | `#[cfg(test)] mod tests` beside the code | `scenarios/<feature>/*.toml` |
+| Live in | `<module>/tests/` beside the code | `scenarios/<feature>/*.toml` |
 | Written in | Rust | declarative TOML |
 | Prove | a function's contract | a user journey end to end |
 | Read like | `a_single_keystroke_is_never_wrapped_in_a_paste` | *a destructive suggestion is blocked before it can reach the shell* |
@@ -39,8 +39,9 @@ So the suite has both, and they are aimed at different targets.
 
 ## Unit tests
 
-854 of them, beside the code they test. Named as sentences, so a failure reads as a
-statement about the product rather than a symbol that broke:
+1305 of them (857 in `framework`, 318 in `corelib`, 130 in `platform`), beside the code
+they test. Named as sentences, so a failure reads as a statement about the product rather
+than a symbol that broke:
 
 ```
 ✗ a_chatty_model_cannot_smuggle_a_second_line
@@ -51,6 +52,31 @@ statement about the product rather than a symbol that broke:
 They cover every pure module: the engines (`term`, `gfx`, `wire`, `re`), the AI runtime,
 the `caps` tool families, plugins, security, config, profiles, i18n, the CLI, and the
 pure GUI logic (panes, keymap actions, link routing, workspace persistence).
+
+### Where they live
+
+Each module keeps its tests in a `tests/` folder beside it, declared with one line at the
+bottom of the source file:
+
+```
+crates/framework/src/config/
+  mod.rs          ← ends with `#[cfg(test)] mod tests;`
+  apply.rs
+  paths.rs
+  tests/
+    mod.rs        ← `use super::*;` still sees every private item
+```
+
+A **child module**, deliberately — not a crate-level `tests/` directory. Rust's
+integration tests can only see `pub` items, and most of these suites assert on private
+functions (`fs_write_guard`, `apply_toml`, `shell_split`, `LiveMarkdown::feed`). Making
+them public to test them would widen the API surface for the benefit of the test suite,
+which is the wrong trade. A child module sees everything its parent can, so the tests
+read the same as when they sat inline — they just no longer sit between you and the code.
+
+Where a suite grows past the file-size gate it splits by the surface it exercises
+(`cli/tests/{display,flow,jobs,loops,run,subcommands}.rs`), with the mocks they share in
+`tests/mod.rs`.
 
 ### Cap regressions
 
@@ -245,24 +271,27 @@ no alias hint ever fired. Both skip cleanly where the shell isn't installed.
 
 ## Architectural gates
 
-Three scripts guard the project's structural promises. They are not tests of behaviour —
+Four scripts guard the project's structural promises. They are not tests of behaviour —
 they fail the build when an invariant is broken.
 
 ```sh
 bash tools/check_no_crates.sh   # 🚫 no third-party crate may enter the build
 bash tools/check_layers.sh      # 🧱 every cross-layer edge is the immediately-lower facade
 bash tools/check_unsafe.sh      # 🔒 all unsafe is confined to platform/src/os/
+bash tools/check_file_size.sh   # 📏 no source file over 1000 lines
 ```
 
 The zero-crate gate reads `Cargo.lock` and rejects any source that is not a workspace
 member — direct or transitive. The layer gate enforces `corelib < platform < framework <
 app`. The unsafe gate keeps every `unsafe` block inside the FFI seam, which is why
-`framework` can carry `#![forbid(unsafe_code)]`.
+`framework` can carry `#![forbid(unsafe_code)]`. The file-size gate is the newest, and
+the one aimed at contributors rather than at the binary: a file nobody reads end to end
+is a file nobody can change safely, so the split has to happen while it is still cheap.
 
 `.github/workflows/ci.yml` builds and tests on macOS, Linux and Windows on every push and
-pull request, then runs the zero-crate and layer gates. **The unsafe gate is not yet
-wired into CI** — run it locally, or add it as a step alongside the other two. All three
-must be run with `bash`, not `sh`.
+pull request, then runs the zero-crate and layer gates. **The unsafe and file-size gates
+are not yet wired into CI** — run them locally, or add them as steps alongside the other
+two. All four must be run with `bash`, not `sh`.
 
 ---
 
