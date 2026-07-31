@@ -62,13 +62,15 @@ you screen-share or record).
 
 ### What it looks like
 
-Real output from the shipped rules:
+What the shipped rules do, line for line. Each secret is written as its **prefix only**
+(`AKIA…`, `sk-ant-…`) — a document about not leaking secrets should not itself contain
+anything shaped like one, and the rule that matches each is listed below anyway:
 
 ```
 DATABASE_URL=postgres://db.internal/prod      →  DATABASE_URL=postgres://db.internal/prod
-AWS_ACCESS_KEY_ID=AKIA3RJHF2P9QLXMZB4T        →  AWS_ACCESS_KEY_ID=«redacted»
-ANTHROPIC_API_KEY=sk-ant-api03-9Fk2LmQ7xTvB   →  ANTHROPIC_«redacted»
-GITHUB_TOKEN=ghp_8sK2mVx91QpLzR4tYnB7wDe3Fg   →  GITHUB_«redacted»
+AWS_ACCESS_KEY_ID=AKIA…                       →  AWS_ACCESS_KEY_ID=«redacted»
+ANTHROPIC_API_KEY=sk-ant-…                    →  ANTHROPIC_«redacted»
+GITHUB_TOKEN=ghp_…                            →  GITHUB_«redacted»
 LOG_LEVEL=debug                               →  LOG_LEVEL=debug
 ```
 

@@ -9,7 +9,7 @@ tags = ["redaction"]
 redact_ai = ["sk-[A-Za-z0-9_-]{8,}", "(?i)(api[_-]?key|token)[\"']?\\s*[:=]\\s*\\S+"]
 
 [[step]]
-redact = "ANTHROPIC_API_KEY=sk-ant-api03-9Fk2LmQ7xTvB"
+redact = "ANTHROPIC_API_KEY=sk-ant-example-only-not-a-key"
 scope = "ai"
 
 [[step]]

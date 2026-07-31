@@ -132,9 +132,13 @@ fn command_guard_plugin_enforces_default_deny_and_confirm() {
 fn redactor_plugin_is_the_single_redaction_source() {
     use crate::security::RedactScope::Ai;
     let p = default_policy();
-    // Each secret is an INERT literal; the redactor plugin's rules must scrub it.
-    assert!(!p.redact("key sk-ant-api03-AbCd1234EfGh5678IjKl", Ai).contains("AbCd1234EfGh5678IjKl"));
-    assert!(!p.redact("AKIA1234567890ABCDEF here", Ai).contains("AKIA1234567890ABCDEF"));
+    // Each "secret" is an INERT literal that the redactor plugin's rules must scrub.
+    // They keep the SHAPE a rule matches — that is what is under test — but carry no
+    // entropy, so they are recognisably placeholders rather than anything that reads
+    // like a credential. Nothing that could be mistaken for a real key belongs in a
+    // repository, least of all in the tests for the thing that hides keys.
+    assert!(!p.redact("key sk-ant-example-only-not-a-key", Ai).contains("example-only-not-a-key"));
+    assert!(!p.redact("AKIAEXAMPLEONLY00000 here", Ai).contains("AKIAEXAMPLEONLY00000"));
     assert!(!p.redact("Authorization: Bearer eyJabc.def.ghi", Ai).contains("eyJabc.def.ghi"));
     assert!(!p.redact("API_KEY=supersecretvalue123", Ai).contains("supersecretvalue123"));
     // ordinary text is untouched

@@ -8,12 +8,12 @@ fn redact_survives_a_pathological_rule_on_long_input() {
     let mut p = Policy::new();
     p.add_redaction("(a+)+$", "«boom»", RedactScope::Terminal, false).unwrap();
     p.add_redaction("AKIA[0-9A-Z]{16}", "«key»", RedactScope::Terminal, false).unwrap();
-    let long = "a".repeat(10_000) + "b AKIA1234567890ABCDEF tail";
+    let long = "a".repeat(10_000) + "b AKIAEXAMPLEONLY00000 tail";
     let t = std::time::Instant::now();
     let out = p.redact(&long, RedactScope::Terminal);
     assert!(t.elapsed() < std::time::Duration::from_millis(200), "took {:?}", t.elapsed());
     assert!(out.contains("«key»"), "the healthy rule still applies");
-    assert!(!out.contains("AKIA1234567890ABCDEF"));
+    assert!(!out.contains("AKIAEXAMPLEONLY00000"));
     assert!(out.starts_with(&"a".repeat(100)), "the pathological rule left the text alone");
 }
 

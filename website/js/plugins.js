@@ -328,7 +328,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "redactor": {
       text: "Secret redaction before AI egress — AWS/OpenAI/GitHub keys, JWTs, PEM blocks.",
       demo: (w) => [
-        { do: "cmd", text: "export AWS_KEY=AKIA1234567890ABCDEF" },
+        { do: "cmd", text: "export AWS_KEY=AKIA…" },
         { do: "cmd", text: "@ai why did the deploy fail?" },
         { do: "out", spans: [DIM("  context sent: export AWS_KEY="), WARN("«redacted»")] },
         { do: "out", spans: [DIM("  the model never sees your secrets")] },

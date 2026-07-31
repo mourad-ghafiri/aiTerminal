@@ -351,12 +351,17 @@ function makePhone(host) {
    Two aligned columns so the eye can pair them line for line. The right-hand
    side is not invented: these are the exact strings the shipped `redactor`
    rules produce, including the cases where the `KEY=value` rule takes the key
-   name with it (`ANTHROPIC_API_KEY=sk-…` → `ANTHROPIC_«redacted»`). */
+   name with it (`ANTHROPIC_API_KEY=sk-…` → `ANTHROPIC_«redacted»`).
+
+   The left column shows each secret as its PREFIX only. Nothing on this site is
+   shaped like a real credential — a page about not leaking secrets should not be
+   the thing a secret scanner has to think about. The third column carries the
+   rule that matched, which is the part that actually documents anything. */
 const REDACT_ROWS = [
   ["DATABASE_URL=postgres://db.internal/prod", "DATABASE_URL=postgres://db.internal/prod", ""],
-  ["AWS_ACCESS_KEY_ID=AKIA3RJHF2P9QLXMZB4T", "AWS_ACCESS_KEY_ID=«redacted»", "AKIA[0-9A-Z]{16}"],
-  ["ANTHROPIC_API_KEY=sk-ant-api03-9Fk2LmQ7xTvB", "ANTHROPIC_«redacted»", "sk-[A-Za-z0-9_-]{16,}"],
-  ["GITHUB_TOKEN=ghp_8sK2mVx91QpLzR4tYnB7wDe3Fg", "GITHUB_«redacted»", "gh[pousr]_[A-Za-z0-9]{20,}"],
+  ["AWS_ACCESS_KEY_ID=AKIA…", "AWS_ACCESS_KEY_ID=«redacted»", "AKIA[0-9A-Z]{16}"],
+  ["ANTHROPIC_API_KEY=sk-ant-…", "ANTHROPIC_«redacted»", "sk-[A-Za-z0-9_-]{16,}"],
+  ["GITHUB_TOKEN=ghp_…", "GITHUB_«redacted»", "gh[pousr]_[A-Za-z0-9]{20,}"],
   ["LOG_LEVEL=debug", "LOG_LEVEL=debug", ""],
 ];
 

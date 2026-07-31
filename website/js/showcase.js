@@ -705,8 +705,8 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "call", fn: async () => { await g.type("cat .env"); g.send("cat .env"); await sleep(280); } },
           { do: "out", spans: [ACC("  ▸ Mourad: "), FG("cat .env")], ms: 200 },
           { do: "cmd", text: "cat .env", speed: 12 },
-          { do: "out", spans: [ACC2("AWS_ACCESS_KEY_ID"), MUT("="), WARN("AKIA3RJHF2P9QLXMZB4T")], ms: 90 },
-          { do: "out", spans: [ACC2("ANTHROPIC_API_KEY"), MUT("="), WARN("sk-ant-api03-9Fk2LmQ7xTvB")], ms: 90 },
+          { do: "out", spans: [ACC2("AWS_ACCESS_KEY_ID"), MUT("="), WARN("AKIA…")], ms: 90 },
+          { do: "out", spans: [ACC2("ANTHROPIC_API_KEY"), MUT("="), WARN("sk-ant-…")], ms: 90 },
           { do: "out", spans: [ACC2("LOG_LEVEL"), MUT("="), FG("debug")], ms: 260 },
           { do: "out", spans: [MUT("  ◂ sent 3 lines to telegram "), OK("· 2 redacted")], ms: 300 },
           { do: "call", fn: async () => {
@@ -834,9 +834,9 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "pause", ms: 300 },
           { do: "cmd", text: "cat .env" },
           { do: "out", spans: [ACC2("DATABASE_URL"), MUT("="), FG("postgres://db.internal/prod")], ms: 70 },
-          { do: "out", spans: [ACC2("AWS_ACCESS_KEY_ID"), MUT("="), WARN("AKIA3RJHF2P9QLXMZB4T")], ms: 70 },
-          { do: "out", spans: [ACC2("ANTHROPIC_API_KEY"), MUT("="), WARN("sk-ant-api03-9Fk2LmQ7xTvB")], ms: 70 },
-          { do: "out", spans: [ACC2("GITHUB_TOKEN"), MUT("="), WARN("ghp_8sK2mVx91QpLzR4tYnB7wDe3Fg")], ms: 70 },
+          { do: "out", spans: [ACC2("AWS_ACCESS_KEY_ID"), MUT("="), WARN("AKIA…")], ms: 70 },
+          { do: "out", spans: [ACC2("ANTHROPIC_API_KEY"), MUT("="), WARN("sk-ant-…")], ms: 70 },
+          { do: "out", spans: [ACC2("GITHUB_TOKEN"), MUT("="), WARN("ghp_…")], ms: 70 },
           { do: "out", spans: [ACC2("LOG_LEVEL"), MUT("="), FG("debug")], ms: 900 },
 
           // your own machine shows you everything — the boundary is egress, not display

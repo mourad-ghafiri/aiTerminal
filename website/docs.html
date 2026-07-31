@@ -603,12 +603,11 @@ background jobs (3):
       <a href="https://t.me/BotFather" target="_blank" rel="noopener"><b>@BotFather</b></a> — it is
       Telegram's own bot for making bots. Send <code>/newbot</code>. It asks for a display name
       (anything, e.g. <code>My Terminal</code>), then a username that must be unique and end in
-      <code>bot</code> (e.g. <code>mourad_term_bot</code>). It replies with a token that looks like
-      this:</p>
-    <pre><code>123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw</code></pre>
+      <code>bot</code> (e.g. <code>mourad_term_bot</code>). It replies with a token — a run of digits,
+      a colon, then a long random tail. Treat it as a password: anyone holding it can drive your bot.</p>
     <p><b>2 — Put the token in your environment, not in the config file.</b> Add this to your shell
       profile (<code>~/.zshrc</code>), so it is not sitting in a file you might share or commit:</p>
-    <pre><code><span class="p">❯</span> export TELEGRAM_BOT_TOKEN='123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw'</code></pre>
+    <pre><code><span class="p">❯</span> export TELEGRAM_BOT_TOKEN=<span class="s">'&lt;paste the token BotFather sent you&gt;'</span></code></pre>
     <p><b>3 — Turn gates on</b> in <code>~/.aiTerminal/config.toml</code>. The
       <code>"$VAR"</code> form is read from the environment at start:</p>
     <pre><code><span class="k">[gates]</span>
@@ -1265,8 +1264,8 @@ Added <span class="ab">--json</span> to the export command, with a test.
 
     <pre><code><span class="p">❯</span> cat .env
 DATABASE_URL=postgres://db.internal/prod
-AWS_ACCESS_KEY_ID=<span class="w">AKIA3RJHF2P9QLXMZB4T</span>
-ANTHROPIC_API_KEY=<span class="w">sk-ant-api03-9Fk2LmQ7xTvB</span>
+AWS_ACCESS_KEY_ID=<span class="w">AKIA…</span>
+ANTHROPIC_API_KEY=<span class="w">sk-ant-…</span>
 LOG_LEVEL=debug
 
 <span class="c"># what actually leaves for the model</span>
@@ -1274,6 +1273,10 @@ DATABASE_URL=postgres://db.internal/prod        <span class="c">← untouched</s
 AWS_ACCESS_KEY_ID=<span class="ok">«redacted»</span>
 <span class="ok">ANTHROPIC_«redacted»</span>
 LOG_LEVEL=debug                                 <span class="c">← untouched</span></code></pre>
+
+    <div class="callout">Each key above is written as its <b>prefix only</b> — a page about not
+      leaking secrets should not itself carry anything shaped like one. The rules that match the
+      full values are in the table below.</div>
 
     <p>Two things to read off that. Redaction is <b>targeted</b> — the connection string and the log
       level pass through, so the model keeps enough context to be useful. And rules <b>compose</b>:
