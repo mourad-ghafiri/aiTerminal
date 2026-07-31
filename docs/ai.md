@@ -126,7 +126,35 @@ You are a careful senior engineer. …
 
 - Agents live in `~/.aiTerminal/ai/agents/<name>.md`; **8 bundled**: `ai`,
   `coder`, `explorer`, `planner`, `researcher`, `reviewer`, `tester`, `writer`.
-  `@agent` lists them, `@agent <name>` shows one in full — tools, skills, steps.
+
+  `@agent` lists them with what each is made of and what it is *for* — the
+  description in full rather than clipped at the window's edge, and the skills
+  spliced into its prompt, which are half of why two agents with the same tools
+  behave differently:
+
+  ```text
+  ❯ @agent
+  agents (8):
+    served by claude-sonnet-5
+
+    @coder       25 tools · 8 skills · 24 steps
+        Senior engineer + orchestrator — explores, makes the smallest correct
+        edit, verifies, delegates.
+        skills   concise · planning · orchestration · code-review · testing · …
+
+    @explorer    7 tools · 1 skill · 12 steps
+        Fast read-only scout — maps the relevant code and reports back tightly.
+        skills   concise
+  ```
+
+  The model is named once, at the top, because it is a property of the `[ai]`
+  pool and not of any agent — printing it on all eight rows would imply a
+  per-agent setting that does not exist. A weighted pool says *one of*.
+
+  `@agent <name>` shows one in full: the same header, then its tools **grouped by
+  family**, so "it can read files and run commands but not reach the network" is
+  one glance rather than twelve lines read one at a time — then the output
+  contract a flow node chains on, and the file's own path.
 - **Skills** (`ai/skills/*.md`) and **prompts** (`ai/prompts/*.md`) are reusable
   Markdown blocks spliced into an agent's system prompt by name, **in the order
   the agent declared them** — so the list reads as a priority, and the same agent
@@ -396,8 +424,8 @@ time stacks in one column, and the arrows only ever point the way the work moves
   ⠻ apply · @coder · claude-opus-5
     running · attempt 2 · 18.4s · 9.1k tokens · 4 tool calls · needs plan, explore
     ⚙ fs.read src/cli.rs · 9ms · 6KB
-    ⚙ fs.edit src/cli.rs · 12ms · 1.4KB
-    ⚙ sys.run cargo test · 2.1s · exit 0
+    ⚙ fs.edit src/cli.rs · 12ms · 1 replaced
+    ⚙ sys.run cargo test · 2.1s · 48 lines
   3/8 done · 1 running · 21.3k tokens · 24.6s
 ```
 
@@ -697,11 +725,24 @@ stderr, content on stdout, so piping stays clean:
 ❯ @coder "fix the failing parser test"
 ✦ @coder · claude-opus-4-8
 ⠹ thinking…                          ← animated while the model reasons
-  ⚙ fs.search {"q":"parse_flow"} · 18ms · 2.1KB
-  ⚙ fs.edit {"path":"src/…"} · 6ms · 412B
+  ⚙ fs.search "parse_flow" · 18ms · 6 results
+  ⚙ fs.edit src/flow/parse.rs · 6ms · 1 replaced
 The fix: the parser dropped the …    ← the answer, streaming
 ✓ 8.4s · 2 tools · 12.3k in / 1.8k out · ~$0.014
 ```
+
+A tool line says **what the call was acting on**, not the argument JSON it arrived as.
+`fs.read {"path":"crates/framework/src/cli/runn` is the wire format truncated at a fixed
+width — unreadable at a glance, and it reliably cuts the one part you were reading. So
+the subject is picked out and a long one is elided in the *middle*, because a path's last
+component is what you were looking for. What came back is read the same way, off the
+JSON's shape: an array is a count of results, a listing counts its entries, multi-line
+output counts its lines, and anything else is how much of it there was.
+
+Nothing in that knows a tool by name. A table of per-tool formatters would be a second
+registry to keep in step with `caps`, and wrong the day an MCP server exposes a tool this
+build has never heard of — which still gets a readable line, because arguments have names
+whatever the tool is.
 
 A **`@flow`** shows a live board — the graph, drawn as cards and repainted in place (see
 [Watching it run](#watching-it-run)); a **`@loop`** shows each iteration and a footer

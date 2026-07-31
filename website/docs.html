@@ -221,10 +221,17 @@ The most common causes are cache invalidation and copying node_modules…</code>
 <span class="p">❯</span> @coder "fix the failing parser test"
 <span class="a">✦ @coder · claude-opus-4-8</span>
 <span class="c">∴ thinking…</span>
-<span class="c">  ⚙ fs.search {"q":"parse_line"} · 18ms · 2.1KB</span>
-<span class="c">  ⚙ fs.edit {"path":"src/…"} · 6ms · 412B</span>
+<span class="c">  ⚙ fs.search "parse_line" · 18ms · 6 results</span>
+<span class="c">  ⚙ fs.edit src/parser.rs · 6ms · 1 replaced</span>
 The fix: the parser dropped the final line …
 <span class="c">✓ 8.4s · 2 tools · 12.3k in / 1.8k out</span></code></pre>
+    <p>A tool line says <b>what the call was acting on</b>, not the argument JSON it arrived as —
+      <code>fs.read {"path":"crates/framework/src/cli/runn</code> is the wire format cut at a fixed
+      width, and it reliably takes the one part you were reading. A long subject is elided in the
+      <em>middle</em>, because a path's last component is what you were looking for. What came back
+      is read off the JSON's shape: an array is a count of results, a listing counts its entries, and
+      multi-line output counts its lines. Nothing in that knows a tool by name, so a tool an MCP server exposes
+      that this build has never heard of still gets a readable line.</p>
     <p>An agent is a Markdown file with TOML frontmatter — system prompt, allowed tools, step
       budget, skills. <code>@agent</code> lists the eight that ship; <code>@agent &lt;name&gt;</code>
       shows one in full.</p>
@@ -402,8 +409,8 @@ Map the code, review it three ways in parallel, then merge into one verdict
   <span class="a">⠻ apply · @coder · claude-opus-5</span>
     <span class="c">running · attempt 2 · 18.4s · 9.1k tokens · 4 tool calls · needs plan, explore</span>
     <span class="c">⚙ fs.read src/cli.rs · 9ms · 6KB</span>
-    <span class="c">⚙ fs.edit src/cli.rs · 12ms · 1.4KB</span>
-    <span class="c">⚙ sys.run cargo test · 2.1s · exit 0</span>
+    <span class="c">⚙ fs.edit src/cli.rs · 12ms · 1 replaced</span>
+    <span class="c">⚙ sys.run cargo test · 2.1s · 48 lines</span>
   <span class="c">3/8 done · 1 running · 21.3k tokens · 24.6s</span></code></pre>
     <p><b>The shape.</b> <code>explore</code> and <code>conventions</code> share a column because
       they run at the same time; <code>apply</code> is to their right because it waits for both.
@@ -1192,8 +1199,8 @@ Read it with fs.read when you need more.</span></code></pre>
       only that we do not disturb the order.</p>
     <p>The saving is a number, not a claim:</p>
     <pre><code><span class="p">❯</span> @coder "add a --json flag to the export command"
-<span class="c">  ⚙ fs.read {"path":"src/cli.rs"} · 9ms · 6KB</span>
-<span class="c">  ⚙ fs.edit {"path":"src/cli.rs"} · 12ms · 1.4KB</span>
+<span class="c">  ⚙ fs.read src/cli.rs · 9ms · 6KB</span>
+<span class="c">  ⚙ fs.edit src/cli.rs · 12ms · 1 replaced</span>
 
 Added <span class="ab">--json</span> to the export command, with a test.
 <span class="c">✓ 8.4s · 3 tools · 12.3k in / 1.8k out (11.1k cached, 90%) · ~$0.004</span></code></pre>
@@ -1396,7 +1403,7 @@ scope   = <span class="s">"ai"</span></code></pre>
       its child; the regex engine is step-budgeted; a panic degrades to one dropped frame.</p>
 
     <h2 id="testing">Testing</h2>
-    <p><b>1327 unit tests</b> and <b>273 scenarios</b>, running in a few seconds with no network and
+    <p><b>1341 unit tests</b> and <b>274 scenarios</b>, running in a few seconds with no network and
       no API key. A unit test proves a function; a <b>scenario</b> proves a product — a real user
       journey written as TOML and played against the real code.</p>
     <pre><code><span class="p">❯</span> cargo test --workspace                          <span class="c"># everything</span>

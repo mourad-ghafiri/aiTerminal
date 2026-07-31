@@ -1,0 +1,41 @@
+name = "the roster reads on a machine with no model configured"
+tags = ["cli", "agent"]
+
+# Reading what you have is not the same as running it, and it must not need a key. This
+# is the machine somebody evaluating aiTerminal is sitting at: nothing configured, and
+# the first question is "what can this thing do".
+#
+# The listing has to survive that honestly — which model serves an agent is a property of
+# the `[ai]` pool, so with no pool there is no model, and saying so beats printing a
+# plausible default or a blank column.
+
+[setup]
+home = "agents-offline"
+
+[[step]]
+run = "@agent"
+
+[[step]]
+expect_exit = 0
+
+# One in full — tools grouped by family, skills, the output contract, the file's path.
+[[step]]
+run = "@agent coder"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@agent explorer"
+
+[[step]]
+expect_exit = 0
+
+# A name nobody installed is an error with a suggestion, never the nearest agent run by
+# falling through. `@agent codr` must not quietly show you `coder` and let you believe
+# that is the file you were asking about.
+[[step]]
+run = "@agent codr"
+
+[[step]]
+expect_exit = 2

@@ -1,6 +1,6 @@
 # Testing
 
-aiTerminal has **1327 unit tests** and **273 scenarios**, and the whole suite runs in a
+aiTerminal has **1341 unit tests** and **274 scenarios**, and the whole suite runs in a
 few seconds with no network, no API key, no window, and no changes to your machine.
 
 ```sh
@@ -39,7 +39,7 @@ So the suite has both, and they are aimed at different targets.
 
 ## Unit tests
 
-1327 of them (865 in `framework`, 332 in `corelib`, 130 in `platform`), beside the code
+1341 of them (879 in `framework`, 332 in `corelib`, 130 in `platform`), beside the code
 they test. Named as sentences, so a failure reads as a statement about the product rather
 than a symbol that broke:
 
@@ -131,7 +131,7 @@ scenario must never pass silently.
 
 ### Coverage
 
-273 journeys across every feature. Each folder's test asserts a minimum count, so
+274 journeys across every feature. Each folder's test asserts a minimum count, so
 coverage cannot silently shrink.
 
 | Folder | # | What a journey drives |
@@ -142,7 +142,7 @@ coverage cannot silently shrink.
 | `ai/` | 27 | model reply → command or answer, the guard, the agent tool loop |
 | `terminal/` | 22 | the VT engine — grid, colour, wide glyphs, scrollback, DEC modes |
 | `jobs/` | 20 | scheduling, occurrence logs, and what a job reports when it stops |
-| `cli/` | 18 | the `@`-command surface: profiles, themes, config, plugins, documents, offline flow verbs, jobs, gates |
+| `cli/` | 19 | the `@`-command surface: profiles, themes, config, plugins, documents, offline flow verbs, jobs, gates |
 | `config/` | 16 | config parsing and the profile overlay |
 | `security/` | 15 | the command guard and the redactor |
 | `plugins/` | 14 | what a `plugin.toml` composes into, and what trust gates |

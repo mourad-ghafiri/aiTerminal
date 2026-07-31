@@ -37,7 +37,10 @@ document.addEventListener("DOMContentLoaded", () => {
           await streamLine(w, [DIM(st.text)], { paneIdx: st.paneIdx, speed: 9, prefix: [DIM("∴ ")] });
           break;
         case "tool":
-          w.line([DIM(`  ⚙ ${st.name} ${st.args} · ${st.ms}ms · ${st.size}`)], st.paneIdx);
+          /* The real trace shows WHAT a call is acting on, never the argument JSON it
+             arrived as, and a duration in the unit a person would have used. */
+          const dur = st.ms < 1000 ? `${st.ms}ms` : `${(st.ms / 1000).toFixed(1)}s`;
+          w.line([DIM(`  ⚙ ${st.name} ${st.args} · ${dur} · ${st.size}`)], st.paneIdx);
           await sleep(st.wait || 300);
           break;
         case "spin": await spinner(w, st.label || "thinking…", st.ms || 900, st); break;
@@ -257,17 +260,17 @@ document.addEventListener("DOMContentLoaded", () => {
           /* everyday: nothing here is about code */
           { do: "cmd", text: "@researcher \"which cordless drills do reviewers actually rate, and why\"" },
           { do: "out", spans: [ACC("✦ @researcher"), MUT(" · claude-opus-4-8")] },
-          { do: "tool", name: "web.search", args: '{"query":"cordless drill reviews 2026"}', ms: 340, size: "3.4KB" },
-          { do: "tool", name: "web.read", args: '{"url":"https://…/tool-reviews"}', ms: 1180, size: "18KB" },
-          { do: "tool", name: "web.read", args: '{"url":"https://…/teardown"}', ms: 940, size: "11KB" },
+          { do: "tool", name: "web.search", args: '"cordless drill reviews 2026"', ms: 340, size: "8 results" },
+          { do: "tool", name: "web.read", args: "https://…/tool-reviews", ms: 1180, size: "18KB" },
+          { do: "tool", name: "web.read", args: "https://…/teardown", ms: 940, size: "11KB" },
           { do: "stream", spans: [FG("Three names recur, for two different reasons — and one of them is a rebrand. Sources and dates below; I could not confirm the torque figure anywhere.")], speed: 10 },
           { do: "footer", text: "14.2s · 3 tools · 9.1k in / 1.4k out (7.6k cached, 83%)" },
           { do: "pause", ms: 1100 },
 
           { do: "cmd", text: "@writer \"turn @notes.md into a one-page brief at brief.md\"" },
           { do: "out", spans: [ACC("✦ @writer"), MUT(" · claude-opus-4-8")] },
-          { do: "tool", name: "fs.read", args: '{"path":"notes.md"}', ms: 4, size: "3.9KB" },
-          { do: "tool", name: "fs.write", args: '{"path":"brief.md"}', ms: 6, size: "2.1KB" },
+          { do: "tool", name: "fs.read", args: "notes.md", ms: 4, size: "3.9KB" },
+          { do: "tool", name: "fs.write", args: "brief.md", ms: 6, size: "2.1KB" },
           { do: "stream", spans: [FG("Wrote brief.md — one page, the decision first. Two claims I could not check are marked.")], speed: 10 },
           { do: "pause", ms: 1100 },
 
@@ -276,10 +279,10 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "out", spans: [ACC("✦ @coder"), MUT(" · claude-opus-4-8")] },
           { do: "spin", label: "thinking…", ms: 900 },
           { do: "think", text: "The test expects a trailing newline — the parser drops it on the last line…" },
-          { do: "tool", name: "todo.set", args: '{"items":["find it","fix it","re-run"]}', ms: 3, size: "88B" },
-          { do: "tool", name: "fs.search", args: '{"q":"parse_line"}', ms: 18, size: "2.1KB" },
-          { do: "tool", name: "fs.edit", args: '{"path":"src/parser.rs"}', ms: 6, size: "412B" },
-          { do: "tool", name: "sys.run", args: '{"cmd":"cargo test parser"}', ms: 2100, size: "1.4KB" },
+          { do: "tool", name: "todo.set", args: "find it", ms: 3, size: "3 entries" },
+          { do: "tool", name: "fs.search", args: '"parse_line"', ms: 18, size: "6 results" },
+          { do: "tool", name: "fs.edit", args: "src/parser.rs", ms: 6, size: "1 replaced" },
+          { do: "tool", name: "sys.run", args: "cargo test parser", ms: 2100, size: "exit 0" },
           { do: "stream", spans: [FG("The fix: the parser dropped the final line — added the flush in "), ACC2("parse_line()"), FG(".")], speed: 11 },
           { do: "footer", text: "8.4s · 4 tools · 12.3k in / 1.8k out (11.1k cached, 90%)" },
         ]);
@@ -327,7 +330,7 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "out", spans: [DIM("                            ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎    ← the fixer sends it back, bounded")] },
           { do: "out", spans: [ERR("  ✗ verify · @tester · claude-sonnet-5")], ms: 200 },
           { do: "out", spans: [DIM("    failed · attempt 2 · 9.8s · 4.1k tokens · 6 tool calls · needs apply")] },
-          { do: "out", spans: [DIM("    ⚙ sys.run cargo test · 2.1s · exit 1")] },
+          { do: "out", spans: [DIM("    ⚙ sys.run cargo test · 2.1s · 62 lines")] },
           { do: "out", spans: [DIM("  8/8 done · 46.3k tokens · 1m04s")] },
           { do: "pause", ms: 900 },
 
@@ -387,10 +390,10 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "out", spans: [FG("🔁 loop 'coder' — up to 5 iteration(s)")] },
           { do: "out", spans: [DIM("  verifier: cargo test -p framework config:: — proposed from the goal")] },
           { do: "out", spans: [FG("▶ iteration 1/5")] },
-          { do: "tool", name: "fs.edit", args: '{"path":"src/config.rs"}', ms: 7, size: "610B" },
+          { do: "tool", name: "fs.edit", args: "src/config.rs", ms: 7, size: "1 replaced" },
           { do: "out", spans: [DIM("  check: exit=1 · assertion failed: default theme")], ms: 500 },
           { do: "out", spans: [FG("▶ iteration 2/5")] },
-          { do: "tool", name: "fs.edit", args: '{"path":"src/config.rs"}', ms: 5, size: "188B" },
+          { do: "tool", name: "fs.edit", args: "src/config.rs", ms: 5, size: "1 replaced" },
           { do: "out", spans: [DIM("  check: exit=0")], ms: 400 },
           { do: "out", spans: [OK("✓ goal reached after 2 iteration(s)")] },
           { do: "pause", ms: 1200 },
@@ -400,10 +403,10 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "out", spans: [FG("🔁 loop 'writer' — up to 5 iteration(s)")] },
           { do: "out", spans: [DIM("  verifier: test $(wc -w < intro.md) -lt 200")] },
           { do: "out", spans: [FG("▶ iteration 1/5")] },
-          { do: "tool", name: "fs.edit", args: '{"path":"intro.md"}', ms: 5, size: "1.2KB" },
+          { do: "tool", name: "fs.edit", args: "intro.md", ms: 5, size: "2 replaced" },
           { do: "out", spans: [DIM("  check: exit=1")], ms: 420 },
           { do: "out", spans: [FG("▶ iteration 2/5")] },
-          { do: "tool", name: "fs.edit", args: '{"path":"intro.md"}', ms: 4, size: "640B" },
+          { do: "tool", name: "fs.edit", args: "intro.md", ms: 4, size: "1 replaced" },
           { do: "out", spans: [DIM("  check: exit=0")], ms: 380 },
           { do: "out", spans: [OK("✓ goal reached after 2 iteration(s)")] },
           { do: "out", spans: [MUT("  ← the goal was prose; the check was still a command that exits 0")] },

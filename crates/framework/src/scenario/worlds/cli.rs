@@ -141,8 +141,8 @@ impl CliWorld {
         let (head, rest) = argv.split_first().ok_or("a `run` step needs a command")?;
         let head = head.trim_start_matches('@');
         let rest: Vec<String> = rest.to_vec();
-        // `@flow`, `@job` and `@loop` are verbs of the `ai` command; the rest are their
-        // own. Exactly the mapping `builtin/shell` installs.
+        // `@agent`, `@flow`, `@job` and `@loop` are verbs of the `ai` command; the rest
+        // are their own. Exactly the mapping `builtin/shell` installs.
         let code = match head {
             "profile" => crate::cli::profile(&rest),
             "theme" => crate::cli::theme(&rest),
@@ -150,7 +150,7 @@ impl CliWorld {
             "plugin" => crate::cli::plugin(&rest),
             "gate" => crate::cli::gate(&rest),
             "md" => crate::cli::md(&rest),
-            "flow" | "job" | "loop" | "ai" => {
+            "agent" | "flow" | "job" | "loop" | "ai" => {
                 let argv: Vec<String> = std::iter::once(head.to_string()).chain(rest).collect();
                 crate::cli::ai(&argv)
             }

@@ -102,8 +102,8 @@ agents (8):
         <h3><span class="em">🧪</span>Reproduce → test → fix</h3>
         <p><code>@tester</code> writes the failing test first, then makes it pass.</p>
         <pre><span class="p">❯</span> <span class="ab">@tester</span><span class="c"> "totals drift when qty is 0 — reproduce and fix"</span>
-<span class="d">  ⚙ fs.write {"path":"tests/totals.rs"} · 4ms · 1.1KB</span>
-<span class="d">  ⚙ sys.run {"cmd":"cargo test totals"} · 2.9s · 2.2KB</span>
+<span class="d">  ⚙ fs.write tests/totals.rs · 4ms · 1.1KB</span>
+<span class="d">  ⚙ sys.run cargo test totals · 2.9s · 31 lines</span>
 Reproduced: rounding applied before the zero-check …</pre>
       </div>
 
@@ -220,7 +220,7 @@ Reproduced: rounding applied before the zero-check …</pre>
         <p>Your <code>~/.aiTerminal/aiTerminal.md</code> and folder memories teach it the house style once — every run after follows it.</p>
         <pre><span class="p">❯</span> <span class="ab">@coder</span><span class="c"> "add a new /health endpoint following our handler pattern"</span>
 <span class="d">∴ recalling: handlers live in api/handlers, one file per route, table-driven tests…</span>
-<span class="d">  ⚙ fs.write {"path":"api/handlers/health.rs"} · 5ms · 890B</span></pre>
+<span class="d">  ⚙ fs.write api/handlers/health.rs · 5ms · 890B</span></pre>
       </div>
 
     </div>
@@ -255,7 +255,7 @@ Reproduced: rounding applied before the zero-check …</pre>
         <h3><span class="em">🔐</span>Security audit sweep</h3>
         <p>A read-only reviewer with a security skill — it can look, it cannot touch.</p>
         <pre><span class="p">❯</span> <span class="ab">@reviewer</span><span class="c"> "audit the auth module: injection, secrets, unsafe patterns"</span>
-<span class="d">  ⚙ fs.search {"q":"password"} · 12ms · 3.4KB</span>
+<span class="d">  ⚙ fs.search "password" · 12ms · 9 results</span>
 1. login.rs:52 — the SQL string is concatenated …</pre>
       </div>
 
@@ -621,7 +621,7 @@ switched to profile 'work' — applies within a second
         <h3><span class="em">🧠</span>A terminal that remembers</h3>
         <p>Agents curate a BM25-ranked markdown memory (<code>memory.*</code> tools) — recalled automatically in every future run.</p>
         <pre><span class="p">❯</span> <span class="ab">@coder</span><span class="c"> "remember: deploys go through make ship, never push main directly"</span>
-<span class="d">  ⚙ memory.add {"kind":"decision"} · 3ms · 96B</span>
+<span class="d">  ⚙ memory.add decision · 3ms · 96B</span>
 <span class="d">recalled automatically in future runs — plain markdown, no database</span></pre>
       </div>
 
@@ -769,7 +769,7 @@ api/handlers/. Register it in ROUTES, add a table test…</pre>
         <h3><span class="em">📰</span>Read a long page without the browser</h3>
         <p><code>@researcher</code> can fetch and read. (<code>@ai</code> cannot — it has no tools; it answers or proposes a command.)</p>
         <pre><span class="p">❯</span> <span class="ab">@researcher</span><span class="c"> "what does this actually say — https://example.org/policy-update"</span>
-<span class="d">  ⚙ web.read {"url":"https://example.org/policy-update"} · 1.1s · 22KB</span>
+<span class="d">  ⚙ web.read https://example.org/policy-update · 1.1s · 22KB</span>
 Three changes matter to you, one takes effect in March …
 <span class="d">every claim carries its source; what it couldn't confirm is listed</span></pre>
       </div>
@@ -778,8 +778,8 @@ Three changes matter to you, one takes effect in March …
         <h3><span class="em">✍️</span>Draft it, and save the file</h3>
         <p><code>@writer</code> writes to disk rather than printing at you — and marks anything it could not verify instead of smoothing over it.</p>
         <pre><span class="p">❯</span> <span class="ab">@writer</span><span class="c"> "turn @notes.md into a one-page brief at brief.md"</span>
-<span class="d">  ⚙ fs.read {"path":"notes.md"} · 4ms · 3.9KB</span>
-<span class="d">  ⚙ fs.write {"path":"brief.md"} · 6ms · 2.1KB</span>
+<span class="d">  ⚙ fs.read notes.md · 4ms · 3.9KB</span>
+<span class="d">  ⚙ fs.write brief.md · 6ms · 2.1KB</span>
 Wrote brief.md — the decision first. Two claims marked unverified.</pre>
       </div>
 

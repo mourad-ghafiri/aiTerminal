@@ -27,6 +27,7 @@ pub(crate) mod run;
 pub(crate) mod runner;
 pub(crate) mod style;
 pub(crate) mod theme;
+pub(crate) mod trace;
 
 #[cfg(test)]
 mod tests;

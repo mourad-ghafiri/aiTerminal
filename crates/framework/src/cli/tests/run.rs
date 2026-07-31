@@ -293,3 +293,42 @@ fn folder_session_flows_into_context_and_runner() {
     let runner = build_runner(&cfg, &settings, Some(ws.clone()), policy, false);
     assert_eq!(runner.ctx.memory_dir.as_deref(), Some(session.memory_dir().as_path()), "runner memory is folder-scoped");
 }
+
+#[test]
+fn an_agent_listing_says_what_it_is_made_of_and_leaves_out_the_zeroes() {
+    use crate::ai::defs::Agent;
+    use crate::cli::agents::shape;
+    let agent = |tools: usize, skills: usize, prompts: usize| Agent {
+        name: "x".into(),
+        description: String::new(),
+        system: String::new(),
+        tools: (0..tools).map(|i| format!("fs.t{i}")).collect(),
+        skills: (0..skills).map(|i| format!("s{i}")).collect(),
+        prompts: (0..prompts).map(|i| format!("p{i}")).collect(),
+        max_steps: 24,
+    };
+    assert_eq!(shape(&agent(25, 8, 0)), "25 tools · 8 skills · 24 steps");
+    // A count of nothing is a fact about the listing's columns, not about the agent —
+    // and eight rows of `0 skills · 0 prompts` is how a table stops being read.
+    assert_eq!(shape(&agent(7, 1, 0)), "7 tools · 1 skill · 24 steps", "and it counts in English");
+    assert_eq!(shape(&agent(0, 0, 0)), "no tools · 24 steps", "but no tools is worth saying");
+}
+
+#[test]
+fn a_description_is_wrapped_rather_than_cut_at_the_window() {
+    use crate::cli::agents::wrap;
+    // It used to be clipped to 58 columns on the same row as the counts, which is where
+    // the half of the sentence saying what an agent RETURNS reliably disappeared.
+    let text = "Senior engineer and orchestrator — explores the code, makes the smallest correct edit, verifies it, and delegates what it should not do itself.";
+    let lines = wrap(text, 40);
+    assert!(lines.len() > 1, "it wrapped: {lines:?}");
+    for l in &lines {
+        assert!(l.chars().count() <= 40, "{l:?} is wider than the window");
+    }
+    // Every word survives — that is the whole difference from clipping.
+    assert_eq!(lines.join(" "), text);
+    // A word longer than the width goes on its own line rather than vanishing.
+    let long = wrap("short supercalifragilisticexpialidocious", 10);
+    assert!(long.iter().any(|l| l.contains("supercali")), "{long:?}");
+    assert!(wrap("", 40).is_empty(), "nothing in, nothing out");
+}

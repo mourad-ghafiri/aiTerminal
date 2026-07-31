@@ -1,4 +1,3 @@
-use crate::cli::format::human_bytes;
 use crate::cli::run::{json_text, tool_args_to_pairs};
 use crate::cli::style::{muted, reset};
 
@@ -108,16 +107,17 @@ impl crate::ai::ToolRunner for CliToolRunner {
         }
         let pairs = tool_args_to_pairs(args);
         // A concise, TIMED tool trace on stderr, so a streaming run shows its work.
-        let preview: String = args.chars().take(72).collect();
+        // What it is acting on rather than the JSON it arrived as — see `cli::trace`.
+        let what = crate::cli::trace::call(name, &pairs);
         let started = std::time::Instant::now();
         let result = crate::caps::run(name, &pairs, &self.ctx);
         let ms = started.elapsed().as_millis();
         let (dim, r) = (muted(), reset());
         let line = match &result {
-            Ok(v) => format!("\u{2699} {name} {preview} \u{b7} {ms}ms \u{b7} {}", human_bytes(json_text(v).len())),
+            Ok(v) => format!("\u{2699} {what} \u{b7} {} \u{b7} {}", crate::cli::trace::took(ms), crate::cli::trace::result(v)),
             Err(e) => {
-                let brief: String = e.chars().take(80).collect();
-                format!("\u{2699} {name} {preview} \u{b7} {ms}ms \u{b7} \u{2717} {brief}")
+                let brief: String = e.lines().next().unwrap_or("").chars().take(80).collect();
+                format!("\u{2699} {what} \u{b7} {} \u{b7} \u{2717} {brief}", crate::cli::trace::took(ms))
             }
         };
         match &self.trace {

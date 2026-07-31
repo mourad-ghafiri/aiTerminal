@@ -202,7 +202,7 @@ the last one so the code stays contributable, not just correct.
 
 ## 🧪 Tested
 
-**1327 unit tests** and **273 scenarios**, in a few seconds, with no network and no API key.
+**1341 unit tests** and **274 scenarios**, in a few seconds, with no network and no API key.
 
 A unit test proves a function; a **scenario** proves a *product*. Scenarios are real user
 journeys written as TOML and played against the real code — *a destructive suggestion is

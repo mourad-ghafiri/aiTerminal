@@ -11,7 +11,7 @@ use crate::cli::format::{outcome_exit, outcome_glyph, run_footer_with};
 use crate::cli::observe::{CliObserver, finish_streamed};
 use crate::cli::run::instructions;
 use crate::cli::runner::{build_runner, context_settings, run_scratch};
-use crate::cli::style::{accent, markdown_opts, muted, out_is_tty, reset};
+use crate::cli::style::{accent, markdown_opts, muted, out_is_tty, reset, term_cols};
 
 pub(crate) fn ai_agent_cmd(args: &[String]) -> i32 {
     crate::config::Config::ensure_default();
@@ -39,18 +39,32 @@ pub(crate) fn ai_agent_cmd(args: &[String]) -> i32 {
     }
     let Some(name) = wanted else {
         println!("{}", crate::i18n::translate("agent.header", &[agents.len().to_string()]));
+        // Which model serves them, once, at the top. It is a property of the `[ai]` pool
+        // and not of any agent, so printing it on all eight rows would say the same thing
+        // eight times AND imply a per-agent setting that does not exist.
+        println!("  {dim}{}{r}", serving());
         for a in &agents {
+            println!();
             let bad = faults(&a.name);
-            if bad.is_empty() {
-                println!(
-                    "  {:<12} {dim}{:>2} tools \u{b7} {:>2} steps{r}  {}",
-                    a.name,
-                    a.tools.len(),
-                    a.max_steps,
-                    clip_tail(&a.description, 58)
-                );
-            } else {
-                println!("  {:<12} {}\u{26a0} {}{r}", a.name, accent(), clip_tail(&bad.join(" \u{b7} "), 62));
+            if !bad.is_empty() {
+                println!("  {}{:<13}{r}{}\u{26a0} {}{r}", accent(), format!("@{}", a.name), accent(), clip_tail(&bad.join(" \u{b7} "), 62));
+                continue;
+            }
+            // The counts on the name line, the description under it in full. It used to
+            // be clipped to 58 columns on the same row, which is where a sentence
+            // explaining what an agent is FOR reliably got cut in half.
+            // The name padded INSIDE the colour, so the counts line up in a column the
+            // eye can run down. Padding the coloured string instead would count the
+            // escape bytes and misalign every row by exactly their length.
+            println!("  {}{:<13}{r}{dim}{}{r}", accent(), format!("@{}", a.name), shape(a));
+            for line in wrap(&a.description, term_cols().saturating_sub(6).clamp(30, 92)) {
+                println!("      {line}");
+            }
+            if !a.skills.is_empty() {
+                println!("      {dim}skills   {}{r}", a.skills.join(" \u{b7} "));
+            }
+            if !a.prompts.is_empty() {
+                println!("      {dim}prompts  {}{r}", a.prompts.join(" \u{b7} "));
             }
         }
         println!("\n{}", crate::i18n::translate("agent.run_hint", &[]));
@@ -70,25 +84,49 @@ pub(crate) fn ai_agent_cmd(args: &[String]) -> i32 {
         }
         println!();
     }
-    println!("{}@{}{r} {dim}\u{b7} {} step(s){r}", accent(), a.name, a.max_steps);
-    println!("  {}", a.description);
+    let width = term_cols().saturating_sub(4).clamp(30, 92);
+    println!("{}@{}{r}  {dim}{} \u{b7} {}{r}", accent(), a.name, shape(a), serving());
+    for line in wrap(&a.description, width) {
+        println!("  {line}");
+    }
     if !a.skills.is_empty() {
-        println!("\n  {dim}skills{r}  {}", a.skills.join(", "));
+        println!("\n  {dim}skills{r}   {}", a.skills.join(" \u{b7} "));
     }
     if !a.prompts.is_empty() {
-        println!("  {dim}prompts{r} {}", a.prompts.join(", "));
+        println!("  {dim}prompts{r}  {}", a.prompts.join(" \u{b7} "));
     }
     if a.tools.is_empty() {
         println!("\n  {dim}no tools \u{2014} it answers from the conversation alone{r}");
     } else {
+        // Grouped by family. A flat list of twelve `fs.*`/`sys.*`/`web.*` names is read
+        // one line at a time; grouped, "it can read files and run commands but not reach
+        // the network" is one glance — and that is the question anybody asking what an
+        // agent may do is actually asking.
         println!("\n  {dim}tools{r}");
-        for t in &a.tools {
-            // A tool that is not in the registry is shown as such rather than
-            // quietly given the catalog's generic description.
-            let known = crate::caps::is_method(t);
-            let mark = if known { " " } else { "\u{2717}" };
-            let what = if known { crate::caps::describe(t) } else { "not a real capability" };
-            println!("   {mark} {t:<20} {dim}{}{r}", clip_tail(what, 60));
+        let mut seen: Vec<&str> = Vec::new();
+        for fam in a.tools.iter().filter_map(|t| t.split('.').next()) {
+            if seen.contains(&fam) {
+                continue;
+            }
+            // A blank line BETWEEN groups and never after the last one — a trailing blank
+            // reads as a section that failed to print rather than as a separator.
+            if !seen.is_empty() {
+                println!();
+            }
+            seen.push(fam);
+            for t in a.tools.iter().filter(|t| t.starts_with(&format!("{fam}."))) {
+                // A tool that is not in the registry is shown as such rather than
+                // quietly given the catalog's generic description.
+                let known = crate::caps::is_method(t);
+                let mark = if known { " " } else { "\u{2717}" };
+                let what = if known { crate::caps::describe(t) } else { "not a real capability" };
+                println!("   {mark} {t:<20} {dim}{}{r}", clip_tail(what, width.saturating_sub(24)));
+            }
+        }
+        // Whatever did not look like `family.method` — an MCP tool, or a typo.
+        let loose: Vec<&String> = a.tools.iter().filter(|t| !t.contains('.')).collect();
+        for t in loose {
+            println!("   \u{2717} {t:<20} {dim}not a real capability{r}");
         }
     }
     // The last section of an agent's prompt is its output contract, and a flow node
@@ -101,6 +139,65 @@ pub(crate) fn ai_agent_cmd(args: &[String]) -> i32 {
     }
     println!("\n  {dim}{}{r}", crate::config::Config::agents_dir().join(format!("{}.md", a.name)).display());
     0
+}
+
+/// `12 tools · 3 skills · 30 steps` — what an agent is made of, in one glance.
+///
+/// Zeroes are left out rather than printed as `0 skills`: a count of nothing is a fact
+/// about the listing's columns, not about the agent, and eight rows of them is how a
+/// table stops being read.
+pub(crate) fn shape(a: &crate::ai::defs::Agent) -> String {
+    let mut parts = Vec::new();
+    for (n, word) in [(a.tools.len(), "tool"), (a.skills.len(), "skill"), (a.prompts.len(), "prompt")] {
+        if n > 0 {
+            parts.push(format!("{n} {word}{}", if n == 1 { "" } else { "s" }));
+        }
+    }
+    if a.tools.is_empty() {
+        parts.push("no tools".into());
+    }
+    parts.push(format!("{} steps", a.max_steps));
+    parts.join(" \u{b7} ")
+}
+
+/// Which model will actually serve an agent run.
+///
+/// Asked of the pool, because that is where the answer lives — an agent file has no model
+/// field and inventing one for the listing would be a UI promising a setting that is not
+/// there. A pool of several says so, since the honest answer is then "one of these".
+fn serving() -> String {
+    let entries = crate::config::Config::load().ai_settings().pool.entries;
+    match entries.len() {
+        0 => "no model configured — @config to set one".to_string(),
+        1 => format!("served by {}", entries[0].model.id),
+        _ => {
+            let ids: Vec<&str> = entries.iter().map(|e| e.model.id.as_str()).collect();
+            format!("served by one of {}", ids.join(", "))
+        }
+    }
+}
+
+/// Break `text` into lines of at most `width` columns, on spaces.
+///
+/// A description is one sentence explaining what an agent is for, and clipping it at the
+/// window's edge takes the half that says what it returns. Wrapping keeps all of it.
+pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let room = line.is_empty() || line.chars().count() + 1 + word.chars().count() <= width;
+        if !room {
+            out.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        out.push(line);
+    }
+    out
 }
 
 /// Make this process behave like a command rather than a server.
