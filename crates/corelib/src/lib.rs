@@ -17,6 +17,7 @@ pub mod codec;
 pub mod datetime;
 pub mod design;
 pub mod gfx;
+pub mod graph;
 pub mod md;
 pub mod mermaid;
 pub mod theme;

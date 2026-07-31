@@ -3,9 +3,9 @@ tags = ["flow", "ui"]
 
 # The whole reason to declare a graph rather than a chain is that independent work
 # overlaps. A flat list of rows throws that away — three reviews and a summary read as
-# four things in a queue. So the board groups nodes into bands by how deep they sit in
-# the dependency graph: one band is one wave, everything in it starts at the same time,
-# and the fork in the gutter says so without anyone having to read the file.
+# four things in a queue. So a node's DEPTH decides its column: what runs first is on the
+# left, what runs at the same time stacks in one column, and the arrows only ever point
+# the way the work moves. You see the shape before you read a word.
 
 [[step]]
 flow = """
@@ -35,16 +35,22 @@ final  = true
 prompt = "Merge {{correctness.output}} and {{security.output}}"
 """
 
-# Before anything runs: every node is a card, the two that start together sit side by
-# side, the capability surface is stated, and the node that is waiting says so.
+# Before anything runs: every node is a card, the capability surface is stated, and the
+# node that is waiting says what is holding it.
 [[step]]
 expect_graph_view_contains = ["╭─", "╰─", "○ map", "○ correctness", "@explorer", "4 nodes", "2 agents", "when correctness.passed", "0/4 done"]
 
-# And the cards are joined: a solid arrow where the work simply moves on, a dashed
-# route where it has to travel — which is the difference between a picture of a graph
-# and a list that has been told it is one.
+# The cards are joined, and the run's whole shape is on one line — including the chain
+# that decides the wall clock, which on a graph that overlaps work is not the slowest
+# node and cannot be read off the picture.
 [[step]]
-expect_graph_view_contains = ["▸", "╌"]
+expect_graph_view_contains = ["▸", "slowest path"]
+
+# `correctness` and `security` are one rank, so they share a column: same left edge,
+# different rows. That IS the claim in this scenario's name, asserted on geometry rather
+# than on which glyph the renderer happened to pick.
+[[step]]
+expect_nodes_share_a_column = ["correctness", "security"]
 
 [[step]]
 node_says = ["map: the map", "correctness: looks right", "security: no leaks", "report: agreed"]

@@ -195,7 +195,7 @@ pub(crate) fn parse_flow_args(raw: &[String]) -> Result<FlowCmd, String> {
 pub(crate) fn flow_usage() -> String {
     [
         "usage: @flow <name> \"<input>\"       run a flow",
-        "       @flow … --bg | --dry-run     detach it | verify and draw it, spend nothing",
+        "       @flow … --bg | --dry-run     detach it (`@flow watch` attaches) | spend nothing",
         "       @flow … --timeout 30m --budget TOKENS --concurrency N",
         "       @flow … --view graph|list    draw the shape, or one dense row per node",
         "       @flow                        list the installed flows",
@@ -205,7 +205,7 @@ pub(crate) fn flow_usage() -> String {
         "       @flow show <id>              one run: the graph, with what each node cost",
         "       @flow nodes [<id>]           every node of a run, side by side",
         "       @flow node [<id>] <node>     one node in full: cost, model, what it said",
-        "       @flow watch [<id>]           follow a run that is still going",
+        "       @flow watch [<id>]           attach to a run that is still going (Ctrl-C detaches)",
         "       @flow log <id> [<node>] [-f] a node's full output",
         "       @flow resume <id>            run only what did not complete",
         "       @flow retry [<id>] <node>    run one node again, and what depended on it",

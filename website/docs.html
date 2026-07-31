@@ -383,44 +383,69 @@ Map the code, review it three ways in parallel, then merge into one verdict
     <h3>Watching it run</h3>
     <p>A chain can narrate itself; a graph cannot. Four nodes start together and finish in whatever
       order they finish, so a stream of start/done lines hides the most useful thing about the run.
-      So you watch it as <b>the graph it is</b>: every node a card, joined by a solid arrow where the
-      work simply moves on and a dashed route where it wraps to the next line or loops back.</p>
+      So you watch it as <b>the graph it is</b> — and the layout <em>is</em> the graph, not the file:
+      <b>a rank is a column</b>. What runs first is on the left, what runs at the same time stacks in
+      one column, and the arrows only ever point the way the work moves.</p>
     <pre><code><span class="a">▸ build · add a --json flag to the export command</span>
-  <span class="c">8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time</span>
-  <span class="g">╭──────────────────────╮</span>    <span class="g">╭──────────────────────╮</span>    <span class="g">╭──────────────────────╮</span>    <span class="a">╭──────────────────────╮</span>
-  <span class="g">│ ✓ plan            ⚙3 │</span>    <span class="g">│ ✓ explore        ⚙12 │</span>    <span class="g">│ ✓ conventions     ⚙9 │</span>    <span class="a">│ ⠻ apply           ⚙4 │</span>
-  <span class="g">│</span> <span class="c">@planner             </span><span class="g">│</span><span class="g">───▸</span><span class="g">│</span> <span class="c">@explorer            </span><span class="g">│</span>    <span class="g">│</span> <span class="c">@explorer            </span><span class="g">│</span><span class="g">───▸</span><span class="a">│</span> <span class="c">@coder               </span><span class="a">│</span>
-  <span class="g">│</span> <span class="c">4.2s · 9.0k          </span><span class="g">│</span>    <span class="g">│</span> <span class="c">8.1s · 6.9k          </span><span class="g">│</span>    <span class="g">│</span> <span class="c">7.6s · 8.8k          </span><span class="g">│</span>    <span class="a">│</span> <span class="c">fs.edit src/cli.rs   </span><span class="a">│</span>
-  <span class="g">╰──────────────────────╯</span>    <span class="g">╰──────────────────────╯</span>    <span class="g">╰──────────────────────╯</span>    <span class="a">╰──────────────────────╯</span>
-<span class="g">              ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌▴                           ╎</span>
-<span class="g">                                          ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎</span>
-<span class="c">              ▾╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎</span>
-  <span class="c">╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮</span>
-  <span class="c">│ ○ verify             │    │ ○ fix                │    │ ○ review             │    │ ○ summary            │</span>
-  <span class="c">│ @tester              │───▸│ @coder               │    │ @reviewer            │───▸│ @writer              │</span>
-  <span class="c">│                      │    │ when verify.output … │    │ when verify.output … │    │                      │</span>
-  <span class="c">╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯</span>
-<span class="c">              ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎                           ▴</span>
-<span class="c">              ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎</span>
+  <span class="c">8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time · slowest path plan→apply→verify→summary</span>
+  <span class="g">╭──────────────────────────╮</span>    <span class="g">╭──────────────────────────╮</span>    <span class="a">╭──────────────────────────╮</span>
+  <span class="g">│ ✓ plan                ⚙3 │</span>    <span class="g">│ ✓ explore            ⚙12 │</span>    <span class="a">│ ⠻ apply               ⚙4 │</span>
+  <span class="g">│</span> <span class="c">@planner · sonnet-5      </span><span class="g">│───▸│</span> <span class="c">@explorer · sonnet-5     </span><span class="g">│───▸</span><span class="a">│</span> <span class="c">@coder · opus-5          </span><span class="a">│</span>
+  <span class="g">│</span> <span class="c">4.2s · 9.0k              </span><span class="g">│</span>  <span class="c">╎</span><span class="g">││</span> <span class="c">8.1s · 6.9k              </span><span class="g">│</span>  <span class="c">╎</span><span class="a">││</span> <span class="c">⚙ fs.edit src/cli.rs     </span><span class="a">│</span>
+  <span class="g">╰──────────────────────────╯</span>  <span class="c">╎</span><span class="g">│╰──────────────────────────╯</span>  <span class="c">╎</span><span class="a">│╰──────────────────────────╯</span>
+                                <span class="c">╎</span><span class="g">│╭──────────────────────────╮</span>  <span class="c">╎</span><span class="a">│</span>
+                                <span class="c">╎</span><span class="g">││ ✓ conventions         ⚙9 │</span>  <span class="c">╎</span><span class="a">│</span>
+                                <span class="c">╎▸</span><span class="g">│</span> <span class="c">@explorer · sonnet-5     </span><span class="g">│──</span><span class="c">╎</span><span class="a">┘</span>
+                                <span class="c">╎ </span><span class="g">│</span> <span class="c">7.6s · 8.8k              </span><span class="g">│</span>  <span class="c">╎</span>
+                                <span class="c">╎ </span><span class="g">╰──────────────────────────╯</span>  <span class="c">╎</span>
+                                <span class="c">╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎</span>
+  <span class="a">⠻ apply · @coder · claude-opus-5</span>
+    <span class="c">running · attempt 2 · 18.4s · 9.1k tokens · 4 tool calls · needs plan, explore</span>
+    <span class="c">⚙ fs.read src/cli.rs · 9ms · 6KB</span>
+    <span class="c">⚙ fs.edit src/cli.rs · 12ms · 1.4KB</span>
+    <span class="c">⚙ sys.run cargo test · 2.1s · exit 0</span>
   <span class="c">3/8 done · 1 running · 21.3k tokens · 24.6s</span></code></pre>
-    <p>The first line is what the whole run can reach. Each card carries its state and name, the
-      agent and model behind it, its tool calls and attempts, and — while it works — the tool it is
-      in right now, which becomes what it cost once it finishes.</p>
-    <p>Nodes are laid out in <b>reading order</b>: by depth in the graph, then across and down. So
-      nodes that start together sit side by side, and the board stays a sane height instead of
-      growing a row per wave. <b>An edge takes the colour of the node it leaves once that node has
-      settled</b>, so the path that actually ran lights up behind the board and stops exactly where
-      the run did — in the theme's own green, red and amber, alongside the accent the <b>running
-      card pulses in</b>. All five of the theme's semantic colours, so the board restyles with
-      everything else.</p>
+    <p><b>The shape.</b> <code>explore</code> and <code>conventions</code> share a column because
+      they run at the same time; <code>apply</code> is to their right because it waits for both.
+      Depth is horizontal position and nothing else — it used to be reading order, so two cards side
+      by side meant only that they were declared next to each other. The ranking and the crossing
+      reduction are the same
+      <a href="https://www.yworks.com/pages/layered-graph-layout" target="_blank" rel="noopener">layered-graph</a>
+      passes the diagram renderer uses, so <code>@flow graph &lt;name&gt;</code> and the live board
+      agree about the shape.</p>
+    <p><b>What is not drawn.</b> An edge the graph already implies is left off. If <code>d</code>
+      needs <code>a</code>, <code>b</code> and <code>c</code> where <code>b</code> and <code>c</code>
+      both need <code>a</code>, the direct <code>a → d</code> says nothing new, and drawing it puts
+      three arrows into one card where one carries the meaning. The dependency is untouched — the
+      scheduler still honours it; what is dropped is saying it twice. A <code>goto</code> travels in
+      the band under the whole board and turns in the gaps, so a loop never runs through the cards it
+      loops over.</p>
+    <p><b>The slowest path</b> on the header line is the chain that decides the wall clock. On a
+      graph that overlaps work that is <em>not</em> the slowest node — a slow node with three fast
+      ones beside it costs nothing extra — and it cannot be read off the picture, so it is stated.</p>
+    <p>Under the cards, a <b>pane follows whichever node is working</b> (or worked last): its agent,
+      model, state, attempt, elapsed, cost, what it needs, and the last few tool calls it made. A
+      card is three lines and has to hold a name; these are the questions asked of a run that is
+      going wrong, which is the only time anybody watches a board closely. There is no selection
+      because the board does not read your keyboard — for the whole story of one node,
+      <code>@flow node &lt;id&gt;</code> and <code>@flow log &lt;id&gt;</code> are the commands.</p>
+    <p><b>An edge takes the colour of the node it leaves once that node has settled</b>, so the path
+      that actually ran lights up behind the board and stops exactly where the run did — in the
+      theme's own green, red and amber, alongside the accent the <b>running card pulses in</b>.</p>
     <p><b>Two views.</b> <code>[flow] view = "list"</code> — or <code>--view list</code> for one
       command — puts every node back on a single dense row in file order. It is the shortest board
       that can exist, which is what a twenty-node flow in a six-line split wants; and the graph view
-      <b>hands over to it by itself</b> when the cards will not fit the window, because a picture
-      that scrolls its own header off the top is not a picture. Off a terminal —
-      <code>--bg</code>, a pipe, CI — neither view applies: the same state machine prints
-      <code>[node] event</code> lines instead, nothing is overwritten, and the attribution a plain
-      stream could never give is still there.</p>
+      <b>hands over to it by itself</b> when the cards will not fit the window, in <em>either</em>
+      direction — depth costs width now, so a nine-deep flow asks for more columns than a terminal
+      has. Off a terminal — <code>--bg</code>, a pipe, CI — neither view applies: the same state
+      machine prints <code>[node] event</code> lines instead, nothing is overwritten, and the
+      attribution a plain stream could never give is still there.</p>
+    <p><b>Your keyboard is left alone.</b> While the board owns a region of the screen it asks the
+      terminal to stop echoing, because the board repaints by climbing back over the block it drew
+      and an echoed keystroke moves the cursor out from under it — which used to strand a copy of the
+      board on screen for every Enter pressed during a run. Ctrl-C still works, and an
+      <code>approve</code> node gets echo and the cursor back for as long as its question is on
+      screen.</p>
 
     <h3>Node control</h3>
     <p><code>show</code> is the whole run and <code>log</code> is one node's text. Between them sits
@@ -438,7 +463,7 @@ Map the code, review it three ways in parallel, then merge into one verdict
       <tr><th>Command</th><th>What it does</th></tr>
       <tr><td><code>@flow nodes [&lt;id&gt;]</code></td><td>every node of a run, side by side: state, agent, model, attempts, time, tokens, tool calls, exit</td></tr>
       <tr><td><code>@flow node [&lt;id&gt;] &lt;node&gt;</code></td><td>one node in full — its edges and condition, then what it was asked and what it answered, rendered as the Markdown it is</td></tr>
-      <tr><td><code>@flow watch [&lt;id&gt;]</code></td><td>follow a run that is still going, from any pane — including a <code>--bg</code> run with no terminal of its own</td></tr>
+      <tr><td><code>@flow watch [&lt;id&gt;]</code></td><td>attach to a run that is still going, from any pane — including a <code>--bg</code> run with no terminal of its own. No id attaches to the newest live run; <b>Ctrl-C detaches and the run keeps going</b></td></tr>
       <tr><td><code>@flow retry [&lt;id&gt;] &lt;node&gt;</code></td><td>run one node again <b>and everything built on it</b>, printed before anything starts</td></tr>
     </table></div>
     <p>Which model served a node is a fact the record has to keep: a pool that picks per run cannot
@@ -1371,7 +1396,7 @@ scope   = <span class="s">"ai"</span></code></pre>
       its child; the regex engine is step-budgeted; a panic degrades to one dropped frame.</p>
 
     <h2 id="testing">Testing</h2>
-    <p><b>1305 unit tests</b> and <b>271 scenarios</b>, running in a few seconds with no network and
+    <p><b>1327 unit tests</b> and <b>273 scenarios</b>, running in a few seconds with no network and
       no API key. A unit test proves a function; a <b>scenario</b> proves a product — a real user
       journey written as TOML and played against the real code.</p>
     <pre><code><span class="p">❯</span> cargo test --workspace                          <span class="c"># everything</span>

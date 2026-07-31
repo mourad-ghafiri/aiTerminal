@@ -1,31 +1,39 @@
 //! Where the cards go — pure geometry, no drawing and no colour.
 //!
-//! Two decisions live here, and both are about the same thing: a board has to fit.
+//! **A rank is a column.** A node's depth in the dependency graph decides how far right it
+//! sits, and everything of one rank stacks vertically in that column. So the picture is the
+//! graph: what runs first is on the left, what runs at the same time is above and below each
+//! other, and the arrows only ever point the way the work moves.
 //!
-//! **Reading order, not one row per wave.** Nodes are ordered by rank and then packed
-//! left to right, wrapping when the next card will not fit — so eight nodes land in two
-//! rows of cards rather than in the six rows their depth would demand. Parallel
-//! siblings share a rank, so they end up side by side anyway, and the connectors show
-//! the fan.
+//! It used to pack cards left to right and wrap at four per line, which is reading order
+//! wearing a graph's clothes — two nodes side by side meant "declared next to each other",
+//! not "run at the same time", and a node's parent could be anywhere. Depth was invisible,
+//! which is the one thing a flow's picture exists to show.
 //!
-//! **The layout is a function of `(the graph, cols)` and nothing else.** No live text
-//! reaches it. That is what keeps the block exactly as tall on the last frame as on the
-//! first, which is what lets the repaint erase it with a line count it measured before
-//! any of this happened.
+//! Columns rather than rows because of the shape of a terminal: 80×24 holds four or five
+//! ranks across and four stacked cards down, where the same graph drawn top-to-bottom would
+//! be thirty rows tall and scroll its own header away. When even that will not fit,
+//! [`graph`](super::graph) falls back to the list — a picture that does not fit is not a
+//! picture.
+//!
+//! The ranking and the within-rank ordering are [`corelib::graph`], shared with the diagram
+//! renderer, so `@flow graph <name>` and the board watching that flow agree about its shape.
+//! What is here is the part that is about *cells*: how wide a card is, where the columns
+//! start, and which of three shapes an edge is drawn as.
+//!
+//! **The layout is a function of `(the graph, cols)` and nothing else.** No live text reaches
+//! it. That is what keeps the block exactly as tall on the last frame as on the first, which
+//! is what lets the repaint erase it with a line count it measured before any of this happened.
 
 use super::Row;
 
 /// Border, title, what, detail, border.
 pub(crate) const CARD_H: usize = 5;
-/// Columns between two cards — enough for `───▸` to read as an arrow.
+/// Columns between two ranks — enough for `───▸` to read as an arrow, and for an elbow to
+/// turn in without touching either card.
 pub(crate) const GAP: usize = 4;
-/// The most lanes a band will grow to. Past this, routes share again — a band taller
-/// than a card is a band that has stopped being a gap between two things.
-const MAX_LANES: usize = 4;
-/// The most cards on one line. Past four, a line is more than the eye scans in one go
-/// and every card on it is too narrow to say anything — a wider board is not a better
-/// one, it is the same board with the words taken out.
-const MAX_PER_ROW: usize = 4;
+/// Blank rows between two cards stacked in the same column.
+pub(crate) const VGAP: usize = 1;
 /// A card narrower than this cannot hold a node id and a state glyph.
 const MIN_W: usize = 18;
 const MAX_W: usize = 34;
@@ -34,7 +42,10 @@ const MAX_W: usize = 34;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Card {
     pub node: usize,
-    pub row: usize,
+    /// Depth in the dependency graph — which column this card is in.
+    pub rank: usize,
+    /// Which of the cards stacked in that column this is, top first.
+    pub slot: usize,
     pub x: usize,
     pub y: usize,
     pub w: usize,
@@ -47,20 +58,24 @@ impl Card {
     pub fn bottom(&self) -> usize {
         self.y + CARD_H - 1
     }
-    pub fn cx(&self) -> usize {
-        self.x + self.w / 2
+    /// The middle row of the card — where a horizontal edge meets it.
+    pub fn cy(&self) -> usize {
+        self.y + CARD_H / 2
     }
 }
 
 /// How one edge gets drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Link {
-    /// The target is the very next card in the same row: a solid arrow across the gap.
+    /// The next rank along, in the same slot: a straight arrow across the gap.
     Straight,
-    /// Anything else — a wrap onto the next row, a skip, a `goto` pointing back. Routed
-    /// dashed through the lane below the source, because a line that has to travel is a
-    /// line that will cross something.
-    Routed,
+    /// The next rank along but a different slot, or a rank further on — out of the right
+    /// port, down or up the gap, into the left port. Every turn is a right angle, so an
+    /// edge is read by following it rather than by guessing which dash belongs to which.
+    Elbow,
+    /// A `goto` pointing back at a rank already passed. Drawn under the board, so a loop
+    /// never runs through the cards it loops over.
+    Back,
 }
 
 /// One edge, resolved to the two cards it joins.
@@ -69,8 +84,8 @@ pub(crate) struct Edge {
     pub from: usize,
     pub to: usize,
     pub link: Link,
-    /// Which lane of its band a routed edge travels in. Two routes on one row merge
-    /// into a single dashed run and read as one edge going nowhere in particular.
+    /// Which lane of the gap (or of the band under the board) this edge travels in, so two
+    /// edges turning in the same place do not merge into one line going nowhere.
     pub lane: usize,
 }
 
@@ -78,167 +93,147 @@ pub(crate) struct Edge {
 pub(crate) struct Grid {
     pub cards: Vec<Card>,
     pub edges: Vec<Edge>,
+    /// Whether each node is on the critical path — the chain that decides the wall clock.
+    pub critical: Vec<bool>,
     pub w: usize,
     pub h: usize,
 }
 
 impl Grid {
-    fn card_of(&self, node: usize) -> Option<&Card> {
-        self.cards.iter().find(|c| c.node == node)
-    }
-
     /// The card for `node`, by node index.
     pub fn card(&self, node: usize) -> Option<&Card> {
-        self.card_of(node)
+        self.cards.iter().find(|c| c.node == node)
     }
+}
 
-    /// A column a route can climb between rows `lo..=hi` without crossing a card.
-    ///
-    /// Preferring one of the two ends keeps a long route beside the thing it joins; the
-    /// left margin is the fallback, because no card ever sits there. Without this a
-    /// backward edge always ran down the far left of the board and back, which reads as
-    /// a border rather than as an edge.
-    pub fn clear_column(&self, want: &[usize], lo: usize, hi: usize) -> usize {
-        let blocked = |x: usize| {
-            self.cards.iter().any(|c| c.row >= lo && c.row <= hi && x >= c.x && x <= c.right())
-        };
-        want.iter().copied().find(|x| !blocked(*x)).unwrap_or(0)
+/// Every edge of the graph, in index space: `needs` points from a dependency to its
+/// dependent, and a `goto` points the other way — the node holding it sends the run BACK.
+fn wires(rows: &[Row]) -> Vec<(usize, usize)> {
+    let at = |id: &str| rows.iter().position(|x| x.id == id);
+    let mut out = Vec::new();
+    for (i, row) in rows.iter().enumerate() {
+        for dep in &row.needs {
+            if let Some(j) = at(dep) {
+                out.push((j, i));
+            }
+        }
+        if let Some(back) = row.goto.as_deref().and_then(at) {
+            out.push((i, back));
+        }
     }
+    out
+}
+
+/// Each node's depth in the dependency graph.
+pub(crate) fn ranks(rows: &[Row]) -> Vec<usize> {
+    let spans: Vec<(usize, usize, usize)> = wires(rows).into_iter().map(|(a, b)| (a, b, 1)).collect();
+    corelib::graph::ranks(rows.len(), &spans)
+}
+
+/// The nodes of each rank, top to bottom, ordered to cut edge crossings.
+fn columns(rows: &[Row]) -> Vec<Vec<usize>> {
+    let rank = ranks(rows);
+    let wires = wires(rows);
+    let none = vec![None; rows.len()];
+    corelib::graph::order(rows.len(), &wires, &rank, &none)
 }
 
 /// Lay `rows` out in a `cols`-wide window.
 pub(crate) fn plan(rows: &[Row], cols: usize) -> Grid {
     if rows.is_empty() {
-        return Grid { cards: Vec::new(), edges: Vec::new(), w: 0, h: 0 };
+        return Grid { cards: Vec::new(), edges: Vec::new(), critical: Vec::new(), w: 0, h: 0 };
     }
-    // How many fit on a line at the narrowest a card is allowed to be, never more than
-    // there are nodes to put on it. Always at least one: a window too narrow for even
-    // that is the caller's problem to notice, and it does.
+    let cols_of = columns(rows);
+    let ranks_n = cols_of.len().max(1);
     let room = cols.saturating_sub(2);
-    let per_row = ((room + GAP) / (MIN_W + GAP)).clamp(1, rows.len().min(MAX_PER_ROW));
-    // Then the cards grow to fill the line they are on. A board that leaves half its
-    // width empty while clipping every card's text at fourteen characters has decided
-    // the wrong thing is scarce.
-    let card_w = ((room + GAP) / per_row).saturating_sub(GAP).clamp(MIN_W, MAX_W).min(room.max(MIN_W));
 
-    // Columns first: which line a card is on and where along it, both of which the edge
-    // classification needs. The vertical positions cannot be settled until the routes
-    // are known, because it is the routes that decide how deep each band has to be.
-    let cards: Vec<Card> = order(rows)
-        .into_iter()
-        .enumerate()
-        .map(|(i, node)| Card { node, row: i / per_row, x: 2 + (i % per_row) * (card_w + GAP), y: 0, w: card_w })
-        .collect();
-    let last_row = cards.last().map_or(0, |c| c.row);
-    let mut grid = Grid { edges: Vec::new(), w: cards.iter().map(|c| c.right() + 1).max().unwrap_or(0), h: 0, cards };
+    // Every rank gets the same width, so the columns line up and a card's left edge is a
+    // fact about its depth rather than about the text in the card before it. Asking for
+    // more room than there is produces a grid too wide to fit, which `graph::fits` reads
+    // as "use the list" — the honest answer, rather than cards clipped to nothing.
+    let want = (room + GAP) / ranks_n;
+    let card_w = want.saturating_sub(GAP).clamp(MIN_W, MAX_W);
+
+    let mut cards: Vec<Card> = Vec::with_capacity(rows.len());
+    for (rank, nodes) in cols_of.iter().enumerate() {
+        for (slot, &node) in nodes.iter().enumerate() {
+            cards.push(Card {
+                node,
+                rank,
+                slot,
+                x: 2 + rank * (card_w + GAP),
+                y: slot * (CARD_H + VGAP),
+                w: card_w,
+            });
+        }
+    }
+
+    let tallest = cols_of.iter().map(|c| c.len()).max().unwrap_or(1);
+    let mut grid = Grid {
+        w: cards.iter().map(|c| c.right() + 1).max().unwrap_or(0),
+        h: tallest * (CARD_H + VGAP),
+        critical: critical(rows),
+        cards,
+        edges: Vec::new(),
+    };
     grid.edges = edges(rows, &grid);
 
-    // **A lane each.** Two routes sharing one row merge into a single dashed run and
-    // read as one edge going nowhere in particular — which is exactly what made the
-    // first version of this board unreadable on a real eight-node flow. So a band is as
-    // deep as it has routes to carry, up to the point where it stops being a gap.
-    //
-    // Shortest hop nearest the cards, so a route that only steps sideways stays tucked
-    // under them and the long sweeps stack below it. Lines that cross are unavoidable in
-    // a wrapped graph; lines that cross *more than they need to* are a choice.
-    let span = |e: &Edge| -> usize {
-        let (a, b) = (grid.card_of(e.from), grid.card_of(e.to));
-        match (a, b) {
-            (Some(a), Some(b)) => a.x.abs_diff(b.x),
-            _ => 0,
-        }
-    };
-    let mut routed: Vec<usize> = (0..grid.edges.len()).filter(|i| grid.edges[*i].link == Link::Routed).collect();
-    routed.sort_by_key(|i| span(&grid.edges[*i]));
-    let mut lanes = vec![0usize; last_row + 1];
-    for i in routed {
-        let band = grid.cards.iter().find(|c| c.node == grid.edges[i].from).map_or(0, |c| c.row);
-        grid.edges[i].lane = lanes[band] % MAX_LANES;
-        lanes[band] += 1;
-    }
-    let depth: Vec<usize> = lanes.iter().map(|n| (*n).min(MAX_LANES)).collect();
-    let mut y = 0;
-    for row in 0..=last_row {
-        for card in grid.cards.iter_mut().filter(|c| c.row == row) {
-            card.y = y;
-        }
-        y += CARD_H + depth[row];
-    }
-    // `y` has already counted the band under the LAST row, which is part of the picture
-    // too: a same-row hop and a `goto` pointing back both travel in it, and a line drawn
-    // off the bottom of the canvas is a line nobody sees. A row with no routes under it
-    // contributes nothing, so a board of plain arrows pays for no band at all.
-    grid.h = y;
+    // A band under the board carries every backward edge, one lane each so two loops do
+    // not merge into a single line pointing at neither of their targets. A board with no
+    // loops pays for no band at all.
+    let backs = grid.edges.iter().filter(|e| e.link == Link::Back).count();
+    grid.h += backs;
     grid
 }
 
-/// The nodes in the order they are read: by rank, then as the file declares them.
+/// Which nodes lie on the chain that decides how long the whole run takes.
 ///
-/// Rank is one past the deepest thing a node needs, so everything of one rank is
-/// independent of everything else of that rank — which is exactly the set the scheduler
-/// starts together, and therefore the set that should sit side by side.
-pub(crate) fn order(rows: &[Row]) -> Vec<usize> {
-    let rank = ranks(rows);
-    let mut out: Vec<usize> = (0..rows.len()).collect();
-    out.sort_by_key(|&i| (rank[i], i));
+/// Weighted by what each node actually cost when there is a cost, and by one node otherwise
+/// — so an unrun graph still names the chain that is going to decide its wall clock, and a
+/// finished one names the chain that did.
+fn critical(rows: &[Row]) -> Vec<bool> {
+    let weight: Vec<u64> = rows.iter().map(|r| r.ms.max(1)).collect();
+    let mut out = vec![false; rows.len()];
+    for i in corelib::graph::critical_path(rows.len(), &wires(rows), &weight) {
+        if let Some(slot) = out.get_mut(i) {
+            *slot = true;
+        }
+    }
     out
 }
 
-/// Each node's depth in the dependency graph.
+/// Every edge, classified and given a lane. Edges the graph already implies are dropped.
 ///
-/// The `needs` graph is proved acyclic before a run begins (`verify::find_cycle`), and
-/// the relaxation is bounded regardless, so a malformed graph settles instead of
-/// spinning.
-pub(crate) fn ranks(rows: &[Row]) -> Vec<usize> {
-    let mut rank = vec![0usize; rows.len()];
-    for _ in 0..rows.len() {
-        let mut moved = false;
-        for i in 0..rows.len() {
-            let deepest = rows[i]
-                .needs
-                .iter()
-                .filter_map(|d| rows.iter().position(|x| x.id == *d))
-                .map(|j| rank[j] + 1)
-                .max()
-                .unwrap_or(0);
-            if deepest > rank[i] {
-                rank[i] = deepest;
-                moved = true;
-            }
-        }
-        if !moved {
-            break;
-        }
-    }
-    rank
-}
-
-/// Every edge, classified and given a lane.
-///
-/// `needs` points from a dependency to its dependent. A `goto` points the other way —
-/// the node holding it sends the run BACK to its target — so it is drawn as an edge in
-/// that direction, which is why it always comes out routed.
+/// `a → c` alongside `a → b → c` says nothing the picture does not already say, and drawing
+/// it is the single biggest source of clutter on a real flow: a node listing three
+/// dependencies, two of which are ancestors of the third, collects three arrows where one
+/// carries the meaning. The dependency is untouched — the scheduler still honours it.
 fn edges(rows: &[Row], grid: &Grid) -> Vec<Edge> {
+    let wires = wires(rows);
+    let implied = corelib::graph::implied(rows.len(), &wires);
     let mut out: Vec<Edge> = Vec::new();
-    let push = |out: &mut Vec<Edge>, from: usize, to: usize| {
-        let (Some(a), Some(b)) = (grid.card_of(from), grid.card_of(to)) else { return };
-        // Adjacent in reading order AND on the same line: the one case a straight arrow
-        // says everything, because there is nothing for it to travel past.
-        let straight = a.row == b.row && b.x == a.x + a.w + GAP;
-        // The lane is handed out later, once every route is known and the bands can be
-        // made as deep as they need to be.
-        out.push(Edge { from, to, link: if straight { Link::Straight } else { Link::Routed }, lane: 0 });
-    };
-    // In reading order, so the lanes are handed out in the order the eye meets them.
-    for i in order(rows) {
-        for dep in &rows[i].needs {
-            if let Some(j) = rows.iter().position(|x| x.id == *dep) {
-                push(&mut out, j, i);
-            }
+    let mut lanes: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+    let mut backs = 0usize;
+    for (i, &(from, to)) in wires.iter().enumerate() {
+        if implied[i] {
+            continue;
         }
-        if let Some(back) = rows[i].goto.as_ref().and_then(|g| rows.iter().position(|x| x.id == *g)) {
-            push(&mut out, i, back);
-        }
+        let (Some(a), Some(b)) = (grid.card(from), grid.card(to)) else { continue };
+        let (link, lane) = if b.rank <= a.rank {
+            let lane = backs;
+            backs += 1;
+            (Link::Back, lane)
+        } else if b.rank == a.rank + 1 && b.slot == a.slot {
+            (Link::Straight, 0)
+        } else {
+            // Elbows turn in the gap to the LEFT of the target, so two edges arriving at
+            // one card from different slots do not share a vertical.
+            let lane = lanes.entry(b.rank).or_default();
+            let n = *lane;
+            *lane += 1;
+            (Link::Elbow, n)
+        };
+        out.push(Edge { from, to, link, lane });
     }
     out
 }

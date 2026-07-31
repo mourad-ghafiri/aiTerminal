@@ -27,6 +27,10 @@ use std::sync::{Arc, Mutex};
 
 pub(crate) use view::{human_tokens, Palette, View};
 
+/// How many of a node's tool calls the pane keeps. Enough to see what it is working
+/// through; few enough that the board's height is still a constant.
+pub(crate) const TRACE_KEEP: usize = 3;
+
 /// Where a node is, as far as the board is concerned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub(crate) enum State {
@@ -100,6 +104,16 @@ pub(crate) struct Row {
     pub state: State,
     /// What it is doing right now — the tool it is in, or why it was skipped.
     pub note: String,
+    /// The last few tool calls this node made, oldest first.
+    ///
+    /// `note` is one line and is overwritten, which is right for a card: what a node is
+    /// doing NOW is what a card has room to say. It is wrong for the pane, where the
+    /// question is what a node has BEEN doing — a single line there is a stream you can
+    /// only ever see the last frame of.
+    pub trace: Vec<String>,
+    /// Bumped on every change, so "which node is the interesting one" has an answer that
+    /// does not depend on wall-clock timing between threads.
+    pub touched: u64,
     /// The model actually serving this node, once the run has pinned one.
     pub model: String,
     pub tools: u32,
@@ -132,6 +146,16 @@ pub(crate) struct Board {
     started: std::time::Instant,
     stop: Arc<AtomicBool>,
     ticker: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// Held for as long as the board owns a region of the screen.
+    ///
+    /// The repaint climbs back up from where it left the cursor. An echoed keystroke moves
+    /// that cursor, so every Enter pressed during a run used to strand the block already
+    /// drawn and paint another below it. The board does not read the keyboard, so the
+    /// honest fix is for the terminal to stop writing into the board's region on its behalf.
+    quiet: Mutex<Option<platform::os::RawGuard>>,
+    /// Set while an approval is being typed: the ticker keeps running but paints nothing,
+    /// because the reader owns the cursor until the answer arrives.
+    held: Arc<AtomicBool>,
     /// The widest node id, so the columns line up.
     width: usize,
     concurrency: usize,
@@ -167,6 +191,8 @@ impl Board {
             started: std::time::Instant::now(),
             stop: Arc::new(AtomicBool::new(false)),
             ticker: Mutex::new(None),
+            quiet: Mutex::new(None),
+            held: Arc::new(AtomicBool::new(false)),
             width,
             concurrency: concurrency.max(1),
             palette: Palette::theme(),
@@ -181,6 +207,7 @@ impl Board {
         if !self.live {
             return;
         }
+        *self.quiet.lock().unwrap_or_else(|e| e.into_inner()) = platform::os::echo_off();
         let me = Arc::clone(self);
         let stop = self.stop.clone();
         let handle = std::thread::spawn(move || {
@@ -196,6 +223,24 @@ impl Board {
         *self.ticker.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
     }
 
+    /// Hand the screen and the keyboard back for as long as the returned guard lives.
+    ///
+    /// An `approve` node reads a line from stdin, and the two things the board does to keep
+    /// itself intact are exactly the two things that would break that: nothing painted while
+    /// somebody else owns the cursor, and echo back on so the answer can be seen as it is
+    /// typed. Typing blind at a y/n prompt would be a worse bug than the one echo-off fixes.
+    pub fn hold(self: &Arc<Board>) -> Hold {
+        self.held.store(true, Ordering::Relaxed);
+        let restore = self.quiet.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if self.live {
+            // Leave the cursor under the board rather than on its last row, so the prompt
+            // is written below the picture instead of over it.
+            *self.painted.lock().unwrap_or_else(|e| e.into_inner()) = 0;
+            eprintln!();
+        }
+        Hold { board: Arc::clone(self), restore }
+    }
+
     /// Stop repainting and leave the finished board on screen.
     pub fn finish(self: &Arc<Board>) {
         self.stop.store(true, Ordering::Relaxed);
@@ -208,6 +253,10 @@ impl Board {
             *self.painted.lock().unwrap_or_else(|e| e.into_inner()) = 0;
             eprintln!();
         }
+        // Last, so the terminal is only handed back once nothing else will be drawn: the
+        // restore flushes whatever was typed at the board, and anything typed after this
+        // point belongs to the shell.
+        drop(self.quiet.lock().unwrap_or_else(|e| e.into_inner()).take());
     }
 
     fn header(&self) {
@@ -231,6 +280,12 @@ impl Board {
         self.update(id, |r| {
             r.note = line.to_string();
             r.calls += 1;
+            r.trace.push(line.to_string());
+            // A ring, not a log: the pane has a fixed number of lines and the run record
+            // on disk is where the whole history belongs. An unbounded vector here would
+            // grow for the length of the run for the sake of lines nobody can see.
+            let over = r.trace.len().saturating_sub(TRACE_KEEP);
+            r.trace.drain(..over);
         });
         self.event(id, line);
     }
@@ -283,8 +338,10 @@ impl Board {
 
     fn update(&self, id: &str, f: impl FnOnce(&mut Row)) {
         if let Ok(mut rows) = self.rows.lock() {
+            let stamp = rows.iter().map(|r| r.touched).max().unwrap_or(0) + 1;
             if let Some(row) = rows.iter_mut().find(|r| r.id == id) {
                 f(row);
+                row.touched = stamp;
             }
         }
         if self.live {
@@ -314,19 +371,32 @@ impl Board {
     /// the last painted line. That holds only if the block is newline-**separated** and
     /// no row is wider than the window; both are a [`View`]'s contract, and both are
     /// asserted for each view.
+    ///
+    /// The third way to defeat it is a block TALLER than the window: the terminal scrolls
+    /// to fit it, the top rows leave the screen, and climbing back up now lands somewhere
+    /// that is no longer the board. A view choosing to be too tall is a bug, but the
+    /// consequence is corruption of everything above it, so the clamp is here rather than
+    /// left to each view to promise.
     fn paint_to(&self, w: &mut dyn std::io::Write) {
-        let cols = crate::cli::term_cols();
-        let text = self.draw(cols);
+        self.paint_into(w, crate::cli::term_cols(), crate::cli::term_rows());
+    }
+
+    /// The paint into a window of a stated size — the seam that lets a test drive the
+    /// clamp, which the real terminal size cannot be made to exercise.
+    fn paint_into(&self, w: &mut dyn std::io::Write, cols: usize, rows: usize) {
+        if self.held.load(Ordering::Relaxed) {
+            return; // somebody else owns the cursor
+        }
+        let drawn = self.draw_in(cols, rows);
+        let text = match rows {
+            0 => drawn,
+            _ => crate::cli::live::clamp_tail(&drawn, rows.saturating_sub(1)).0,
+        };
         let lines = text.lines().count();
         let mut painted = self.painted.lock().unwrap_or_else(|e| e.into_inner());
         let _ = write!(w, "{}{text}", crate::cli::erase_seq(*painted));
         let _ = w.flush();
         *painted = lines;
-    }
-
-    /// The whole board as text in a `cols`-wide window, as tall as the terminal says.
-    pub fn draw(&self, cols: usize) -> String {
-        self.draw_in(cols, crate::cli::term_rows())
     }
 
     /// The board in a window of a stated size — the same function the paint writes and
@@ -349,6 +419,25 @@ impl Board {
 impl Drop for Board {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The screen and the keyboard, lent out. Dropping it takes them back.
+pub(crate) struct Hold {
+    board: Arc<Board>,
+    restore: Option<platform::os::RawGuard>,
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        // The guard captured the terminal state as it was BEFORE the board quietened it, so
+        // dropping it here would undo the answer's own echo settings. Take echo off afresh
+        // instead, and let the original guard restore the pre-board state at `finish`.
+        drop(self.restore.take());
+        if self.board.live {
+            *self.board.quiet.lock().unwrap_or_else(|e| e.into_inner()) = platform::os::echo_off();
+        }
+        self.board.held.store(false, Ordering::Relaxed);
     }
 }
 

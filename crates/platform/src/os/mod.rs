@@ -110,20 +110,40 @@ pub fn terminal_size() -> Option<(u16, u16)> {
     None
 }
 
+/// The terminal-state guard [`raw_mode`] and [`echo_off`] hand back. Re-exported so a
+/// long-lived display can hold one in a *field* — the guard's whole contract is that the
+/// terminal is restored when it drops, which is only useful if you can choose when.
+#[cfg(target_os = "macos")]
+pub use macos::proc::RawGuard;
+
 /// Put the controlling terminal (stdin) into raw mode until the returned guard drops — a
 /// full-screen CLI app (the Markdown editor) reads keystrokes one at a time and owns the
 /// screen; dropping the guard restores the terminal. `None` off a tty. macOS only for now.
 #[cfg(target_os = "macos")]
-pub fn raw_mode() -> Option<macos::proc::RawGuard> {
+pub fn raw_mode() -> Option<RawGuard> {
     macos::proc::raw_mode()
 }
 
-/// A no-op raw-mode guard for hosts without a termios backend yet — restores nothing.
+/// Stop the terminal echoing input until the returned guard drops, changing nothing else —
+/// for a display that owns a region of the screen but never reads the keyboard. Echoed
+/// input moves the cursor out from under such a display and corrupts its next repaint.
+/// `ICANON`/`ISIG` stay on, so Ctrl-C still works. `None` off a tty. macOS only for now.
+#[cfg(target_os = "macos")]
+pub fn echo_off() -> Option<RawGuard> {
+    macos::proc::echo_off()
+}
+
+/// A no-op terminal guard for hosts without a termios backend yet — restores nothing.
 #[cfg(not(target_os = "macos"))]
 pub struct RawGuard;
 
 #[cfg(not(target_os = "macos"))]
 pub fn raw_mode() -> Option<RawGuard> {
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn echo_off() -> Option<RawGuard> {
     None
 }
 

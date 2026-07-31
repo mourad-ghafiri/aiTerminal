@@ -47,7 +47,13 @@ pub(crate) fn ai_flow_cmd(args: &[String]) -> i32 {
         },
         FlowCmd::Run(spec) => {
             if spec.bg {
-                return spawn_background(args);
+                let code = spawn_background(args);
+                // Detaching is only useful if you can get back. `@flow watch` has always
+                // existed and nothing ever mentioned it, so nobody found it.
+                if code == 0 {
+                    println!("  attach:  {} ai flow watch", corelib::brand::NAME);
+                }
+                return code;
             }
             let record = spec.job_record.clone();
             let code = run_flow_cli(*spec, None);
@@ -167,6 +173,14 @@ fn flow_graph(name: &str, picture: &crate::flow::doc::Picture) -> i32 {
     0
 }
 
+/// The newest run that is still going, if there is one.
+fn live_run() -> Option<String> {
+    crate::flowruns::list()
+        .into_iter()
+        .find(|r| r.is_live() && platform::os::pid_alive(r.pid))
+        .map(|r| r.id)
+}
+
 /// `@flow runs` — the recent runs, newest first.
 fn flow_runs() -> i32 {
     let runs = crate::flowruns::list();
@@ -177,6 +191,11 @@ fn flow_runs() -> i32 {
     let now = crate::flowruns::now();
     let (dim, r) = (muted(), reset());
     println!("{}", crate::i18n::translate("flow.runs_header", &[runs.len().to_string()]));
+    // Live runs first. A terminal attached to nothing should still show you what is
+    // going, and the newest finished run is not the thing you came here to find.
+    let mut runs = runs;
+    runs.sort_by_key(|r| !(r.is_live() && platform::os::pid_alive(r.pid)));
+    let live = runs.iter().filter(|r| r.is_live() && platform::os::pid_alive(r.pid)).count();
     for run in runs {
         let age = crate::flowruns::human_age(now.saturating_sub(run.finished.unwrap_or(run.started)));
         let input = clip_tail(&run.input, 40);
@@ -184,6 +203,9 @@ fn flow_runs() -> i32 {
         let done = run.nodes.iter().filter(|n| n.state == crate::flowruns::NodeState::Done).count();
         let (tin, tout) = run.tokens();
         println!("      {dim}{done}/{} node(s) done \u{b7} {} tool call(s) \u{b7} {tin} in / {tout} out{r}", run.nodes.len(), run.tools());
+    }
+    if live > 0 {
+        println!("\n  {live} still running \u{b7} attach with: {} ai flow watch", corelib::brand::NAME);
     }
     println!("\n{}", crate::i18n::translate("flow.runs_hint", &[]));
     0
@@ -344,7 +366,14 @@ fn flow_node(id: &str, node: &str) -> i32 {
 /// same board the running process is painting — from any pane, any terminal, and for a
 /// `--bg` run that has no terminal of its own at all.
 fn flow_watch(id: &str, view: &str) -> i32 {
-    let Some(run) = resolved_run(id) else { return 2 };
+    // Bare `@flow watch` means "the one that is going", not "the newest record". Those
+    // are the same thing only until a run finishes, and then the useful default silently
+    // becomes the useless one.
+    let id = match id == "last" {
+        true => live_run().unwrap_or_else(|| id.to_string()),
+        false => id.to_string(),
+    };
+    let Some(run) = resolved_run(&id) else { return 2 };
     let Ok(flow) = load_flow(&run.flow) else {
         eprintln!("aiTerminal: flow '{}' is no longer installed, so its run cannot be drawn", run.flow);
         return 2;
@@ -357,6 +386,9 @@ fn flow_watch(id: &str, view: &str) -> i32 {
         run.concurrency,
     );
     eprintln!("{}{}{}", muted(), crate::i18n::translate("flow.watching", &[run.id.clone()]), reset());
+    // Watching is not owning. Ctrl-C here has always left the run alone, and nothing ever
+    // said so — which makes it the one key nobody is willing to press.
+    eprintln!("{}  Ctrl-C detaches \u{b7} the run keeps going{}", muted(), reset());
     board.start();
     let id = run.id.clone();
     // What has already been put on the board, so a node is applied when it CHANGES

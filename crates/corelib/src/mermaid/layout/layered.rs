@@ -3,13 +3,13 @@
 //! Shared by every box-and-arrow diagram type (flowchart, class, state, ER, …), which is
 //! why it takes a plain [`Graph`] of sizes and edges rather than any one diagram's model.
 //!
-//! Three passes, the classic Sugiyama shape:
+//! Three passes, the classic Sugiyama shape. The first two are graph theory and live in
+//! [`crate::graph`], because the `@flow` board needs the same two over the same graphs and
+//! two implementations of "which rank is this node in" is two different pictures of one
+//! flow. The third is this medium's own, and stays here:
 //!
-//! 1. **Rank** — longest path over the acyclic part. A depth-first pass marks edges that
-//!    point back into the current stack, and those sit out the ranking; without that, one
-//!    cycle stretches a diagram into a staircase.
-//! 2. **Order** — a median heuristic, sweeping down then up, to cut edge crossings. Nodes
-//!    that share a group stay together, so a subgraph's frame stays a tidy rectangle.
+//! 1. **Rank** — longest path over the acyclic part; cycle edges sit out the ranking.
+//! 2. **Order** — a median heuristic, sweeping down then up, to cut edge crossings.
 //! 3. **Place & route** — ranks become rows (or columns), and every edge leaves and enters
 //!    at a *port* on the facing edge of its box, so lines meet boxes square-on instead of
 //!    cutting across their corners.
@@ -41,134 +41,18 @@ impl Graph {
 }
 
 /// Rank assignment over the acyclic part of `g`.
+///
+/// The graph theory lives in [`crate::graph`], which the `@flow` board calls too — so a
+/// flow's document and the board watching that flow run agree about the shape of it.
+/// What is left here is the adapter: a diagram's `Graph` in, index space out.
 pub(crate) fn ranks(g: &Graph) -> Vec<usize> {
-    let n = g.len();
-    let mut adj: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n]; // (edge index, target)
-    for (i, &(from, to, _)) in g.edges.iter().enumerate() {
-        if from < n && to < n && from != to {
-            adj[from].push((i, to));
-        }
-    }
-    // 0 = unvisited, 1 = on the stack, 2 = finished.
-    let mut color = vec![0u8; n];
-    let mut back = vec![false; g.edges.len()];
-    let mut stack: Vec<(usize, usize)> = Vec::new(); // (node, next child)
-    for root in 0..n {
-        if color[root] != 0 {
-            continue;
-        }
-        color[root] = 1;
-        stack.push((root, 0));
-        while let Some(&mut (node, ref mut next)) = stack.last_mut() {
-            if *next < adj[node].len() {
-                let (ei, to) = adj[node][*next];
-                *next += 1;
-                match color[to] {
-                    0 => {
-                        color[to] = 1;
-                        stack.push((to, 0));
-                    }
-                    1 => back[ei] = true, // points into the current path: a cycle
-                    _ => {}
-                }
-            } else {
-                color[node] = 2;
-                stack.pop();
-            }
-        }
-    }
-    let mut rank = vec![0usize; n];
-    for _ in 0..n.max(1) {
-        let mut changed = false;
-        for (i, &(from, to, min_len)) in g.edges.iter().enumerate() {
-            if back[i] || from >= n || to >= n || from == to {
-                continue;
-            }
-            let want = rank[from] + min_len.max(1);
-            if rank[to] < want {
-                rank[to] = want;
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    rank
+    crate::graph::ranks(g.len(), &g.edges)
 }
 
 /// Nodes per rank, ordered to reduce crossings and to keep groups together.
 pub(crate) fn order(g: &Graph, rank: &[usize]) -> Vec<Vec<usize>> {
-    let n = g.len();
-    let max_rank = rank.iter().copied().max().unwrap_or(0);
-    let mut ranks: Vec<Vec<usize>> = vec![Vec::new(); max_rank + 1];
-    for i in 0..n {
-        ranks[rank[i]].push(i);
-    }
-    // Neighbors in the previous / next rank, for the median.
-    let mut up: Vec<Vec<usize>> = vec![Vec::new(); n];
-    let mut down: Vec<Vec<usize>> = vec![Vec::new(); n];
-    for &(from, to, _) in &g.edges {
-        if from < n && to < n && rank[from] != rank[to] {
-            let (a, b) = if rank[from] < rank[to] { (from, to) } else { (to, from) };
-            down[a].push(b);
-            up[b].push(a);
-        }
-    }
-    let mut pos = position_map(&ranks, n);
-    // Four sweeps is enough to settle the diagrams a terminal shows; more buys nothing.
-    for pass in 0..4 {
-        let downward = pass % 2 == 0;
-        // Rank 0 is swept too: it has no parents to follow, but its group affinity still
-        // decides which of its nodes sit next to each other.
-        let seq: Vec<usize> = if downward { (0..=max_rank).collect() } else { (0..=max_rank).rev().collect() };
-        for r in seq {
-            let neighbors = if downward { &up } else { &down };
-            let mut keyed: Vec<(usize, (usize, f32, usize))> = ranks[r]
-                .iter()
-                .enumerate()
-                .map(|(i, &node)| {
-                    let med = median(&neighbors[node], &pos).unwrap_or(pos[node] as f32);
-                    (node, (group_key(g, node), med, i))
-                })
-                .collect();
-            keyed.sort_by(|a, b| {
-                a.1 .0
-                    .cmp(&b.1 .0)
-                    .then(a.1 .1.partial_cmp(&b.1 .1).unwrap_or(std::cmp::Ordering::Equal))
-                    .then(a.1 .2.cmp(&b.1 .2))
-            });
-            ranks[r] = keyed.into_iter().map(|(node, _)| node).collect();
-            pos = position_map(&ranks, n);
-        }
-    }
-    ranks
-}
-
-/// A node's index within its own rank.
-fn position_map(ranks: &[Vec<usize>], n: usize) -> Vec<usize> {
-    let mut pos = vec![0usize; n];
-    for r in ranks {
-        for (i, &node) in r.iter().enumerate() {
-            pos[node] = i;
-        }
-    }
-    pos
-}
-
-/// Group members sort together; ungrouped nodes sort last so a frame stays contiguous.
-fn group_key(g: &Graph, node: usize) -> usize {
-    g.group.get(node).copied().flatten().map(|i| i + 1).unwrap_or(usize::MAX)
-}
-
-fn median(neighbors: &[usize], pos: &[usize]) -> Option<f32> {
-    if neighbors.is_empty() {
-        return None;
-    }
-    let mut ps: Vec<usize> = neighbors.iter().map(|&n| pos[n]).collect();
-    ps.sort_unstable();
-    let mid = ps.len() / 2;
-    Some(if ps.len() % 2 == 1 { ps[mid] as f32 } else { (ps[mid - 1] + ps[mid]) as f32 / 2.0 })
+    let edges: Vec<(usize, usize)> = g.edges.iter().map(|&(a, b, _)| (a, b)).collect();
+    crate::graph::order(g.len(), &edges, rank, &g.group)
 }
 
 /// Positioned boxes for an ordered, ranked graph.

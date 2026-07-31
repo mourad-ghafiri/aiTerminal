@@ -280,6 +280,9 @@ impl FlowDriver<'_> {
             };
         }
         use std::io::Write;
+        // The board is quiet and repainting in place; both have to stop for the length of
+        // one question, or the answer is typed invisibly over a picture that keeps moving.
+        let _hold = self.board.hold();
         eprint!("{}{question} [y/N] {}", accent(), reset());
         let _ = std::io::stderr().flush();
         let mut line = String::new();

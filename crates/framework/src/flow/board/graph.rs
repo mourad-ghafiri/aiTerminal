@@ -21,16 +21,13 @@
 //! else. [`Canvas`] decides **which glyph**, resolving every join from a direction mask.
 //! [`paint`](super::paint) decides **what colour**. This module only says what to draw.
 
-use super::card::{self, Card, Grid, Link, CARD_H};
+use super::card::{self, Card, Grid, Link, GAP};
 use super::list::ListView;
 use super::paint::{compose, Ink, Paint};
-use super::view::{clip, human_tokens, note_of, summary, time_of, Head, View};
+use super::view::{clip, human_tokens, note_of, pane, summary, time_of, Head, View, PANE_H};
 use super::{Row, State};
 use corelib::cells::Canvas;
 
-/// The column a route falls back to when neither end's own column is clear. Cards start
-/// at 2, so nothing is ever drawn there.
-const MARGIN: usize = 0;
 /// How tall a board may get when the window will not say how tall IT is — a pipe, a job
 /// log, a test. Past this a board has stopped being something you take in at a glance.
 const BLIND_BUDGET: usize = 40;
@@ -43,7 +40,7 @@ impl View for GraphView {
         // Cards cost height. A deep graph in a short split is a picture that scrolls its
         // own header off the top and takes the prompt with it — so when it will not fit,
         // the denser view is not a downgrade, it is the only one that can be read.
-        if !fits(&grid, head) {
+        if !fits(&grid, head, cols) {
             return ListView.render(rows, head, frame, cols);
         }
         let (dim, r) = (&head.palette.muted, &head.palette.reset);
@@ -57,19 +54,26 @@ impl View for GraphView {
         for c in &grid.cards {
             draw_card(&mut canvas, &mut paint, c, &rows[c.node], frame);
         }
-        let mut lines = vec![format!("  {dim}{}{r}", clip(&shape_line(rows, head), cols.saturating_sub(2)))];
+        let mut lines = vec![format!("  {dim}{}{r}", clip(&shape_line(rows, &grid, head), cols.saturating_sub(2)))];
         lines.extend(compose(&canvas, &paint, head.palette));
+        lines.extend(pane(rows, head, cols));
         lines.push(summary(rows, head, cols));
         lines.join("\n")
     }
 }
 
 /// Whether the card grid fits the window it is painting into.
-fn fits(grid: &Grid, head: &Head) -> bool {
+///
+/// **Both** dimensions, now that a rank is a column: depth costs width, so a nine-deep
+/// flow asks for more columns than a terminal has, where before the packing simply wrapped
+/// it. A picture drawn past the right-hand edge is worse than no picture — the terminal
+/// wraps each row into two visual ones while the repaint counts one, which is the failure
+/// that leaked a line per tick. So too wide falls back to the list exactly as too tall does.
+fn fits(grid: &Grid, head: &Head, cols: usize) -> bool {
     // Two rows go to the header and the tally; one more is the prompt the board is
     // printed above, which must not be pushed off the top.
-    let budget = if head.rows > 0 { head.rows.saturating_sub(3) } else { BLIND_BUDGET };
-    grid.cards.len() > 1 && grid.h <= budget
+    let budget = if head.rows > 0 { head.rows.saturating_sub(3 + PANE_H) } else { BLIND_BUDGET };
+    grid.cards.len() > 1 && grid.h <= budget && grid.w <= cols
 }
 
 // ── the cards ──────────────────────────────────────────────────────────────
@@ -189,76 +193,68 @@ fn edge_ink(state: State) -> Ink {
 fn draw_edge(canvas: &mut Canvas, paint: &mut Paint, grid: &Grid, rows: &[Row], edge: &card::Edge) {
     let (Some(a), Some(b)) = (grid.card(edge.from), grid.card(edge.to)) else { return };
     let ink = edge_ink(rows[edge.from].state);
+    let arrive = |canvas: &mut Canvas, paint: &mut Paint, x: usize, y: usize, ch: char| {
+        canvas.put(x as isize, y as isize, ch);
+        paint.set(x, y, ink);
+    };
     match edge.link {
+        // The next rank along, level with it: nothing to travel past, so nothing to draw
+        // but the arrow itself.
         Link::Straight => {
-            let y = a.y + CARD_H / 2;
-            let (x0, x1) = (a.right() + 1, b.x.saturating_sub(1));
+            let (y, x0, x1) = (a.cy(), a.right() + 1, b.x.saturating_sub(1));
             canvas.hline(x0 as isize, x1.saturating_sub(1) as isize, y as isize);
-            canvas.put(x1 as isize, y as isize, '\u{25b8}');
             paint.span(x0, x1, y, ink);
+            arrive(canvas, paint, x1, y, '\u{25b8}');
         }
-        Link::Routed => {
-            for pair in route(a, b, edge.lane, grid).windows(2) {
-                let ((x0, y0), (x1, y1)) = (pair[0], pair[1]);
-                if x0 == x1 {
-                    // A vertical OVERWRITES. It is the segment that says the route
-                    // reaches the card, and one drawn only where nothing else had been
-                    // vanishes at the first crossing — which left three arrowheads on the
-                    // board with no line arriving at any of them.
-                    for y in y0.min(y1)..=y0.max(y1) {
-                        canvas.put(x0 as isize, y as isize, corelib::cells::DASH_V);
-                        paint.set(x0, y, ink);
-                    }
-                } else {
-                    // A horizontal does not: where it meets a vertical, the vertical owns
-                    // the crossing, and a run of dashes reads through one interruption
-                    // perfectly well.
-                    canvas.dashed_h(x0 as isize, x1 as isize, y0 as isize);
-                    paint.span(x0.min(x1), x0.max(x1), y0, ink);
-                }
+        // Out of the right port, along to the gap before the target, up or down it, then
+        // into the left port. Right angles only: an edge is read by following it.
+        Link::Elbow => {
+            let turn = b.x.saturating_sub(1 + edge.lane % GAP.max(1));
+            let (y0, y1) = (a.cy(), b.cy());
+            canvas.hline((a.right() + 1) as isize, turn as isize, y0 as isize);
+            paint.span(a.right() + 1, turn, y0, ink);
+            // `vline` rather than a run of glyphs: the canvas resolves each cell from a
+            // direction mask, so where this meets the two horizontals it becomes a proper
+            // corner (`╮` `╰`) instead of a vertical bar laid across a line.
+            canvas.vline(y0 as isize, y1 as isize, turn as isize);
+            for y in y0.min(y1)..=y0.max(y1) {
+                paint.set(turn, y, ink);
             }
-            let up = b.row <= a.row;
-            let (hx, hy) = (b.cx(), if up { b.bottom() + 1 } else { b.y.saturating_sub(1) });
-            canvas.put(hx as isize, hy as isize, if up { '\u{25b4}' } else { '\u{25be}' });
-            paint.set(hx, hy, ink);
+            canvas.hline(turn as isize, b.x.saturating_sub(1) as isize, y1 as isize);
+            paint.span(turn, b.x.saturating_sub(1), y1, ink);
+            arrive(canvas, paint, b.x.saturating_sub(1), y1, '\u{25b8}');
+        }
+        // A `goto` pointing back at a rank already passed. It travels in the band UNDER
+        // the whole board, and both of its verticals run in a GAP between two columns —
+        // never at a card's centre, which with a rank per column would take the line
+        // straight through whatever is stacked below the ends.
+        Link::Back => {
+            let lane = grid.h.saturating_sub(1).saturating_sub(edge.lane);
+            // Down the gap AFTER the source when it has one, so the loop leaves on the
+            // side the work was moving. The last column has no gap after it — a `goto`
+            // from a final node is the common case — so that one descends on its left.
+            let last = grid.cards.iter().map(|c| c.rank).max().unwrap_or(0);
+            let after = a.rank < last;
+            let down = if after { a.right() + 2 + edge.lane } else { a.x.saturating_sub(2 + edge.lane) };
+            let up = b.x.saturating_sub(2 + edge.lane);
+            let (px, qx) = if after { (a.right() + 1, down) } else { (down, a.x.saturating_sub(1)) };
+            canvas.dashed_h(px as isize, qx as isize, a.cy() as isize);
+            paint.span(px, qx, a.cy(), ink);
+            for y in a.cy()..=lane {
+                canvas.put(down as isize, y as isize, corelib::cells::DASH_V);
+                paint.set(down, y, ink);
+            }
+            canvas.dashed_h(up.min(down) as isize, down.max(up) as isize, lane as isize);
+            paint.span(up.min(down), up.max(down), lane, ink);
+            for y in b.cy()..=lane {
+                canvas.put(up as isize, y as isize, corelib::cells::DASH_V);
+                paint.set(up, y, ink);
+            }
+            canvas.hline(up as isize, b.x.saturating_sub(1) as isize, b.cy() as isize);
+            paint.span(up, b.x.saturating_sub(1), b.cy(), ink);
+            arrive(canvas, paint, b.x.saturating_sub(1), b.cy(), '\u{25b8}');
         }
     }
-}
-
-/// The corners a routed edge turns at, source first.
-///
-/// Two shapes. A neighbour is a hop through the band under the source. Anything further
-/// has to climb past whole rows of cards, so it looks for a column that is clear —
-/// beside one of the two ends if it can, and the left margin if it cannot.
-fn route(a: &Card, b: &Card, lane: usize, grid: &Grid) -> Vec<(usize, usize)> {
-    let below_a = a.bottom() + 1 + lane;
-    if b.row == a.row || b.row == a.row + 1 {
-        let entry = if b.row == a.row { b.bottom() + 1 } else { b.y.saturating_sub(1) };
-        return vec![(a.cx(), a.bottom() + 1), (a.cx(), below_a), (b.cx(), below_a), (b.cx(), entry)];
-    }
-    let back = b.row < a.row;
-    let (approach, entry) = match back {
-        true => (b.bottom() + 1 + lane, b.bottom() + 1),
-        false => (b.y.saturating_sub(1), b.y.saturating_sub(1)),
-    };
-    // Which rows the climb actually crosses. Both ends sit in a *band*, not on a card
-    // row, so the source's own row is in the way of a backward climb and the rows
-    // strictly between the two are in the way of a forward one. Including either end's
-    // own card row would rule out its own column and send every route to the margin,
-    // where it reads as a border down the side of the board rather than as an edge.
-    let (lo, hi) = match back {
-        true => (b.row + 1, a.row),
-        false => (a.row + 1, b.row.saturating_sub(1)),
-    };
-    let climb = grid.clear_column(&[b.cx(), a.cx(), MARGIN], lo, hi);
-    vec![
-        (a.cx(), a.bottom() + 1),
-        (a.cx(), below_a),
-        (climb, below_a),
-        (climb, approach),
-        (b.cx(), approach),
-        (b.cx(), entry),
-    ]
 }
 
 // ── the header ─────────────────────────────────────────────────────────────
@@ -266,7 +262,7 @@ fn route(a: &Card, b: &Card, lane: usize, grid: &Grid) -> Vec<(usize, usize)> {
 /// "7 nodes · 3 agents · 14 tools · 4 skills · 2 mcp · 4 at a time" — the run's whole
 /// capability surface on one line, so what an agent can reach is a fact you read rather
 /// than a thing you assume.
-fn shape_line(rows: &[Row], head: &Head) -> String {
+fn shape_line(rows: &[Row], grid: &Grid, head: &Head) -> String {
     let mut agents: Vec<&Row> = Vec::new();
     for row in rows.iter().filter(|x| x.what.starts_with('@')) {
         if !agents.iter().any(|a| a.what == row.what) {
@@ -290,6 +286,19 @@ fn shape_line(rows: &[Row], head: &Head) -> String {
         parts.push(format!("{mcps} mcp"));
     }
     parts.push(format!("{} at a time", head.concurrency));
+    // The chain that decides the wall clock. On a graph that runs things at the same time
+    // this is not the slowest node and cannot be read off the picture: a slow node with
+    // three fast ones beside it costs nothing, and the eye has no way to tell which arm of
+    // a fork the run is actually waiting for.
+    let path: Vec<&str> = grid
+        .cards
+        .iter()
+        .filter(|c| grid.critical.get(c.node).copied().unwrap_or(false))
+        .map(|c| rows[c.node].id.as_str())
+        .collect();
+    if path.len() > 1 {
+        parts.push(format!("slowest path {}", path.join("\u{2192}")));
+    }
     parts.join(" \u{b7} ")
 }
 

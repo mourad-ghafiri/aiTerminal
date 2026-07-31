@@ -1,0 +1,60 @@
+name = "the board draws depth, and never draws what the graph already implies"
+tags = ["flow", "ui", "graph"]
+
+# Two complaints about the old board, one cause. It packed cards left to right and wrapped
+# at four per line, so where a card sat said how far down the FILE its node was declared —
+# not how deep in the graph it ran. Two cards side by side could be sequential; a node's
+# parent could be anywhere; depth, the one thing a flow's picture exists to show, was
+# invisible.
+#
+# A rank is a column now. `a` is on the left because nothing precedes it, `b` and `c` share
+# a column because they run at the same time, and `d` is on the right because it waits for
+# both. You read the shape before you read a word.
+
+[[step]]
+flow = """
+[[node]]
+id     = "a"
+agent  = "explorer"
+prompt = "Map it"
+
+[[node]]
+id     = "b"
+agent  = "reviewer"
+needs  = ["a"]
+prompt = "Review {{a.output}}"
+
+[[node]]
+id     = "c"
+agent  = "tester"
+needs  = ["a"]
+prompt = "Test {{a.output}}"
+
+[[node]]
+id     = "d"
+agent  = "coder"
+needs  = ["a", "b", "c"]
+final  = true
+prompt = "Fix {{b.output}} and {{c.output}}"
+"""
+
+# `b` and `c` are one rank, so one column: same left edge, different heights.
+[[step]]
+expect_nodes_share_a_column = ["b", "c"]
+
+# `d` needs `a` directly AND through both of the others, so the direct `a → d` edge
+# constrains nothing the picture does not already say. Drawing it is the biggest single
+# source of clutter on a real flow: three arrows into one card where one carries the
+# meaning. The DEPENDENCY is untouched — the scheduler still honours it, and `d` still
+# ranks below everything it needs.
+[[step]]
+expect_edge_is_drawn = ["a->b", "a->c", "b->d", "c->d"]
+
+[[step]]
+expect_edge_is_implied = ["a->d"]
+
+# And the run's whole shape is on one line, including the chain that decides the wall
+# clock. On a graph that overlaps work that is not the slowest node and cannot be read off
+# the picture: a slow node with fast ones beside it costs nothing.
+[[step]]
+expect_graph_view_contains = ["slowest path"]

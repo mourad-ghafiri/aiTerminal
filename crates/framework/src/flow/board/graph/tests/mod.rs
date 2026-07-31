@@ -1,5 +1,5 @@
 use super::super::tests::{fixture, painted_at};
-use super::super::view::{visible_width, Palette};
+use super::super::view::{strip_ansi, visible_width, Palette};
 use super::super::{Board, State};
 use super::*;
 
@@ -27,9 +27,35 @@ fn every_node_is_drawn_as_a_card() {
 #[test]
 fn cards_are_joined_by_arrows_and_routes() {
     let text = painted_at(&fixture("graph"), 120);
+    // Every edge arrives the same way — at a card's left port, pointing right — because
+    // every edge means the same thing: the work moves on. What distinguishes them is the
+    // line, not the head: solid where the work goes forward, dashed where a `goto` sends
+    // it back. An arrowhead that changed direction was one more thing to decode.
     assert!(text.contains('\u{25b8}'), "a solid arrow between neighbours:\n{text}");
-    assert!(text.contains('╌') || text.contains('╎'), "and a dashed route:\n{text}");
-    assert!(text.contains('\u{25b4}') || text.contains('\u{25be}'), "which arrives somewhere:\n{text}");
+    assert!(text.contains('╌') && text.contains('╎'), "and a dashed loop, along and back up:\n{text}");
+    let heads = text.matches('\u{25b8}').count();
+    assert!(heads >= 3, "one head per drawn edge, all of them arriving: {heads}\n{text}");
+}
+
+#[test]
+fn a_loop_never_runs_through_the_cards_it_loops_over() {
+    // A `goto` travels in the band under the whole board and turns in the GAPS between
+    // columns. Drawn at the cards' own centres it went straight through whatever was
+    // stacked below either end — a line through a node's text, which reads as damage.
+    let b = fixture("graph");
+    let rows = rows_of(&b);
+    let text = painted_at(&b, 120);
+    let grid = super::super::card::plan(&rows, 120);
+    // The canvas rows sit under the one-line header, so a card's y is one text line lower.
+    let lines: Vec<Vec<char>> = text.lines().map(|l| strip_ansi(l).chars().collect()).collect();
+    for card in &grid.cards {
+        for y in card.y + 1..card.bottom() {
+            for x in card.x + 1..card.right() {
+                let ch = lines.get(y + 1).and_then(|l| l.get(x)).copied().unwrap_or(' ');
+                assert!(ch != '╎' && ch != '╌', "a loop crosses {:?} at ({x},{y}): {:?}", rows[card.node].id, lines[y + 1].iter().collect::<String>());
+            }
+        }
+    }
 }
 
 #[test]
@@ -140,10 +166,13 @@ fn a_card_carries_what_it_is_what_serves_it_and_what_it_cost() {
     let text = painted_at(&b, 150);
     assert!(text.contains("@explorer \u{b7} claude-sonnet-5"), "the model shares the line:\n{text}");
     assert!(text.contains("4.2s \u{b7} 9.4k"), "and the cost is under it:\n{text}");
-    // Too narrow to hold both, so the thing that identifies the node wins.
+    // Too narrow to hold both, so on the CARD the thing that identifies the node wins.
+    // The pane below still names the model — it has a whole line for one node, which is
+    // the entire reason it exists.
     let narrow = painted_at(&b, 70);
-    assert!(narrow.contains("@explorer"), "{narrow}");
-    assert!(!narrow.contains("claude-sonnet-5"), "the model gave way:\n{narrow}");
+    let cards: String = narrow.lines().filter(|l| l.contains('│')).collect::<Vec<_>>().join("\n");
+    assert!(cards.contains("@explorer"), "{narrow}");
+    assert!(!cards.contains("claude-sonnet-5"), "the model gave way on the card:\n{narrow}");
 }
 
 #[test]
@@ -168,17 +197,35 @@ fn a_waiting_card_says_what_is_holding_it_and_where_it_loops_back_to() {
 #[test]
 fn a_window_too_short_for_cards_gets_the_list_instead() {
     // Cards cost height. Refusing to admit that is how a board scrolls its own header
-    // off the top and becomes unreadable.
+    // off the top and becomes unreadable. Width is held constant here so height is the
+    // only thing under test — `a_window_too_narrow_for_the_ranks` covers the other axis.
     let b = fixture("graph");
     let rows = rows_of(&b);
     let palette = Palette::default();
-    let tall = GraphView.render(&rows, &head(&palette, 40), 0, 60);
+    let tall = GraphView.render(&rows, &head(&palette, 40), 0, 100);
     assert!(tall.contains('╭'), "there is room for cards:\n{tall}");
-    let short = GraphView.render(&rows, &head(&palette, 8), 0, 60);
+    let short = GraphView.render(&rows, &head(&palette, 8), 0, 100);
     assert!(!short.contains('╭'), "and here there is not:\n{short}");
-    assert_eq!(short, ListView.render(&rows, &head(&palette, 8), 0, 60), "it is the list, not a third thing");
+    assert_eq!(short, ListView.render(&rows, &head(&palette, 8), 0, 100), "it is the list, not a third thing");
     // Every node is still accounted for — the fallback is denser, not smaller.
     for id in ["map", "left", "right", "report"] {
         assert!(short.contains(id), "{id} is missing:\n{short}");
+    }
+}
+
+#[test]
+fn a_window_too_narrow_for_the_ranks_gets_the_list_too() {
+    // Now that a rank is a column, DEPTH costs width — a flow deep enough asks for more
+    // columns than the terminal has. Drawn anyway, every row wraps into two visual ones
+    // while the repaint counts one, which is the bug that leaked a line per tick.
+    let b = fixture("graph");
+    let rows = rows_of(&b);
+    let palette = Palette::default();
+    let wide = GraphView.render(&rows, &head(&palette, 40), 0, 100);
+    assert!(wide.contains('╭'), "three ranks fit in 100 columns:\n{wide}");
+    let narrow = GraphView.render(&rows, &head(&palette, 40), 0, 50);
+    assert!(!narrow.contains('╭'), "and they do not fit in 50:\n{narrow}");
+    for line in narrow.lines() {
+        assert!(visible_width(line) <= 50, "{line:?}");
     }
 }

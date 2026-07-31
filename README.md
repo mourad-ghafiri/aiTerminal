@@ -73,7 +73,7 @@ profiles. The AI is woven into the shell itself through one idea:
 | --- | --- |
 | 🪄 `@ai <request>` | Natural language → one shell command, checked by the command guard, preloaded for review (or auto-run per `[ai] mode`). |
 | 🤖 `@<agent> <task>` | Run a named agent's full tool loop (read/search/edit/run, memory, MCP) and print its report. Ships with `coder`, `explorer`, `reviewer`, `tester`. |
-| 🔀 `@flow <name> "<input>"` | Run a workflow **graph**: independent nodes run at the same time, `when` routes on the edge, a `run` node costs no tokens, and `goto` retries a bounded number of times. Five ship — `build`, `fix`, `review`, `research`, `document` — and a bare `@flow "<goal>"` is routed to one by the model, which prints its choice before spending anything. `@flow check` proves a graph before it runs; `@flow graph` draws it as a real diagram with a table of what each node reaches; you watch it **as a graph**, one band per wave of work; and `@flow nodes` / `node` / `watch` / `retry` / `resume` give you the run a node at a time. |
+| 🔀 `@flow <name> "<input>"` | Run a workflow **graph**: independent nodes run at the same time, `when` routes on the edge, a `run` node costs no tokens, and `goto` retries a bounded number of times. Five ship — `build`, `fix`, `review`, `research`, `document` — and a bare `@flow "<goal>"` is routed to one by the model, which prints its choice before spending anything. `@flow check` proves a graph before it runs; `@flow graph` draws it as a real diagram with a table of what each node reaches; you watch it **as a graph** — a rank is a column, so depth is something you see and work that runs together stacks together, with a pane under the cards following whichever node is working; and `@flow nodes` / `node` / `watch` / `retry` / `resume` give you the run a node at a time. |
 | 🧾 **Not just for code** | `@ai summarise @lease.pdf` · `@flow research "which e-bike for a hilly commute"` · `@writer "turn @notes.md into a brief"` · `@job "every Monday at 9, summarise ~/Documents/inbox"` · `@md edit letter.md`. The docs' [Without writing code](docs/ai.md#without-writing-code) table says what each one needs — and `@md`, `@theme`, `@agent`, `@flow check` and `@job -- <command>` need no model at all. |
 | 🧑‍🔬 `@agent [<name>]` | The eight agents you have — planner, explorer, researcher, coder, tester, reviewer, writer and the assistant — with their tools, step caps and what each returns. Every one is an editable Markdown file. |
 | 🔁 `@loop "<goal>"` | Iterate an agent until the goal **verifies**. `--check "<cmd>"` is a binary stop condition; with none, the AI proposes a real one from the goal (guard-adjudicated — a "verifier" that deploys is refused) and it is **proven before the first token is spent**: already green costs nothing, unrunnable is caught up front, and a failure seeds iteration 1. Bounded on iterations, tokens *and* wall clock; repeats and oscillations both count as no progress and buy exactly one materially-different retry. Every iteration is recorded, so `@loop show/log/resume` pick it back up. |
@@ -202,7 +202,7 @@ the last one so the code stays contributable, not just correct.
 
 ## 🧪 Tested
 
-**1305 unit tests** and **271 scenarios**, in a few seconds, with no network and no API key.
+**1327 unit tests** and **273 scenarios**, in a few seconds, with no network and no API key.
 
 A unit test proves a function; a **scenario** proves a *product*. Scenarios are real user
 journeys written as TOML and played against the real code — *a destructive suggestion is

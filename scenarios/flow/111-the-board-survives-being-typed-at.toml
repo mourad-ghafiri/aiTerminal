@@ -1,0 +1,50 @@
+name = "a keystroke during a run does not add lines to the board"
+tags = ["flow", "ui"]
+
+# The bug people actually hit. The board repaints in place: it writes its block, records
+# how many lines that was, and next frame climbs back over them to erase. Climbing works
+# only if the cursor is still where the board left it — and pressing Enter moves it. The
+# terminal echoed a newline, the next frame erased from the wrong row, and the block
+# already on screen was stranded. One stray block per Enter, and the run became unreadable.
+#
+# No amount of care inside the board could fix that: the keystroke comes from outside it.
+# So the board asks the terminal to stop echoing for as long as it owns that region, which
+# is honest anyway — the board is not reading your keyboard.
+
+[[step]]
+flow = """
+[[node]]
+id     = "build"
+run    = "cargo build"
+
+[[node]]
+id     = "test"
+run    = "cargo test"
+needs  = ["build"]
+final  = true
+"""
+
+[[step]]
+node_exits = ["build: 0", "test: 0"]
+
+# The block is the same height on every frame, whatever the nodes are doing. That is what
+# makes the erase arithmetic correct in the first place — a board whose height changes as
+# a tool trace arrives cannot be erased with a count measured before it did.
+[[step]]
+expect_board_height_is_constant = true
+
+# And nothing is ever left one row below where it says it is: the block is separated by
+# newlines, never terminated by one, so the cursor stays ON the last row it painted.
+[[step]]
+expect_board_ends_on_its_last_row = true
+
+[[step]]
+run = true
+
+# And the two properties still hold once every node has settled — the state the leak was
+# most visible in, because a finished board is the one left on your screen.
+[[step]]
+expect_board_height_is_constant = true
+
+[[step]]
+expect_board_ends_on_its_last_row = true

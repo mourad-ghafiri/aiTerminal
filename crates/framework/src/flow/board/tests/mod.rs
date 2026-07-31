@@ -44,9 +44,9 @@ pub(crate) fn fixture(view: &str) -> Arc<Board> {
     )
 }
 
-/// The board as it would look in a `cols`-wide window.
+/// The board as it would look in a `cols`-wide window of unstated height.
 pub(crate) fn painted_at(b: &Arc<Board>, cols: usize) -> String {
-    b.draw(cols)
+    b.draw_in(cols, 0)
 }
 
 fn painted(b: &Arc<Board>) -> String {
@@ -188,10 +188,125 @@ fn a_repaint_lands_back_on_the_first_row_and_leaves_nothing_behind() {
         let third = String::from_utf8(out).unwrap();
         assert!(third.starts_with(&format!("\r\x1b[{}A\x1b[0J", rows_painted - 1)), "{view}: {third:?}");
         assert_eq!(third.lines().count(), rows_painted, "still the same block ({view}): {third:?}");
-        // Exactly one line IS the plan row (substring-counting would also match the
-        // `@planner` beside it — the leak showed up as repeated whole lines).
-        let plan_rows = third.lines().filter(|l| l.split_whitespace().any(|t| t == "plan")).count();
+        // Exactly one CARD line is the plan row (substring-counting would also match the
+        // `@planner` beside it — the leak showed up as repeated whole lines). The pane
+        // names the focused node too, so the count is taken over the picture alone.
+        let plan_rows = third
+            .lines()
+            .filter(|l| l.contains('│') || view == "list")
+            .filter(|l| l.split_whitespace().any(|t| t == "plan"))
+            .count();
         assert_eq!(plan_rows, 1, "the finished row appears ONCE ({view}): {third:?}");
+    }
+}
+
+#[test]
+fn the_pane_follows_the_node_that_is_working() {
+    // A card is three lines and has to hold a name, so what a node cost, which model
+    // served it and what it has been DOING cannot all live there. The pane is the answer,
+    // and with no keyboard to select with it has to choose — the node that is working.
+    let b = fixture("graph");
+    b.running("left", "@reviewer");
+    b.model("left", "claude-sonnet-5");
+    b.tool("left", "⚙ fs.read src/cli.rs · 9ms");
+    let text = painted(&b);
+    let pane = text.lines().filter(|l| !l.contains('│')).collect::<Vec<_>>().join("\n");
+    assert!(pane.contains("left"), "the working node is named:\n{text}");
+    assert!(pane.contains("claude-sonnet-5"), "with what is serving it:\n{pane}");
+    assert!(pane.contains("fs.read src/cli.rs"), "and what it is doing:\n{pane}");
+
+    // It moves on when the work does — the interesting node is the one that just changed.
+    b.settled("left", State::Done, 1200, 900, "");
+    b.running("right", "@reviewer");
+    let after = painted(&b);
+    let pane = after.lines().filter(|l| !l.contains('│')).collect::<Vec<_>>().join("\n");
+    assert!(pane.contains("right"), "the pane followed the work:\n{after}");
+}
+
+#[test]
+fn the_pane_keeps_the_last_few_calls_not_only_the_newest() {
+    // `note` is one line and is overwritten, which is right for a card and wrong for the
+    // pane: what a node HAS BEEN doing is the question, and one line is a stream you can
+    // only ever see the last frame of.
+    let b = fixture("graph");
+    b.running("map", "@explorer");
+    for i in 0..8 {
+        b.tool("map", &format!("⚙ fs.read file{i}.rs"));
+    }
+    let text = painted(&b);
+    assert!(text.contains("file7.rs"), "the newest is there:\n{text}");
+    assert!(text.contains("file6.rs") && text.contains("file5.rs"), "and the ones before it:\n{text}");
+    assert!(!text.contains("file0.rs"), "but it is a ring, not a log:\n{text}");
+}
+
+#[test]
+fn the_board_is_exactly_as_tall_whatever_the_nodes_are_doing() {
+    // The invariant the whole repaint rests on, now that there is a pane under the cards:
+    // a block whose height changes as text arrives is a block that cannot be erased with
+    // a line count measured before the text arrived.
+    let b = fixture("graph");
+    let quiet = painted(&b).lines().count();
+    b.running("left", "@reviewer");
+    b.model("left", "a-model-with-a-very-long-name-indeed");
+    for i in 0..6 {
+        b.tool("left", &format!("⚙ sys.run cargo test --package framework --lib {i}"));
+    }
+    assert_eq!(painted(&b).lines().count(), quiet, "busy");
+    b.settled("left", State::Failed, 9000, 12_000, "exit 1");
+    assert_eq!(painted(&b).lines().count(), quiet, "settled");
+}
+
+#[test]
+fn a_held_board_paints_nothing_so_an_answer_can_be_typed() {
+    // An `approve` node reads a line from stdin. The board is repainting in place and has
+    // told the terminal to stop echoing — both of which have to stop for the length of one
+    // question, or the answer is typed invisibly over a picture that keeps moving.
+    let b = Board::new(
+        "ship · this branch".into(),
+        vec![BoardNode { id: "ask".into(), what: "asks you".into(), ..BoardNode::default() }],
+        true, // live: the repainting path is the one that has to fall silent
+        "graph",
+        1,
+    );
+    let mut before: Vec<u8> = Vec::new();
+    b.paint_into(&mut before, 80, 24);
+    assert!(!before.is_empty(), "a board with nobody holding it paints");
+
+    let hold = b.hold();
+    let mut during: Vec<u8> = Vec::new();
+    b.paint_into(&mut during, 80, 24);
+    assert!(during.is_empty(), "nothing is drawn while the answer is being typed: {during:?}");
+
+    drop(hold);
+    let mut after: Vec<u8> = Vec::new();
+    b.paint_into(&mut after, 80, 24);
+    assert!(!after.is_empty(), "and the board comes back once the question is answered");
+    // It repaints from scratch rather than climbing over the prompt it just wrote.
+    let text = String::from_utf8(after).unwrap();
+    assert!(!text.starts_with("\x1b["), "the first paint after a hold erases nothing: {text:?}");
+}
+
+#[test]
+fn the_board_never_paints_taller_than_the_window() {
+    // The third way to defeat the erase arithmetic, after a stray newline and a too-wide
+    // row: a block taller than the terminal. The terminal scrolls to fit it, the top rows
+    // leave the screen, and climbing back up lands somewhere that is no longer the board —
+    // so the next frame erases whatever the user had above it.
+    let many: Vec<BoardNode> = (0..40)
+        .map(|i| BoardNode {
+            id: format!("n{i}"),
+            what: "@coder".into(),
+            needs: if i == 0 { vec![] } else { vec![format!("n{}", i - 1)] },
+            ..BoardNode::default()
+        })
+        .collect();
+    let b = Board::new("deep · a long chain".into(), many, true, "graph", 1);
+    for window in [8usize, 12, 24, 50] {
+        let mut out: Vec<u8> = Vec::new();
+        b.paint_into(&mut out, 80, window);
+        let text = String::from_utf8(out).unwrap();
+        let drawn = text.lines().count();
+        assert!(drawn < window, "{drawn} rows must not fill a {window}-row window: {text:?}");
     }
 }
 

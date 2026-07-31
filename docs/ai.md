@@ -263,7 +263,7 @@ it warns about the rest.
 ❯ @flow show <id>                # the graph again, with what each node cost
 ❯ @flow nodes [<id>]             # every node of a run, side by side
 ❯ @flow node [<id>] <node>       # one node in full: model, cost, transcript
-❯ @flow watch [<id>]             # follow a run that is still going
+❯ @flow watch [<id>]             # attach to a live run (Ctrl-C detaches)
 ❯ @flow log <id> [<node>] [-f]   # what a node actually said
 ❯ @flow resume <id>              # run only what did not complete
 ❯ @flow retry [<id>] <node>      # run one node again, and what depended on it
@@ -375,52 +375,79 @@ An `approve` node asks on a terminal; detached, it parks the run as `waiting` an
 
 A chain can narrate itself; a graph cannot. Four nodes start together and finish in
 whatever order they finish, so a stream of start/done lines hides the most useful thing
-about the run. So you watch it as **the graph it is**: every node a card, joined by a
-solid arrow where the work simply moves on and a dashed route where it wraps to the next
-line or loops back.
+about the run. So you watch it as **the graph it is** — and the layout is the graph, not
+the file: **a rank is a column**. What runs first is on the left, what runs at the same
+time stacks in one column, and the arrows only ever point the way the work moves.
 
 ```text
 ▸ build · add a --json flag to the export command
-  8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time
-  ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮
-  │ ✓ plan            ⚙3 │    │ ✓ explore        ⚙12 │    │ ✓ conventions     ⚙9 │    │ ⠻ apply           ⚙4 │
-  │ @planner             │───▸│ @explorer            │    │ @explorer            │───▸│ @coder               │
-  │ 4.2s · 9.0k          │    │ 8.1s · 6.9k          │    │ 7.6s · 8.8k          │    │ fs.edit src/cli.rs   │
-  ╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯
-              ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌▴                           ╎
-                                          ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎
-              ▾╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎
-  ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮
-  │ ○ verify             │    │ ○ fix                │    │ ○ review             │    │ ○ summary            │
-  │ @tester              │───▸│ @coder               │    │ @reviewer            │───▸│ @writer              │
-  │                      │    │ when verify.output … │    │ when verify.output … │    │                      │
-  ╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯
-              ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎                           ▴
-              ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎
+  8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time · slowest path plan→apply→verify→summary
+  ╭──────────────────────────╮    ╭──────────────────────────╮    ╭──────────────────────────╮
+  │ ✓ plan                ⚙3 │    │ ✓ explore            ⚙12 │    │ ⠻ apply               ⚙4 │
+  │ @planner · sonnet-5      │───▸│ @explorer · sonnet-5     │───▸│ @coder · opus-5          │
+  │ 4.2s · 9.0k              │  ╎││ 8.1s · 6.9k              │  ╎││ ⚙ fs.edit src/cli.rs     │
+  ╰──────────────────────────╯  ╎│╰──────────────────────────╯  ╎│╰──────────────────────────╯
+                                ╎│╭──────────────────────────╮  ╎│
+                                ╎││ ✓ conventions         ⚙9 │  ╎│
+                                ╎▸│ @explorer · sonnet-5     │──╎┘
+                                ╎ │ 7.6s · 8.8k              │  ╎
+                                ╎ ╰──────────────────────────╯  ╎
+                                ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎
+  ⠻ apply · @coder · claude-opus-5
+    running · attempt 2 · 18.4s · 9.1k tokens · 4 tool calls · needs plan, explore
+    ⚙ fs.read src/cli.rs · 9ms · 6KB
+    ⚙ fs.edit src/cli.rs · 12ms · 1.4KB
+    ⚙ sys.run cargo test · 2.1s · exit 0
   3/8 done · 1 running · 21.3k tokens · 24.6s
 ```
 
-The first line is what the whole run can reach. Each card carries its state and name,
-the agent and model behind it, its tool calls and attempts, and — while it works — the
-tool it is in right now, which becomes what it cost once it finishes.
+Three things to read off that.
 
-Nodes are laid out in **reading order**: by depth in the graph, then across and down. So
-nodes that start together sit side by side, and the board stays a sane height instead of
-growing a row per wave. **An edge takes the colour of the node it leaves once that node
-has settled**, so the path that actually ran lights up behind the board and stops exactly
-where the run did — in the theme's own green, red and amber, alongside the accent the
-**running card pulses in**. All five of the theme's semantic colours, so the board
-restyles with everything else.
+**The shape.** `explore` and `conventions` share a column because they run at the same
+time; `apply` is to their right because it waits for both. Depth is horizontal position
+and nothing else — it used to be reading order, so two cards side by side meant only that
+they were declared next to each other. The ranking and the crossing reduction are the
+same [layered-graph](https://www.yworks.com/pages/layered-graph-layout) passes the
+diagram renderer uses, so `@flow graph <name>` and the board agree about the shape.
+
+**What is not drawn.** An edge the graph already implies is left off. If `d` needs `a`,
+`b` and `c` where `b` and `c` both need `a`, the direct `a → d` says nothing new, and
+drawing it puts three arrows into one card where one carries the meaning. The dependency
+is untouched — the scheduler still honours it; what is dropped is saying it twice. A
+`goto` travels in the band under the whole board and turns in the gaps, so a loop never
+runs through the cards it loops over.
+
+**The slowest path** on the header line is the chain that decides the wall clock. On a
+graph that overlaps work that is *not* the slowest node — a slow node with three fast ones
+beside it costs nothing extra — and it cannot be read off the picture, so it is stated.
+
+Under the cards, a **pane follows whichever node is working** (or worked last): its agent,
+model, state, attempt, elapsed, cost, what it needs, and the last few tool calls it made.
+A card is three lines and has to hold a name; these are the questions asked of a run that
+is going wrong, which is the only time anybody watches a board closely. There is no
+selection because the board does not read your keyboard — for the whole story of one node,
+`@flow node <id>` and `@flow log <id>` are still the commands.
+
+**An edge takes the colour of the node it leaves once that node has settled**, so the path
+that actually ran lights up behind the board and stops exactly where the run did — in the
+theme's own green, red and amber, alongside the accent the **running card pulses in**.
 
 **Two views.** `[flow] view = "list"` — or `--view list` for one command — puts every
 node back on a single dense row in file order. It is the shortest board that can exist,
 which is what a twenty-node flow in a six-line split wants. The graph view **hands over
-to it by itself** when the cards will not fit the window: a picture that scrolls its own
-header off the top is not a picture.
+to it by itself** when the cards will not fit the window, in *either* direction: depth
+costs width now, so a nine-deep flow asks for more columns than a terminal has. A picture
+drawn past the edge is worse than no picture.
 
 Off a terminal — `--bg`, a pipe, CI — neither view applies: the same state machine
 prints `[node] event` lines instead. Nothing is overwritten, and the attribution a
 plain stream could never give is still there.
+
+**Your keyboard is left alone.** While the board owns a region of the screen it asks the
+terminal to stop echoing, because the board repaints by climbing back over the block it
+drew and an echoed keystroke moves the cursor out from under it — which used to strand a
+copy of the board on screen for every Enter pressed during a run. Ctrl-C still works, and
+an `approve` node gets echo and the cursor back for as long as its question is on screen.
 
 ### Node control
 
@@ -444,10 +471,14 @@ attempts, its edges and its condition, then what it was asked and what it answer
 rendered as the Markdown it is. Which model served a node is a fact the record has to
 keep: a pool that picks per run cannot be read backwards for it.
 
-`@flow watch [<id>]` follows a run that is still going, from any pane. Every node's
-result is written the moment it lands, so the board it paints is the same board the
-running process is painting — including for a `--bg` run that has no terminal of its
-own.
+`@flow watch [<id>]` **attaches** to a run that is still going, from any pane. Every
+node's result is written the moment it lands, so the board it paints is the same board
+the running process is painting — including for a `--bg` run that has no terminal of its
+own. With no id it attaches to the newest run that is *still going*, which is what you
+meant; **Ctrl-C detaches and leaves the run alone**, and the board says so while you
+watch. `@flow … --bg` prints the attach command when it detaches, and `@flow runs` lists
+what is still running first, so a terminal attached to nothing still shows you the way
+back.
 
 `@flow retry [<id>] <node>` runs one node again **and everything built on it**, and
 prints that set before anything starts. The cascade is the point: re-running `apply`

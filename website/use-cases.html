@@ -72,18 +72,21 @@ agents (8):
         <p>The <code>build</code> graph plans it, maps the code <em>and</em> your conventions in parallel, edits, runs <em>your</em> tests — and if they fail, loops back through a fixer up to three times before giving up.</p>
         <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> build "add a --json flag to the export command"</span>
 <span class="a">▸ build · add a --json flag to the export command</span>
-  <span class="d">8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time</span>
-  <span class="g">╭──────────────────────╮    ╭──────────────────────╮</span>
-  <span class="g">│ ✓ plan            ⚙3 │    │ ✓ explore        ⚙12 │</span>
-  <span class="g">│ @planner             │───▸│ @explorer            │</span>
-  <span class="g">│ 4.2s · 3.1k          │    │ 8.1s · 9.4k          │</span>
-  <span class="g">╰──────────────────────╯    ╰──────────────────────╯</span>
-  <span class="d">            ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌▾</span>
-  <span class="a">╭──────────────────────╮    ╭──────────────────────╮</span>
-  <span class="a">│ ⠻ apply           ⚙4 │</span>    <span class="d">│ ○ verify             │</span>
-  <span class="a">│ @coder               │</span><span class="d">───▸│ @tester              │</span>
-  <span class="a">│ fs.edit src/cli.rs   │</span>    <span class="d">│                      │</span>
-  <span class="a">╰──────────────────────╯</span>    <span class="d">╰──────────────────────╯</span>
+  <span class="d">8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time · slowest path plan→apply→verify</span>
+  <span class="g">╭──────────────────────╮</span>    <span class="a">╭──────────────────────╮</span>    <span class="d">╭──────────────────────╮</span>
+  <span class="g">│ ✓ plan            ⚙3 │</span>    <span class="a">│ ⠻ apply           ⚙4 │</span>    <span class="d">│ ○ verify             │</span>
+  <span class="g">│ @planner             │</span><span class="g">───▸</span><span class="a">│ @coder               │</span><span class="d">───▸│ @tester              │</span>
+  <span class="g">│ 4.2s · 3.1k          │</span>  <span class="d">╎</span><span class="a">│ ⚙ fs.edit src/cli.rs │</span>    <span class="d">│                      │</span>
+  <span class="g">╰──────────────────────╯</span>  <span class="d">╎</span><span class="a">╰──────────────────────╯</span>    <span class="d">╰──────────────────────╯</span>
+                          <span class="d">╎</span><span class="g">╭──────────────────────╮</span>
+                          <span class="d">╎</span><span class="g">│ ✓ explore        ⚙12 │</span>
+                          <span class="d">╎▸</span><span class="g">│ @explorer            │</span>
+                          <span class="d">╎ </span><span class="g">│ 8.1s · 9.4k          │</span>
+                          <span class="d">╎ </span><span class="g">╰──────────────────────╯</span>
+  <span class="a">⠻ apply · @coder · claude-opus-5</span>
+    <span class="d">running · 18.4s · 9.1k tokens · 4 tool calls · needs plan, explore</span>
+    <span class="d">⚙ fs.read src/cli.rs · 9ms · 6KB</span>
+    <span class="d">⚙ fs.edit src/cli.rs · 12ms · 1.4KB</span>
   <span class="d">3/8 done · 1 running · 21.3k tokens · 24.6s</span></pre>
       </div>
 
@@ -168,18 +171,16 @@ Reproduced: rounding applied before the zero-check …</pre>
         <p>The <code>research</code> graph splits the question into sub-questions, researches each <em>at the same time</em>, then reports what the sources actually say — including where they disagree and what it could not establish.</p>
         <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> "Research LLM memory techniques"</span>
 <span class="a">▸ research</span> <span class="d">— the goal asks for sources and a comparison, not a code change</span>
-  <span class="d">4 nodes · 3 agents · 24 tools · 6 skills · 4 at a time</span>
-  <span class="g">╭──────────────────────╮    ╭──────────────────────╮</span>
-  <span class="g">│ ✓ plan            ⚙2 │    │ ⠻ gather             │</span>
-  <span class="g">│ @planner             │───▸│ @researcher × 5      │</span>
-  <span class="g">│ 3.1s · 1.2k          │    │ ⚙ web.search         │</span>
-  <span class="g">╰──────────────────────╯    ╰──────────────────────╯</span>
-  <span class="d">            ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌▾</span>
-  <span class="d">╭──────────────────────╮    ╭──────────────────────╮</span>
-  <span class="d">│ ○ compare            │    │ ○ report             │</span>
-  <span class="d">│ @researcher          │───▸│ @writer              │</span>
-  <span class="d">│                      │    │                      │</span>
-  <span class="d">╰──────────────────────╯    ╰──────────────────────╯</span></pre>
+  <span class="d">4 nodes · 3 agents · 24 tools · 6 skills · 4 at a time · slowest path plan→gather→compare→report</span>
+  <span class="g">╭──────────────────────╮</span>    <span class="a">╭──────────────────────╮</span>    <span class="d">╭──────────────────────╮</span>    <span class="d">╭──────────────────────╮</span>
+  <span class="g">│ ✓ plan            ⚙2 │</span>    <span class="a">│ ⠻ gather             │</span>    <span class="d">│ ○ compare            │</span>    <span class="d">│ ○ report             │</span>
+  <span class="g">│ @planner             │</span><span class="g">───▸</span><span class="a">│ @researcher × 5      │</span><span class="d">───▸│ @researcher          │───▸│ @writer              │</span>
+  <span class="g">│ 3.1s · 1.2k          │</span>    <span class="a">│ ⚙ web.search         │</span>    <span class="d">│                      │    │                      │</span>
+  <span class="g">╰──────────────────────╯</span>    <span class="a">╰──────────────────────╯</span>    <span class="d">╰──────────────────────╯    ╰──────────────────────╯</span>
+  <span class="a">⠻ gather · @researcher · claude-sonnet-5</span>
+    <span class="d">running · 12.0s · 5 tool calls · needs plan</span>
+    <span class="d">⚙ web.search "LLM memory architectures" · 480ms</span>
+    <span class="d">⚙ web.read arxiv.org/abs/2404.… · 1.2s · 44KB</span></pre>
       </div>
 
       <div class="uc">

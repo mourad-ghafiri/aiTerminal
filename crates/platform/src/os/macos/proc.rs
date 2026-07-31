@@ -177,6 +177,51 @@ pub fn raw_mode() -> Option<RawGuard> {
     Some(RawGuard { fd, saved })
 }
 
+/// The `c_lflag` echo family on macOS/BSD (`<termios.h>`): typed characters, the erase and
+/// kill edits, a bare newline, and the `^C` a control character prints.
+const ECHO: c_ulong = 0x0000_0008;
+const ECHOE: c_ulong = 0x0000_0002;
+const ECHOK: c_ulong = 0x0000_0004;
+const ECHONL: c_ulong = 0x0000_0010;
+const ECHOCTL: c_ulong = 0x0000_0040;
+
+/// Stop the terminal echoing input until the returned guard drops — and change nothing else.
+///
+/// For a program that OWNS a region of the screen but does not read the keyboard: a live
+/// display repainting in place. Echoed input is what breaks such a display, because the
+/// cursor it climbs back up from is no longer where it left it, so every keystroke strands
+/// the block it already drew and paints another below.
+///
+/// Deliberately NOT [`raw_mode`]: `ICANON` and `ISIG` stay on, so Ctrl-C still raises
+/// `SIGINT` and a suspended guard hands back a terminal a line-reader can still use.
+/// `ECHOCTL` goes with the rest, or that Ctrl-C prints `^C` into the display on its way out.
+/// Restoring uses `TCSAFLUSH`, so whatever was typed while nothing was reading is discarded
+/// rather than delivered to the shell the moment the display finishes.
+pub fn echo_off() -> Option<RawGuard> {
+    let fd: c_int = 0;
+    let mut saved = Termios {
+        c_iflag: 0,
+        c_oflag: 0,
+        c_cflag: 0,
+        c_lflag: 0,
+        c_cc: [0; 20],
+        c_ispeed: 0,
+        c_ospeed: 0,
+    };
+    // SAFETY: `saved` is a valid termios buffer; fd 0 is stdin. A non-tty fd fails cleanly.
+    unsafe {
+        if tcgetattr(fd, &mut saved) != 0 {
+            return None;
+        }
+        let mut quiet = saved;
+        quiet.c_lflag &= !(ECHO | ECHOE | ECHOK | ECHONL | ECHOCTL);
+        if tcsetattr(fd, TCSAFLUSH, &quiet) != 0 {
+            return None;
+        }
+    }
+    Some(RawGuard { fd, saved })
+}
+
 static SIGWINCH_HIT: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_sigwinch(_sig: c_int) {

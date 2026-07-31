@@ -94,6 +94,87 @@ pub(crate) fn named(name: &str) -> Box<dyn View> {
     }
 }
 
+/// How many lines the pane occupies. A **constant**, always drawn: the block's height
+/// must depend on the graph and nothing else, or the repaint cannot erase it with a
+/// number it measured before the live text arrived.
+pub(crate) const PANE_H: usize = 2 + super::TRACE_KEEP;
+
+/// Which node the pane is about: the one that is working, or the one that worked last.
+///
+/// No selection, because the board does not read the keyboard — so it has to choose, and
+/// the honest choice is whatever changed most recently. Ties are broken by a counter
+/// bumped inside the rows lock rather than by a clock, so two nodes finishing in the same
+/// millisecond still give the same answer on every frame.
+pub(crate) fn focus(rows: &[Row]) -> Option<&Row> {
+    let newest = |want: fn(&Row) -> bool| rows.iter().filter(|r| want(r)).max_by_key(|r| r.touched);
+    newest(|r| r.state == State::Running)
+        .or_else(|| newest(|r| r.state != State::Waiting))
+        .or_else(|| rows.first())
+}
+
+/// The pane under the graph: everything about one node that a card has no room for.
+///
+/// A card is three lines and has to hold a name, so what a node cost, which model served
+/// it, how many attempts it took and what it has actually been *doing* cannot all live
+/// there. They are the questions asked of a run that is going wrong, which is the only
+/// time anybody watches a board closely.
+pub(crate) fn pane(rows: &[Row], head: &Head, cols: usize) -> Vec<String> {
+    let (dim, r, accent) = (&head.palette.muted, &head.palette.reset, &head.palette.accent);
+    let room = cols.saturating_sub(4);
+    let mut out = Vec::with_capacity(PANE_H);
+    let Some(row) = focus(rows) else {
+        return vec![String::new(); PANE_H];
+    };
+
+    let mut title = vec![row.id.clone()];
+    if !row.what.is_empty() {
+        title.push(row.what.clone());
+    }
+    if !row.model.is_empty() {
+        title.push(row.model.clone());
+    }
+    let ink = head.palette.of(row.state);
+    out.push(format!("  {ink}{}{r} {accent}{}{r}", row.state.glyph(0), clip(&title.join(" \u{b7} "), room)));
+
+    let mut facts = vec![row.state.word().to_string()];
+    if row.attempts > 1 {
+        facts.push(format!("attempt {}", row.attempts));
+    }
+    let time = time_of(row);
+    if !time.trim().is_empty() {
+        facts.push(time.trim().to_string());
+    }
+    if row.tokens > 0 {
+        facts.push(format!("{} tokens", human_tokens(row.tokens)));
+    }
+    if row.calls > 0 {
+        facts.push(format!("{} tool call{}", row.calls, if row.calls == 1 { "" } else { "s" }));
+    }
+    if !row.needs.is_empty() {
+        facts.push(format!("needs {}", row.needs.join(", ")));
+    }
+    let note = note_of(row);
+    if !note.is_empty() && row.trace.is_empty() {
+        facts.push(note);
+    }
+    out.push(format!("    {dim}{}{r}", clip(&facts.join(" \u{b7} "), room)));
+
+    // Oldest first, bottom-aligned: the newest call is always on the same line, so the
+    // eye is not chasing it up and down the pane as the count grows.
+    let blanks = super::TRACE_KEEP.saturating_sub(row.trace.len());
+    for _ in 0..blanks {
+        out.push(String::new());
+    }
+    for line in row.trace.iter().take(super::TRACE_KEEP) {
+        out.push(format!("    {dim}{}{r}", clip(line, room)));
+    }
+    out.truncate(PANE_H);
+    while out.len() < PANE_H {
+        out.push(String::new());
+    }
+    out
+}
+
 /// The tally under every board, in either view.
 pub(crate) fn summary(rows: &[Row], head: &Head, cols: usize) -> String {
     let (dim, r) = (&head.palette.muted, &head.palette.reset);

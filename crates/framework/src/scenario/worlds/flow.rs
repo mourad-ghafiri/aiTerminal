@@ -289,6 +289,36 @@ impl World for FlowWorld {
         if let Some(bad) = world::list(step, "expect_graph_view_excludes") {
             return world::expect_missing(&self.painted("graph")?, &bad, "the graph view");
         }
+        // "These nodes run at the same time" — asserted on the geometry rather than on a
+        // glyph. Nodes of one rank share a column, so their cards start at the same x and
+        // sit at different heights; that is the claim, and it survives the renderer
+        // changing its mind about which character an arrow is.
+        if let Some(want) = world::list(step, "expect_nodes_share_a_column") {
+            return self.share_a_column(&want);
+        }
+        // Which edges the picture carries. `a->b` is drawn; an edge the graph already
+        // implies is not, because saying the same constraint twice is what turns a graph
+        // into a thicket. Both directions are asserted, so "we stopped drawing edges" and
+        // "we drew them all" are equally caught.
+        if let Some(want) = world::list(step, "expect_edge_is_drawn") {
+            return self.edges_drawn(&want, true);
+        }
+        // The two properties the in-place repaint rests on. Both have been broken before,
+        // and both are invisible in the rendered text — which is why they are asserted on
+        // the geometry and on the bytes rather than on how the board looks.
+        if world::flag(step, "expect_board_height_is_constant") == Some(true) {
+            return self.height_is_constant();
+        }
+        if world::flag(step, "expect_board_ends_on_its_last_row") == Some(true) {
+            let painted = self.painted("graph")?;
+            if painted.ends_with('\n') {
+                return Err("the block is newline-TERMINATED, so the cursor is left one row below it — the next repaint climbs one short and strands a line".into());
+            }
+            return Ok(());
+        }
+        if let Some(want) = world::list(step, "expect_edge_is_implied") {
+            return self.edges_drawn(&want, false);
+        }
         // How tall the window is. The card view is the only thing that asks, and what it
         // does when the answer is "not very" is worth stating rather than assuming.
         if let Some(n) = world::int(step, "window_rows") {
@@ -394,9 +424,105 @@ impl FlowWorld {
         Ok(crate::flow::doc::document(flow, None, &cast, crate::flow::doc::Picture::Graph, cols))
     }
 
+    /// Whether the block is the same height however busy the nodes are.
+    ///
+    /// The in-place repaint erases with a line count measured on the PREVIOUS frame. A
+    /// board that grows when a tool trace arrives is therefore a board that erases one row
+    /// short of itself and leaves the rest on screen for the length of the run.
+    fn height_is_constant(&self) -> Result<(), String> {
+        let quiet = self.painted("graph")?.lines().count();
+        let flow = self.flow.as_ref().ok_or("no flow declared yet")?;
+        let busy: Vec<String> = flow.nodes.iter().map(|n| n.id.clone()).collect();
+        for id in &busy {
+            let text = self.painted_with("graph", |board| {
+                board.running(id, "@agent");
+                board.model(id, "a-model-with-a-conspicuously-long-name");
+                for i in 0..9 {
+                    board.tool(id, &format!("\u{2699} sys.run cargo test --package framework --lib case-{i}"));
+                }
+            })?;
+            let n = text.lines().count();
+            if n != quiet {
+                return Err(format!("the board is {n} rows with '{id}' working and {quiet} rows idle:\n{text}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether each `from->to` is on the board (`drawn`) or left off it as implied.
+    fn edges_drawn(&self, want: &[String], drawn: bool) -> Result<(), String> {
+        let flow = self.flow.as_ref().ok_or("no flow declared yet")?;
+        let grid = crate::flow::board::card::plan(&self.board_rows()?, 200);
+        for spec in want {
+            let (a, b) = spec.split_once("->").ok_or_else(|| format!("{spec:?} needs `from->to`"))?;
+            let at = |id: &str| {
+                flow.nodes.iter().position(|n| n.id == id.trim()).ok_or_else(|| format!("no node {id:?}"))
+            };
+            let (from, to) = (at(a)?, at(b)?);
+            let on_board = grid.edges.iter().any(|e| e.from == from && e.to == to);
+            if on_board != drawn {
+                let all: Vec<String> = grid
+                    .edges
+                    .iter()
+                    .map(|e| format!("{}->{}", flow.nodes[e.from].id, flow.nodes[e.to].id))
+                    .collect();
+                let what = if drawn { "is not drawn" } else { "is drawn, but the graph already implies it" };
+                return Err(format!("{spec} {what}; the board carries {all:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// The flow's nodes as the layout takes them — ids and edges, no live text.
+    fn board_rows(&self) -> Result<Vec<crate::flow::board::Row>, String> {
+        let flow = self.flow.as_ref().ok_or("no flow declared yet")?;
+        Ok(flow
+            .nodes
+            .iter()
+            .map(|n| crate::flow::board::Row {
+                id: n.id.clone(),
+                needs: n.needs.clone(),
+                goto: n.goto.clone(),
+                ..crate::flow::board::Row::default()
+            })
+            .collect())
+    }
+
+    /// Whether every named node is laid out in one column — one rank, therefore one wave.
+    fn share_a_column(&self, want: &[String]) -> Result<(), String> {
+        let flow = self.flow.as_ref().ok_or("no flow declared yet")?;
+        let grid = crate::flow::board::card::plan(&self.board_rows()?, 120);
+        let mut seen: Vec<(String, usize, usize)> = Vec::new();
+        for id in want {
+            let i = flow.nodes.iter().position(|n| n.id == *id).ok_or(format!("no node '{id}'"))?;
+            let card = grid.card(i).ok_or(format!("'{id}' was not laid out"))?;
+            seen.push((id.clone(), card.x, card.y));
+        }
+        let (_, x0, _) = seen[0].clone();
+        for (id, x, _) in &seen {
+            if *x != x0 {
+                return Err(format!("'{id}' is at column {x}, not {x0} — these do not run together: {seen:?}"));
+            }
+        }
+        let mut ys: Vec<usize> = seen.iter().map(|(_, _, y)| *y).collect();
+        ys.sort_unstable();
+        ys.dedup();
+        if ys.len() != seen.len() {
+            return Err(format!("two of them are drawn on top of each other: {seen:?}"));
+        }
+        Ok(())
+    }
+
     /// The board a live run paints, in the named view — the real renderer, at a fixed
     /// width, with each node put where the run left it.
     fn painted(&self, view: &str) -> Result<String, String> {
+        self.painted_with(view, |_| {})
+    }
+
+    /// The same board, with `busy` given a chance to put live text on it first — so a
+    /// property that is about the board NOT changing can be asserted against one that has
+    /// been made to change as much as it can.
+    fn painted_with(&self, view: &str, busy: impl FnOnce(&std::sync::Arc<crate::flow::board::Board>)) -> Result<String, String> {
         use crate::flow::board::{Board, BoardNode, State};
         let flow = self.flow.as_ref().ok_or("no flow declared yet")?;
         let nodes: Vec<BoardNode> = flow
@@ -432,6 +558,7 @@ impl FlowWorld {
                 }
             }
         }
+        busy(&board);
         // A wide window, so what a scenario asserts is the board's own doing rather than
         // a column budget: at a narrow width every view clips, and clipping is not the
         // behaviour under test here.
