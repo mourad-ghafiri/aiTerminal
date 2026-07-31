@@ -394,16 +394,29 @@ impl Transport for MockTransport {
 pub struct ScriptedTransport {
     responses: Vec<String>,
     next: std::sync::atomic::AtomicUsize,
+    /// Every body that was posted, in order.
+    ///
+    /// What a caller SENDS is half of what a harness does, and until now no test could
+    /// see it — only the reply was scripted. A request carries the cache breakpoints,
+    /// the message order, the tool catalogue: all things whose correctness is invisible
+    /// in the answer that comes back.
+    sent: std::sync::Mutex<Vec<String>>,
 }
 
 impl ScriptedTransport {
     pub fn new(responses: Vec<String>) -> Self {
-        ScriptedTransport { responses, next: std::sync::atomic::AtomicUsize::new(0) }
+        ScriptedTransport { responses, next: std::sync::atomic::AtomicUsize::new(0), sent: std::sync::Mutex::new(Vec::new()) }
+    }
+
+    /// The request bodies posted so far, oldest first.
+    pub fn sent(&self) -> Vec<String> {
+        self.sent.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 
 impl Transport for ScriptedTransport {
-    fn stream(&self, _url: &str, _headers: &[(String, String)], _body: &str, _cancel: &CancelToken) -> StreamHandle {
+    fn stream(&self, _url: &str, _headers: &[(String, String)], body: &str, _cancel: &CancelToken) -> StreamHandle {
+        self.sent.lock().unwrap_or_else(|e| e.into_inner()).push(body.to_string());
         let i = self.next.fetch_add(1, Ordering::SeqCst);
         let idx = i.min(self.responses.len().saturating_sub(1));
         let sse = self.responses.get(idx).cloned().unwrap_or_default();

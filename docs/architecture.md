@@ -93,7 +93,27 @@ and "what to drop" are different questions with different right answers.
 
 The budget is resolved against the model the run **pins**, not the pool's
 representative: under a weighted or round-robin strategy those differ, and a budget
-built ahead of time would belong to a model that is not answering.
+built ahead of time would belong to a model that is not answering. And the reply's
+reservation is capped at half the window: `context_window` comes from an `[ai]` setting
+and `max_tokens` from a model file, so the two routinely disagree, and a 16k reply
+declared against an 8k window used to leave a quarter of the window for everything else
+— a run that compacted on turn one and bought a summary on every turn after.
+
+## What a run does not pay for twice
+
+A turn re-sends everything before it. Left alone, that means a twelve-step run pays full
+price for its system prompt twelve times, and pays for a 200 KB build log on every turn
+after the one that fetched it. Two rules stop both, and one number proves they worked.
+
+| Piece | Rule |
+| --- | --- |
+| `ai::request::CacheHints` | A turn states what is **settled** — the system block is fixed for the run, and every message but the newest has already been sent. A fact about the conversation, so it lives on the neutral request; each `Provider` decides what to do with it. Anthropic emits two `cache_control` breakpoints (one static, one rolling); OpenAI caches a matching prefix by itself and needs only that we not disturb the order. |
+| `ai::request::prefix_digest` | A cache is worth nothing if the prefix moves, and a prefix moves silently — a tool list in directory order, a timestamp somebody adds to a prompt. The digest is what a test holds on to. `McpHub::tools()` is sorted for the same reason. |
+| `ai::agent::TOOL_INLINE_MAX` | A tool result over 8 KB is written to the run's scratch directory **as it arrives** and replaced by a preview plus its path. It used to happen only under budget pressure, which meant carrying the whole thing until the window noticed. `fs.read` is not workspace-confined, so the agent can always follow the pointer. |
+| `ai::stream::Usage` | `cache_read` / `cache_write` come back from the provider and reach the run footer: `12.3k in / 1.8k out (11.1k cached, 90%)`. Without it, "the harness is efficient" would be a claim nobody could check. |
+
+The first of those is why compaction has become rare rather than routine: results never
+enter the transcript at full size, so most runs finish without the ladder running at all.
 
 ## How the AI stays out of the window
 

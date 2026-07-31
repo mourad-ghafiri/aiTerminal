@@ -141,6 +141,11 @@ impl StreamDecoder for OpenAiDecoder {
             stop_reason: self.stop_reason.take(),
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
+            // OpenAI-compatible endpoints cache a matching prefix automatically and do
+            // not report the split in the streaming usage block. Zero here is honest:
+            // we do not know, rather than we know it was nothing.
+            cache_read: 0,
+            cache_write: 0,
         }
     }
 }
@@ -160,6 +165,21 @@ pub fn text_sse_openai(text: &str, input: u32, output: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_body_is_the_same_whether_or_not_a_prefix_is_settled() {
+        // OpenAI-compatible endpoints cache a matching prefix by themselves; there is no
+        // field to set. So the adapter's job is the opposite one — to not disturb the
+        // order — and this asserts it honestly rather than the adapter pretending to act
+        // on a hint it cannot use.
+        let m = crate::ai::model::AiSettings::default().choose();
+        let msgs = vec![crate::ai::request::Message::user("do it"), crate::ai::request::Message::user("and this")];
+        let hinted = crate::ai::request::agent_request(&m, "you are careful", msgs.clone());
+        let plain = crate::ai::request::ChatRequest { cache: crate::ai::CacheHints::none(), ..hinted.clone() };
+        let a = OpenAiAdapter::new("");
+        assert_eq!(a.encode_body(&hinted), a.encode_body(&plain));
+        assert!(!a.encode_body(&hinted).contains("cache"), "nothing vendor-specific is invented");
+    }
     use platform::transport::SseDecoder;
 
     fn decode_all(sse: &str) -> Vec<StreamEvent> {
@@ -189,6 +209,7 @@ mod tests {
             top_k: None,
             thinking: false,
             images: Vec::new(),
+            cache: crate::ai::CacheHints::none(),
         };
         let body = adapter.encode_body(&req);
         assert!(body.contains("\"messages\":[{\"role\":\"system\""), "system is a leading message: {body}");
@@ -210,7 +231,7 @@ mod tests {
         assert_eq!(text, "Hello world");
         assert!(matches!(
             evs.last(),
-            Some(StreamEvent::Done { input_tokens: 10, output_tokens: 5, stop_reason: Some(r) }) if r == "stop"
+            Some(StreamEvent::Done { input_tokens: 10, output_tokens: 5, stop_reason: Some(r), .. }) if r == "stop"
         ));
     }
 
@@ -247,6 +268,7 @@ mod tests {
             top_p: None,
             top_k: None,
             thinking: false,
+            cache: crate::ai::CacheHints::none(),
             images: vec![
                 crate::ai::request::ImageData { media_type: "application/pdf".into(), b64: "UERG".into() },
                 crate::ai::request::ImageData { media_type: "image/png".into(), b64: "UE5H".into() },

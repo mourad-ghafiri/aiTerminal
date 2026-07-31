@@ -144,7 +144,7 @@ impl CompactionStage for OffloadToolResults {
             .iter()
             .enumerate()
             .filter_map(|(i, turn)| match turn {
-                Turn::ToolResult { text, .. } if text.len() >= self.min_bytes && !text.contains(OFFLOAD_MARK) => Some((i, text.len())),
+                Turn::ToolResult { text, .. } if text.len() >= self.min_bytes && !is_offloaded(text) => Some((i, text.len())),
                 _ => None,
             })
             .collect();
@@ -153,21 +153,64 @@ impl CompactionStage for OffloadToolResults {
         let mut changed = false;
         for (index, _) in candidates {
             let Some(Turn::ToolResult { name, text }) = t.turns().get(index).cloned() else { continue };
-            let Some(path) = write_offload(&ctx.scratch, index, &name, &text) else { continue };
-            let preview: Vec<&str> = text.lines().take(self.preview_lines).collect();
-            let stub = format!(
-                "{}\n\u{2026}\n{OFFLOAD_MARK}{}] \u{2014} {} lines, {} bytes. Read it with fs.read when you need more.",
-                preview.join("\n"),
-                path.display(),
-                text.lines().count(),
-                text.len()
-            );
+            let Some(stub) = offload(&ctx.scratch, index, &name, &text, self.preview_lines) else { continue };
             t.replace(index, Turn::ToolResult { name, text: stub });
             report.offloaded += 1;
             changed = true;
         }
         changed
     }
+}
+
+/// Turn one oversized tool result into a preview plus a pointer to the whole thing.
+///
+/// The ONE definition of what an offloaded result looks like, because there are two
+/// moments it can happen and they must produce the same shape: when a result arrives
+/// (the agent loop, so a large one never enters the transcript at full size) and when
+/// the window is under pressure (this ladder, catching what slipped through).
+///
+/// Lossless in the sense that matters: the bytes are on disk at a path the agent was
+/// handed, and `fs.read` is not workspace-confined — only writes are — so it can pull
+/// any of it back when it turns out to matter.
+///
+/// `None` when it cannot be written. A full disk must not fail a run; the caller keeps
+/// what it had.
+pub fn offload(scratch: &Path, seq: usize, name: &str, text: &str, preview_lines: usize) -> Option<String> {
+    let path = write_offload(scratch, seq, name, text)?;
+    Some(format!(
+        "{}\n\u{2026}\n{OFFLOAD_MARK}{}] \u{2014} {} lines, {} bytes. Read it with fs.read when you need more.",
+        preview(text, preview_lines),
+        path.display(),
+        text.lines().count(),
+        text.len()
+    ))
+}
+
+/// How much of an offloaded result stays inline. Enough to recognise what it is;
+/// nowhere near enough to be worth carrying.
+const PREVIEW_MAX_BYTES: usize = 2_048;
+
+/// The first `lines` lines, and never more than [`PREVIEW_MAX_BYTES`].
+///
+/// Both bounds are needed. Lines alone are no bound at all on the output that most
+/// wants offloading — minified JSON, base64, a log with no breaks in it — where the
+/// "first thirty lines" of a five-megabyte blob is five megabytes, and the preview ends
+/// up the size of the thing it was supposed to replace.
+fn preview(text: &str, lines: usize) -> String {
+    let head: String = text.lines().take(lines).collect::<Vec<_>>().join("\n");
+    match head.len() > PREVIEW_MAX_BYTES {
+        false => head,
+        true => {
+            let cut = head.char_indices().map(|(i, _)| i).take_while(|i| *i <= PREVIEW_MAX_BYTES).last().unwrap_or(0);
+            head[..cut].to_string()
+        }
+    }
+}
+
+/// Whether a result has already been written out — so a second pass never offloads its
+/// own preview into a chain of stubs.
+pub fn is_offloaded(text: &str) -> bool {
+    text.contains(OFFLOAD_MARK)
 }
 
 /// Write one tool result to the scratch dir; `None` if it cannot be written (a full

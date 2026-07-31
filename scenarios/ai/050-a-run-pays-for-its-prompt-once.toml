@@ -1,0 +1,46 @@
+name = "a run pays for its prompt once, not once per turn"
+tags = ["ai", "context", "cost"]
+
+# The single largest inefficiency the harness had. An agent's system prompt — its
+# instructions, its skills, its whole tool catalogue — is built once and re-sent on
+# EVERY turn of the run, and so is everything the conversation has accumulated. Sent
+# without a cache marker, a twelve-step run pays full price for that prompt twelve
+# times.
+#
+# So every turn declares what is settled, and the adapter turns that into cache
+# breakpoints: one static on the system block, one rolling on the newest message the
+# provider has already seen. Two, which is the documented shape — spending more would
+# just mean more to invalidate.
+
+[setup]
+dialect = "anthropic"
+
+[[step]]
+tool = "fs.read"
+
+[[step]]
+tool_returns = ["fs.read=fn main() {}"]
+
+[[step]]
+model_says_in_turn = ["@tool fs.read {\"path\":\"main.rs\"}", "It is an empty main."]
+
+[[step]]
+agent = "what does main.rs do"
+
+[[step]]
+expect_answer = "It is an empty main."
+
+[[step]]
+expect_requests = 2
+
+# Turn one has nothing behind it yet, so only the system block is marked — that turn
+# WRITES the cache the rest of the run reads.
+[[step]]
+turn = 1
+expect_request_contains = ["cache_control", "ephemeral"]
+
+# Turn two marks the system block AND the message turn one already sent. Everything
+# before the newest turn is bytes the provider still has.
+[[step]]
+turn = 2
+expect_request_contains = ["cache_control"]

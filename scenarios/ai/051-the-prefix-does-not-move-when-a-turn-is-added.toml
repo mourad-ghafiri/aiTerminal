@@ -1,0 +1,41 @@
+name = "the prefix does not move when a turn is added"
+tags = ["ai", "context", "cost"]
+
+# A cache pays out only on a prefix that matches token for token, so the value of
+# marking one is entirely contingent on never editing it. The transcript is
+# append-only for exactly this reason — a turn is ADDED, never rewritten — and this is
+# the assertion that keeps that true after somebody touches the loop.
+#
+# It is also the failure that would be invisible: a prompt that quietly stops being
+# stable produces identical answers at ten times the price, and nothing in the output
+# looks wrong.
+
+[setup]
+dialect = "anthropic"
+
+[[step]]
+tool = "sys.run"
+
+[[step]]
+tool_returns = ["sys.run=214 tests, 0 failures"]
+
+[[step]]
+model_says_in_turn = ["@tool sys.run {\"cmd\":\"cargo test\"}", "@tool sys.run {\"cmd\":\"cargo clippy\"}", "Tests and lints are clean."]
+
+[[step]]
+agent = "check the build"
+
+[[step]]
+expect_requests = 3
+
+# Everything each request sends before its own newest turn is byte-identical to what
+# the request before it sent.
+[[step]]
+expect_prefix_never_moves = true
+
+# And the system block in particular is still there on the last turn, marked cacheable
+# — it is the largest single thing being re-sent, and the one most likely to grow a
+# timestamp somebody thought was harmless.
+[[step]]
+turn = 3
+expect_request_contains = ["You can call tools", "cache_control"]

@@ -6,6 +6,7 @@
 //! Tools are executed through a host-supplied [`ToolRunner`] — the gui backs it
 //! with the native capability families (consent-gated); tests inject a mock.
 
+use crate::ai::stream::Usage;
 use std::path::PathBuf;
 
 use crate::ai::budget::{ContextBudget, HeuristicEstimator, TokenEstimator, DEFAULT_COMPACT_AT};
@@ -91,8 +92,8 @@ pub enum RunOutcome {
 pub struct AgentRun {
     pub answer: String,
     pub steps: Vec<ToolStep>,
-    pub input_tokens: u32,
-    pub output_tokens: u32,
+    /// What the run cost, cached and uncached.
+    pub usage: Usage,
     /// Why the run ended — see [`RunOutcome`].
     pub outcome: RunOutcome,
     /// The model id that actually served the run (the pinned candidate-list head, or a
@@ -182,8 +183,27 @@ fn prose_before_tool(text: &str) -> String {
 
 /// One tool result's maximum size inside the transcript — a tool that returns
 /// megabytes is clipped (head + tail, the middle elided) before it is stored or
-/// re-sent to the model every remaining turn.
+/// re-sent to the model every remaining turn. The last resort, for when a result
+/// cannot be written to disk at all.
 const TOOL_RESULT_MAX: usize = 48 * 1024;
+
+/// Above this, a tool result is written to a file **as it arrives** and the model is
+/// handed a preview plus its path.
+///
+/// It used to happen only once the window was under pressure, which meant a 40 KB
+/// `cargo test` output rode in the transcript — and was re-sent on every remaining turn
+/// — until the budget noticed. Retrieval research is consistent about this: an
+/// identifier the agent can follow beats the whole artifact inline, and it beats it on
+/// accuracy as well as on cost.
+///
+/// Deliberately generous. Every `fs.read` of a source file and every short command is
+/// under it, so this is not a change to the common case — it is a ceiling on the
+/// uncommon one.
+const TOOL_INLINE_MAX: usize = 8 * 1024;
+
+/// Lines of an offloaded result kept inline, so the agent can tell what it has without
+/// reading the file back.
+const TOOL_PREVIEW_LINES: usize = 30;
 
 /// Clip `s` to ≤ `max` bytes as head + `…[N bytes elided]…` + tail, on char
 /// boundaries. The head dominates (¾) — that's where commands echo their intent;
@@ -362,7 +382,7 @@ pub fn run_agent<T: Transport>(
     let ladder = Ladder::default();
 
     let mut steps = Vec::new();
-    let (mut tin, mut tout) = (0u32, 0u32);
+    let mut usage = Usage::default();
     let mut model_used = String::new();
     // Bounded nudge-and-retry when a turn emits a botched tool call (or nothing) — see
     // `looks_like_tool_attempt`. Corrections still consume the `max_steps` budget.
@@ -372,11 +392,10 @@ pub fn run_agent<T: Transport>(
     // Pin the candidate list ONCE: its head serves every turn (a coherent run on one
     // model), and only a hard pre-token failure fails over to a later pool member.
     let candidates = client.candidates();
-    let finish = |answer: String, steps: Vec<ToolStep>, tin: u32, tout: u32, outcome: RunOutcome, model_used: String| AgentRun {
+    let finish = |answer: String, steps: Vec<ToolStep>, usage: Usage, outcome: RunOutcome, model_used: String| AgentRun {
         answer,
         steps,
-        input_tokens: tin,
-        output_tokens: tout,
+        usage,
         outcome,
         model_used,
     };
@@ -391,7 +410,7 @@ pub fn run_agent<T: Transport>(
         // new (billable) model turn. A mid-stream cancel kills curl, so `ask_streaming`
         // below also returns promptly; this guard prevents the NEXT turn.
         if client.is_cancelled() {
-            return finish("_(stopped)_".into(), steps, tin, tout, RunOutcome::Cancelled, model_used);
+            return finish("_(stopped)_".into(), steps, usage, RunOutcome::Cancelled, model_used);
         }
         // Compact BEFORE spending a turn, never after: the point is to send a prompt
         // the model can accept, and a check that runs afterwards has already lost the
@@ -402,8 +421,8 @@ pub fn run_agent<T: Transport>(
                 let mut cctx = CompactCtx { scratch: agent.scratch.clone(), keep: "", summarizer: Some(&mut summarizer) };
                 ladder.run(&mut transcript, &est, &budget, &mut cctx)
             };
-            tin += summarizer.input_tokens;
-            tout += summarizer.output_tokens;
+            usage.input += summarizer.input_tokens;
+            usage.output += summarizer.output_tokens;
             if !report.is_empty() {
                 observer.on_compact(&report);
             }
@@ -422,20 +441,19 @@ pub fn run_agent<T: Transport>(
         let sys = transcript.system().to_string();
         let res = client.stream_request(&candidates, &|m| crate::ai::request::agent_request(m, &sys, messages.clone()), &mut on_part);
         drop(on_part);
-        let (answer, ti, to, used) = match res {
+        let (answer, turn_usage, used) = match res {
             Ok(v) => v,
             Err(e) => {
                 // A genuinely empty stream is a model/prompt issue, not an internal error —
                 // turn the raw transport message into an actionable hint.
                 let msg = if e.contains("empty response") { NO_TEXT_HINT.to_string() } else { format!("\u{26d4} {e}") };
-                return finish(msg, steps, tin, tout, RunOutcome::Error(e), model_used);
+                return finish(msg, steps, usage, RunOutcome::Error(e), model_used);
             }
         };
         if model_used.is_empty() {
             model_used = used.id.clone();
         }
-        tin += ti;
-        tout += to;
+        usage.add(turn_usage);
         match parse_tool_call(&answer) {
             Some((name, args)) => {
                 // Commit the turn's prose (before the tool marker) to the transcript first,
@@ -451,8 +469,8 @@ pub fn run_agent<T: Transport>(
                 let result = if let Some(ctx_tool) = CtxTool::parse(&name) {
                     let mut summarizer = ClientSummarizer { client, model: &turn_model, input_tokens: 0, output_tokens: 0 };
                     let out = ctx_tool.run(&args, &mut transcript, &est, &budget, agent, &ladder, &mut summarizer, observer);
-                    tin += summarizer.input_tokens;
-                    tout += summarizer.output_tokens;
+                    usage.input += summarizer.input_tokens;
+                    usage.output += summarizer.output_tokens;
                     out
                 } else if agent.tools.iter().any(|t| t.name == name) {
                     // Only allow declared tools; anything else is reported back inert.
@@ -460,9 +478,16 @@ pub fn run_agent<T: Transport>(
                 } else {
                     format!("error: tool '{name}' is not available to this agent")
                 };
-                // Clip BEFORE storing/forwarding: the clipped text is what the model
-                // sees, so the step record keeps the same view.
-                let result = clip_middle(&result, TOOL_RESULT_MAX).into_owned();
+                // Bound it BEFORE storing or forwarding: what the model sees is what the
+                // step record keeps, and what a later turn re-sends. A big result goes to
+                // a file the moment it arrives — carrying it inline would cost its tokens
+                // again on every remaining turn of the run — and clipping is the fallback
+                // for when the disk will not take it.
+                let result = match result.len() > TOOL_INLINE_MAX && !crate::ai::compact::is_offloaded(&result) {
+                    true => crate::ai::compact::offload(&agent.scratch, steps.len(), &name, &result, TOOL_PREVIEW_LINES)
+                        .unwrap_or_else(|| clip_middle(&result, TOOL_RESULT_MAX).into_owned()),
+                    false => clip_middle(&result, TOOL_RESULT_MAX).into_owned(),
+                };
                 let last_name = name.clone();
                 steps.push(ToolStep { name, args, result: result.clone() });
                 // Stuck-loop guard: if the last 3 tool calls are byte-identical (same name + args),
@@ -471,7 +496,7 @@ pub fn run_agent<T: Transport>(
                 if let [.., c, b, a] = steps.as_slice() {
                     if a.name == b.name && b.name == c.name && a.args == b.args && b.args == c.args {
                         let msg = format!("[stopped — the tool `{}` was called repeatedly with no progress]", a.name);
-                        return finish(msg, steps, tin, tout, RunOutcome::ToolStall, model_used);
+                        return finish(msg, steps, usage, RunOutcome::ToolStall, model_used);
                     }
                 }
                 // Record the assistant's call + the (tainted) result, then continue.
@@ -502,11 +527,11 @@ pub fn run_agent<T: Transport>(
                 // No tool call and no prose → a friendly hint instead of a blank bubble.
                 let answer = if empty { NO_TEXT_HINT.to_string() } else { answer };
                 let outcome = if empty { RunOutcome::Error("empty response".into()) } else { RunOutcome::Completed };
-                return finish(answer, steps, tin, tout, outcome, model_used);
+                return finish(answer, steps, usage, outcome, model_used);
             }
         }
     }
-    finish("[reached the step limit before finishing]".into(), steps, tin, tout, RunOutcome::StepLimit, model_used)
+    finish("[reached the step limit before finishing]".into(), steps, usage, RunOutcome::StepLimit, model_used)
 }
 
 /// The nudge appended after a botched tool call — restates the exact `@tool` form.
@@ -997,7 +1022,7 @@ mod tests {
         assert_eq!(run.answer, "All done — the date is shown above.");
         assert_eq!(run.outcome, RunOutcome::Completed);
         // tokens accumulate across both turns
-        assert_eq!((run.input_tokens, run.output_tokens), (18, 11));
+        assert_eq!((run.usage.input, run.usage.output), (18, 11));
     }
 
     /// A two-model pool on the `failover` strategy — its `order()` head is deterministic
@@ -1214,8 +1239,10 @@ mod tests {
 
     #[test]
     fn transcript_stays_bounded_when_tools_return_megabytes() {
-        // A tool returning ~5 MB across 3 turns: the clipped results + old-result
-        // elision keep the transcript (re-sent every turn!) under the soft cap.
+        // A tool returning ~5 MB across 3 turns. The transcript is re-sent on EVERY
+        // remaining turn, so carrying even one of these would cost its tokens again and
+        // again — which is why a big result now goes to a file the moment it arrives and
+        // the model is handed a preview plus a path.
         struct HugeRunner;
         impl ToolRunner for HugeRunner {
             fn run(&mut self, _name: &str, _args: &str) -> Result<String, String> {
@@ -1235,18 +1262,55 @@ mod tests {
             max_steps: 5,
             ..Default::default()
         };
+        let scratch = std::env::temp_dir().join(format!("aiterm-agent-huge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let agent = AgentSpec { scratch: scratch.clone(), ..agent };
         let mut runner = HugeRunner;
         let run = run_agent(&client, &agent, "go", "", &mut runner, &mut NoopObserver);
         assert_eq!(run.outcome, RunOutcome::Completed);
         assert_eq!(run.steps.len(), 3);
         for st in &run.steps {
-            assert!(st.result.len() <= TOOL_RESULT_MAX + 100, "step result clipped: {}", st.result.len());
-            assert!(st.result.contains("bytes elided"));
+            // Small enough that re-sending it costs almost nothing…
+            assert!(st.result.len() < TOOL_INLINE_MAX, "still carrying it inline: {} bytes", st.result.len());
+            // …and a pointer to where the rest of it went, which the agent can follow.
+            assert!(st.result.contains("Read it with fs.read"), "no way back to the bytes: {}", st.result);
         }
+        // The five megabytes really are on disk — offloading is not a synonym for losing.
+        let written: u64 = std::fs::read_dir(&scratch)
+            .map(|d| d.filter_map(|e| e.ok()).filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum())
+            .unwrap_or(0);
+        assert!(written >= 15 * 1024 * 1024, "three 5 MB results were written, got {written} bytes");
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]
-    fn a_small_window_compacts_mid_run_instead_of_overflowing_it() {
+    fn a_result_small_enough_to_carry_is_left_alone() {
+        // The common case, and the reason the threshold is generous: a source file, a
+        // short command, a search hit. Sending an agent to a file for six lines would be
+        // an extra turn bought for nothing.
+        struct SmallRunner;
+        impl ToolRunner for SmallRunner {
+            fn run(&mut self, _name: &str, _args: &str) -> Result<String, String> {
+                Ok("fn main() {\n    println!(\"hi\");\n}\n".into())
+            }
+        }
+        let transport = ScriptedTransport::new(vec![
+            text_sse("@tool fs.read {\"path\":\"main.rs\"}", 1, 1),
+            text_sse("done.", 1, 1),
+        ]);
+        let client = Client::new(keyed_settings(), transport);
+        let agent = AgentSpec {
+            tools: vec![ToolSpec { name: "fs.read".into(), describe: "x".into() }],
+            max_steps: 4,
+            ..Default::default()
+        };
+        let run = run_agent(&client, &agent, "go", "", &mut SmallRunner, &mut NoopObserver);
+        assert_eq!(run.steps[0].result, "fn main() {\n    println!(\"hi\");\n}\n", "untouched");
+        assert!(!run.steps[0].result.contains("fs.read when you need more"));
+    }
+
+    #[test]
+    fn a_small_window_survives_a_run_that_would_have_overflowed_it() {
         // The case the whole change exists for: a cheap model with a small window.
         // The run must finish, and it must do so by giving context back rather than
         // by sending a prompt the provider would reject.
@@ -1290,11 +1354,11 @@ mod tests {
 
         assert_eq!(run.outcome, RunOutcome::Completed, "the run finished under a small window");
         assert_eq!(run.answer, "done.");
-        assert!(!obs.reports.is_empty(), "it compacted rather than sailing past the window");
-        let last = obs.reports.last().unwrap();
-        assert!(last.tokens_after < last.tokens_before, "{}", last.summary());
-        assert!(last.offloaded > 0, "the free rung did the work");
-        assert!(!last.summarized, "no model call was spent — offloading was enough");
+        // It never needed the ladder. Results are written out as they ARRIVE now, so the
+        // transcript never grows towards the window in the first place — the cheapest
+        // compaction is the one that does not have to happen. (When something does slip
+        // through, `ai::compact` proves the ladder still catches it.)
+        assert!(obs.reports.is_empty(), "nothing had to be compacted: {:?}", obs.reports.len());
         // The lifted bytes are on disk where the agent was told to look.
         let files: Vec<_> = std::fs::read_dir(&scratch).map(|d| d.filter_map(|e| e.ok()).collect()).unwrap_or_default();
         assert!(!files.is_empty(), "offloaded output was written to the scratch dir");

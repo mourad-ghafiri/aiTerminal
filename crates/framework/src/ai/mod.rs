@@ -43,9 +43,9 @@ pub use memory::{MemoryEntry, MemoryService};
 pub use session::Session;
 pub use pool::{ModelOverrides, ModelPool, PoolEntry, Strategy};
 pub use reply::{classify_command_reply, Classified, CommandReply, ReplySink};
-pub use request::{command_request, qa_request, ChatRequest, ImageData, Message, Role, RUN_PREFIX};
+pub use request::{command_request, qa_request, CacheHints, ChatRequest, ImageData, Message, Role, RUN_PREFIX};
 pub use setup::{setup_hint, setup_hint_short};
-pub use stream::StreamEvent;
+pub use stream::{StreamEvent, Usage};
 pub use tools::{DEFAULT_CODER_TOOLS, DEFAULT_SAFE_TOOLS};
 
 // The provider seam: the Strategy + Adapters + Factory + self-describing model

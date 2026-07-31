@@ -1119,24 +1119,61 @@ compact_at     = <span class="n">0.75</span>   <span class="c"># fraction of the
 id             = <span class="s">"my-local-model"</span>
 context_window = <span class="n">16000</span></code></pre>
 
+    <p>The reply's reservation is capped at <b>half the window</b>. <code>context_window</code> is a
+      setting you type and <code>max_tokens</code> comes from a model file, so the two routinely
+      disagree — and a 16k reply declared against an 8k window used to leave a quarter of the window
+      for everything else, which meant compacting on turn one and buying a summary on every turn
+      after.</p>
+
+    <h3>A big tool result never enters the transcript</h3>
+    <p>A tool result does not cost its tokens once. It is stored, and the transcript is re-sent on
+      <b>every remaining turn</b> — so a 200&nbsp;KB build log carried inline is paid for again and
+      again, and it crowds out the reasoning it was fetched to support. So a result over
+      <b>8&nbsp;KB</b> is written to <code>cache/offload/&lt;run&gt;/</code> the moment it arrives,
+      and the model is handed a preview plus the path.</p>
+    <pre><code>   Compiling framework v0.0.0 (/work/crates/framework)
+   …
+<span class="c">[full output saved to …/cache/offload/1785-42/003-sys-run.txt] — 4000 lines, 214887 bytes.
+Read it with fs.read when you need more.</span></code></pre>
+    <p>Lossless in the way that matters: <code>fs.read</code> is not workspace-confined (only writes
+      are), so the agent can pull any of it back when it turns out to matter. The threshold is
+      deliberately generous — every source file you read and every short command is under it.</p>
+
     <h3>The ladder — cheapest rung first</h3>
+    <p>When something still grows past the line — a long conversation rather than a large result —
+      compaction runs cheapest rung first and stops as soon as the transcript fits.</p>
     <div class="table-wrap"><table>
       <tr><th>Rung</th><th>What it does</th><th>Costs</th></tr>
-      <tr><td><b>offload</b></td><td>The largest tool results are written to <code>cache/offload/&lt;run&gt;/</code> and replaced by their first ~20 lines plus the path.</td><td><b>nothing</b> — no model call</td></tr>
+      <tr><td><b>offload</b></td><td>Any large tool result that slipped through is written out and replaced by a preview plus its path.</td><td><b>nothing</b> — no model call</td></tr>
       <tr><td><b>summarize</b></td><td>The oldest turns fold into one <code>## Earlier work (compacted)</code> block, sized from the budget so the result actually fits.</td><td>one model call</td></tr>
     </table></div>
-    <p>Offloading is lossless in the way that matters: the full text is on disk at a path the agent
-      was handed, and <code>fs.read</code> fetches it back on demand. Almost every run stops at that
-      rung — which is what keeps a cheap model cheap, since compaction that spent a call every time
-      would undo the saving it exists to make. A run that compacts <b>says so</b>; it never shrinks
-      its own history silently.</p>
-    <pre><code><span class="p">❯</span> @coder "why is the build failing?"
-<span class="a">✦ @coder · qwen2.5-coder</span>
-<span class="c">  ⚙ sys.run {"cmd":"cargo build"} · 2.4s · 412KB</span>
-<span class="c">  ℹ compacted: 7940 → 2180 tokens (−5760) via offload</span>
-<span class="c">  ⚙ fs.read {"path":"src/parser.rs"} · 12ms · 8KB</span>
+    <p>Most runs now finish <b>without the ladder running at all</b> — results never enter the
+      transcript at full size in the first place, and the cheapest compaction is the one that does
+      not have to happen. A run that does compact <b>says so</b>; it never shrinks its own history
+      silently.</p>
 
-The build fails on an unterminated string literal at <span class="ab">src/parser.rs:88</span>.</code></pre>
+    <h3>Paying for the prompt once</h3>
+    <p>A turn re-sends everything before it: the agent's system prompt — its instructions, its
+      skills, its whole tool catalogue — and the entire conversation so far. Left unmarked, a
+      twelve-step run pays full price for that prompt <b>twelve times</b>.</p>
+    <p>So every turn <b>declares what is settled</b>: the system block is fixed for the run, and
+      every message but the newest has already been sent. That is a fact about the conversation
+      rather than a vendor feature, so it rides on the neutral request and each provider decides
+      what to do with it — Anthropic gets two <code>cache_control</code> breakpoints (one static,
+      one rolling), and OpenAI-compatible endpoints cache a matching prefix by themselves and need
+      only that we do not disturb the order.</p>
+    <p>The saving is a number, not a claim:</p>
+    <pre><code><span class="p">❯</span> @coder "add a --json flag to the export command"
+<span class="c">  ⚙ fs.read {"path":"src/cli.rs"} · 9ms · 6KB</span>
+<span class="c">  ⚙ fs.edit {"path":"src/cli.rs"} · 12ms · 1.4KB</span>
+
+Added <span class="ab">--json</span> to the export command, with a test.
+<span class="c">✓ 8.4s · 3 tools · 12.3k in / 1.8k out (11.1k cached, 90%) · ~$0.004</span></code></pre>
+    <p>The first turn of a run writes the cache; every turn after reads it, and the share climbs as
+      the run goes on. <b>A run showing no cached share is the signal that something in the prompt
+      has stopped being stable</b> — a tool list that changed order, a timestamp somebody added.
+      The transcript is append-only and the MCP tool catalogue is sorted for exactly this reason,
+      and both are held in place by tests.</p>
 
     <h3><code>ctx.*</code> — an agent managing its own context</h3>
     <p>Two tools <b>every agent has</b>, answered by the run loop itself rather than by a capability

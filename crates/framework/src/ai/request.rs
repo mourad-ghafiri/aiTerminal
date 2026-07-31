@@ -40,6 +40,37 @@ pub struct ImageData {
     pub b64: String,
 }
 
+/// What the caller knows will not change between the turns of one run.
+///
+/// A **fact about the conversation**, never a vendor mechanism — which is why it lives
+/// on the neutral request and each [`Provider`](crate::ai::provider::Provider) decides
+/// what to do with it. Anthropic turns it into `cache_control` breakpoints; OpenAI
+/// caches a matching prefix automatically and needs nothing but for us not to disturb
+/// the order.
+///
+/// The two facts are true **by construction** rather than by hope: `run_agent` builds
+/// its system prompt once per run, and a `Transcript` only ever appends.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CacheHints {
+    /// The system block is fixed for the whole run.
+    pub system: bool,
+    /// How many leading messages are settled — everything but the newest turn.
+    pub stable_messages: usize,
+}
+
+impl CacheHints {
+    /// Nothing is known to be stable: a one-shot request that will never be repeated.
+    pub fn none() -> Self {
+        CacheHints::default()
+    }
+
+    /// One turn of a run: the system block is fixed and every message but the last has
+    /// already been sent once.
+    pub fn for_turn(messages: usize) -> Self {
+        CacheHints { system: true, stable_messages: messages.saturating_sub(1) }
+    }
+}
+
 /// A chat completion request — provider-independent. Always streamed.
 #[derive(Clone, Debug)]
 pub struct ChatRequest {
@@ -56,6 +87,8 @@ pub struct ChatRequest {
     /// Images attached to the LAST user message (vision input) — emitted by the adapter
     /// as image content blocks; empty for a text-only request.
     pub images: Vec<ImageData>,
+    /// What the caller knows is settled, so a provider can reuse it.
+    pub cache: CacheHints,
 }
 
 impl ChatRequest {
@@ -63,6 +96,29 @@ impl ChatRequest {
     pub fn with_images(mut self, images: Vec<ImageData>) -> Self {
         self.images = images;
         self
+    }
+
+    /// A fingerprint of the part of this request that must not move between turns.
+    ///
+    /// A cache is worth nothing if the prefix shifts, and a prefix shifts silently:
+    /// a tool list in `read_dir` order, a timestamp somebody adds to the system prompt,
+    /// a set iterated instead of a vector. This is what a test holds on to, so the
+    /// regression is caught here rather than as a bill at the end of the month.
+    pub fn prefix_digest(&self) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut eat = |bytes: &[u8]| {
+            for b in bytes {
+                h ^= *b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        eat(self.model.as_bytes());
+        eat(self.system.as_deref().unwrap_or("").as_bytes());
+        for m in self.messages.iter().take(self.cache.stable_messages) {
+            eat(m.role.as_str().as_bytes());
+            eat(m.content.as_bytes());
+        }
+        h
     }
 }
 
@@ -132,6 +188,7 @@ pub fn qa_request(model: &ModelDef, prompt: &str, context: &str) -> ChatRequest 
         top_k: model.top_k,
         thinking: model.caps.enable_thinking,
         images: Vec::new(),
+        cache: CacheHints::none(),
     }
 }
 
@@ -144,6 +201,11 @@ pub fn qa_request(model: &ModelDef, prompt: &str, context: &str) -> ChatRequest 
 /// competing with the system slot for the model's attention. An agent's prompt IS the
 /// system prompt.
 pub fn agent_request(model: &ModelDef, system: &str, messages: Vec<Message>) -> ChatRequest {
+    // The ONE place a turn declares what is settled. Every later turn of the run re-sends
+    // this same system block and these same earlier messages, so a provider that can
+    // reuse them should be told — and told here, where the fact is known, rather than
+    // guessed at by each adapter.
+    let cache = CacheHints::for_turn(messages.len());
     ChatRequest {
         model: model.id.clone(),
         max_tokens: model.max_tokens,
@@ -154,6 +216,7 @@ pub fn agent_request(model: &ModelDef, system: &str, messages: Vec<Message>) -> 
         top_k: model.top_k,
         thinking: model.caps.enable_thinking,
         images: Vec::new(),
+        cache,
     }
 }
 
@@ -170,6 +233,7 @@ pub fn command_request(model: &ModelDef, nl: &str, context: &str) -> ChatRequest
         top_k: None,
         thinking: false,
         images: Vec::new(),
+        cache: CacheHints::none(),
     }
 }
 
@@ -200,6 +264,83 @@ mod tests {
         assert!(sys.contains("RUN:"), "command header: {sys}");
         assert!(sys.contains("teacher"));
         assert!(sys.contains("never call anything \"markdown\" or \"mermaid\""), "no-jargon rule present");
+    }
+
+    /// The turns of one run: the same system prompt, an ever-growing conversation.
+    fn turns(system: &str, messages: &[&str]) -> Vec<ChatRequest> {
+        let m = AiSettings::default().choose();
+        (1..=messages.len())
+            .map(|n| {
+                let so_far = messages[..n]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| Message {
+                        role: if i % 2 == 0 { Role::User } else { Role::Assistant },
+                        content: (*c).to_string(),
+                    })
+                    .collect();
+                agent_request(&m, system, so_far)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_run_declares_its_prefix_settled_so_a_provider_can_reuse_it() {
+        // The whole caching change in one assertion: the system block is fixed for the
+        // run, and every message but the newest has already been sent once.
+        let run = turns("you are a careful engineer", &["do the thing", "@tool fs.list {}", "1 file"]);
+        assert_eq!(run[0].cache, CacheHints { system: true, stable_messages: 0 }, "turn one has nothing settled yet");
+        assert_eq!(run[1].cache, CacheHints { system: true, stable_messages: 1 });
+        assert_eq!(run[2].cache, CacheHints { system: true, stable_messages: 2 });
+        // A one-shot request claims nothing: there is no later turn to reuse it.
+        assert_eq!(qa_request(&AiSettings::default().choose(), "hi", "").cache, CacheHints::none());
+    }
+
+    #[test]
+    fn the_prefix_never_moves_while_a_run_grows() {
+        // A cache pays out only on a prefix that matches token for token, so what has
+        // already been sent must never be edited — only added to. This is the assertion
+        // that keeps that true after somebody rewrites the transcript in six months.
+        let run = turns("you are a careful engineer", &["do the thing", "@tool fs.list {}", "1 file", "done"]);
+        for pair in run.windows(2) {
+            let (before, after) = (&pair[0], &pair[1]);
+            assert_eq!(before.system, after.system, "the system block was rewritten mid-run");
+            for (i, m) in before.messages.iter().enumerate() {
+                assert_eq!(m, &after.messages[i], "message {i} changed between turns");
+            }
+            assert_eq!(after.messages.len(), before.messages.len() + 1, "a turn adds exactly one message");
+        }
+    }
+
+    #[test]
+    fn the_digest_catches_a_prefix_that_stopped_being_stable() {
+        // `prefix_digest` exists to be held on to by a test. A prompt that grows a
+        // timestamp, a tool list in directory order, a set iterated instead of a vector
+        // — each one silently voids the cache, and none of them looks like a bug.
+        let m = AiSettings::default().choose();
+        let one = agent_request(&m, "system A", vec![Message::user("a"), Message::user("b")]);
+        let two = agent_request(&m, "system A", vec![Message::user("a"), Message::user("b")]);
+        assert_eq!(one.prefix_digest(), two.prefix_digest(), "the same run rebuilt is the same prefix");
+
+        // Anything in the settled part moving is a different prefix, and a cache miss.
+        let changed = agent_request(&m, "system A (built at 12:04)", vec![Message::user("a"), Message::user("b")]);
+        assert_ne!(one.prefix_digest(), changed.prefix_digest(), "a system prompt that varies is caught");
+        let reordered = agent_request(&m, "system A", vec![Message::user("b"), Message::user("a")]);
+        assert_ne!(one.prefix_digest(), reordered.prefix_digest(), "a reordered history is caught");
+
+        // A growing run has a growing prefix — that is the point, and the digest says so.
+        // What must hold is that the new prefix EXTENDS the old one rather than replacing
+        // it: measured over the earlier turn's length, the two are the same bytes.
+        let next = agent_request(&m, "system A", vec![Message::user("a"), Message::user("b"), Message::user("c")]);
+        assert_ne!(one.prefix_digest(), next.prefix_digest(), "turn three settles more than turn two did");
+        let rewound = ChatRequest { cache: one.cache, ..next.clone() };
+        assert_eq!(one.prefix_digest(), rewound.prefix_digest(), "and everything turn two sent is still there, unchanged");
+
+        // Whereas a run that edited its history does NOT extend — which is the failure
+        // this whole digest exists to name.
+        let edited = agent_request(&m, "system A", vec![Message::user("a EDITED"), Message::user("b"), Message::user("c")]);
+        let rewound = ChatRequest { cache: one.cache, ..edited };
+        assert_ne!(one.prefix_digest(), rewound.prefix_digest());
     }
 
     #[test]

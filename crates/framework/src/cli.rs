@@ -163,7 +163,7 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
         sink.quiet();
         let (tin, tout) = (out.input_tokens as u64, out.output_tokens as u64);
         let footer = |tin, tout| {
-            run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget)
+            run_footer_with("\u{2713}", started.elapsed(), 0, crate::ai::Usage { input: tin as u32, output: tout as u32, ..Default::default() }, Some(client.model().cost(tin, tout)), cfg.ai_budget)
         };
 
         match out.reply {
@@ -245,7 +245,7 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
         eprintln!();
     }
     println!();
-    eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, tin, tout, Some(client.model().cost(tin, tout)), cfg.ai_budget));
+    eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, crate::ai::Usage { input: tin as u32, output: tout as u32, ..Default::default() }, Some(client.model().cost(tin, tout)), cfg.ai_budget));
     record_session_run(session.as_ref(), "@ai (q&a)", prompt, "answered");
     0
 }
@@ -1105,14 +1105,24 @@ fn outcome_glyph(outcome: &crate::ai::RunOutcome) -> &'static str {
 
 /// The run footer with an explicit status glyph and optional cost/budget telemetry:
 /// `✓ 8.4s · 2 tools · 12.3k in / 1.8k out · ~$0.014 · 14% of $0.10`.
-fn run_footer_with(glyph: &str, elapsed: std::time::Duration, tools: usize, tin: u64, tout: u64, cost: Option<f64>, budget: Option<f64>) -> String {
+fn run_footer_with(glyph: &str, elapsed: std::time::Duration, tools: usize, usage: crate::ai::Usage, cost: Option<f64>, budget: Option<f64>) -> String {
     let secs = elapsed.as_secs_f64();
     let t = if secs >= 10.0 { format!("{secs:.0}s") } else { format!("{secs:.1}s") };
     let mut s = format!("{glyph} {t}");
     if tools > 0 {
         s.push_str(&format!(" \u{b7} {tools} tool{}", if tools == 1 { "" } else { "s" }));
     }
-    s.push_str(&format!(" \u{b7} {} in / {} out", human_tokens(tin), human_tokens(tout)));
+    s.push_str(&format!(
+        " \u{b7} {} in / {} out",
+        human_tokens(usage.prompt_tokens() as u64),
+        human_tokens(usage.output as u64)
+    ));
+    // The saving, stated. A run whose prefix was reused shows a large share here and a
+    // small bill beside it; one whose prefix moved shows nothing, which is the signal
+    // that something in the prompt is no longer stable.
+    if usage.cache_read > 0 {
+        s.push_str(&format!(" ({} cached, {}%)", human_tokens(usage.cache_read as u64), usage.cached_percent()));
+    }
     s.push_str(&cost_segment(cost, budget));
     s
 }
@@ -1971,8 +1981,8 @@ fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::ai::AiSetti
     let run = crate::ai::run_agent(&client, &agent, prompt, ctx, &mut runner, &mut obs);
     finish_streamed(&mut obs, &run.answer);
     let glyph = outcome_glyph(&run.outcome);
-    let cost = Some(client.model().cost(run.input_tokens as u64, run.output_tokens as u64));
-    eprintln!("{}{}{}", muted(), run_footer_with(glyph, started.elapsed(), run.steps.len(), run.input_tokens as u64, run.output_tokens as u64, cost, cfg.ai_budget), reset());
+    let cost = Some(client.model().cost(run.usage.input as u64, run.usage.output as u64));
+    eprintln!("{}{}{}", muted(), run_footer_with(glyph, started.elapsed(), run.steps.len(), run.usage, cost, cfg.ai_budget), reset());
     outcome_exit(&run.outcome)
 }
 
@@ -2851,6 +2861,8 @@ struct NodeOut {
     approved: bool,
     /// Reached an approval with nobody to ask: the run parks rather than deadlocks.
     parked: bool,
+    /// Prompt tokens this node read back out of the provider's cache.
+    cached_tokens: u64,
     /// The model that actually served this node. A pool that picks per run means the
     /// config cannot be read backwards for it, so the record has to carry it.
     model: String,
@@ -2991,6 +3003,7 @@ impl FlowDriver<'_> {
                 approved: out.approved,
                 input_tokens: out.input_tokens,
                 output_tokens: out.output_tokens,
+                cached_tokens: out.cached_tokens,
                 tools: out.tools,
                 ms: out.ms,
                 attempts: out.attempts,
@@ -3034,13 +3047,14 @@ impl FlowDriver<'_> {
             node: node.id.clone(),
         };
         let run = crate::ai::run_agent(&client, &spec, prompt, "", &mut runner, &mut obs);
-        self.spent.fetch_add((run.input_tokens + run.output_tokens) as u64, std::sync::atomic::Ordering::Relaxed);
+        self.spent.fetch_add((run.usage.input + run.usage.output) as u64, std::sync::atomic::Ordering::Relaxed);
         NodeOut {
             ok: run.outcome == crate::ai::RunOutcome::Completed,
             output: run.answer,
             model: run.model_used,
-            input_tokens: run.input_tokens as u64,
-            output_tokens: run.output_tokens as u64,
+            input_tokens: run.usage.input as u64,
+            output_tokens: run.usage.output as u64,
+            cached_tokens: run.usage.cache_read as u64,
             tools: run.steps.len(),
             ms: started.elapsed().as_millis() as u64,
             attempts: 1,
@@ -3288,6 +3302,7 @@ fn join(parts: Vec<NodeOut>) -> NodeOut {
             out.model = p.model.clone();
         }
         out.input_tokens += p.input_tokens;
+        out.cached_tokens += p.cached_tokens;
         out.output_tokens += p.output_tokens;
         out.tools += p.tools;
         out.ms = out.ms.max(p.ms);
@@ -3604,6 +3619,7 @@ fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
         }
     }
     let (tin, tout) = record.tokens();
+    let cached = record.cached();
     let cost = Some(cfg.ai_settings().primary().cost(tin, tout));
     let glyph = match status {
         "done" => "\u{2713}",
@@ -3611,7 +3627,7 @@ fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
         "cancelled" => "\u{23f9}",
         _ => "\u{2717}",
     };
-    eprintln!("{dim}{}{r}", run_footer_with(glyph, started.elapsed(), record.tools(), tin, tout, cost, cfg.ai_budget));
+    eprintln!("{dim}{}{r}", run_footer_with(glyph, started.elapsed(), record.tools(), crate::ai::Usage { input: tin as u32, output: tout as u32, cache_read: cached as u32, ..Default::default() }, cost, cfg.ai_budget));
     if parked {
         eprintln!("{dim}{}{r}", crate::i18n::translate("flow.resume_hint", &[run_id.clone()]));
     }
@@ -3924,10 +3940,10 @@ fn drive_loop<T: crate::ai::Transport>(
         eprintln!("\u{25B6} {}", crate::i18n::translate("loop.iteration", &[k.to_string(), last.to_string()]));
         let prompt = loop_prompt(goal, k, last, check_label, &state.feedback, &state.tried, state.shifting);
         let run = crate::ai::run_agent(client, maker, &prompt, "", runner, observer);
-        st.tin += run.input_tokens as u64;
-        st.tout += run.output_tokens as u64;
+        st.tin += run.usage.input as u64;
+        st.tout += run.usage.output as u64;
         st.tools += run.steps.len();
-        spent += (run.input_tokens + run.output_tokens) as u64;
+        spent += (run.usage.input + run.usage.output) as u64;
         state.shifting = false;
         // An errored/cancelled iteration is NOT work — never hand it to the
         // verifier as if it were; stop the loop with the real cause.
@@ -4324,7 +4340,7 @@ fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
 
     // The same footer as agent/flow, with iterations in place of a lone elapsed count.
     let cost = Some(client.model().cost(run.tin, run.tout));
-    let footer = run_footer_with(glyph, started.elapsed(), run.tools, run.tin, run.tout, cost, cfg.ai_budget);
+    let footer = run_footer_with(glyph, started.elapsed(), run.tools, crate::ai::Usage { input: run.tin as u32, output: run.tout as u32, ..Default::default() }, cost, cfg.ai_budget);
     eprintln!("{dim}{footer} \u{b7} {} iteration{}{r}", run.iters, if run.iters == 1 { "" } else { "s" });
     if code != 0 {
         eprintln!("{dim}  {}{r}", crate::i18n::translate("loop.resume_hint", &[id.clone()]));
@@ -6576,12 +6592,29 @@ mod tests {
         assert_eq!(super::human_tokens(12_345), "12.3k");
         assert_eq!(super::human_bytes(80), "80B");
         assert_eq!(super::human_bytes(2048), "2.0KB");
-        let f = super::run_footer_with("\u{2713}", std::time::Duration::from_millis(4200), 3, 12_345, 1_800, None, None);
+        let spent = |i: u32, o: u32| crate::ai::Usage { input: i, output: o, ..Default::default() };
+        let f = super::run_footer_with("\u{2713}", std::time::Duration::from_millis(4200), 3, spent(12_345, 1_800), None, None);
         assert_eq!(f, "\u{2713} 4.2s \u{b7} 3 tools \u{b7} 12.3k in / 1800 out");
-        let f1 = super::run_footer_with("\u{2713}", std::time::Duration::from_secs(61), 1, 100, 5, None, None);
+        let f1 = super::run_footer_with("\u{2713}", std::time::Duration::from_secs(61), 1, spent(100, 5), None, None);
         assert!(f1.contains("61s") && f1.contains("1 tool \u{b7}"), "{f1}");
-        let f0 = super::run_footer_with("\u{2713}", std::time::Duration::from_millis(900), 0, 10, 2, None, None);
+        let f0 = super::run_footer_with("\u{2713}", std::time::Duration::from_millis(900), 0, spent(10, 2), None, None);
         assert!(!f0.contains("tool"), "no tool segment when none ran: {f0}");
+    }
+
+    #[test]
+    fn the_footer_says_how_much_of_the_prompt_was_reused() {
+        // The number the whole caching change exists to produce. A run that reused its
+        // prefix should be able to show it; one that did not must show nothing, so a
+        // prompt that has quietly stopped being stable is visible rather than merely
+        // expensive.
+        let reused = crate::ai::Usage { input: 900, output: 200, cache_read: 8_100, cache_write: 0 };
+        let f = super::run_footer_with("\u{2713}", std::time::Duration::from_secs(3), 2, reused, None, None);
+        assert!(f.contains("9000 in"), "the whole prompt is counted, cached or not: {f}");
+        assert!(f.contains("(8100 cached, 90%)"), "{f}");
+
+        let cold = crate::ai::Usage { input: 9_000, output: 200, cache_read: 0, cache_write: 9_000 };
+        let f = super::run_footer_with("\u{2713}", std::time::Duration::from_secs(3), 2, cold, None, None);
+        assert!(!f.contains("cached"), "the first turn writes the cache, it does not read one: {f}");
     }
 
     #[test]
@@ -6943,19 +6976,20 @@ mod tests {
         }
 
         // A small one drops terminal first, then session, then memory — and never the
-        // instructions or the user's own attachment.
-        let tight = super::fit_context(&crate::ai::ContextBudget::new(8_192, 7_000, 0.75), "why?", &blocks(4_000));
+        // instructions or the user's own attachment. Each bulky block alone is far
+        // larger than the whole budget, so what survives is exactly what is protected.
+        let tight = super::fit_context(&crate::ai::ContextBudget::new(8_192, 7_000, 0.75), "why?", &blocks(40_000));
         assert!(tight.contains("haiku"), "standing instructions survive: {tight:?}");
         assert!(tight.contains("the file they picked"), "an explicit attachment survives: {tight:?}");
-        assert!(tight.len() < 4_000, "the bulky blocks went: {}", tight.len());
+        assert!(!tight.contains("x x x"), "the bulky blocks went: {} bytes kept", tight.len());
 
         // Blocks go WHOLE — half a digest is a misleading digest.
         let one = super::fit_context(
             &crate::ai::ContextBudget::new(8_192, 7_000, 0.75),
             "why?",
-            &[("session", "## Session\ncomplete or absent".to_string())],
+            &[("session", format!("## Session\ncomplete or absent{}", big(40_000)))],
         );
-        assert!(one.is_empty() || one.contains("complete or absent"), "never half a block: {one:?}");
+        assert!(one.is_empty() || one.contains("complete or absent"), "never half a block: {}", one.len());
 
         // Empty blocks are not counted, and nothing is fabricated.
         let none = super::fit_context(

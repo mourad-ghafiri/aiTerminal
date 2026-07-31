@@ -68,6 +68,9 @@ struct Outcome {
     compactions: Vec<crate::ai::CompactionReport>,
     /// Tool results that were lifted out of context to a file, by tool name.
     offloaded_files: Vec<std::path::PathBuf>,
+    /// Every request body the run posted, oldest first. What a harness SENDS is half of
+    /// what it does, and none of it is visible in the answer that comes back.
+    sent: Vec<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -214,6 +217,45 @@ impl World for AiWorld {
             return world::expect_lines(&got, &want, "the flow steps that ran");
         }
         // ── what the harness did about its context ───────────────────────────
+        // ── what the harness SENT ────────────────────────────────────────────
+        if let Some(want) = world::list(step, "expect_request_contains") {
+            let turn = world::int(step, "turn").unwrap_or(1).max(1) as usize;
+            let body = self
+                .last
+                .sent
+                .get(turn - 1)
+                .ok_or_else(|| format!("the run made {} request(s), not {turn}", self.last.sent.len()))?;
+            return world::expect_contains(body, &want, &format!("the body of request {turn}"));
+        }
+        if let Some(bad) = world::list(step, "expect_request_excludes") {
+            let turn = world::int(step, "turn").unwrap_or(1).max(1) as usize;
+            let body = self
+                .last
+                .sent
+                .get(turn - 1)
+                .ok_or_else(|| format!("the run made {} request(s), not {turn}", self.last.sent.len()))?;
+            return world::expect_missing(body, &bad, &format!("the body of request {turn}"));
+        }
+        if let Some(n) = world::int(step, "expect_requests") {
+            let got = self.last.sent.len() as i64;
+            if got != n {
+                return Err(format!("the run posted {got} request(s), expected {n}"));
+            }
+            return Ok(());
+        }
+        // Every turn re-sends what came before it. The bytes a provider already has must
+        // be byte-identical or the cache it kept is worthless — this walks the bodies and
+        // proves each one begins with the one before it.
+        if world::flag(step, "expect_prefix_never_moves") == Some(true) {
+            for (i, pair) in self.last.sent.windows(2).enumerate() {
+                let (before, after) = (&pair[0], &pair[1]);
+                let head = before.find("\"messages\"").unwrap_or(0);
+                if after.get(..head) != before.get(..head) {
+                    return Err(format!("request {} rewrote what request {} had already sent", i + 2, i + 1));
+                }
+            }
+            return Ok(());
+        }
         if world::flag(step, "expect_compacted") == Some(true) {
             return match self.last.compactions.is_empty() {
                 true => Err("the run never compacted \u{2014} it stayed within the window".into()),
@@ -339,6 +381,7 @@ impl AiWorld {
         }
         let mut obs = Watcher::default();
         let run = ai::run_agent(&client, &spec, task, "", &mut runner, &mut obs);
+        let sent = client.transport().sent();
 
         // Whatever was lifted out of context is on disk in the run's scratch dir.
         let offloaded_files: Vec<std::path::PathBuf> = std::fs::read_dir(&self.scratch)
@@ -352,9 +395,10 @@ impl AiWorld {
                 RunOutcome::Error(e) => Some(e.clone()),
                 _ => None,
             },
-            tokens: (run.input_tokens, run.output_tokens),
+            tokens: (run.usage.input, run.usage.output),
             compactions: obs.reports,
             offloaded_files,
+            sent,
             ..Outcome::default()
         };
         Ok(())

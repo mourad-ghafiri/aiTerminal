@@ -83,6 +83,20 @@ pub fn load_servers(dirs: &[PathBuf]) -> Vec<McpServer> {
     out
 }
 
+/// Qualify every server's tools and put them in one stable order.
+///
+/// Split out from [`McpHub::tools`] so the ordering rule can be tested without
+/// spawning a process — the rule is the point, not the plumbing that reaches it.
+fn qualify<'a>(servers: impl Iterator<Item = (&'a str, &'a [McpTool])>) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = servers
+        .flat_map(|(server, tools)| {
+            tools.iter().map(move |t| (format!("mcp.{server}.{}", t.name), t.description.clone()))
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
 /// The line transport an [`McpClient`] speaks JSON-RPC over. Real = child stdio;
 /// scripted = canned responses (tests). `recv` returns `None` on timeout.
 pub trait McpTransport {
@@ -274,15 +288,17 @@ impl McpHub {
         self.clients.iter().all(|(_, c)| c.tools.is_empty())
     }
 
-    /// Every tool across all servers, qualified `mcp.<server>.<tool>` with its description.
+    /// Every tool across all servers, qualified `mcp.<server>.<tool>` with its
+    /// description, **sorted by name**.
+    ///
+    /// The order is not cosmetic. This list is spliced into an agent's system prompt,
+    /// which is the prefix a provider caches — and a cache only pays out on a prefix
+    /// that matches token for token. A server answering `tools/list` in a different
+    /// order on Tuesday, or two servers starting in a different order, would silently
+    /// void the cache for every run afterwards and nothing would look wrong except the
+    /// bill. Sorting costs a comparison per tool and removes the whole class.
     pub fn tools(&self) -> Vec<(String, String)> {
-        let mut out = Vec::new();
-        for (server, c) in &self.clients {
-            for t in &c.tools {
-                out.push((format!("mcp.{server}.{}", t.name), t.description.clone()));
-            }
-        }
-        out
+        qualify(self.clients.iter().map(|(name, c)| (name.as_str(), c.tools.as_slice())))
     }
 
     /// Route a qualified `mcp.<server>.<tool>` call. `args` is a JSON arguments object
@@ -299,6 +315,25 @@ impl McpHub {
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+
+    #[test]
+    fn the_tool_catalogue_is_ordered_whatever_order_the_servers_answered_in() {
+        // This list is spliced into an agent's system prompt, which is the prefix a
+        // provider caches — and a cache pays out only on a prefix that matches token for
+        // token. A server answering `tools/list` in a different order, or two servers
+        // starting in a different order, would void the cache for every run afterwards
+        // and nothing would look wrong except the bill.
+        let tool = |n: &str| McpTool { name: n.to_string(), description: format!("does {n}") };
+        let a = [tool("zeta"), tool("alpha")];
+        let b = [tool("mid")];
+        let one = qualify([("srv", a.as_slice()), ("other", b.as_slice())].into_iter());
+        let two = qualify([("other", b.as_slice()), ("srv", a.as_slice())].into_iter());
+        assert_eq!(one, two, "the same servers in a different order give the same catalogue");
+        let names: Vec<&str> = one.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["mcp.other.mid", "mcp.srv.alpha", "mcp.srv.zeta"]);
+        // Descriptions ride along with their tool, not with their position.
+        assert_eq!(one[1].1, "does alpha");
+    }
 
     /// A scripted transport: each `send` of a request enqueues a canned response line
     /// (keyed by the JSON-RPC `method`); `recv` dequeues. Notifications enqueue nothing.

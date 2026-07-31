@@ -61,6 +61,8 @@ pub(crate) fn choose_with<T: platform::transport::Transport>(
         top_k: None,
         thinking: false,
         images: Vec::new(),
+        // One question, asked once — there is no later turn to reuse anything.
+        cache: crate::ai::CacheHints::none(),
     };
     let reply = client.complete(&req).map_err(|e| format!("routing this goal failed: {e}"))?;
     decode(&reply, flows).ok_or_else(|| "the model did not name a flow for this goal".into())

@@ -107,18 +107,22 @@ impl ContextBudget {
             0 => model.context_window as usize,
             n => n as usize,
         };
-        ContextBudget {
-            window: window.max(WINDOW_FLOOR),
-            reserve_output: model.max_tokens as usize,
-            compact_at: compact_at.clamp(0.1, 0.95),
-        }
+        ContextBudget::new(window, model.max_tokens as usize, compact_at)
     }
 
     /// Construct directly — for tests and callers that already hold the numbers.
     pub fn new(window: usize, reserve_output: usize, compact_at: f32) -> ContextBudget {
+        let window = window.max(WINDOW_FLOOR);
         ContextBudget {
-            window: window.max(WINDOW_FLOOR),
-            reserve_output,
+            window,
+            // A reply cannot be reserved more room than the conversation has. The two
+            // numbers come from different places — `context_window` from an `[ai]`
+            // setting somebody typed, `max_tokens` from the model file — so they
+            // routinely disagree, and a model declaring a 16k reply against an 8k window
+            // used to leave a quarter of the window for everything else. The run then
+            // compacted on turn one and every turn after, buying a summary each time:
+            // the harness paying a model call per turn to work around arithmetic.
+            reserve_output: reserve_output.min(window / 2),
             compact_at: compact_at.clamp(0.1, 0.95),
         }
     }
@@ -129,9 +133,9 @@ impl ContextBudget {
     }
 
     /// Tokens a prompt may actually occupy: the window less the reply's reservation
-    /// and the headroom. Never zero — a model whose `max_tokens` claims the whole
-    /// window still gets a quarter of it to think in, rather than a budget that says
-    /// every prompt is infinitely over.
+    /// and the headroom. Never zero — the reservation is already capped at half the
+    /// window, and this floor catches whatever the headroom would still eat on a very
+    /// small one, rather than reporting that every prompt is infinitely over.
     pub fn usable(&self) -> usize {
         self.window
             .saturating_sub(self.reserve_output)
@@ -219,10 +223,32 @@ mod tests {
     #[test]
     fn a_greedy_max_tokens_cannot_starve_the_prompt() {
         // A model file claiming the whole window for output would otherwise leave
-        // `usable` at zero, and every prompt would be infinitely over budget.
+        // `usable` at zero, and every prompt would be infinitely over budget. The
+        // reservation is capped at half the window, so half of it less the headroom is
+        // still there for the conversation.
         let b = ContextBudget::for_model(&model(32_000, 32_000), 0, DEFAULT_COMPACT_AT);
-        assert_eq!(b.usable(), 8_000, "a quarter of the window is still usable");
+        assert_eq!(b.usable(), 32_000 / 2 - HEADROOM);
         assert!(b.pressure(1_000) < 1.0);
+    }
+
+    #[test]
+    fn a_window_smaller_than_the_reply_still_leaves_room_to_work() {
+        // The two numbers come from different places — `context_window` from an `[ai]`
+        // setting somebody typed, `max_tokens` from the model file — so they routinely
+        // disagree. An 8k window against a 16k reply used to leave a quarter of the
+        // window for everything else: the run compacted on turn one and every turn
+        // after, buying a summary each time. The harness was paying a model call per
+        // turn to work around arithmetic.
+        let b = ContextBudget::for_model(&model(8_192, 16_000), 0, DEFAULT_COMPACT_AT);
+        assert_eq!(b.usable(), 8_192 / 2 - HEADROOM, "half the window, less the headroom");
+        // An ordinary transcript for a small model sits comfortably under the line
+        // rather than over it on the first turn.
+        assert!(!b.needs_compaction(1_600), "threshold is {}", b.compact_threshold());
+        assert!(b.needs_compaction(3_000), "and a genuinely large one still trips it");
+
+        // A sane pairing is untouched: the reservation is a cap, not a target.
+        let sane = ContextBudget::for_model(&model(200_000, 8_000), 0, DEFAULT_COMPACT_AT);
+        assert_eq!(sane.usable(), 200_000 - 8_000 - HEADROOM);
     }
 
     #[test]

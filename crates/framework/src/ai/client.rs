@@ -11,7 +11,7 @@ use platform::transport::{CancelToken, Transport};
 use crate::ai::model::AiSettings;
 use crate::ai::provider::{decode_stream, provider_for, ModelDef};
 use crate::ai::request::{command_request, qa_request, ChatRequest};
-use crate::ai::stream::StreamEvent;
+use crate::ai::stream::{StreamEvent, Usage};
 use std::time::Duration;
 
 /// Bounded same-model retry for a transient provider error (see `ask_streaming`).
@@ -106,7 +106,7 @@ impl<T: Transport> Client<T> {
     /// text delta is forwarded to `on_delta` as it arrives. Returns the full answer, token
     /// usage, and the model that produced it (telemetry records the model + pricing
     /// actually used). Blocking — the agent runs on a worker thread.
-    pub fn ask_streaming(&self, prompt: &str, context: &str, on_part: &mut dyn FnMut(bool, &str)) -> Result<(String, u32, u32, ModelDef), String> {
+    pub fn ask_streaming(&self, prompt: &str, context: &str, on_part: &mut dyn FnMut(bool, &str)) -> Result<(String, Usage, ModelDef), String> {
         self.ask_streaming_on(&self.candidates(), prompt, context, on_part)
     }
 
@@ -119,12 +119,18 @@ impl<T: Transport> Client<T> {
         req.model = model.id.clone();
         let rx = self.run(&model, req);
         let mut sink = |_: bool, _: &str| {};
-        stream_with_usage(&rx, &mut sink).map(|(text, _, _)| text)
+        stream_with_usage(&rx, &mut sink).map(|(text, _)| text)
     }
 
     /// The candidate list for a whole run — the pool's [`order`](AiSettings::order):
     /// one strategy pick, then the rest as a failover chain. Computed ONCE by
     /// `run_agent` and reused every turn, so the model stays fixed across a run.
+    /// The transport this client posts through — so a test can read what was SENT, not
+    /// only what came back. A harness's request is half of what it does.
+    pub fn transport(&self) -> &T {
+        &self.transport
+    }
+
     pub fn candidates(&self) -> Vec<ModelDef> {
         self.settings.order()
     }
@@ -132,7 +138,7 @@ impl<T: Transport> Client<T> {
     /// Like [`ask_streaming`](Self::ask_streaming) but over a caller-fixed candidate
     /// list, so a multi-turn agent run pins ONE model (the list head) across turns
     /// and only fails over to a later candidate on a hard error before any token.
-    pub fn ask_streaming_on(&self, candidates: &[ModelDef], prompt: &str, context: &str, on_part: &mut dyn FnMut(bool, &str)) -> Result<(String, u32, u32, ModelDef), String> {
+    pub fn ask_streaming_on(&self, candidates: &[ModelDef], prompt: &str, context: &str, on_part: &mut dyn FnMut(bool, &str)) -> Result<(String, Usage, ModelDef), String> {
         self.stream_with(candidates, &|model| qa_request(model, prompt, context), on_part)
     }
 
@@ -147,7 +153,7 @@ impl<T: Transport> Client<T> {
         candidates: &[ModelDef],
         build: &dyn Fn(&ModelDef) -> ChatRequest,
         on_part: &mut dyn FnMut(bool, &str),
-    ) -> Result<(String, u32, u32, ModelDef), String> {
+    ) -> Result<(String, Usage, ModelDef), String> {
         self.stream_with(candidates, build, on_part)
     }
 
@@ -159,7 +165,7 @@ impl<T: Transport> Client<T> {
         candidates: &[ModelDef],
         build: &dyn Fn(&ModelDef) -> ChatRequest,
         on_part: &mut dyn FnMut(bool, &str),
-    ) -> Result<(String, u32, u32, ModelDef), String> {
+    ) -> Result<(String, Usage, ModelDef), String> {
         let mut last_err = String::from("no model candidates");
         for (i, model) in candidates.iter().enumerate() {
             // Per-candidate retry: a TRANSIENT error before any output (a 429/503/overloaded
@@ -178,7 +184,7 @@ impl<T: Transport> Client<T> {
                     stream_with_usage(&rx, &mut sink)
                 };
                 match res {
-                    Ok((text, ti, to)) => return Ok((text, ti, to, model.clone())),
+                    Ok((text, usage)) => return Ok((text, usage, model.clone())),
                     Err(e) if !emitted && attempt < MAX_RETRIES && is_transient(&e) && !self.is_cancelled() => {
                         attempt += 1;
                         let backoff = RETRY_BASE * 2u32.pow(attempt - 1);
@@ -236,7 +242,7 @@ impl<T: Transport> Client<T> {
 /// channel closes. Used by the CLI and tests.
 #[cfg(test)]
 pub(crate) fn collect(rx: &Receiver<StreamEvent>) -> Result<String, String> {
-    stream_with_usage(rx, &mut |_, _| {}).map(|(s, _, _)| s)
+    stream_with_usage(rx, &mut |_, _| {}).map(|(s, _)| s)
 }
 
 
@@ -244,7 +250,7 @@ pub(crate) fn collect(rx: &Receiver<StreamEvent>) -> Result<String, String> {
 /// text)` as it arrives — `thinking=false` for an answer delta (also accumulated into the
 /// returned text), `thinking=true` for a reasoning delta (NOT part of the answer). Stops
 /// at `Done`/`Error` or channel close.
-fn stream_with_usage(rx: &Receiver<StreamEvent>, on_part: &mut dyn FnMut(bool, &str)) -> Result<(String, u32, u32), String> {
+fn stream_with_usage(rx: &Receiver<StreamEvent>, on_part: &mut dyn FnMut(bool, &str)) -> Result<(String, Usage), String> {
     let mut out = String::new();
     for ev in rx {
         match ev {
@@ -253,11 +259,13 @@ fn stream_with_usage(rx: &Receiver<StreamEvent>, on_part: &mut dyn FnMut(bool, &
                 out.push_str(&s);
             }
             StreamEvent::Thinking(s) => on_part(true, &s),
-            StreamEvent::Done { input_tokens, output_tokens, .. } => return Ok((out, input_tokens, output_tokens)),
+            StreamEvent::Done { input_tokens, output_tokens, cache_read, cache_write, .. } => {
+                return Ok((out, Usage { input: input_tokens, output: output_tokens, cache_read, cache_write }))
+            }
             StreamEvent::Error(e) => return Err(e),
         }
     }
-    Ok((out, 0, 0))
+    Ok((out, Usage::default()))
 }
 
 #[cfg(test)]
@@ -361,7 +369,7 @@ mod tests {
         };
         let client = Client::new(s, MockTransport::from_fixture(text_sse("recovered", 3, 2)));
         let mut streamed = String::new();
-        let (text, _, _, used) = client.ask_streaming("hi", "", &mut |thinking, d| {
+        let (text, _, used) = client.ask_streaming("hi", "", &mut |thinking, d| {
             if !thinking {
                 streamed.push_str(d)
             }
@@ -388,7 +396,7 @@ mod tests {
             },
         };
         let client = Client::new(s, MockTransport::from_fixture(text_sse("recovered", 3, 2)));
-        let (text, _, _, used) = client.ask_streaming("hi", "", &mut |_, _| {}).unwrap();
+        let (text, _, used) = client.ask_streaming("hi", "", &mut |_, _| {}).unwrap();
         assert_eq!(text, "recovered");
         assert_eq!(used.id, "good-model", "cost pick died, chain fell over to the healthy model");
         std::env::remove_var(env);

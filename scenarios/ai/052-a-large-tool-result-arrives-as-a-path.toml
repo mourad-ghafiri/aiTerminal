@@ -1,0 +1,41 @@
+name = "a large tool result arrives as a path, not as forty kilobytes"
+tags = ["ai", "context", "cost"]
+
+# A tool result does not cost its tokens once. It is stored in the transcript, and the
+# transcript is re-sent on every remaining turn — so a 200 KB build log carried inline
+# is paid for again and again, and it crowds out the reasoning it was fetched to
+# support.
+#
+# So a big result is written to a file the MOMENT it arrives and the model is handed a
+# preview plus the path. Retrieval research is consistent about this: an identifier
+# the agent can follow beats the artifact inline, on accuracy as well as on cost.
+
+[setup]
+max_steps = 5
+
+[[step]]
+tool = "sys.run"
+
+[[step]]
+tool_returns_many_lines = ["sys.run=   Compiling framework v0.0.0 (/work/crates/framework)"]
+times = 4000
+
+[[step]]
+model_says_in_turn = ["@tool sys.run {\"cmd\":\"cargo build\"}", "The build compiled the framework crate."]
+
+[[step]]
+agent = "build it"
+
+[[step]]
+expect_outcome = "completed"
+
+# The second request carries the result of the first tool call. It must carry a
+# pointer to it, not the thing itself.
+[[step]]
+turn = 2
+expect_request_contains = ["Read it with fs.read when you need more"]
+
+# And the whole log is on disk where the agent was told to look, so nothing was lost
+# by not carrying it.
+[[step]]
+expect_offloaded_output_is_readable = true

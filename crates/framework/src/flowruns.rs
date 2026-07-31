@@ -97,6 +97,11 @@ pub(crate) struct NodeRun {
     pub approved: bool,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Prompt tokens this node did not pay full price for, because the provider still
+    /// had the prefix from the turn before. A flow is where this matters most: eight
+    /// nodes on one model means eight prefixes, and the difference between reusing them
+    /// and not is most of the bill.
+    pub cached_tokens: u64,
     pub tools: usize,
     /// Wall clock, in milliseconds.
     pub ms: u64,
@@ -156,6 +161,11 @@ impl Run {
 
     pub fn tokens(&self) -> (u64, u64) {
         self.nodes.iter().fold((0, 0), |(i, o), n| (i + n.input_tokens, o + n.output_tokens))
+    }
+
+    /// Prompt tokens the whole run read back out of a provider's cache.
+    pub fn cached(&self) -> u64 {
+        self.nodes.iter().map(|n| n.cached_tokens).sum()
     }
 
     pub fn tools(&self) -> usize {
@@ -233,6 +243,7 @@ pub(crate) fn write(id: &str, run: &Run) {
                 ("state".into(), Toml::Str(n.state.word().into())),
                 ("input_tokens".into(), Toml::Int(n.input_tokens as i64)),
                 ("output_tokens".into(), Toml::Int(n.output_tokens as i64)),
+                ("cached_tokens".into(), Toml::Int(n.cached_tokens as i64)),
                 ("tools".into(), Toml::Int(n.tools as i64)),
                 ("ms".into(), Toml::Int(n.ms as i64)),
                 ("attempts".into(), Toml::Int(n.attempts as i64)),
@@ -287,6 +298,7 @@ pub(crate) fn read(id: &str) -> Option<Run> {
                 approved: n.get("approved").and_then(|v| v.as_bool()).unwrap_or(false),
                 input_tokens: i("input_tokens") as u64,
                 output_tokens: i("output_tokens") as u64,
+                cached_tokens: i("cached_tokens") as u64,
                 tools: i("tools") as usize,
                 ms: i("ms") as u64,
                 attempts: i("attempts") as u32,
@@ -402,6 +414,7 @@ mod tests {
             approved: false,
             input_tokens: 8100,
             output_tokens: 2400,
+            cached_tokens: 6400,
             tools: 7,
             ms: 4200,
             attempts: 2,
@@ -424,6 +437,11 @@ mod tests {
         assert_eq!(back.node("verify").unwrap().model, "", "a command node has no model, and claims none");
         assert_eq!(back.node("verify").unwrap().exit, Some(1), "a command's exit status survives");
         assert_eq!(back.tokens(), (8100, 2400));
+        // What the provider did not charge full price for. Without it a run's real cost
+        // cannot be read back off disk, and the flow footer would report a number that
+        // silently ignores the biggest saving the harness makes.
+        assert_eq!(back.node("map").unwrap().cached_tokens, 6400);
+        assert_eq!(back.cached(), 6400);
         assert_eq!(back.tools(), 7);
     }
 

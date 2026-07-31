@@ -34,15 +34,14 @@ expect_answer = "Build, tests and lints all ran."
 [[step]]
 expect_outcome = "completed"
 
-# It got there by giving context back, not by luck.
+# And it got there without compacting at all. A result this size is written to a file
+# the MOMENT it arrives, so the transcript never grows towards the window in the first
+# place — the cheapest compaction is the one that does not have to happen. This is the
+# whole difference between an 8k model being usable and being a bill: the alternative
+# was summarizing on every turn, paying a model call each time to undo damage the
+# harness had just done to itself.
 [[step]]
-expect_compacted = true
-
-# And the free rung was enough: no model call was spent on a summary. This is what
-# keeps a cheap model cheap — compaction that costs a call on every turn would undo
-# the saving it was meant to make.
-[[step]]
-expect_compacted_without_a_model_call = true
+expect_no_compaction = true
 
 # Nothing was lost. The full output is on disk at the path the agent was handed, and
 # `fs.read` can fetch it back when it turns out to matter.

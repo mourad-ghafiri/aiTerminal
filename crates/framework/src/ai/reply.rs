@@ -165,7 +165,7 @@ mod tests {
     /// depend on where the chunk boundaries fall.
     fn stream(chunks: &[&str]) -> Vec<StreamEvent> {
         let mut evs: Vec<StreamEvent> = chunks.iter().map(|c| StreamEvent::Delta((*c).to_string())).collect();
-        evs.push(StreamEvent::Done { stop_reason: None, input_tokens: 10, output_tokens: 5 });
+        evs.push(StreamEvent::Done { stop_reason: None, input_tokens: 10, output_tokens: 5, cache_read: 0, cache_write: 0 });
         evs
     }
 
@@ -273,7 +273,7 @@ mod tests {
         let evs = vec![
             StreamEvent::Thinking("the user wants…".into()),
             StreamEvent::Delta("Here you go".into()),
-            StreamEvent::Done { stop_reason: None, input_tokens: 1, output_tokens: 2 },
+            StreamEvent::Done { stop_reason: None, input_tokens: 1, output_tokens: 2, cache_read: 0, cache_write: 0 },
         ];
         let out = classify_command_reply(evs.into_iter(), &mut rec);
         assert_eq!(out.reply, CommandReply::Answer);

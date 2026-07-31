@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn ai_scenarios() {
-        check("ai", 21);
+        check("ai", 27);
     }
 
     #[test]

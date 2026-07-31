@@ -930,21 +930,72 @@ id             = "my-local-model"
 context_window = 16000
 ```
 
+The reply's reservation is capped at **half the window**. `context_window` is a setting
+you type and `max_tokens` comes from a model file, so the two routinely disagree — and a
+16k reply declared against an 8k window used to leave a quarter of the window for
+everything else, which meant compacting on turn one and buying a summary on every turn
+after.
+
+### A big tool result never enters the transcript
+
+A tool result does not cost its tokens once. It is stored, and the transcript is re-sent
+on **every remaining turn** — so a 200 KB build log carried inline is paid for again and
+again, and it crowds out the reasoning it was fetched to support.
+
+So a result over **8 KB** is written to `~/.aiTerminal/cache/offload/<run>/` the moment
+it arrives, and the model is handed a preview plus the path:
+
+```text
+   Compiling framework v0.0.0 (/work/crates/framework)
+   …
+[full output saved to …/cache/offload/1785-42/003-sys-run.txt] — 4000 lines, 214 887 bytes.
+Read it with fs.read when you need more.
+```
+
+Lossless in the way that matters: `fs.read` is not workspace-confined (only writes are),
+so the agent can pull any of it back when it turns out to matter. The threshold is
+deliberately generous — every source file you read and every short command is under it.
+
 ### The ladder
 
-Compaction runs **cheapest rung first** and stops as soon as the transcript fits.
+When something still grows past the line — a long conversation rather than a large
+result — compaction runs **cheapest rung first** and stops as soon as the transcript
+fits.
 
 | Rung | What it does | Costs |
 | --- | --- | --- |
-| **offload** | The largest tool results are written to `~/.aiTerminal/cache/offload/<run>/` and replaced by their first ~20 lines plus the path. | nothing — no model call |
+| **offload** | Any large tool result that slipped through is written out and replaced by a preview plus its path. | nothing — no model call |
 | **summarize** | The oldest turns fold into one `## Earlier work (compacted)` block, sized from the budget so the result actually fits. | one model call |
 
-Offloading is **lossless in the way that matters**: the full text is on disk at a path
-the agent was handed, and `fs.read` fetches it back on demand. Almost every run stops
-at that rung, which is what keeps a cheap model cheap — compaction that spent a call
-every time would undo the saving it exists to make.
+Most runs now finish **without the ladder running at all** — results never enter the
+transcript at full size in the first place, and the cheapest compaction is the one that
+does not have to happen. A run that does compact says so; it never shrinks its own
+history silently.
 
-A run that compacts says so; it never shrinks its own history silently.
+### Paying for the prompt once
+
+A turn re-sends everything before it: the agent's system prompt — its instructions, its
+skills, its whole tool catalogue — and the entire conversation so far. Left unmarked,
+a twelve-step run pays full price for that prompt twelve times.
+
+So every turn **declares what is settled**: the system block is fixed for the run, and
+every message but the newest has already been sent. That is a fact about the
+conversation rather than a vendor feature, so it rides on the neutral request and each
+provider decides what to do with it — Anthropic gets two `cache_control` breakpoints
+(one static, one rolling), and OpenAI-compatible endpoints cache a matching prefix by
+themselves and need only that we do not disturb the order.
+
+The saving is a number, not a claim:
+
+```text
+✓ 8.4s · 3 tools · 12.3k in / 1.8k out (11.1k cached, 90%) · ~$0.004
+```
+
+The first turn of a run writes the cache; every turn after reads it, and the share
+climbs as the run goes on. **A run showing no cached share is the signal that
+something in the prompt has stopped being stable** — a tool list that changed order, a
+timestamp somebody added. The transcript is append-only and the MCP tool catalogue is
+sorted for exactly this reason, and both are held in place by tests.
 
 ### `ctx.*` — an agent managing its own context
 

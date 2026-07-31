@@ -65,12 +65,22 @@ impl Provider for AnthropicAdapter {
     fn encode_body(&self, req: &ChatRequest) -> String {
         // Images attach to the LAST user message as content blocks (Anthropic shape).
         let last_user = req.messages.iter().rposition(|m| m.role.as_str() == "user");
+        // The rolling cache breakpoint: the newest settled message. Everything before it
+        // was sent verbatim on the previous turn, so the API can charge a tenth for it —
+        // and a turn is only ever ADDED, never edited, which is what makes that true.
+        // Anthropic allows four breakpoints; two is the documented shape, one static
+        // (the system block) and one rolling.
+        let settled = req.cache.stable_messages.min(req.messages.len()).checked_sub(1);
         let messages = Json::Arr(
             req.messages
                 .iter()
                 .enumerate()
                 .map(|(i, m)| {
-                    let content = if Some(i) == last_user && !req.images.is_empty() {
+                    let content = if Some(i) == settled {
+                        // A cached message has to be a block array — `cache_control` has
+                        // nowhere to live on a plain string.
+                        Json::Arr(vec![cached_text(&m.content)])
+                    } else if Some(i) == last_user && !req.images.is_empty() {
                         let mut blocks = vec![Json::obj([("type".to_string(), Json::Str("text".to_string())), ("text".to_string(), Json::Str(m.content.clone()))])];
                         for img in &req.images {
                             // A PDF rides as a `document` block; everything else as `image`.
@@ -117,7 +127,15 @@ impl Provider for AnthropicAdapter {
             }
         }
         if let Some(system) = &req.system {
-            pairs.push(("system".to_string(), Json::Str(system.clone())));
+            // The static breakpoint. An agent's system prompt — its instructions, its
+            // skills, its whole tool catalogue — is built once and re-sent on every turn
+            // of the run. Marked cacheable it is written once and read back for a tenth
+            // of the price on every turn after; unmarked it was full price, twelve times,
+            // for a twelve-step run.
+            pairs.push(match req.cache.system {
+                true => ("system".to_string(), Json::Arr(vec![cached_text(system)])),
+                false => ("system".to_string(), Json::Str(system.clone())),
+            });
         }
         pairs.push(("messages".to_string(), messages));
         Json::Obj(pairs).to_string()
@@ -127,6 +145,17 @@ impl Provider for AnthropicAdapter {
     }
 }
 
+/// A text block the API is told it may keep. `ephemeral` is the only lifetime the
+/// Messages API offers, and it is the right one: a run's prefix is worth caching for
+/// the minutes that run lasts, not for a day.
+fn cached_text(text: &str) -> Json {
+    Json::obj([
+        ("type".to_string(), Json::Str("text".to_string())),
+        ("text".to_string(), Json::Str(text.to_string())),
+        ("cache_control".to_string(), Json::obj([("type".to_string(), Json::Str("ephemeral".to_string()))])),
+    ])
+}
+
 /// Accumulates Anthropic stream state (usage + stop reason) and maps each
 /// de-framed `data:` payload to neutral events.
 #[derive(Default)]
@@ -134,6 +163,10 @@ pub struct AnthropicDecoder {
     stop_reason: Option<String>,
     input_tokens: u32,
     output_tokens: u32,
+    /// Prompt tokens the API charged at a tenth because it still had them, and the ones
+    /// it wrote so the next turn can. Both arrive in `message_start`.
+    cache_read: u32,
+    cache_write: u32,
 }
 
 impl AnthropicDecoder {
@@ -151,6 +184,8 @@ impl StreamDecoder for AnthropicDecoder {
             stop_reason: self.stop_reason.take(),
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
+            cache_read: self.cache_read,
+            cache_write: self.cache_write,
         }
     }
 }
@@ -172,6 +207,15 @@ fn map_anthropic(data: &str, dec: &mut AnthropicDecoder) -> Vec<StreamEvent> {
             }
             if let Some(n) = usize_field(usage, "output_tokens") {
                 dec.output_tokens = n;
+            }
+            // The two halves of prompt caching. `input_tokens` counts only what was NOT
+            // cached, so a turn that reused its whole prefix reports a tiny input and a
+            // large `cache_read` — which is the saving, stated.
+            if let Some(n) = usize_field(usage, "cache_read_input_tokens") {
+                dec.cache_read = n;
+            }
+            if let Some(n) = usize_field(usage, "cache_creation_input_tokens") {
+                dec.cache_write = n;
             }
             Vec::new()
         }
@@ -205,6 +249,8 @@ fn map_anthropic(data: &str, dec: &mut AnthropicDecoder) -> Vec<StreamEvent> {
             stop_reason: dec.stop_reason.take(),
             input_tokens: dec.input_tokens,
             output_tokens: dec.output_tokens,
+            cache_read: dec.cache_read,
+            cache_write: dec.cache_write,
         }],
         "error" => {
             let msg = json
@@ -263,6 +309,7 @@ mod tests {
             top_k: Some(40),
             thinking: false,
             images: Vec::new(),
+            cache: crate::ai::CacheHints::none(),
         };
         let body = adapter.encode_body(&req);
         let j = Json::parse(&body).unwrap();
@@ -287,11 +334,98 @@ mod tests {
             top_k: Some(40),
             thinking: true,
             images: Vec::new(),
+            cache: crate::ai::CacheHints::none(),
         };
         let j = Json::parse(&AnthropicAdapter::new("").encode_body(&req)).unwrap();
         assert_eq!(j.get("thinking").and_then(|t| t.get("type")).and_then(Json::as_str), Some("adaptive"));
         assert!(j.get("temperature").is_none(), "sampling omitted when thinking");
         assert!(j.get("top_p").is_none() && j.get("top_k").is_none());
+    }
+
+    /// A run's turn: a fixed system prompt and a conversation that only grows.
+    fn turn(messages: &[&str]) -> ChatRequest {
+        let msgs: Vec<crate::ai::request::Message> = messages
+            .iter()
+            .enumerate()
+            .map(|(i, c)| crate::ai::request::Message {
+                role: if i % 2 == 0 { crate::ai::request::Role::User } else { crate::ai::request::Role::Assistant },
+                content: (*c).to_string(),
+            })
+            .collect();
+        ChatRequest {
+            model: "claude-opus-4-8".into(),
+            max_tokens: 100,
+            system: Some("you are a careful engineer".into()),
+            cache: crate::ai::CacheHints::for_turn(msgs.len()),
+            messages: msgs,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: false,
+            images: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_settled_prefix_is_marked_cacheable_exactly_twice() {
+        // Two breakpoints, which is the documented shape: one static on the system block
+        // — an agent's instructions, skills and whole tool catalogue, re-sent on every
+        // turn of the run — and one rolling on the newest settled message. Anthropic
+        // allows four; spending more than we need is a cache we would have to invalidate
+        // more often.
+        let body = AnthropicAdapter::new("").encode_body(&turn(&["do it", "@tool fs.list {}", "one file"]));
+        assert_eq!(body.matches("\"cache_control\"").count(), 2, "{body}");
+        assert!(body.contains("\"ephemeral\""), "{body}");
+        // The system block is a block ARRAY now — `cache_control` has nowhere to live on
+        // a plain string.
+        assert!(body.contains("\"system\":[{\"type\":\"text\",\"text\":\"you are a careful engineer\""), "{body}");
+        // …and the rolling one is on the SECOND message, not the third: the newest turn
+        // is the thing being added, and marking it would cache something that is about to
+        // be followed by a different continuation every time.
+        let at = body.find("\"@tool fs.list {}\"").expect("the settled message is there");
+        let after = &body[at..];
+        assert!(after[..120.min(after.len())].contains("cache_control"), "the settled message carries it: {after}");
+        assert!(body.contains("\"content\":\"one file\""), "the newest turn stays a plain string: {body}");
+    }
+
+    #[test]
+    fn the_first_turn_of_a_run_caches_only_the_system_block() {
+        // Nothing has been sent yet, so there is nothing settled to roll over — the
+        // system block is written into the cache and every turn after reads it back.
+        let body = AnthropicAdapter::new("").encode_body(&turn(&["do it"]));
+        assert_eq!(body.matches("\"cache_control\"").count(), 1, "{body}");
+        assert!(body.contains("\"content\":\"do it\""), "{body}");
+    }
+
+    #[test]
+    fn a_request_with_nothing_settled_is_the_plain_body_it_always_was() {
+        // A one-shot question is asked once. Marking it cacheable would pay the cache's
+        // write premium for a prefix nothing will ever read.
+        let plain = ChatRequest { cache: crate::ai::CacheHints::none(), ..turn(&["do it", "sure", "and this"]) };
+        let body = AnthropicAdapter::new("").encode_body(&plain);
+        assert!(!body.contains("cache_control"), "{body}");
+        assert!(body.contains("\"system\":\"you are a careful engineer\""), "a plain string system: {body}");
+    }
+
+    #[test]
+    fn the_decoder_reads_both_halves_of_the_cache() {
+        // `input_tokens` counts only what was NOT cached, so without these two a turn
+        // that reused its whole prefix would look almost free and a run's real cost would
+        // be unknowable.
+        let mut dec = AnthropicDecoder::new();
+        let start = "{\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":42,\"output_tokens\":0,\"cache_read_input_tokens\":8100,\"cache_creation_input_tokens\":120}}}";
+        assert!(dec.map(start).is_empty(), "message_start emits no event of its own");
+        match dec.finish() {
+            StreamEvent::Done { input_tokens, cache_read, cache_write, .. } => {
+                assert_eq!((input_tokens, cache_read, cache_write), (42, 8100, 120));
+            }
+            other => panic!("expected Done, got {other:?}"),
+        }
+        // A provider that does not report them leaves both at zero, which reads as "we do
+        // not know" rather than as a wrong number.
+        let mut cold = AnthropicDecoder::new();
+        cold.map("{\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":900}}}");
+        assert!(matches!(cold.finish(), StreamEvent::Done { cache_read: 0, cache_write: 0, .. }));
     }
 
     #[test]
@@ -307,6 +441,7 @@ mod tests {
             top_p: None,
             top_k: None,
             thinking: false,
+            cache: crate::ai::CacheHints::none(),
             images: vec![crate::ai::request::ImageData { media_type: "image/png".into(), b64: "QUJD".into() }],
         };
         let body = AnthropicAdapter::new("").encode_body(&with_img);
@@ -331,6 +466,7 @@ mod tests {
             top_p: None,
             top_k: None,
             thinking: false,
+            cache: crate::ai::CacheHints::none(),
             images: vec![
                 crate::ai::request::ImageData { media_type: "application/pdf".into(), b64: "UERG".into() },
                 crate::ai::request::ImageData { media_type: "image/jpeg".into(), b64: "SlBH".into() },

@@ -82,6 +82,8 @@ pub(crate) fn read_with<T: platform::transport::Transport>(
         top_k: None,
         thinking: false,
         images: Vec::new(),
+        // One question, asked once — there is no later turn to reuse anything.
+        cache: crate::ai::CacheHints::none(),
     };
     let reply = client.complete(&req).ok()?;
     decode(&reply, request, now)

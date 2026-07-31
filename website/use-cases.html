@@ -236,7 +236,9 @@ Reproduced: rounding applied before the zero-check …</pre>
         <p><code>@explorer</code> is read-only and fast — pipe the map straight into a file.</p>
         <pre><span class="p">❯</span> git clone github.com/org/service && cd service
 <span class="p">❯</span> <span class="ab">@explorer</span><span class="c"> "map the request lifecycle from route to DB"</span> > MAP.md
-<span class="d">✓ 22s · 9 tools · 18k in / 1.2k out</span></pre>
+<span class="d">✓ 22s · 9 tools · 18k in / 1.2k out (16.2k cached, 90%)</span></pre>
+        <p>Nine tool calls, and the prompt behind them was paid for <em>once</em>: the first turn
+          writes the cache, every turn after reads it.</p>
       </div>
 
       <div class="uc">

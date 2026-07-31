@@ -261,7 +261,7 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "tool", name: "web.read", args: '{"url":"https://…/tool-reviews"}', ms: 1180, size: "18KB" },
           { do: "tool", name: "web.read", args: '{"url":"https://…/teardown"}', ms: 940, size: "11KB" },
           { do: "stream", spans: [FG("Three names recur, for two different reasons — and one of them is a rebrand. Sources and dates below; I could not confirm the torque figure anywhere.")], speed: 10 },
-          { do: "footer", text: "14.2s · 3 tools · 9.1k in / 1.4k out" },
+          { do: "footer", text: "14.2s · 3 tools · 9.1k in / 1.4k out (7.6k cached, 83%)" },
           { do: "pause", ms: 1100 },
 
           { do: "cmd", text: "@writer \"turn @notes.md into a one-page brief at brief.md\"" },
@@ -281,7 +281,7 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "tool", name: "fs.edit", args: '{"path":"src/parser.rs"}', ms: 6, size: "412B" },
           { do: "tool", name: "sys.run", args: '{"cmd":"cargo test parser"}', ms: 2100, size: "1.4KB" },
           { do: "stream", spans: [FG("The fix: the parser dropped the final line — added the flush in "), ACC2("parse_line()"), FG(".")], speed: 11 },
-          { do: "footer", text: "8.4s · 4 tools · 12.3k in / 1.8k out" },
+          { do: "footer", text: "8.4s · 4 tools · 12.3k in / 1.8k out (11.1k cached, 90%)" },
         ]);
       },
     },
