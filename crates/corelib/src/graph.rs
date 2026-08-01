@@ -174,6 +174,82 @@ fn median(neighbors: &[usize], pos: &[usize]) -> Option<f32> {
     Some(if ps.len() % 2 == 1 { ps[mid] as f32 } else { (ps[mid - 1] + ps[mid]) as f32 / 2.0 })
 }
 
+/// Who must run before each node, as a set you can ask in constant time.
+///
+/// One row of bits per node: bit `j` of row `i` means "`j` runs before `i`, directly or
+/// through anything in between". Built once for the whole graph.
+///
+/// The alternative — walking `needs` on demand — is what made `@flow check` unusable: a
+/// 200-node chain of writing agents took **67 seconds**, and 400 nodes did not finish,
+/// because every pair of nodes recomputed both ancestor sets and then compared them
+/// element by element with a linear id lookup inside the loop. The work is the same
+/// answer every time; computing it once is the whole fix.
+pub struct Reach {
+    words: usize,
+    rows: Vec<u64>,
+}
+
+impl Reach {
+    /// Whether `who` runs before `of`.
+    pub fn has(&self, of: usize, who: usize) -> bool {
+        match self.rows.get(of * self.words + who / 64) {
+            Some(w) => w & (1 << (who % 64)) != 0,
+            None => false,
+        }
+    }
+
+    /// Every node that runs before `of`, ascending.
+    pub fn of(&self, of: usize) -> impl Iterator<Item = usize> + '_ {
+        let row = of * self.words;
+        (0..self.words * 64).filter(move |&j| {
+            self.rows.get(row + j / 64).is_some_and(|w| w & (1 << (j % 64)) != 0)
+        })
+    }
+
+    fn set(&mut self, of: usize, who: usize) {
+        if let Some(w) = self.rows.get_mut(of * self.words + who / 64) {
+            *w |= 1 << (who % 64);
+        }
+    }
+}
+
+/// The transitive closure of "runs before", for every node at once.
+///
+/// One pass in rank order is enough: [`ranks`] puts a node strictly below everything it
+/// depends on, so by the time a node is reached every ancestor's row is already final.
+/// Cycle edges are skipped — the same ones [`ranks`] sets aside — because "runs before"
+/// is not a question a cycle answers.
+pub fn ancestors(n: usize, edges: &[(usize, usize)]) -> Reach {
+    let words = n.div_ceil(64).max(1);
+    let mut reach = Reach { words, rows: vec![0u64; words * n] };
+    if n == 0 {
+        return reach;
+    }
+    let back = back_edges(n, edges);
+    let rank = ranks(n, &edges.iter().map(|&(a, b)| (a, b, 1)).collect::<Vec<_>>());
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by_key(|&i| rank[i]);
+    // Incoming edges per node, so each node is finished in one visit.
+    let mut incoming: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, &(from, to)) in edges.iter().enumerate() {
+        if !back[i] && from < n && to < n && from != to {
+            incoming[to].push(from);
+        }
+    }
+    for &node in &order {
+        for k in 0..incoming[node].len() {
+            let from = incoming[node][k];
+            reach.set(node, from);
+            // …and everything that ran before it.
+            for w in 0..words {
+                let src = reach.rows[from * words + w];
+                reach.rows[node * words + w] |= src;
+            }
+        }
+    }
+    reach
+}
+
 /// Which edges say nothing the rest of the graph does not already say.
 ///
 /// If `a → c` and also `a → b → c`, then the direct `a → c` is **implied**: removing it

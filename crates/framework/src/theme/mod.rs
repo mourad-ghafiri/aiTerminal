@@ -23,6 +23,27 @@ pub fn resolve(dir: &Path, name: &str) -> Theme {
     corelib::theme::midnight()
 }
 
+/// Why the theme file `name` in `dir` will not parse, or `None` when it is fine.
+///
+/// [`resolve`] deliberately falls back to a working theme rather than failing, which is
+/// right at render time — a broken file should not leave you with no colours. It is wrong
+/// at SWITCH time: `@theme <name>` used to accept a file it had never parsed, write the
+/// name into your profile, and leave the window rendering something else entirely, with
+/// nothing said. This is the same question asked where the answer can still be acted on.
+///
+/// It is the SAME question, not a stricter one. [`Theme::from_toml`] resolves each token
+/// on its own and falls back for any it cannot read, so a file with three colours in it is
+/// a valid theme and stays one — matching the config rule that missing keys take defaults.
+/// The only answer here is "this file is not TOML", which is the only case where the name
+/// you picked buys you nothing at all.
+pub fn problem(dir: &Path, name: &str) -> Option<String> {
+    let path = dir.join(format!("{name}.toml"));
+    match std::fs::read_to_string(&path) {
+        Err(e) => Some(format!("cannot be read: {e}")),
+        Ok(text) => Theme::from_toml(&text).err(),
+    }
+}
+
 /// User theme names (the `*.toml` file stems in `dir`), sorted.
 pub fn names(dir: &Path) -> Vec<String> {
     let mut out = Vec::new();

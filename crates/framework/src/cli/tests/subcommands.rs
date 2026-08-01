@@ -41,6 +41,42 @@ fn theme_set_updates_the_active_profile_and_validates() {
 }
 
 #[test]
+fn a_theme_that_will_not_parse_is_refused_not_applied() {
+    // `theme_set` checked that the FILENAME existed and wrote the name straight into the
+    // profile. `resolve` then fell back to midnight at render time, so the name you picked
+    // was in your config, the window was a different theme, and nothing anywhere said so.
+    let (_h, _home) = crate::test_home::lock_home("cli-theme-broken");
+    crate::config::Config::ensure_default();
+    assert_eq!(theme_set("graphite"), 0);
+
+    let dir = crate::config::Config::themes_dir();
+    std::fs::write(dir.join("broken.toml"), "[[[[\nname =\n").unwrap();
+    std::fs::write(dir.join("unterm.toml"), "name = \"unterminated\n").unwrap();
+
+    for name in ["broken", "unterm"] {
+        assert_eq!(theme_set(name), 2, "{name} is not a theme this can apply");
+        assert_eq!(
+            crate::config::Config::load().theme,
+            "graphite",
+            "and the profile still names the theme that works after trying {name}",
+        );
+        assert!(crate::config::Config::theme_problem(name).is_some(), "the listing marks {name}");
+    }
+
+    // What it must NOT refuse: the parser resolves every token on its own, so a file that
+    // sets some of them is a real theme. Refusing these would break the same rule the
+    // config keeps — missing keys fall back, a partial file is fine — and would turn a
+    // fix for silent breakage into a new way to be told no.
+    std::fs::write(dir.join("partial.toml"), "name = \"partial\"\naccent = \"#ff8800\"\n").unwrap();
+    std::fs::write(dir.join("odd.toml"), "fg = \"notacolour\"\n").unwrap();
+    for name in ["partial", "odd"] {
+        assert_eq!(crate::config::Config::theme_problem(name), None, "{name} parses");
+        assert_eq!(theme_set(name), 0, "{name} applies");
+        assert_eq!(crate::config::Config::load().theme, name);
+    }
+}
+
+#[test]
 fn config_refuses_a_word_it_does_not_know() {
     // `@config paht` printed the whole config and exited 0, so the typo looked like
     // a real subcommand.

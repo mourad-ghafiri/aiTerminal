@@ -1,0 +1,108 @@
+name = "a loop run and a job are read back and put away"
+tags = ["cli", "loop", "jobs"]
+
+# `@loop` was the surface with the least coverage of anything a person actually types: the
+# engine has scenarios, and all four verbs that read a finished run — `show`, `log`,
+# `resume`, `clear` — had never been typed by one. That is the gap this closes.
+#
+# `@job cancel` already had a scenario (071, where a scheduled job is cancelled and stops
+# firing). What is added here is the half that one does not ask: cancelling ENDS a job, it
+# does not erase it — the record stays listed and readable afterwards, which is the whole
+# difference between `cancel` and `clear`.
+
+[setup]
+home = "loop-verbs"
+
+[[step]]
+record_loop_run = "loop-alpha"
+goal = "make the flaky test stop failing"
+
+[[step]]
+expect_loop_runs = 1
+
+[[step]]
+run = "@loop"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@loop show loop-alpha"
+
+[[step]]
+expect_exit = 0
+
+# The iteration log — written per turn, so this reads the second attempt's file, not the
+# record's summary of it.
+[[step]]
+run = "@loop log loop-alpha"
+
+[[step]]
+expect_exit = 0
+
+# `last` resolves to the newest run, which is the way anyone types it.
+[[step]]
+run = "@loop show last"
+
+[[step]]
+expect_exit = 0
+
+# A run that is not there is refused, even with one that is sitting next to it — the id is
+# resolved, not fallen back on.
+[[step]]
+run = "@loop show loop-nothing"
+
+[[step]]
+expect_exit = 2
+
+# ── @job cancel ─────────────────────────────────────────────────────────────
+# A job with a schedule is the only one there is anything to cancel about: cancelling
+# takes away the next firing, and the record stays for you to read.
+
+[[step]]
+run = "@job --every 15m -- echo tick"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_jobs = 1
+
+[[step]]
+run = "@job cancel last"
+
+[[step]]
+expect_exit = 0
+
+# Cancelled, not deleted: it is still listed, and it is not going to fire again.
+[[step]]
+expect_jobs = 1
+
+[[step]]
+expect_job_unscheduled = true
+
+[[step]]
+run = "@job show last"
+
+[[step]]
+expect_exit = 0
+
+# ── clearing ────────────────────────────────────────────────────────────────
+
+[[step]]
+run = "@loop clear"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_loop_runs = 0
+
+[[step]]
+run = "@job clear"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_jobs = 0

@@ -282,3 +282,57 @@ fn distance_and_nearest_only_suggest_a_close_call() {
     assert!(nearest("verifu", &["verify", "build"]).contains("verify"));
     assert_eq!(nearest("totally-different", &["verify"]), "", "no wild guesses");
 }
+
+#[test]
+fn a_deep_chain_of_writers_verifies_in_well_under_a_second() {
+    // `@flow check` is the command sold as free — "proved before it spends a token" — and
+    // it is the one a person runs BEFORE trusting the thing with a task. A plain
+    // user-written file used to wedge it:
+    //
+    //    50 nodes    0.13s
+    //   100 nodes    3.45s
+    //   200 nodes   66.90s
+    //   400 nodes   did not finish
+    //
+    // Not size — depth AND writers together. The same chain of read-only agents took
+    // 0.01s, and 150 independent writers took 0.04s. Every pair of writing nodes asked
+    // "can these two overlap", and each answer re-walked both ancestor chains as strings
+    // with a linear id lookup inside the loop.
+    let n = 500;
+    let mut src = String::from("description = \"deep\"\n");
+    for i in 0..n {
+        src.push_str("[[node]]\n");
+        src.push_str(&format!("id = \"n{i}\"\n"));
+        src.push_str("agent = \"coder\"\n"); // a writer: the expensive half of the pair test
+        src.push_str("prompt = \"p\"\n");
+        if i > 0 {
+            src.push_str(&format!("needs = [\"n{}\"]\n", i - 1));
+        }
+    }
+    let flow = parse("deep", &src).expect("a long chain is a valid flow");
+    let started = std::time::Instant::now();
+    let report = verify(&flow, &Fixture);
+    let took = started.elapsed();
+    assert!(took < std::time::Duration::from_secs(1), "{n} nodes took {took:?}");
+    assert!(report.errors.is_empty(), "and it is a valid graph: {:?}", report.errors);
+    // A chain is fully ordered, so no two nodes can ever overlap — nothing to warn about.
+    assert!(
+        !report.warnings.iter().any(|w| w.contains("at the same time")),
+        "a chain has no concurrency: {:?}",
+        report.warnings
+    );
+}
+
+#[test]
+fn a_wide_graph_of_writers_still_reports_every_concurrent_pair() {
+    // The other half of the same fix: making the pair test cheap must not make it blind.
+    // Three independent writers really can run together, and that is the warning this
+    // check exists to produce.
+    let mut src = String::from("description = \"wide\"\n");
+    for i in 0..3 {
+        src.push_str(&format!("[[node]]\nid = \"w{i}\"\nagent = \"coder\"\nprompt = \"p\"\n"));
+    }
+    let report = check(&src);
+    let pairs = report.warnings.iter().filter(|w| w.contains("at the same time")).count();
+    assert_eq!(pairs, 3, "w0/w1, w0/w2, w1/w2: {:?}", report.warnings);
+}

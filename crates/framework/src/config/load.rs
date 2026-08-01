@@ -77,6 +77,20 @@ impl Config {
         corelib::theme::midnight()
     }
 
+    /// Why the named theme will not parse, or `None` when it is fine — searched in the
+    /// same order [`Config::resolve_theme`] resolves, so the answer is about the file that
+    /// would actually be used.
+    pub fn theme_problem(name: &str) -> Option<String> {
+        let user = Self::themes_dir();
+        if user.join(format!("{name}.toml")).exists() {
+            return crate::theme::problem(&user, name);
+        }
+        match Self::registry_root("") {
+            Some(root) => crate::theme::problem(&root.join("themes"), name),
+            None => Some("no theme file by that name".into()),
+        }
+    }
+
     /// All available theme names — the user's `themes/` plus the bundled
     /// `builtin/themes/`, deduped and sorted.
     pub fn user_theme_names() -> Vec<String> {

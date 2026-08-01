@@ -161,10 +161,14 @@ fn escape(s: &str) -> String {
 pub(crate) fn shape(flow: &Flow) -> String {
     let n = flow.nodes.len();
     let mut notes = Vec::new();
+    // Built ONCE, outside both loops. `exclusive` is asked here for every pair of nodes,
+    // and it used to walk the ancestor chain from scratch on each call — the same shape
+    // that made `@flow check` take a minute on a 200-node graph.
+    let reach = crate::flow::verify::ancestry(flow);
     let widest = (0..flow.nodes.len())
         .map(|i| {
             (0..flow.nodes.len())
-                .filter(|&j| flow.nodes[j].needs == flow.nodes[i].needs && !crate::flow::verify::exclusive(flow, i, j))
+                .filter(|&j| flow.nodes[j].needs == flow.nodes[i].needs && !crate::flow::verify::exclusive(flow, &reach, i, j))
                 .count()
         })
         .max()

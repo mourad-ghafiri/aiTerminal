@@ -20,6 +20,13 @@ in the window (chrome, panes, status bar, switcher) and the shell (prompt colors
 for your own theme rather than a blank page:
 `@theme export nebula > ~/.aiTerminal/themes/mine.toml`.
 
+A theme is **parsed before it is applied**. If the file is not TOML, `@theme <name>`
+says which line will not read, leaves the theme you had, and `@theme` marks the file
+with `⚠` in the listing — the alternative is a name in your profile and a window that
+renders something else with nothing said. What it does *not* refuse is an incomplete
+file: every token resolves on its own and falls back to the default, so a theme that
+sets three colours is a theme, exactly as a partial `config.toml` is a config.
+
 `@theme <name>` writes the active profile's config overlay, so every profile
 keeps its own look (`@profile switch` restyles accordingly). The window follows
 config-file changes each second — the same applies if you hand-edit

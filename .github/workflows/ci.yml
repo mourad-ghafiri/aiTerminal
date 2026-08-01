@@ -35,3 +35,20 @@ jobs:
       - name: Layer gate
         shell: bash
         run: bash tools/check_layers.sh
+
+      # Every `unsafe` block lives in the FFI seam, which is what lets every other
+      # crate root carry `#![forbid(unsafe_code)]`.
+      - name: Unsafe gate
+        shell: bash
+        run: bash tools/check_unsafe.sh
+
+      # A file nobody reads end to end is a file nobody can change safely.
+      - name: File-size gate
+        shell: bash
+        run: bash tools/check_file_size.sh
+
+      # A verb a command advertises in its own usage text and no scenario ever
+      # types is a promise nothing holds.
+      - name: Verb-coverage gate
+        shell: bash
+        run: bash tools/check_verb_coverage.sh

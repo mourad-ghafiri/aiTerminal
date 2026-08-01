@@ -132,10 +132,13 @@ pub(crate) fn verify(flow: &Flow, world: &dyn World) -> Report {
         ));
         return r; // ancestry is meaningless in a cycle
     }
-    let ancestors: Vec<Vec<String>> = (0..flow.nodes.len()).map(|i| ancestors_of(flow, i)).collect();
+    let reach = ancestry(flow);
+    // The id-keyed view the checks below read, derived from the one closure rather than
+    // recomputed per node.
+    let runs_before = |i: usize, id: &str| flow.index(id).is_some_and(|j| reach.has(i, j));
     for (i, node) in flow.nodes.iter().enumerate() {
         if let Some(goto) = &node.goto {
-            if goto != &node.id && !ancestors[i].contains(goto) {
+            if goto != &node.id && !runs_before(i, goto) {
                 r.errors.push(format!(
                     "node '{}' goes back to '{goto}', but '{goto}' does not run before it — a backward edge repeats work already done",
                     node.id
@@ -172,7 +175,7 @@ pub(crate) fn verify(flow: &Flow, world: &dyn World) -> Report {
                                 node.id,
                                 nearest(id, &ids)
                             ));
-                        } else if !ancestors[i].contains(id) {
+                        } else if !runs_before(i, id) {
                             // The check the research calls an invalid join: without it a
                             // node reads a result that has not been produced yet, and the
                             // value it gets depends on scheduling.
@@ -201,7 +204,7 @@ pub(crate) fn verify(flow: &Flow, world: &dyn World) -> Report {
                         node.when_src,
                         nearest(&named, &ids)
                     ));
-                } else if !ancestors[i].contains(&named) {
+                } else if !runs_before(i, &named) {
                     r.errors.push(format!(
                         "node '{}': when = {:?} asks about '{named}', which does not run before it",
                         node.id, node.when_src
@@ -265,7 +268,7 @@ pub(crate) fn verify(flow: &Flow, world: &dyn World) -> Report {
     }
 
     // ── warnings: it will run, but you should know ─────────────────────────
-    r.worst_case_runs = worst_case(flow);
+    r.worst_case_runs = worst_case(flow, &reach);
     // Only worth saying when nothing bounds the spend: the warning exists to ask for
     // a budget, so a flow that already declares one has answered it.
     if r.worst_case_runs > BUSY && flow.bounds.budget.is_none() {
@@ -282,7 +285,7 @@ pub(crate) fn verify(flow: &Flow, world: &dyn World) -> Report {
             ));
         }
     }
-    for pair in concurrent_writers(flow, world) {
+    for pair in concurrent_writers(flow, world, &reach) {
         r.warnings.push(format!(
             "nodes '{}' and '{}' can run at the same time and both write or execute — add `solo = true` to one if they touch the same files",
             pair.0, pair.1
@@ -319,20 +322,21 @@ fn uses_input(flow: &Flow) -> bool {
         .any(|n| n.templates().iter().any(|t| t.refs().iter().any(|r| matches!(r, Ref::Input))))
 }
 
-/// Every node that must run before `i`, transitively.
-fn ancestors_of(flow: &Flow, i: usize) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut queue: Vec<String> = flow.nodes[i].needs.clone();
-    while let Some(id) = queue.pop() {
-        if out.contains(&id) {
-            continue;
-        }
-        if let Some(j) = flow.index(&id) {
-            queue.extend(flow.nodes[j].needs.clone());
-        }
-        out.push(id);
-    }
-    out
+/// "Runs before", for every node at once — built once per verification.
+///
+/// It used to be a function of `(flow, i)` that walked `needs` as **strings**, deduping
+/// with `Vec::contains` and resolving each id through `Flow::index` (a linear scan). Three
+/// callers used it, one of them for every PAIR of nodes, so a 200-node flow of writing
+/// agents took 67 seconds to verify and a 400-node one never finished. `@flow check` is
+/// the command sold as free.
+pub(crate) fn ancestry(flow: &Flow) -> corelib::graph::Reach {
+    let edges: Vec<(usize, usize)> = flow
+        .nodes
+        .iter()
+        .enumerate()
+        .flat_map(|(i, n)| n.needs.iter().filter_map(move |d| flow.index(d).map(|j| (j, i))))
+        .collect();
+    corelib::graph::ancestors(flow.nodes.len(), &edges)
 }
 
 /// A dependency cycle, named in order, or `None`.
@@ -378,7 +382,7 @@ fn walk(flow: &Flow, i: usize, state: &mut [u8], path: &mut Vec<usize>) -> Optio
 /// How many agent runs this flow could cost with everything going wrong: retries
 /// spent, every `goto` taken its full `max`. Map nodes count as one, because their
 /// real multiplier is the length of a list nobody has produced yet.
-fn worst_case(flow: &Flow) -> u32 {
+fn worst_case(flow: &Flow, reach: &corelib::graph::Reach) -> u32 {
     let mut per_node: Vec<u32> = flow.nodes.iter().map(|n| 1 + n.retry).collect();
     for node in &flow.nodes {
         let Some(goto) = &node.goto else { continue };
@@ -386,7 +390,7 @@ fn worst_case(flow: &Flow) -> u32 {
         // Everything from the loop's target down to the node that jumps back runs
         // once more per turn of the loop.
         for i in 0..flow.nodes.len() {
-            if i == target || ancestors_of(flow, i).contains(goto) {
+            if i == target || reach.has(i, target) {
                 per_node[i] = per_node[i].saturating_mul(node.max + 1);
             }
         }
@@ -426,21 +430,12 @@ pub(crate) fn alternatives(a: &Node, b: &Node) -> bool {
 /// `review` carries no condition of its own, but `review` only runs when the verdict
 /// passed, so `summary` cannot coexist with the `fix` that runs when it failed. Left
 /// un-generalised, every flow with a branch and a tail warns about itself.
-pub(crate) fn exclusive(flow: &Flow, a: usize, b: usize) -> bool {
-    let branch = |i: usize| {
-        let mut all = ancestors_of(flow, i);
-        all.push(flow.nodes[i].id.clone());
-        all
-    };
+pub(crate) fn exclusive(flow: &Flow, reach: &corelib::graph::Reach, a: usize, b: usize) -> bool {
+    // A node's branch is itself plus everything that runs before it — read off the
+    // precomputed closure in index space, so there is no id lookup in the inner loop.
+    let branch = |i: usize| -> Vec<usize> { reach.of(i).chain(std::iter::once(i)).collect() };
     let (left, right) = (branch(a), branch(b));
-    left.iter().any(|x| {
-        right.iter().any(|y| {
-            match (flow.index(x), flow.index(y)) {
-                (Some(i), Some(j)) => alternatives(&flow.nodes[i], &flow.nodes[j]),
-                _ => false,
-            }
-        })
-    })
+    left.iter().any(|&i| right.iter().any(|&j| alternatives(&flow.nodes[i], &flow.nodes[j])))
 }
 
 /// Pairs of nodes that can be in flight together and both write or execute.
@@ -448,7 +443,7 @@ pub(crate) fn exclusive(flow: &Flow, a: usize, b: usize) -> bool {
 /// Reported, never refused: running two writers at once is allowed here by design.
 /// The point is that you find out from `@flow check` rather than from a file that
 /// came out wrong.
-fn concurrent_writers(flow: &Flow, world: &dyn World) -> Vec<(String, String)> {
+fn concurrent_writers(flow: &Flow, world: &dyn World, reach: &corelib::graph::Reach) -> Vec<(String, String)> {
     // Only file-mutating tools count. `sys.run` would be the wider net, but a
     // read-only reviewer runs `git diff` with it — flagging every agent that can
     // shell out makes the warning fire on the safest flow we ship, and a warning
@@ -469,11 +464,16 @@ fn concurrent_writers(flow: &Flow, world: &dyn World) -> Vec<(String, String)> {
     for a in 0..flow.nodes.len() {
         for b in (a + 1)..flow.nodes.len() {
             let (x, y) = (&flow.nodes[a], &flow.nodes[b]);
-            if x.solo || y.solo || !writes(x) || !writes(y) || exclusive(flow, a, b) {
+            // Cheapest tests first: a node that cannot write can never be half of a
+            // concurrent-write pair, and asking that costs a lookup rather than a walk.
+            if x.solo || y.solo || !writes(x) || !writes(y) {
                 continue;
             }
             // Ordered against each other by a dependency? Then they never overlap.
-            if ancestors_of(flow, a).contains(&y.id) || ancestors_of(flow, b).contains(&x.id) {
+            if reach.has(a, b) || reach.has(b, a) {
+                continue;
+            }
+            if exclusive(flow, reach, a, b) {
                 continue;
             }
             out.push((x.id.clone(), y.id.clone()));

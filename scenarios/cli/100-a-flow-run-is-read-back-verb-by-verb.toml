@@ -1,0 +1,94 @@
+name = "a flow run is read back, verb by verb"
+tags = ["cli", "flow"]
+
+# The verbs that read a run were typed by exactly one scenario before this — 061, which
+# runs every one of them on a machine with NO RUNS and proves each refuses. That is half a
+# proof. It cannot tell a working `@flow show` from one that refuses everything, because
+# refusing is the only behaviour it ever sees.
+#
+# This is the other half: a run that exists, read back verb by verb.
+#
+# The run below is written, not executed — every node of every shipped flow is an agent, so
+# running one for real would need a model, and the model is not what these verbs are.
+
+[setup]
+home = "flow-verbs"
+
+[[step]]
+record_flow_run = "run-alpha"
+flow = "review"
+input = "the export command"
+nodes = ["map:done", "correctness:done", "security:done", "design:done", "report:done"]
+
+[[step]]
+expect_flow_runs = 1
+
+# The listing.
+[[step]]
+run = "@flow runs"
+
+[[step]]
+expect_exit = 0
+
+# One run in full — this draws the graph from the flow DEFINITION and the costs from the
+# RECORD, so it fails if either half cannot be found.
+[[step]]
+run = "@flow show run-alpha"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@flow nodes run-alpha"
+
+[[step]]
+expect_exit = 0
+
+# One node, and its full output from the node's own file.
+[[step]]
+run = "@flow node run-alpha report"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@flow log run-alpha report"
+
+[[step]]
+expect_exit = 0
+
+# A node that is not in the run is refused rather than reported on as empty.
+[[step]]
+run = "@flow node run-alpha nosuchnode"
+
+[[step]]
+expect_exit = 2
+
+# `retry` marks the node AND EVERYTHING DOWNSTREAM of it for a rerun — the second half is
+# the whole reason the verb is not just "run this node": `report` read what `correctness`
+# said, so a `correctness` that is being redone makes the existing `report` stale. With no
+# model configured the rerun itself cannot proceed; what this holds is what got marked.
+[[step]]
+run = "@flow retry run-alpha correctness"
+
+[[step]]
+expect_flow_node_state = ["run-alpha", "correctness", "pending"]
+
+# `report` needs `correctness`, so it goes too.
+[[step]]
+expect_flow_node_state = ["run-alpha", "report", "pending"]
+
+# `map`, which `correctness` depends on rather than the other way round, is untouched —
+# and so is `security`, which is downstream of nothing that changed.
+[[step]]
+expect_flow_node_state = ["run-alpha", "map", "done"]
+
+[[step]]
+expect_flow_node_state = ["run-alpha", "security", "done"]
+
+# `clear` prunes what has finished.
+[[step]]
+run = "@flow clear"
+
+[[step]]
+expect_exit = 0

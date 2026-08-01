@@ -1,0 +1,178 @@
+name = "on a fresh machine the record verbs say so instead of falling over"
+tags = ["cli", "flow", "loop", "jobs"]
+
+# The empty state is the FIRST state — what a person meets before they have run anything.
+# 061 proves it for `@flow`; this widens the same question to the two surfaces that had no
+# answer for it at all, `@loop` and `@job`, and adds the one `@flow` verb 061 leaves out.
+# Every verb here reads a store that does not exist yet: no runs directory, no records, no
+# ids to resolve.
+#
+# The rule the whole surface keeps, and what this holds it to: a LISTING of nothing is a
+# success and says so; a NAMED record that is not there is an error, exit 2. Both are
+# correct today. Nothing made them stay that way.
+
+[setup]
+home = "empty-records"
+
+[[step]]
+expect_flow_runs = 0
+
+[[step]]
+expect_loop_runs = 0
+
+[[step]]
+expect_jobs = 0
+
+# ── listings: nothing to show is not a failure ──────────────────────────────
+
+[[step]]
+run = "@flow runs"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@loop"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@job"
+
+[[step]]
+expect_exit = 0
+
+# `clear` on an empty store prunes nothing, successfully.
+[[step]]
+run = "@flow clear"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@loop clear"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@job clear"
+
+[[step]]
+expect_exit = 0
+
+# ── one named record: there is nothing by that name, and it says so ─────────
+
+[[step]]
+run = "@flow show run-nothing"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@flow nodes run-nothing"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@flow node run-nothing report"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@flow log run-nothing"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@flow retry run-nothing report"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@flow resume run-nothing"
+
+[[step]]
+expect_exit = 2
+
+# `watch` attaches to a live run and follows it until you detach, so there is no way to run
+# it to completion in a scenario. What can be held is that it RETURNS: on a machine with no
+# model and no run to attach to it refuses, rather than sitting on an empty store waiting
+# for output that is never coming.
+[[step]]
+run = "@flow watch run-nothing"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@loop show run-nothing"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@loop log run-nothing"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@loop resume run-nothing"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@job show job-nothing"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@job log job-nothing"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@job cancel job-nothing"
+
+[[step]]
+expect_exit = 2
+
+# The shorthand every one of these accepts. `last` on an empty store resolves to nothing,
+# which is the same answer by a different route — and the route that would panic if
+# `resolve` reached for the newest of no records.
+[[step]]
+run = "@flow show last"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@loop show last"
+
+[[step]]
+expect_exit = 2
+
+[[step]]
+run = "@job show last"
+
+[[step]]
+expect_exit = 2
+
+# Nothing above created anything on the way past.
+[[step]]
+expect_flow_runs = 0
+
+[[step]]
+expect_loop_runs = 0
+
+[[step]]
+expect_jobs = 0

@@ -60,6 +60,12 @@ impl World for CliWorld {
             let full = self.home.join(&path);
             return std::fs::create_dir_all(full).map_err(|e| e.to_string());
         }
+        if let Some(id) = world::text(step, "record_flow_run") {
+            return self.record_flow(step, &id);
+        }
+        if let Some(id) = world::text(step, "record_loop_run") {
+            return self.record_loop(step, &id);
+        }
 
         // ── what changed ───────────────────────────────────────────────────────
         if let Some(want) = world::int(step, "expect_exit") {
@@ -118,6 +124,30 @@ impl World for CliWorld {
             let got = crate::jobs::list().first().map(|j| j.status.clone()).ok_or("there are no jobs")?;
             return world::expect_eq(&got, &want, "the newest job's status");
         }
+        if let Some(want) = world::int(step, "expect_flow_runs") {
+            let got = crate::flowruns::list().len() as i64;
+            if got != want {
+                return Err(format!("{got} flow run(s) recorded, expected {want}"));
+            }
+            return Ok(());
+        }
+        if let Some(want) = world::int(step, "expect_loop_runs") {
+            let got = crate::loops::list().len() as i64;
+            if got != want {
+                return Err(format!("{got} loop run(s) recorded, expected {want}"));
+            }
+            return Ok(());
+        }
+        // `["<run>", "<node>", "<state>"]` — the fact `@flow retry` and `@flow resume` are
+        // for. Nothing printed says it; the record is where it is true.
+        if let Some(want) = world::list(step, "expect_flow_node_state") {
+            let [id, node, state] = &want[..] else {
+                return Err("expect_flow_node_state takes [\"<run>\", \"<node>\", \"<state>\"]".into());
+            };
+            let run = crate::flowruns::read(id).ok_or(format!("there is no flow run '{id}'"))?;
+            let got = run.node(node).ok_or(format!("run '{id}' has no node '{node}'"))?;
+            return world::expect_eq(got.state.word(), state, &format!("{id}/{node}"));
+        }
         if world::flag(step, "expect_job_unscheduled") == Some(true) {
             let job = crate::jobs::list().into_iter().next().ok_or("there are no jobs")?;
             return match job.schedule.is_none() && job.next_at.is_none() {
@@ -158,6 +188,86 @@ impl CliWorld {
         };
         self.code = Some(code);
         self.last = line.to_string();
+        Ok(())
+    }
+
+    /// Lay down a finished flow run, through the same writer the engine uses.
+    ///
+    /// The reading verbs — `runs`, `show`, `nodes`, `node`, `log`, `retry`, `resume` — need
+    /// a record to read, and every node of every shipped flow is an agent, so producing one
+    /// the honest way would need a model. Writing the record instead keeps the thing under
+    /// test where it belongs: the commands, not the engine that fills this in. `nodes` is
+    /// `"<id>:<state>"` per entry, so a scenario can say which parts did not finish and
+    /// then prove `resume` picked exactly those.
+    fn record_flow(&mut self, step: &Toml, id: &str) -> Result<(), String> {
+        let flow = world::text(step, "flow").unwrap_or_else(|| "review".into());
+        let status = world::text(step, "status").unwrap_or_else(|| "done".into());
+        let nodes = world::list(step, "nodes").unwrap_or_default();
+        let mut recorded = Vec::new();
+        for (i, spec) in nodes.iter().enumerate() {
+            let (node, state) = spec.split_once(':').unwrap_or((spec.as_str(), "done"));
+            recorded.push(crate::flowruns::NodeRun {
+                id: node.to_string(),
+                state: crate::flowruns::NodeState::read(state),
+                agent: "reviewer".into(),
+                model: "a-model".into(),
+                input_tokens: 1000 + i as u64,
+                output_tokens: 100 + i as u64,
+                attempts: 1,
+                ms: 250,
+                output: format!("what {node} concluded"),
+                ..Default::default()
+            });
+            // The full text lives in its own file — that is what `@flow log` reads, and a
+            // record without it would let `log` pass by finding nothing to print.
+            crate::flowruns::write_node(id, node, "the prompt", &format!("what {node} concluded, in full"));
+        }
+        let run = crate::flowruns::Run {
+            id: id.to_string(),
+            flow,
+            input: world::text(step, "input").unwrap_or_else(|| "a change worth reviewing".into()),
+            status,
+            cwd: self.home.display().to_string(),
+            started: 1_700_000_000,
+            finished: Some(1_700_000_060),
+            pid: 0,
+            timeout: 1800,
+            budget: None,
+            concurrency: 4,
+            nodes: recorded,
+        };
+        crate::flowruns::write(id, &run);
+        Ok(())
+    }
+
+    /// The same, for a loop run — `@loop show|log|list|clear` read one of these.
+    fn record_loop(&mut self, step: &Toml, id: &str) -> Result<(), String> {
+        let run = crate::loops::Run {
+            id: id.to_string(),
+            goal: world::text(step, "goal").unwrap_or_else(|| "make the tests pass".into()),
+            agent: "coder".into(),
+            status: world::text(step, "status").unwrap_or_else(|| "done".into()),
+            verifier: crate::loops::Verifier::Check {
+                command: "cargo test".into(),
+                source: crate::loops::Source::Explicit,
+            },
+            bounds: crate::loops::Bounds { max: 8, budget: None, timeout: 1800 },
+            cwd: self.home.display().to_string(),
+            started: 1_700_000_000,
+            finished: Some(1_700_000_060),
+            pid: 0,
+            progress: crate::loops::Progress {
+                iterations: 2,
+                input_tokens: 2000,
+                output_tokens: 200,
+                tools: 3,
+                feedback: "the verifier is happy".into(),
+                ..Default::default()
+            },
+        };
+        crate::loops::write_iteration(id, 8, 1, "the first attempt", "still failing");
+        crate::loops::write_iteration(id, 8, 2, "the second attempt", "the verifier is happy");
+        crate::loops::write(id, &run);
         Ok(())
     }
 

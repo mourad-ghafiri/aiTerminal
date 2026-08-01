@@ -7,7 +7,7 @@ fn ai_scenarios() {
 
 #[test]
 fn cli_scenarios() {
-    check("cli", 14);
+    check("cli", 22);
 }
 
 #[test]

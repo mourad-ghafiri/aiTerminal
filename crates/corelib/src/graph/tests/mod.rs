@@ -164,3 +164,72 @@ fn a_deep_chain_does_not_blow_the_stack() {
     assert_eq!(back_edges(n, &edges).iter().filter(|b| **b).count(), 0);
     assert_eq!(ranks(n, &spans(&edges))[n - 1], n - 1);
 }
+
+#[test]
+fn ancestry_is_transitive_and_directional() {
+    // a → b → d, a → c → d. Everything runs before `d`; nothing runs before `a`; and the
+    // two middle nodes do not run before each other.
+    let (n, edges) = diamond();
+    let r = ancestors(n, &edges);
+    assert!(r.has(3, 0) && r.has(3, 1) && r.has(3, 2), "d waits for all three");
+    assert!(r.has(1, 0) && r.has(2, 0), "and both middles wait for a");
+    assert!(!r.has(0, 1) && !r.has(0, 3), "nothing runs before the root");
+    assert!(!r.has(1, 2) && !r.has(2, 1), "the parallel pair do not order each other");
+    assert_eq!(r.of(3).collect::<Vec<_>>(), vec![0, 1, 2]);
+    assert_eq!(r.of(0).count(), 0);
+}
+
+#[test]
+fn ancestry_reaches_all_the_way_up_a_long_chain() {
+    // The transitive part is the whole point: the last node of a 300-link chain has 300
+    // ancestors, not one.
+    let n = 300;
+    let edges: Vec<(usize, usize)> = (0..n - 1).map(|i| (i, i + 1)).collect();
+    let r = ancestors(n, &edges);
+    assert_eq!(r.of(n - 1).count(), n - 1);
+    assert!(r.has(n - 1, 0), "the first runs before the last");
+    assert!(!r.has(0, n - 1), "and not the other way round");
+}
+
+#[test]
+fn a_cycle_edge_orders_nothing() {
+    // "Runs before" is not a question a cycle answers, so the edge that closes one is set
+    // aside — the same one `ranks` skips.
+    let (n, edges) = (3, vec![(0, 1), (1, 2), (2, 1)]);
+    let r = ancestors(n, &edges);
+    assert!(r.has(2, 0) && r.has(2, 1), "the acyclic part still orders");
+    assert!(!r.has(1, 2), "the back edge does not claim 2 runs before 1");
+}
+
+#[test]
+fn ancestry_of_an_empty_or_edgeless_graph_is_empty() {
+    assert_eq!(ancestors(0, &[]).of(0).count(), 0);
+    let r = ancestors(3, &[]);
+    for i in 0..3 {
+        assert_eq!(r.of(i).count(), 0, "node {i} waits for nothing");
+    }
+}
+
+#[test]
+fn ancestry_of_a_deep_chain_is_computed_once_not_per_query() {
+    // The regression, at the level it actually hurt: `@flow check` asked this question for
+    // every PAIR of nodes and recomputed it each time, so a 200-node flow took 67 seconds
+    // and a 400-node one never finished. Building the whole closure has to be cheap enough
+    // that asking it n² times afterwards costs nothing.
+    let n = 2_000;
+    let edges: Vec<(usize, usize)> = (0..n - 1).map(|i| (i, i + 1)).collect();
+    let t = std::time::Instant::now();
+    let r = ancestors(n, &edges);
+    let built = t.elapsed();
+    assert!(built < std::time::Duration::from_secs(2), "building took {built:?}");
+    // And every pair query afterwards is a bit test.
+    let t = std::time::Instant::now();
+    let mut count = 0usize;
+    for a in 0..n {
+        for b in (0..n).step_by(97) {
+            count += r.has(a, b) as usize;
+        }
+    }
+    assert!(count > 0);
+    assert!(t.elapsed() < std::time::Duration::from_secs(1), "queries must be free");
+}

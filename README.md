@@ -196,13 +196,14 @@ builtin/           data: plugins, themes, keymaps, agents/skills/prompts/flows/m
 docs/              the manual
 ```
 
-Four CI gates keep it honest: 🚫 **zero external crates**, 🧱 **strict layer edges**,
-🔒 **`unsafe` confined to `platform/src/os/`**, and 📏 **no source file over 1000 lines** —
-the last one so the code stays contributable, not just correct.
+Five CI gates keep it honest: 🚫 **zero external crates**, 🧱 **strict layer edges**,
+🔒 **`unsafe` confined to `platform/src/os/`**, 📏 **no source file over 1000 lines** — so
+the code stays contributable, not just correct — and ⌨️ **every verb a command documents
+is run by a scenario**, so nothing is advertised that nobody has typed.
 
 ## 🧪 Tested
 
-**1350 unit tests** and **275 scenarios**, in a few seconds, with no network and no API key.
+**1358 unit tests** and **278 scenarios**, in a few seconds, with no network and no API key.
 
 A unit test proves a function; a **scenario** proves a *product*. Scenarios are real user
 journeys written as TOML and played against the real code — *a destructive suggestion is

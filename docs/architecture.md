@@ -22,6 +22,8 @@ crates/corelib    pure + OS-free: wire (JSON/TOML/frontmatter), gfx (CPU rasteri
 - `tools/check_unsafe.sh` — `unsafe` exists only under `crates/platform/src/os/`;
   every other crate root is `#![forbid(unsafe_code)]`.
 - `tools/check_file_size.sh` — no source file over 1000 lines.
+- `tools/check_verb_coverage.sh` — every verb a command's usage text documents is
+  executed by a scenario, as typed.
 
 There are no facade crates: callers name real paths (`framework::ai::Client`,
 `platform::term::Term`, `corelib::wire::Json`).
@@ -151,7 +153,8 @@ loop simple and every AI interaction scriptable.
 cargo build --workspace --all-targets
 cargo test  --workspace                 # hermetic: mock transports, temp HOMEs
 bash tools/check_no_crates.sh && bash tools/check_layers.sh \
-  && bash tools/check_unsafe.sh && bash tools/check_file_size.sh
+  && bash tools/check_unsafe.sh && bash tools/check_file_size.sh \
+  && bash tools/check_verb_coverage.sh
 ```
 
 Useful headless proofs (no window needed):
@@ -165,7 +168,7 @@ aiTerminal --render-icon /tmp/icon.png                    # the app icon
 
 ## Testing policy
 
-1275 unit tests and 268 scenarios. **[testing.md](testing.md) is the full guide** — the
+1358 unit tests and 278 scenarios. **[testing.md](testing.md) is the full guide** — the
 two kinds of test and why both exist, coverage per feature, the CI gates, and the honest
 list of what is *not* covered. The policy, in short:
 

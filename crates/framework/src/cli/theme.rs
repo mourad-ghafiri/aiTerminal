@@ -1,3 +1,4 @@
+use crate::cli::style::{accent, reset};
 
 /// `aiTerminal theme [<name> | list | path | export <name>]` — list themes, or
 /// SWITCH the active profile's theme (`@theme nord`): the name is validated, the
@@ -55,7 +56,13 @@ pub fn theme(args: &[String]) -> i32 {
     println!("themes in {} ({}):", crate::config::Config::themes_dir().display(), user.len());
     for n in &user {
         let mark = if n.eq_ignore_ascii_case(&active) { "\u{25CF}" } else { "\u{25CB}" };
-        println!("  {mark} {n}");
+        // A file that will not parse is named as such, the way `@agent` marks a broken
+        // agent — so you find out from the listing rather than from a switch that is
+        // refused, or worse, from a window that looks wrong.
+        match crate::config::Config::theme_problem(n) {
+            Some(why) => println!("  {mark} {n}  {}\u{26a0} {why}{}", accent(), reset()),
+            None => println!("  {mark} {n}"),
+        }
     }
     println!("\n{}", crate::i18n::translate("theme.switch_hint", &[]));
     0
@@ -69,6 +76,17 @@ pub(crate) fn theme_set(name: &str) -> i32 {
         eprintln!("{}", crate::i18n::translate("theme.unknown", &[name.to_string(), available.join(", ")]));
         return 2;
     };
+    // Parse it BEFORE switching. `theme::resolve` falls back to a working theme when a
+    // file will not parse — right at render time, wrong here: the name went into your
+    // profile, the window rendered something else, and nothing said so. Every sibling
+    // already refuses what it cannot use (`@flow check` a broken graph, `@plugin` a name
+    // that is not a plugin, and this very function an unknown theme); only the malformed
+    // file got through.
+    if let Some(why) = crate::config::Config::theme_problem(canonical) {
+        eprintln!("aiTerminal: theme '{canonical}' {why}");
+        eprintln!("  the theme was NOT changed \u{2014} fix the file, or pick another: {}", available.join(", "));
+        return 2;
+    }
     let active = crate::profile::active_id();
     let rendered = format!("\"{}\"", canonical.replace('\\', "\\\\").replace('"', "\\\""));
     if let Err(e) = crate::profile::config_set(&active, "appearance", "theme", &rendered) {

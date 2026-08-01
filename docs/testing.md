@@ -1,6 +1,6 @@
 # Testing
 
-aiTerminal has **1350 unit tests** and **275 scenarios**, and the whole suite runs in a
+aiTerminal has **1358 unit tests** and **278 scenarios**, and the whole suite runs in a
 few seconds with no network, no API key, no window, and no changes to your machine.
 
 ```sh
@@ -39,7 +39,7 @@ So the suite has both, and they are aimed at different targets.
 
 ## Unit tests
 
-1350 of them (888 in `framework`, 332 in `corelib`, 130 in `platform`), beside the code
+1358 of them (891 in `framework`, 337 in `corelib`, 130 in `platform`), beside the code
 they test. Named as sentences, so a failure reads as a statement about the product rather
 than a symbol that broke:
 
@@ -131,7 +131,7 @@ scenario must never pass silently.
 
 ### Coverage
 
-275 journeys across every feature. Each folder's test asserts a minimum count, so
+278 journeys across every feature. Each folder's test asserts a minimum count, so
 coverage cannot silently shrink.
 
 | Folder | # | What a journey drives |
@@ -142,7 +142,7 @@ coverage cannot silently shrink.
 | `ai/` | 28 | model reply → command or answer, the guard, the agent tool loop |
 | `terminal/` | 22 | the VT engine — grid, colour, wide glyphs, scrollback, DEC modes |
 | `jobs/` | 20 | scheduling, occurrence logs, and what a job reports when it stops |
-| `cli/` | 19 | the `@`-command surface: profiles, themes, config, plugins, documents, offline flow verbs, jobs, gates |
+| `cli/` | 22 | the `@`-command surface: profiles, themes, config, plugins, documents, jobs, gates, and every verb that reads a flow/loop/job record — with a run to read and without one |
 | `config/` | 16 | config parsing and the profile overlay |
 | `security/` | 15 | the command guard and the redactor |
 | `plugins/` | 14 | what a `plugin.toml` composes into, and what trust gates |
@@ -271,14 +271,15 @@ no alias hint ever fired. Both skip cleanly where the shell isn't installed.
 
 ## Architectural gates
 
-Four scripts guard the project's structural promises. They are not tests of behaviour —
+Five scripts guard the project's structural promises. They are not tests of behaviour —
 they fail the build when an invariant is broken.
 
 ```sh
-bash tools/check_no_crates.sh   # 🚫 no third-party crate may enter the build
-bash tools/check_layers.sh      # 🧱 every cross-layer edge is the immediately-lower facade
-bash tools/check_unsafe.sh      # 🔒 all unsafe is confined to platform/src/os/
-bash tools/check_file_size.sh   # 📏 no source file over 1000 lines
+bash tools/check_no_crates.sh      # 🚫 no third-party crate may enter the build
+bash tools/check_layers.sh         # 🧱 every cross-layer edge is the immediately-lower facade
+bash tools/check_unsafe.sh         # 🔒 all unsafe is confined to platform/src/os/
+bash tools/check_file_size.sh      # 📏 no source file over 1000 lines
+bash tools/check_verb_coverage.sh  # ⌨️ every documented verb is run by a scenario
 ```
 
 The zero-crate gate reads `Cargo.lock` and rejects any source that is not a workspace
@@ -288,10 +289,18 @@ app`. The unsafe gate keeps every `unsafe` block inside the FFI seam, which is w
 the one aimed at contributors rather than at the binary: a file nobody reads end to end
 is a file nobody can change safely, so the split has to happen while it is still cheap.
 
+The verb gate is the newest, and the only one that guards *coverage* rather than
+structure. It reads each command's own usage text, extracts the verbs it advertises, and
+fails naming any that no scenario ever types. Run against the tree it was added to, it
+named five: `@flow watch`, and all four `@loop` reading verbs — documented, implemented,
+unit-tested at the engine, and never once routed through the dispatch a person uses. That
+gap is invisible in a coverage report, because the code *is* covered; what was missing was
+the path to it. Note what a pass does **not** mean: `@flow show last` on an empty store
+satisfies the gate while only proving the refusal. Reading a real record back is a
+scenario's job, and no script can check that a scenario was worth writing.
+
 `.github/workflows/ci.yml` builds and tests on macOS, Linux and Windows on every push and
-pull request, then runs the zero-crate and layer gates. **The unsafe and file-size gates
-are not yet wired into CI** — run them locally, or add them as steps alongside the other
-two. All four must be run with `bash`, not `sh`.
+pull request, then runs all five gates. They must be run with `bash`, not `sh`.
 
 ---
 
