@@ -157,6 +157,24 @@ impl LiveMarkdown {
         let _ = w.flush();
     }
 
+    /// Take the live tail off the screen, leaving the cursor where the tail began — so a
+    /// chrome line can be written where it was and the tail put back underneath.
+    ///
+    /// This is the whole reason a run has ONE sink. The tail is erased by climbing back
+    /// up `painted` rows, which is only ever right if nothing else has written since it
+    /// was painted. A tool trace on stderr writing between two repaints is exactly that
+    /// "something else", and the climb then lands on the trace and erases it.
+    pub(crate) fn suspend(&mut self, w: &mut dyn std::io::Write) {
+        let _ = w.write_all(erase_seq(self.painted).as_bytes());
+        self.painted = 0;
+    }
+
+    /// Put the tail back after a [`suspend`](Self::suspend).
+    pub(crate) fn resume(&mut self, w: &mut dyn std::io::Write) {
+        self.paint(w);
+        let _ = w.flush();
+    }
+
     /// Finalize: erase the tail and commit whatever remains as final output.
     pub(crate) fn flush(&mut self, w: &mut dyn std::io::Write) {
         self.adapt_size(w);

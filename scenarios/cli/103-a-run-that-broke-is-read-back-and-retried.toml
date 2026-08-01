@@ -1,0 +1,113 @@
+name = "a run that broke is read back and retried"
+tags = ["cli", "flow"]
+
+# Scenario 100 reads back a run where every node succeeded. That is the happy path, and it
+# is not the one anybody types these verbs for: you go looking at a run BECAUSE it broke.
+#
+# This is that run. `map` failed; `correctness` and `security` needed it and were blocked
+# behind it; `design` ruled itself out; `report` never got there. Four of the six states a
+# node can be in, in one record — which is also the shape the flow board was drawing wrong,
+# showing the blocked pair as still waiting on a run that had already finished.
+#
+# Every verb here has to survive it, and `retry` has to put the right nodes back.
+
+[setup]
+home = "flow-broken"
+
+[[step]]
+record_flow_run = "run-broke"
+flow = "review"
+status = "failed"
+input = "the export command"
+nodes = ["map:failed", "correctness:blocked", "security:blocked", "design:skipped", "report:pending"]
+
+[[step]]
+expect_flow_runs = 1
+
+# The record says what happened, and says four different things.
+[[step]]
+expect_flow_node_state = ["run-broke", "map", "failed"]
+
+[[step]]
+expect_flow_node_state = ["run-broke", "correctness", "blocked"]
+
+[[step]]
+expect_flow_node_state = ["run-broke", "design", "skipped"]
+
+[[step]]
+expect_flow_node_state = ["run-broke", "report", "pending"]
+
+# Every reading verb has to cope with it. A record where nothing succeeded is exactly the
+# input that finds a reader assuming there is an answer to show.
+[[step]]
+run = "@flow runs"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@flow show run-broke"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@flow nodes run-broke"
+
+[[step]]
+expect_exit = 0
+
+# The node that broke, on its own.
+[[step]]
+run = "@flow node run-broke map"
+
+[[step]]
+expect_exit = 0
+
+# And one that never ran. It is in the record, so `node` still has something true to say
+# about it — "pending, and here is why nothing came of it" — and says it with exit 0. What
+# it must not do is trip over the missing output file.
+[[step]]
+run = "@flow node run-broke report"
+
+[[step]]
+expect_exit = 0
+
+# `log` is the other half of that: it wants the ANSWER, and this run never produced one.
+# A refusal naming the reason is the honest response; exit 0 with an empty page is not.
+[[step]]
+run = "@flow log run-broke"
+
+[[step]]
+expect_exit = 2
+
+# Retrying the node that broke. The cascade is the point: everything built on `map` has to
+# go back too, or the record would keep answers derived from an output that is being
+# replaced.
+# The exit code is not asserted: `retry` resets the nodes and then hands over to the
+# ordinary resume path, which needs a model this machine does not have. What the reset did
+# is the thing under test, and it is on disk either way.
+[[step]]
+run = "@flow retry run-broke map"
+
+[[step]]
+expect_flow_node_state = ["run-broke", "map", "pending"]
+
+[[step]]
+expect_flow_node_state = ["run-broke", "correctness", "pending"]
+
+[[step]]
+expect_flow_node_state = ["run-broke", "security", "pending"]
+
+[[step]]
+expect_flow_node_state = ["run-broke", "report", "pending"]
+
+# Cleared, and gone.
+[[step]]
+run = "@flow clear"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+expect_flow_runs = 0

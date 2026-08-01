@@ -254,6 +254,13 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
         _ => "\u{2717}",
     };
     eprintln!("{dim}{}{r}", run_footer_with(glyph, started.elapsed(), record.tools(), crate::ai::Usage { input: tin as u32, output: tout as u32, cache_read: cached as u32, ..Default::default() }, cost, cfg.ai_budget));
+    // WHICH node broke, and what it said. `✗ 12s · 16 tools · 29.7k in / 253 out` is a
+    // bill, not an explanation — and the board it sits under has scrolled by the time
+    // anybody reads it back.
+    if let Some(broken) = first_failure(&record) {
+        eprintln!("{dim}  {broken}{r}");
+        eprintln!("{dim}  {}{r}", crate::i18n::translate("flow.resume_hint", &[run_id.clone()]));
+    }
     if parked {
         eprintln!("{dim}{}{r}", crate::i18n::translate("flow.resume_hint", &[run_id.clone()]));
     }
@@ -262,6 +269,20 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
         "waiting" => 0,
         _ => 1,
     }
+}
+
+/// The first node that failed, and the first line of what it said — `✗ read failed —
+/// the step budget of 12 ran out`.
+///
+/// The first, not all of them: a graph fails from one place and everything else is
+/// consequence, and a footer listing five nodes buries the one that matters.
+fn first_failure(record: &crate::flowruns::Run) -> Option<String> {
+    let node = record.nodes.iter().find(|n| n.state == crate::flowruns::NodeState::Failed)?;
+    let why = crate::cli::flow::show::opening_line(&node.output);
+    Some(match why.is_empty() {
+        true => format!("\u{2717} {} failed", node.id),
+        false => format!("\u{2717} {} failed \u{2014} {why}", node.id),
+    })
 }
 
 /// The flow, as the scheduler sees it: edges by index, and the two flags it needs.

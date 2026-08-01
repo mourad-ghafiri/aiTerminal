@@ -1,5 +1,7 @@
-use crate::cli::live::LiveMarkdown;
-use crate::cli::style::{accent, err_is_tty, muted, reset, term_rows};
+pub(crate) mod view;
+
+use crate::cli::style::{err_is_tty, muted, reset};
+pub(crate) use view::{Chrome, RunView, SharedView};
 
 /// A braille spinner on stderr while waiting for the model's first token.
 /// TTY-only (a piped/background run gets nothing); `stop()` clears its line.
@@ -43,13 +45,19 @@ impl Drop for Spinner {
     }
 }
 
-/// A live streaming display for agent/flow/loop runs: answer tokens print to the
-/// writer AS THEY ARRIVE; the `@tool …` machine protocol lines are suppressed
-/// (the tool trace prints separately); reasoning streams dim to stderr. The
-/// engine is line-buffered only as far as needed to decide whether a line is
-/// protocol — ordinary prose flushes mid-line, so typing stays live.
-pub(crate) struct CliObserver<W: std::io::Write> {
-    out: W,
+/// A live streaming display for agent/flow/loop runs.
+///
+/// It owns exactly one thing: **deciding what is prose**. Everything the model streams
+/// goes through the marker machine in [`feed`](CliObserver::feed), and what survives is
+/// handed to the [`RunView`] — which is the only thing that touches the terminal, and
+/// which draws it as raw text or as realtime Markdown depending on where it is pointed.
+///
+/// That split is the fix for the bug this file shipped: `on_delta` used to *return early*
+/// into the Markdown renderer, so the whole marker machine was skipped on a terminal and
+/// every `@tool …` line the model wrote was printed to the user verbatim. There is now
+/// one path, and it is the filtered one.
+pub(crate) struct CliObserver {
+    view: SharedView,
     /// The undecided head of the current line — held only while it is still a
     /// prefix of the `@tool` marker.
     pending: String,
@@ -57,10 +65,6 @@ pub(crate) struct CliObserver<W: std::io::Write> {
     suppress_line: bool,
     /// A tool call was made this turn — everything after it is protocol.
     suppress_turn: bool,
-    /// Everything printed so far (so the caller can avoid re-printing the answer).
-    pub(crate) streamed: String,
-    /// Whether any answer text has printed (for inter-turn spacing).
-    printed: bool,
     /// The waiting spinner for the current turn (stopped on the first token).
     spinner: Option<Spinner>,
     /// Whether the current thinking burst already printed its `∴` marker.
@@ -68,14 +72,12 @@ pub(crate) struct CliObserver<W: std::io::Write> {
     /// Print the raw reasoning text (`[ai] show_reasoning`). Default `false`: reasoning is
     /// hidden behind the animated `∴ thinking…` spinner; tools + answer still stream.
     show_reasoning: bool,
-    /// When set, the answer renders through a LIVE (realtime) Markdown renderer — the in-progress
-    /// block repaints as it streams, completed blocks commit once. Off (piped) → stream raw.
-    live: Option<LiveMarkdown>,
 }
 
-impl<W: std::io::Write> CliObserver<W> {
-    pub(crate) fn new(out: W) -> Self {
-        CliObserver { out, pending: String::new(), suppress_line: false, suppress_turn: false, streamed: String::new(), printed: false, spinner: None, thinking_open: false, show_reasoning: false, live: None }
+impl CliObserver {
+    /// A run drawn into `view`.
+    pub(crate) fn new(view: SharedView) -> Self {
+        CliObserver { view, pending: String::new(), suppress_line: false, suppress_turn: false, spinner: None, thinking_open: false, show_reasoning: false }
     }
 
     /// Opt into streaming the model's raw reasoning text (off by default).
@@ -84,11 +86,10 @@ impl<W: std::io::Write> CliObserver<W> {
         self
     }
 
-    /// Render the answer as realtime styled Markdown instead of raw. `None` on a non-TTY (piped)
-    /// target so pipes stay clean.
-    pub(crate) fn with_markdown(mut self, md: Option<(corelib::md::Style, usize)>) -> Self {
-        self.live = md.map(|(style, width)| LiveMarkdown::new(style, width, term_rows().saturating_sub(2)));
-        self
+    /// The answer text that has reached the display so far.
+    #[cfg(test)]
+    pub(crate) fn shown(&self) -> String {
+        self.view.with(|v| v.shown().to_string())
     }
 
     /// First sign of life this turn — clear the waiting spinner.
@@ -112,17 +113,15 @@ impl<W: std::io::Write> CliObserver<W> {
     }
 
     fn emit(&mut self, s: &str) {
-        self.streamed.push_str(s);
-        let _ = self.out.write_all(s.as_bytes());
-        let _ = self.out.flush();
-        if !s.is_empty() {
-            self.printed = true;
+        if s.is_empty() {
+            return;
         }
+        self.view.with(|v| v.answer(s));
     }
 
     /// Feed one streamed chunk through the tool-marker suppression line machine, so the
     /// machine protocol never reaches the display — in ANY tolerated form (`@tool`,
-    /// `<tool_call>`, a fenced ```` ```tool ```` block; see `parse_tool_call`).
+    /// `<tool_call>`, a fenced ```` ```tool ```` block; see `parse_tool_calls`).
     fn feed(&mut self, text: &str) {
         for c in text.chars() {
             if self.suppress_turn {
@@ -163,11 +162,24 @@ impl<W: std::io::Write> CliObserver<W> {
             }
         }
     }
+
+    /// Flush whatever prose is still held, then seal the live tail: the turn's words are
+    /// final and anything printed next belongs below them, not inside them.
+    fn settle(&mut self) {
+        let held = std::mem::take(&mut self.pending);
+        if !held.is_empty() && !self.suppress_line && !self.suppress_turn {
+            self.emit(&held);
+        }
+        self.view.with(|v| {
+            v.seal();
+            v.newline();
+        });
+    }
 }
 
 /// The line-anchored tool-marker forms suppressed from the live display — sourced from
 /// the parser's SINGLE SOURCE OF TRUTH (`ai::agent::TOOL_LINE_MARKERS`) so the display
-/// filter can never drift from what `parse_tool_call` actually accepts.
+/// filter can never drift from what `parse_tool_calls` actually accepts.
 use crate::ai::agent::TOOL_LINE_MARKERS as DISPLAY_TOOL_MARKERS;
 
 /// `t` is (or begins) a tool-call marker line — swallow it from the display.
@@ -180,16 +192,17 @@ fn is_display_tool_marker_prefix(t: &str) -> bool {
     t == "@tool" || "@tool ".starts_with(t) || DISPLAY_TOOL_MARKERS.iter().any(|m| m.starts_with(t))
 }
 
-impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
+impl crate::ai::AgentObserver for CliObserver {
     fn on_turn_start(&mut self) {
         // Flush any held prose from the previous turn and reset the protocol state.
         let held = std::mem::take(&mut self.pending);
         if !held.is_empty() && !self.suppress_line && !self.suppress_turn {
             self.emit(&held);
         }
-        if self.printed && !self.streamed.ends_with("\n\n") {
-            self.emit(if self.streamed.ends_with('\n') { "\n" } else { "\n\n" });
-        }
+        self.view.with(|v| {
+            v.seal();
+            v.turn_gap();
+        });
         self.pending.clear();
         self.suppress_line = false;
         self.suppress_turn = false;
@@ -198,15 +211,8 @@ impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
         self.wake();
         self.spinner = Some(Spinner::start("thinking\u{2026}".into()));
     }
+
     fn on_delta(&mut self, text: &str) {
-        // Realtime Markdown: the in-progress block repaints as tokens arrive; completed blocks
-        // (and diagrams) commit once. Stop the spinner on the first token.
-        if self.live.is_some() {
-            self.wake();
-            let out = &mut self.out;
-            self.live.as_mut().unwrap().push(out, text);
-            return;
-        }
         self.wake();
         if self.thinking_open {
             self.thinking_open = false;
@@ -214,6 +220,7 @@ impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
         }
         self.feed(text);
     }
+
     fn on_thinking(&mut self, text: &str) {
         // By default reasoning is HIDDEN: keep the animated `∴ thinking…` spinner running
         // (do NOT wake it) and print nothing — the user sees the indicator, then tools and
@@ -225,66 +232,50 @@ impl<W: std::io::Write> crate::ai::AgentObserver for CliObserver<W> {
         let chunk = self.thinking_chunk(text);
         eprint!("{chunk}");
     }
+
     fn on_commit(&mut self, _prose: &str) {
+        // Called on EVERY tool-calling turn, prose or not. A turn that was nothing but
+        // tool calls used to skip this, so the live renderer never finalized its block —
+        // and then re-rendered that block, plus the next turn's, plus the next, growing
+        // a duplicate of the whole run down the screen.
         self.wake();
-        // Realtime mode: finalize the live tail so a following tool trace prints cleanly below it.
-        if self.live.is_some() {
-            let out = &mut self.out;
-            self.live.as_mut().unwrap().flush(out);
-            return;
-        }
-        // Prose lines already streamed; just make sure the tool trace starts clean.
-        let held = std::mem::take(&mut self.pending);
-        if !held.is_empty() && !self.suppress_line && !self.suppress_turn {
-            self.emit(&held);
-        }
-        if self.printed && !self.streamed.ends_with('\n') {
-            self.emit("\n");
-        }
+        self.settle();
     }
+
     fn on_compact(&mut self, report: &crate::ai::CompactionReport) {
         // The docs promise a run that compacts says so. Without this the trait's no-op
         // ran and the history shrank in silence — which is exactly how a later "why did
         // it forget what I told it?" becomes unanswerable.
         self.wake();
-        eprintln!("{}  \u{2139} {}{}", muted(), report.summary(), reset());
+        let line = format!("\u{2139} {}", report.summary());
+        self.view.with(|v| v.commit(Chrome::Aside, &line));
     }
-    fn on_step_start(&mut self, i: usize, n: usize, label: &str) {
-        // A live flow step header on stderr (chrome), so the user watches steps advance.
+
+    fn on_phase(&mut self, headline: &str) {
         self.wake();
-        // Realtime mode: finalize the live tail so the step header prints cleanly beneath it.
-        if self.live.is_some() {
-            let out = &mut self.out;
-            self.live.as_mut().unwrap().flush(out);
-        }
-        if self.printed && !self.streamed.ends_with('\n') {
-            self.emit("\n");
-        }
-        eprintln!("{}\u{25B6} {i}/{n} {label}{}", accent(), reset());
+        self.settle();
+        let line = format!("\u{25B6} {headline}");
+        self.view.with(|v| v.commit(Chrome::Head, &line));
     }
 }
 
 /// Finish a streamed run: end the line, and print the returned answer only when
 /// it never streamed (an error, a cancel, or an empty stream).
-pub(crate) fn finish_streamed<W: std::io::Write>(obs: &mut CliObserver<W>, answer: &str) {
+pub(crate) fn finish_streamed(obs: &mut CliObserver, answer: &str) {
     obs.wake();
     if obs.thinking_open {
         eprintln!();
         obs.thinking_open = false;
     }
+    obs.settle();
     let a = answer.trim();
-    // Realtime mode: finalize any trailing tail still buffered in the live renderer.
-    if obs.live.is_some() {
-        let out = &mut obs.out;
-        obs.live.as_mut().unwrap().flush(out);
-        let _ = obs.out.write_all(b"\n");
-        let _ = obs.out.flush();
-        return;
-    }
-    if !a.is_empty() && !obs.streamed.contains(a) {
-        let _ = obs.out.write_all(b"\n");
-        let _ = obs.out.write_all(a.as_bytes());
-    }
-    let _ = obs.out.write_all(b"\n");
-    let _ = obs.out.flush();
+    obs.view.with(|v| {
+        if !a.is_empty() && !v.shown().contains(a) {
+            v.raw(a);
+            v.raw("\n");
+        }
+    });
 }
+
+#[cfg(test)]
+pub(crate) use view::Recorder;

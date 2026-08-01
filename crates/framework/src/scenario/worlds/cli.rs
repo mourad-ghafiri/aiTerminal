@@ -206,21 +206,29 @@ impl CliWorld {
         let mut recorded = Vec::new();
         for (i, spec) in nodes.iter().enumerate() {
             let (node, state) = spec.split_once(':').unwrap_or((spec.as_str(), "done"));
+            let state = crate::flowruns::NodeState::read(state);
+            // A node that never ran produced nothing, and a real run writes nothing for it.
+            // Giving every node an output regardless would hand the readers a record no run
+            // can produce, and the "there is nothing to show, and here is why" path — which
+            // is most of what you meet on a run that broke — would never be reached.
+            let ran = matches!(state, crate::flowruns::NodeState::Done | crate::flowruns::NodeState::Failed);
             recorded.push(crate::flowruns::NodeRun {
                 id: node.to_string(),
-                state: crate::flowruns::NodeState::read(state),
+                state,
                 agent: "reviewer".into(),
-                model: "a-model".into(),
-                input_tokens: 1000 + i as u64,
-                output_tokens: 100 + i as u64,
-                attempts: 1,
-                ms: 250,
-                output: format!("what {node} concluded"),
+                model: if ran { "a-model".into() } else { String::new() },
+                input_tokens: if ran { 1000 + i as u64 } else { 0 },
+                output_tokens: if ran { 100 + i as u64 } else { 0 },
+                attempts: if ran { 1 } else { 0 },
+                ms: if ran { 250 } else { 0 },
+                output: if ran { format!("what {node} concluded") } else { String::new() },
                 ..Default::default()
             });
             // The full text lives in its own file — that is what `@flow log` reads, and a
             // record without it would let `log` pass by finding nothing to print.
-            crate::flowruns::write_node(id, node, "the prompt", &format!("what {node} concluded, in full"));
+            if ran {
+                crate::flowruns::write_node(id, node, "the prompt", &format!("what {node} concluded, in full"));
+            }
         }
         let run = crate::flowruns::Run {
             id: id.to_string(),

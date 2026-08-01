@@ -59,7 +59,10 @@ impl Palette {
         match state {
             State::Done => &self.success,
             State::Failed => &self.error,
-            State::Parked => &self.warn,
+            // Amber, not red: a blocked node did not go wrong, it was never given the
+            // chance to. The failure that stopped it is the red one, and a board where
+            // half the graph is red does not say which.
+            State::Parked | State::Blocked => &self.warn,
             State::Running => &self.accent,
             State::Waiting | State::Skipped => &self.muted,
         }
@@ -99,15 +102,22 @@ pub(crate) fn named(name: &str) -> Box<dyn View> {
 /// number it measured before the live text arrived.
 pub(crate) const PANE_H: usize = 2 + super::TRACE_KEEP;
 
-/// Which node the pane is about: the one that is working, or the one that worked last.
+/// Which node the pane is about: the one that is working, the one that broke, or the one
+/// that finished last.
 ///
-/// No selection, because the board does not read the keyboard — so it has to choose, and
-/// the honest choice is whatever changed most recently. Ties are broken by a counter
-/// bumped inside the rows lock rather than by a clock, so two nodes finishing in the same
-/// millisecond still give the same answer on every frame.
+/// No selection, because the board does not read the keyboard — so it has to choose. It
+/// used to choose whatever changed most recently, which sounds neutral and is not: when a
+/// node fails, everything downstream of it settles AFTER it, so the pane moved off the
+/// failure and onto whichever branch was ruled out last. The one moment a person looks
+/// closely at a board is the moment something went wrong, and the pane was looking away.
+///
+/// Ties are broken by a counter bumped inside the rows lock rather than by a clock, so two
+/// nodes finishing in the same millisecond still give the same answer on every frame.
 pub(crate) fn focus(rows: &[Row]) -> Option<&Row> {
     let newest = |want: fn(&Row) -> bool| rows.iter().filter(|r| want(r)).max_by_key(|r| r.touched);
     newest(|r| r.state == State::Running)
+        .or_else(|| newest(|r| r.state == State::Failed))
+        .or_else(|| newest(|r| r.state == State::Parked))
         .or_else(|| newest(|r| r.state != State::Waiting))
         .or_else(|| rows.first())
 }
@@ -176,14 +186,22 @@ pub(crate) fn pane(rows: &[Row], head: &Head, cols: usize) -> Vec<String> {
 }
 
 /// The tally under every board, in either view.
+///
+/// It counted `Done` and `Running` and nothing else, so a run where one node failed and
+/// four never got to start reported `0/5 done` — five nodes' worth of nothing happening,
+/// with no hint that anything had gone wrong at all. Every state that is not "on its way"
+/// is named now.
 pub(crate) fn summary(rows: &[Row], head: &Head, cols: usize) -> String {
     let (dim, r) = (&head.palette.muted, &head.palette.reset);
-    let done = rows.iter().filter(|x| x.state == State::Done).count();
-    let running = rows.iter().filter(|x| x.state == State::Running).count();
+    let count = |want: State| rows.iter().filter(|x| x.state == want).count();
+    let done = count(State::Done);
     let tokens: u64 = rows.iter().map(|x| x.tokens).sum();
     let mut parts = vec![format!("{done}/{} done", rows.len())];
-    if running > 0 {
-        parts.push(format!("{running} running"));
+    for state in [State::Running, State::Failed, State::Blocked, State::Skipped, State::Parked] {
+        let n = count(state);
+        if n > 0 {
+            parts.push(format!("{n} {}", state.word()));
+        }
     }
     if tokens > 0 {
         parts.push(format!("{} tokens", human_tokens(tokens)));

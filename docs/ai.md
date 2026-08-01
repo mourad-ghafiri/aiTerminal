@@ -184,9 +184,19 @@ order written and every result comes back together. This is the difference betwe
 file reads costing four model round trips and costing one, and a round trip is the
 expensive part: each one re-sends the whole transcript, which is longer than the last.
 The only rule is that a batch must be *independent* — a call whose arguments come from
-an earlier call's result belongs on the next turn. Eight other dialects are accepted for
-models that will not emit ours (`<tool_call>`, `[TOOL_CALLS]`, fenced blocks, Llama
-pythonic), and each is read for **every** call it carries rather than the first.
+an earlier call's result belongs on the next turn. Other dialects are accepted for models
+that will not emit ours (`<tool_call>`, `[TOOL_CALLS]`, fenced blocks, Llama pythonic, and
+a bare `<tool> {json}` line with no marker at all — recognised only when the leading token
+is a tool *this agent declared*, so prose that mentions one is still prose), and each is
+read for **every** call it carries rather than the first.
+
+**A run that hits a bound still answers.** When `max_steps` runs out — or the stuck-loop
+breaker fires — the loop spends one more turn with the tools withdrawn, asking for the
+best answer the transcript supports. The outcome is unchanged (`⚠` in the footer, exit
+`1`), because the bound really did fire; what changes is that you get the findings rather
+than a sentence about a counter. This matters most inside `@flow`: a node whose agent ran
+out of steps used to fail, block everything downstream of it, and end the run — after
+doing most of the work.
 
 ### Sub-agent delegation — `task.run`
 
@@ -267,6 +277,7 @@ Four things a chain could not do, and this can:
 | `goto = "a"` · `max = 3` | after this node, run `a` again — bounded |
 | `over` + `as` | fan out: one run per item of a list, in parallel |
 | `retry = 1` · `timeout = "10m"` · `max_steps = 20` | this node's own bounds |
+| — | *beyond* `retry`, a node gets **one** extra attempt when the failure was a transport or provider error rather than an answer. A graph should survive a blip on its first node; it should not pay twice for the same wrong answer. |
 | `solo = true` | never run alongside another node |
 | `optional = true` | a failure here blocks nothing and fails nothing |
 | `final = true` | this node's answer is the flow's answer |
@@ -461,12 +472,26 @@ runs through the cards it loops over.
 graph that overlaps work that is *not* the slowest node — a slow node with three fast ones
 beside it costs nothing extra — and it cannot be read off the picture, so it is stated.
 
-Under the cards, a **pane follows whichever node is working** (or worked last): its agent,
-model, state, attempt, elapsed, cost, what it needs, and the last few tool calls it made.
-A card is three lines and has to hold a name; these are the questions asked of a run that
-is going wrong, which is the only time anybody watches a board closely. There is no
-selection because the board does not read your keyboard — for the whole story of one node,
-`@flow node <id>` and `@flow log <id>` are still the commands.
+Under the cards, a **pane follows whichever node is working** — and when something breaks,
+**the one that broke**: its agent, model, state, attempt, elapsed, cost, what it needs, and
+the last few tool calls it made. A card is three lines and has to hold a name; these are
+the questions asked of a run that is going wrong, which is the only time anybody watches a
+board closely. There is no selection because the board does not read your keyboard — for
+the whole story of one node, `@flow node <id>` and `@flow log <id>` are still the commands.
+
+**A run that goes wrong says so, on the card and in the tally.** A settled failure's third
+line is *why* it stopped rather than what it cost — the cost of a failure is the least
+interesting thing about it. A node that could never run because something it needed failed
+is drawn `⊘ blocked`, in amber, distinct from the `·` of a node its own condition ruled
+out; nothing is left reading "waiting" on a run that has finished. And the tally names
+every state, not only the two that are going well:
+
+```text
+  0/5 done · 1 failed · 2 blocked · 2 skipped · 30.0k tokens · 11.5s
+```
+
+The footer under the board then names the first node that failed and the first line of
+what it said, because by the time you read a footer the board has usually scrolled.
 
 **An edge takes the colour of the node it leaves once that node has settled**, so the path
 that actually ran lights up behind the board and stops exactly where the run did — in the
@@ -736,12 +761,30 @@ stderr, content on stdout, so piping stays clean:
 ```text
 ❯ @coder "fix the failing parser test"
 ✦ @coder · claude-opus-4-8
-⠹ thinking…                          ← animated while the model reasons
-  ⚙ fs.search "parse_flow" · 18ms · 6 results
-  ⚙ fs.edit src/flow/parse.rs · 6ms · 1 replaced
-The fix: the parser dropped the …    ← the answer, streaming
+⠹ thinking…                                          ← animated while the model reasons
+  ⚙ fs.search   "parse_flow" · 18ms · 6 results
+  ⚙ fs.edit     src/flow/parse.rs · 6ms · 1 replaced
+  ⋯ sys.run     cargo test --workspace              ← still going, replaced when it lands
+The fix: the parser dropped the …                    ← the answer, streaming
 ✓ 8.4s · 2 tools · 12.3k in / 1.8k out · ~$0.014
 ```
+
+**One thing writes to that region.** The answer repaints in place as it streams while the
+tool trace has to stay where it was printed, and those used to be two writers on two
+streams that knew nothing about each other: the next repaint climbed back over lines it
+had never painted and ate them, so a trace came out cut in half. Everything — answer,
+trace, notes, a loop's iteration headers — now goes through one sink that takes the live
+tail off, writes the line, and puts the tail back. `@agent`, `@loop` and a foreground
+`@job` all draw through it, so all three look alike; a tracked `@job` keeps a copy of the
+text in its log, and only the text, never a repaint frame.
+
+A call still running after a moment says so, and its line is replaced when it lands — a
+forty-second `cargo test` used to print nothing at all until it was over, which on screen
+is indistinguishable from a hang.
+
+The `@tool` protocol itself is never shown. That is not a new rule, but it was only ever
+enforced on the raw path: on a terminal, where the answer renders as Markdown, the filter
+was skipped entirely and every tool call the model wrote was printed to the user verbatim.
 
 A tool line says **what the call was acting on**, not the argument JSON it arrived as.
 `fs.read {"path":"crates/framework/src/cli/runn` is the wire format truncated at a fixed

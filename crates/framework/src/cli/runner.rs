@@ -106,25 +106,97 @@ impl crate::ai::ToolRunner for CliToolRunner {
             return Ok(redact(self, out));
         }
         let pairs = tool_args_to_pairs(args);
-        // A concise, TIMED tool trace on stderr, so a streaming run shows its work.
-        // What it is acting on rather than the JSON it arrived as — see `cli::trace`.
-        let what = crate::cli::trace::call(name, &pairs);
+        // A concise, TIMED tool trace, so a streaming run shows its work. What it is
+        // acting on rather than the JSON it arrived as — see `cli::trace`.
+        let call = crate::cli::trace::call(name, &pairs);
         let started = std::time::Instant::now();
+        // A call that has not returned yet is announced, so a long one is visible while
+        // it runs. `cargo test` takes forty seconds and used to print nothing until it
+        // was over, which on screen is indistinguishable from a hang.
+        let watch = self.announce_slow(&call);
         let result = crate::caps::run(name, &pairs, &self.ctx);
+        let announced = watch.map(|w| w.finish()).unwrap_or(false);
         let ms = started.elapsed().as_millis();
-        let (dim, r) = (muted(), reset());
         let line = match &result {
-            Ok(v) => format!("\u{2699} {what} \u{b7} {} \u{b7} {}", crate::cli::trace::took(ms), crate::cli::trace::result(v)),
+            Ok(v) => call.done(&crate::cli::trace::took(ms), &crate::cli::trace::result(v)),
             Err(e) => {
                 let brief: String = e.lines().next().unwrap_or("").chars().take(80).collect();
-                format!("\u{2699} {what} \u{b7} {} \u{b7} \u{2717} {brief}", crate::cli::trace::took(ms))
+                call.done(&crate::cli::trace::took(ms), &format!("\u{2717} {brief}"))
             }
         };
-        match &self.trace {
-            Some(sink) => sink.tool(&line),
-            None => eprintln!("{dim}  {line}{r}"),
+        match (&self.trace, announced) {
+            (Some(sink), true) => sink.tool_finished(&line),
+            (Some(sink), false) => sink.tool(&line),
+            // No sink at all: a delegate sub-agent, whose parent is the one drawing.
+            (None, _) => eprintln!("{}  {line}{}", muted(), reset()),
         }
         result.map(|j| redact(self, json_text(&j)))
+    }
+}
+
+/// How long a call may run before it is worth saying it is running.
+///
+/// Short enough that anything a person would notice is announced, long enough that the
+/// common case — a file read that takes a millisecond — never flickers a line onto the
+/// screen and off it again.
+const SLOW_CALL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// A pending "this call is still going" announcement.
+///
+/// The timer runs on its own thread because the call itself is blocking, and it waits on a
+/// **channel** rather than polling a flag: dropping the sender wakes it immediately. A
+/// poll loop would have added its own interval to the completion of every fast call, which
+/// on a turn carrying eight of them is latency paid to report that nothing was slow.
+///
+/// `finish` reports whether the announcement was actually made — which is what decides
+/// between replacing a line and writing a fresh one.
+struct SlowWatch {
+    stop: std::sync::mpsc::Sender<()>,
+    said: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for SlowWatch {
+    fn drop(&mut self) {
+        self.stop_now();
+    }
+}
+
+impl SlowWatch {
+    /// Wind the timer up and say whether it got its word in. `Drop` joins the thread on
+    /// every other path, so a `?` returning early can never leave one announcing a call
+    /// nobody is waiting for.
+    fn finish(mut self) -> bool {
+        self.stop_now();
+        self.said.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Wake the timer (dropping the sender disconnects it) and wait for it to go.
+    fn stop_now(&mut self) {
+        self.stop = std::sync::mpsc::channel().0;
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+impl CliToolRunner {
+    /// Announce `call` if it is still running after [`SLOW_CALL`]. `None` when there is
+    /// no sink to announce into.
+    fn announce_slow(&self, call: &crate::cli::trace::Call) -> Option<SlowWatch> {
+        let sink = self.trace.clone()?;
+        let said = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (stop, wait) = std::sync::mpsc::channel::<()>();
+        let line = call.running();
+        let told = said.clone();
+        let handle = std::thread::spawn(move || {
+            // Disconnected = the call finished first and there is nothing to announce.
+            if wait.recv_timeout(SLOW_CALL) == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+                sink.tool_started(&line);
+                told.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+        Some(SlowWatch { stop, said, handle: Some(handle) })
     }
 }
 

@@ -282,7 +282,10 @@ pub(crate) fn drive_loop<T: crate::ai::Transport>(
             return LoopRun { outcome: LoopOutcome::Timeout, ..st };
         }
         st.iters = k - state.done;
-        eprintln!("\u{25B6} {}", crate::i18n::translate("loop.iteration", &[k.to_string(), last.to_string()]));
+        // Through the observer, not `eprintln!`: the answer below this header is repainted
+        // in place, and anything written past the thing doing the repainting is a line the
+        // next frame climbs over and erases.
+        observer.on_phase(&crate::i18n::translate("loop.iteration", &[k.to_string(), last.to_string()]));
         let prompt = loop_prompt(goal, k, last, check_label, &state.feedback, &state.tried, state.shifting);
         let run = crate::ai::run_agent(client, maker, &prompt, "", runner, observer);
         st.tin += run.usage.input as u64;
@@ -320,7 +323,7 @@ pub(crate) fn drive_loop<T: crate::ai::Transport>(
             }
             state.escalated = true;
             state.shifting = true;
-            eprintln!("\u{21BB} {}", crate::i18n::translate("loop.shift", &[]));
+            observer.on_phase(&format!("\u{21BB} {}", crate::i18n::translate("loop.shift", &[])));
         }
         seen.push(verdict.signature);
         if seen.len() > SIGNATURE_MEMORY {

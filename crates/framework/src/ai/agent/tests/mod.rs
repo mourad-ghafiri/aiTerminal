@@ -2,6 +2,20 @@ use super::*;
 use crate::ai::AiSettings;
 use crate::ai::text_sse;
 use platform::transport::ScriptedTransport;
+use super::parse::{MAX_CALLS_PER_TURN, parse_call_body};
+
+/// The tools a dialect test parses against.
+///
+/// A real run passes the agent's own list, because one dialect — a bare
+/// `sys.run {"cmd":"ls"}` line with no marker at all — can only be told apart from prose
+/// by whether the leading token is a tool this agent actually has. Every other dialect is
+/// recognised by syntax and does not care what is in here.
+const DECLARED: &[&str] = &["fs.read", "fs.list", "fs.write", "fs.edit", "sys.run", "web.search", "task.run"];
+
+/// Parse against [`DECLARED`] — the shape these tests were written in.
+fn parse_tool_calls(text: &str) -> Vec<(String, String)> {
+    super::parse::parse_tool_calls(text, DECLARED)
+}
 
 struct MockRunner {
     calls: Vec<(String, String)>,
@@ -250,13 +264,19 @@ fn a_cancelled_client_stops_before_the_next_turn() {
 }
 
 #[test]
-fn step_limit_is_bounded() {
+fn a_run_out_of_steps_answers_from_what_it_has() {
     // Always asks for a tool (with DISTINCT args, so the stuck-loop breaker doesn't fire) →
-    // must stop at max_steps.
+    // must stop at max_steps. The FOURTH scripted reply is the wind-down turn: the loop
+    // asks once more with the tools withdrawn rather than throwing the run away.
+    //
+    // It used to return the literal string "[reached the step limit before finishing]",
+    // which failed the flow node that ran it, blocked everything downstream and killed
+    // the graph — after sixteen tool calls and thirty thousand tokens of real work.
     let transport = ScriptedTransport::new(vec![
         text_sse("@tool sys.run {\"cmd\":\"a\"}", 1, 1),
         text_sse("@tool sys.run {\"cmd\":\"b\"}", 1, 1),
         text_sse("@tool sys.run {\"cmd\":\"c\"}", 1, 1),
+        text_sse("I ran a, b and c. The build is clean; I had not checked the tests yet.", 1, 1),
     ]);
     let client = Client::new(keyed_settings(), transport);
     let agent = AgentSpec {
@@ -267,9 +287,29 @@ fn step_limit_is_bounded() {
     };
     let mut runner = MockRunner { calls: Vec::new() };
     let run = run_agent(&client, &agent, "loop", "", &mut runner, &mut NoopObserver);
-    assert_eq!(run.steps.len(), 3, "bounded by max_steps");
-    assert!(run.answer.contains("step limit"));
+    assert_eq!(run.steps.len(), 3, "bounded by max_steps — the wind-down calls no tools");
+    assert!(run.answer.contains("The build is clean"), "the findings survive: {:?}", run.answer);
+    assert!(run.answer.contains("had not checked"), "and so does what was unfinished: {:?}", run.answer);
+    // The bound really did fire, and the caller still has to know that.
     assert_eq!(run.outcome, RunOutcome::StepLimit);
+}
+
+#[test]
+fn a_wind_down_that_cannot_answer_still_stops() {
+    // The script runs out, so the wind-down turn errors. A run stopped by a bound must
+    // never be turned into a hang or an empty answer by the attempt to rescue it.
+    let transport = ScriptedTransport::new(vec![text_sse("@tool sys.run {\"cmd\":\"a\"}", 1, 1)]);
+    let client = Client::new(keyed_settings(), transport);
+    let agent = AgentSpec {
+        system: String::new(),
+        tools: vec![ToolSpec { name: "sys.run".into(), describe: "x".into() }],
+        max_steps: 1,
+        ..Default::default()
+    };
+    let mut runner = MockRunner { calls: Vec::new() };
+    let run = run_agent(&client, &agent, "loop", "", &mut runner, &mut NoopObserver);
+    assert_eq!(run.outcome, RunOutcome::StepLimit);
+    assert!(run.answer.contains("step budget"), "it says which bound stopped it: {:?}", run.answer);
 }
 
 #[test]
@@ -674,9 +714,14 @@ fn a_batch_costs_one_model_turn() {
 fn three_identical_calls_inside_one_batch_still_trips_the_stall_guard() {
     // A model spinning on a failing call spins just as hard inside a batch, and the guard
     // is checked per call rather than per turn so it catches that too.
-    let (run, _) = batched_run(&["@tool fs.home {}\n@tool fs.home {}\n@tool fs.home {}", "unreachable"], &["fs.home"]);
+    // The second scripted reply is the wind-down turn — a stalled run is stopped, but it
+    // is still asked for whatever it managed to establish rather than discarded.
+    let (run, _) = batched_run(
+        &["@tool fs.home {}\n@tool fs.home {}\n@tool fs.home {}", "fs.home kept returning the same thing; I got no further."],
+        &["fs.home"],
+    );
     assert!(matches!(run.outcome, RunOutcome::ToolStall), "{:?}", run.outcome);
-    assert!(run.answer.contains("no progress"), "{}", run.answer);
+    assert!(run.answer.contains("got no further"), "{}", run.answer);
 }
 
 #[test]

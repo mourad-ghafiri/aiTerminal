@@ -140,14 +140,25 @@ fn subtitle(row: &Row, inner: usize) -> String {
     format!("{} \u{b7} {}", row.what, row.model)
 }
 
-/// The third line: what it is doing, what it cost, or what is holding it.
+/// The third line: what it is doing, why it stopped, or what it cost.
 ///
 /// A live note wins while the node is working — the tool it is in right now is the most
-/// useful thing about it — and gives way to the numbers once it has finished, because by
-/// then the useful thing is what it cost.
+/// useful thing about it. Once it has settled the note gives way to the numbers, **unless
+/// it went wrong**, and that exception is the whole point of this line.
+///
+/// It did not exist, and the result was a card reading `✗ read` above `11.5s · 30.0k` on a
+/// run that had just died. The reason was computed, handed to `settled`, stored on the
+/// row — and then never drawn, because time and tokens are always there and always won.
+/// What a failure cost is the least interesting thing about it.
 fn detail(row: &Row) -> String {
     if row.state == State::Running && !row.note.is_empty() {
         return row.note.clone();
+    }
+    if row.state.went_wrong() {
+        let why = note_of(row);
+        if !why.is_empty() {
+            return why;
+        }
     }
     let mut spent = Vec::new();
     let time = time_of(row);

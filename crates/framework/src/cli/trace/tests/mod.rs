@@ -8,16 +8,16 @@ fn args(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
 fn a_call_names_what_it_is_acting_on_not_its_wire_format() {
     // The whole complaint: the trace printed the model's raw argument JSON, so the one
     // thing you wanted to know — which file — was usually the part that got truncated.
-    assert_eq!(call("fs.read", &args(&[("path", "src/cli.rs"), ("max", "2000")])), "fs.read src/cli.rs");
-    assert_eq!(call("sys.run", &args(&[("cmd", "cargo test")])), "sys.run cargo test");
-    assert_eq!(call("web.read", &args(&[("url", "https://example.com/a")])), "web.read https://example.com/a");
+    assert_eq!(call("fs.read", &args(&[("path", "src/cli.rs"), ("max", "2000")])).line(), "fs.read src/cli.rs");
+    assert_eq!(call("sys.run", &args(&[("cmd", "cargo test")])).line(), "sys.run cargo test");
+    assert_eq!(call("web.read", &args(&[("url", "https://example.com/a")])).line(), "web.read https://example.com/a");
 }
 
 #[test]
 fn the_identifying_argument_wins_over_the_ones_that_configure_the_call() {
     // `max` and `all` are settings; `path` is the subject. Argument ORDER must not decide
     // it — a model is free to serialize its object however it likes.
-    let out = call("fs.edit", &args(&[("all", "true"), ("max", "10"), ("path", "src/lib.rs")]));
+    let out = call("fs.edit", &args(&[("all", "true"), ("max", "10"), ("path", "src/lib.rs")])).line();
     assert_eq!(out, "fs.edit src/lib.rs");
 }
 
@@ -25,9 +25,9 @@ fn the_identifying_argument_wins_over_the_ones_that_configure_the_call() {
 fn a_phrase_is_quoted_and_a_path_is_not() {
     // Quotes group a value the eye would otherwise read as several. A path or a command
     // is already unambiguous, so quoting it is noise.
-    assert_eq!(call("web.search", &args(&[("query", "LLM memory architectures")])), "web.search \"LLM memory architectures\"");
-    assert_eq!(call("fs.read", &args(&[("path", "a/b c/d.rs")])), "fs.read a/b c/d.rs");
-    assert_eq!(call("sys.run", &args(&[("cmd", "-la")])), "sys.run -la");
+    assert_eq!(call("web.search", &args(&[("query", "LLM memory architectures")])).line(), "web.search \"LLM memory architectures\"");
+    assert_eq!(call("fs.read", &args(&[("path", "a/b c/d.rs")])).line(), "fs.read a/b c/d.rs");
+    assert_eq!(call("sys.run", &args(&[("cmd", "-la")])).line(), "sys.run -la");
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn a_long_path_keeps_the_end_you_were_looking_for() {
     // A plain truncation always takes the file name, which is the only part anybody was
     // reading. Both ends survive instead.
     let long = "crates/framework/src/cli/flow/exec/some/deeply/nested/runner.rs";
-    let out = call("fs.read", &args(&[("path", long)]));
+    let out = call("fs.read", &args(&[("path", long)])).line();
     assert!(out.ends_with("runner.rs"), "the end is the point: {out}");
     assert!(out.contains("crates/"), "and so is the start: {out}");
     assert!(out.contains('\u{2026}'), "with the middle elided: {out}");
@@ -45,10 +45,10 @@ fn a_long_path_keeps_the_end_you_were_looking_for() {
 #[test]
 fn a_whole_file_of_content_shows_its_first_line_and_stays_one_line() {
     let body = "fn main() {\n    println!(\"hello\");\n}\n";
-    let out = call("fs.write", &args(&[("path", "src/main.rs"), ("content", body)]));
+    let out = call("fs.write", &args(&[("path", "src/main.rs"), ("content", body)])).line();
     assert_eq!(out, "fs.write src/main.rs", "the path identifies it, not the body");
     // And when content is all there is, it is still one line.
-    let only = call("clip.set", &args(&[("content", body)]));
+    let only = call("clip.set", &args(&[("content", body)])).line();
     assert!(!only.contains('\n'), "a trace line is a line: {only:?}");
 }
 
@@ -56,11 +56,11 @@ fn a_whole_file_of_content_shows_its_first_line_and_stays_one_line() {
 fn a_tool_nobody_here_has_heard_of_still_says_something() {
     // MCP servers expose tools this build has never seen. Falling back to the first
     // argument that carries anything beats printing the name alone.
-    let out = call("mcp.jira.issue", &args(&[("ticket", "PROJ-1421")]));
+    let out = call("mcp.jira.issue", &args(&[("ticket", "PROJ-1421")])).line();
     assert_eq!(out, "mcp.jira.issue PROJ-1421");
     // And a call with nothing to say says only its name, rather than an empty quote.
-    assert_eq!(call("clock.now", &[]), "clock.now");
-    assert_eq!(call("fs.list", &args(&[("path", "   ")])), "fs.list");
+    assert_eq!(call("clock.now", &[]).line(), "clock.now");
+    assert_eq!(call("fs.list", &args(&[("path", "   ")])).line(), "fs.list");
 }
 
 #[test]

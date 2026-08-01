@@ -553,7 +553,11 @@ impl FlowWorld {
                     Status::Done => board.settled(id, State::Done, 1200, 3400, ""),
                     Status::Failed => board.settled(id, State::Failed, 900, 0, "it failed"),
                     Status::Skipped => board.settled(id, State::Skipped, 0, 0, "its condition was false"),
-                    Status::Blocked => board.settled(id, State::Skipped, 0, 0, "something it needed failed"),
+                    // Blocked, not skipped. A node ruled out by its own `when` and one that
+                    // never got the chance because something upstream broke are different
+                    // facts, and drawing them the same is how a run's picture stops
+                    // matching the record beside it.
+                    Status::Blocked => board.settled(id, State::Blocked, 0, 0, "something it needed failed"),
                     _ => {}
                 }
             }

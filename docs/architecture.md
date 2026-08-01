@@ -168,7 +168,7 @@ aiTerminal --render-icon /tmp/icon.png                    # the app icon
 
 ## Testing policy
 
-1358 unit tests and 278 scenarios. **[testing.md](testing.md) is the full guide** — the
+1366 unit tests and 279 scenarios. **[testing.md](testing.md) is the full guide** — the
 two kinds of test and why both exist, coverage per feature, the CI gates, and the honest
 list of what is *not* covered. The policy, in short:
 

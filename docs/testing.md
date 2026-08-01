@@ -1,6 +1,6 @@
 # Testing
 
-aiTerminal has **1358 unit tests** and **278 scenarios**, and the whole suite runs in a
+aiTerminal has **1366 unit tests** and **279 scenarios**, and the whole suite runs in a
 few seconds with no network, no API key, no window, and no changes to your machine.
 
 ```sh
@@ -39,7 +39,7 @@ So the suite has both, and they are aimed at different targets.
 
 ## Unit tests
 
-1358 of them (891 in `framework`, 337 in `corelib`, 130 in `platform`), beside the code
+1366 of them (898 in `framework`, 337 in `corelib`, 131 in `platform`), beside the code
 they test. Named as sentences, so a failure reads as a statement about the product rather
 than a symbol that broke:
 
@@ -142,7 +142,7 @@ coverage cannot silently shrink.
 | `ai/` | 28 | model reply → command or answer, the guard, the agent tool loop |
 | `terminal/` | 22 | the VT engine — grid, colour, wide glyphs, scrollback, DEC modes |
 | `jobs/` | 20 | scheduling, occurrence logs, and what a job reports when it stops |
-| `cli/` | 22 | the `@`-command surface: profiles, themes, config, plugins, documents, jobs, gates, and every verb that reads a flow/loop/job record — with a run to read and without one |
+| `cli/` | 23 | the `@`-command surface: profiles, themes, config, plugins, documents, jobs, gates, and every verb that reads a flow/loop/job record — with a run to read and without one |
 | `config/` | 16 | config parsing and the profile overlay |
 | `security/` | 15 | the command guard and the redactor |
 | `plugins/` | 14 | what a `plugin.toml` composes into, and what trust gates |

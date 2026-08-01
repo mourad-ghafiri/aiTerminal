@@ -44,3 +44,22 @@ run = true
 # ordinary rule applies — a failed dependency stops it.
 [[step]]
 expect_board_lines = ["[map] done", "[left] done", "[right] failed", "[join] blocked"]
+
+# And on a terminal, the same four facts as a picture. The board used to draw a blocked
+# node exactly as it drew a node that had not started — so once `right` failed, `join` sat
+# at `○ waiting` on a run that had already finished, and the tally said `2/4 done` with no
+# hint that anything had gone wrong at all.
+[[step]]
+expect_graph_view_contains = ["✗ right", "⊘ join", "1 failed", "1 blocked"]
+
+# A failed card's third line is WHY it stopped, not what it cost. The cost of a failure is
+# the least interesting thing about it, and it was the only thing shown.
+[[step]]
+expect_graph_view_contains = ["it failed"]
+
+[[step]]
+expect_list_view_contains = ["✗ right", "⊘ join", "1 failed", "1 blocked"]
+
+# Nothing is left claiming to be on its way.
+[[step]]
+expect_graph_view_excludes = ["○"]

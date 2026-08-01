@@ -209,7 +209,16 @@ pub(crate) fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
         crate::loops::write_iteration(&log_id, keep, n, answer, &verdict.feedback);
         Ok(verdict)
     };
-    let mut obs = CliObserver::new(std::io::stdout());
+    // The same region, drawn the same way, as `@agent` and a foreground `@job`. A loop's
+    // answer used to stream as unstyled raw text beside an agent's styled Markdown — one
+    // engine, two products, for no reason anybody chose.
+    let view = crate::cli::observe::SharedView::new(crate::cli::observe::RunView::new(
+        Box::new(std::io::stdout()),
+        None,
+        crate::cli::style::markdown_opts(crate::cli::style::out_is_tty()),
+    ));
+    let mut obs = CliObserver::new(view.clone()).with_reasoning(cfg.ai_show_reasoning);
+    runner.trace = Some(std::sync::Arc::new(view));
     let run = drive_loop(&client, &maker, &mut runner, &mut obs, goal, &mut state, verifier.command(), verify);
     let _ = { use std::io::Write; std::io::stdout().write_all(b"\n") };
 

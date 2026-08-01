@@ -354,6 +354,12 @@ fn flow_node(id: &str, node: &str) -> i32 {
     match run.node_log(&state.id).and_then(|p| std::fs::read_to_string(p).ok()) {
         // Its own `# <node>` heading would repeat the one above it.
         Some(text) => doc.push_str(text.split_once('\n').map_or(text.as_str(), |(_, rest)| rest)),
+        // No transcript file. The record still carries the head of what the node said, and
+        // on a node that FAILED that is the one thing anybody came here to read — so it is
+        // shown rather than thrown away in favour of a sentence about a missing file.
+        None if !state.output.trim().is_empty() => {
+            doc.push_str(&format!("{}\n\n_The full transcript was not kept._\n", state.output.trim()))
+        }
         None => doc.push_str(&format!("_Nothing to show \u{2014} {}._\n", why_not_run(state.state))),
     }
     print_markdown(&doc, &crate::config::Config::flow_runs_dir());
@@ -432,7 +438,7 @@ fn apply_record(board: &std::sync::Arc<crate::flow::board::Board>, node: &crate:
         NodeState::Done => board.settled(&node.id, State::Done, node.ms, tokens, ""),
         NodeState::Failed => board.settled(&node.id, State::Failed, node.ms, tokens, &opening_line(&node.output)),
         NodeState::Skipped => board.settled(&node.id, State::Skipped, 0, 0, "its condition was false"),
-        NodeState::Blocked => board.settled(&node.id, State::Skipped, 0, 0, "something it needed failed"),
+        NodeState::Blocked => board.settled(&node.id, State::Blocked, 0, 0, "something it needed failed"),
         NodeState::Waiting => board.settled(&node.id, State::Parked, node.ms, tokens, "waiting for you"),
     }
 }
@@ -480,11 +486,18 @@ fn flow_retry(id: &str, node: &str) -> i32 {
 /// the record already says which of those it was. One decision, so the two places that
 /// report it can never come to disagree.
 pub(crate) fn why_not_run(state: crate::flowruns::NodeState) -> &'static str {
+    use crate::flowruns::NodeState;
     match state {
-        crate::flowruns::NodeState::Skipped => "its condition was false",
-        crate::flowruns::NodeState::Blocked => "something it needed failed",
-        crate::flowruns::NodeState::Waiting => "it is waiting for an answer",
-        _ => "it has not run yet",
+        NodeState::Skipped => "its condition was false",
+        NodeState::Blocked => "something it needed failed",
+        NodeState::Waiting => "it is waiting for an answer",
+        // Not "it has not run yet", which is what these two used to be told and is simply
+        // untrue. A person asking a failed node what it said and being answered "it has
+        // not run yet" has been given a wrong fact about their own run, at the exact
+        // moment they were trying to find out what went wrong.
+        NodeState::Failed => "it failed before it produced anything",
+        NodeState::Done => "it finished, but its transcript was not kept",
+        NodeState::Pending => "it has not run yet",
     }
 }
 

@@ -40,12 +40,53 @@ const SUBJECT: [&str; 14] = [
 /// How much of a subject is worth showing before it stops being a glance.
 const SUBJECT_MAX: usize = 56;
 
-/// One tool call, as a line a person can read.
-pub(crate) fn call(name: &str, args: &[(String, String)]) -> String {
-    match subject(args) {
-        Some(s) => format!("{name} {s}"),
-        None => name.to_string(),
+/// The column the subject starts in, so a run of calls reads as a table rather than as
+/// ragged prose. The doc comment above has drawn it that way since the module was
+/// written; it was `format!("{name} {subject}")` that never produced it.
+const NAME_W: usize = 11;
+
+/// One tool call, as the pieces a line is built from.
+///
+/// Two lines, not one: a call that has been running for a while is worth saying so
+/// before it returns, and it has no timing or result yet to say it with.
+pub(crate) struct Call {
+    name: String,
+    subject: String,
+}
+
+impl Call {
+    /// `⋯ sys.run     cargo test --workspace` — still going.
+    pub(crate) fn running(&self) -> String {
+        self.head('\u{22ef}')
     }
+
+    /// `⚙ sys.run     cargo test --workspace · 2.1s · 48 lines` — and what came back.
+    pub(crate) fn done(&self, took: &str, result: &str) -> String {
+        format!("{} \u{b7} {took} \u{b7} {result}", self.head('\u{2699}'))
+    }
+
+    /// `fs.read src/cli.rs` — the name and the subject it picked, which is what the
+    /// subject-choosing rules above are actually about.
+    #[cfg(test)]
+    pub(crate) fn line(&self) -> String {
+        match self.subject.is_empty() {
+            true => self.name.clone(),
+            false => format!("{} {}", self.name, self.subject),
+        }
+    }
+
+    fn head(&self, glyph: char) -> String {
+        let name = format!("{:<NAME_W$}", self.name);
+        match self.subject.is_empty() {
+            true => format!("{glyph} {}", name.trim_end()),
+            false => format!("{glyph} {name} {}", self.subject),
+        }
+    }
+}
+
+/// One tool call, as a person would name it.
+pub(crate) fn call(name: &str, args: &[(String, String)]) -> Call {
+    Call { name: name.to_string(), subject: subject(args).unwrap_or_default() }
 }
 
 /// Argument names whose value is free text somebody typed, rather than a name of

@@ -107,6 +107,16 @@ pub trait Driver: Sync {
     /// Did it succeed?
     fn ok(&self, i: usize, out: &Self::Out) -> bool;
 
+    /// Node `i` was settled WITHOUT being run — blocked behind a failure, or skipped
+    /// because every path into it was.
+    ///
+    /// The scheduler decides these on its own thread and never asks the driver, which is
+    /// correct for execution and was silent for everything else: a display watching a run
+    /// heard nothing, so the two nodes downstream of a failure sat at "waiting" on a board
+    /// for a run that had already finished. Whatever the driver is telling — a screen, a
+    /// log, a record — this is the only moment it can learn.
+    fn settled(&self, _i: usize, _status: Status) {}
+
     /// Stop the whole run now. Checked before each dispatch, so an in-flight node
     /// is always allowed to finish rather than being abandoned half-done.
     fn halted(&self) -> bool {
@@ -169,6 +179,7 @@ where
                     if let Some(settled) = without_running(nodes, &status, i) {
                         status[i] = settled;
                         order.push(i);
+                        driver.settled(i, settled);
                         progressed = true;
                     }
                 }
@@ -189,6 +200,7 @@ where
                     if let Some(settled) = without_running(nodes, &status, i) {
                         status[i] = settled;
                         order.push(i);
+                        driver.settled(i, settled);
                         continue;
                     }
                     if nodes[i].solo && inflight > 0 {

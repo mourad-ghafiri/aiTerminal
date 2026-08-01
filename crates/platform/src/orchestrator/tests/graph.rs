@@ -85,6 +85,10 @@ impl Driver for Fake {
     fn halted(&self) -> bool {
         self.halt_after.is_some_and(|n| self.finished.load(Ordering::SeqCst) >= n)
     }
+
+    fn settled(&self, i: usize, status: Status) {
+        self.trace.lock().unwrap().push(format!("settled {i} {status:?}"));
+    }
 }
 
 fn node(needs: &[usize]) -> Node {
@@ -156,6 +160,28 @@ fn a_failure_blocks_only_what_depended_on_it() {
     assert_eq!(run.status[2], Status::Done);
     assert_eq!(run.status[3], Status::Done);
     assert_eq!(run.results[0].as_deref(), Some("fail0"), "the failure is kept, not discarded");
+    // And the driver was TOLD. A node settled without running never reaches `prepare` or
+    // `work`, so this hook is the only moment anything watching the run can learn it
+    // happened — without it, a display shows node 1 as still waiting to start on a run
+    // that has already finished, which is exactly what a real board did.
+    assert!(fake.trace().contains(&"settled 1 Blocked".to_string()), "{:?}", fake.trace());
+}
+
+#[test]
+fn a_node_settled_without_running_is_reported_once_and_correctly() {
+    // Both ways a node can be settled for free, in one graph: 1 is blocked behind a
+    // failure, and 3 is skipped because the only path into it was skipped.
+    let nodes = [node(&[]), node(&[0]), node(&[]), node(&[2])];
+    let fake = Fake::new("xo-o");
+    let run = run_graph(&nodes, &fake, 4);
+    assert_eq!(run.status[1], Status::Blocked);
+    assert_eq!(run.status[3], Status::Skipped);
+    // Sorted, because the ORDER is not a promise: 3's whole branch is decided while 0 is
+    // still running, so it settles first. What is promised is that each is reported, once,
+    // with the status it actually got.
+    let mut told: Vec<String> = fake.trace().into_iter().filter(|l| l.starts_with("settled ")).collect();
+    told.sort();
+    assert_eq!(told, vec!["settled 1 Blocked", "settled 3 Skipped"], "each reported exactly once");
 }
 
 #[test]

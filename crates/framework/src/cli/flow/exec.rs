@@ -18,6 +18,13 @@ pub(crate) struct NodeOut {
     approved: bool,
     /// Reached an approval with nobody to ask: the run parks rather than deadlocks.
     pub(crate) parked: bool,
+    /// The failure was the MACHINERY, not the answer — a transport or provider error
+    /// rather than an agent that did the work and got it wrong.
+    ///
+    /// A retry only makes sense for one of those. Without this distinction `attempt` had
+    /// nothing to go on and treated a dead socket and a bad answer identically, which is
+    /// why the safe default was to retry neither.
+    transient: bool,
     /// Prompt tokens this node read back out of the provider's cache.
     cached_tokens: u64,
     /// The model that actually served this node. A pool that picks per run means the
@@ -28,6 +35,44 @@ pub(crate) struct NodeOut {
     tools: usize,
     ms: u64,
     attempts: u32,
+}
+
+/// Extra attempts a node gets when the failure was the machinery rather than the answer,
+/// on top of whatever `retry` the file declares.
+///
+/// One. The client already retries a transient provider error twice within a single turn
+/// with backoff, so reaching here means that whole ladder was climbed and fell down. A
+/// second climb is worth the money; a third is a way of spending an afternoon.
+const TRANSIENT_RETRIES: u32 = 1;
+
+/// A node's remaining attempts — the retry rule, on its own, so it can be read and tested
+/// without building a scheduler around it.
+pub(crate) struct Attempts {
+    declared: u32,
+    spare: u32,
+}
+
+impl Attempts {
+    pub(crate) fn new(declared: u32) -> Attempts {
+        Attempts { declared, spare: TRANSIENT_RETRIES }
+    }
+
+    /// `made` attempts have happened and the last one failed. Does it get another?
+    ///
+    /// The declared `retry` count first, then — and only if the failure was the machinery
+    /// — the spare. `transient` is the whole distinction: a graph should survive a
+    /// provider blip on its first node, and should not pay twice for an agent that
+    /// answered and answered wrongly.
+    pub(crate) fn again(&mut self, made: u32, transient: bool) -> bool {
+        if made <= self.declared {
+            return true;
+        }
+        if transient && self.spare > 0 {
+            self.spare -= 1;
+            return true;
+        }
+        false
+    }
 }
 
 /// Self-contained work for one node — resolved on the scheduler's thread, executed
@@ -207,6 +252,10 @@ impl FlowDriver<'_> {
         self.spent.fetch_add((run.usage.input + run.usage.output) as u64, std::sync::atomic::Ordering::Relaxed);
         NodeOut {
             ok: run.outcome == crate::ai::RunOutcome::Completed,
+            // A transport/provider error is the machinery failing; a step limit or a stall
+            // is the agent having done the work and run out of room, and running it again
+            // buys the same outcome for a second bill.
+            transient: matches!(run.outcome, crate::ai::RunOutcome::Error(_)),
             output: run.answer,
             model: run.model_used,
             input_tokens: run.usage.input as u64,
@@ -263,15 +312,34 @@ impl FlowDriver<'_> {
         }
     }
 
+    /// Which dependency stopped this node, by name.
+    ///
+    /// "Blocked" on its own sends you hunting across the board for the red card. The
+    /// record rows are written the moment each node lands, so the one that broke is
+    /// already there to be named.
+    fn blocked_by(&self, node: &crate::flow::Node) -> String {
+        let Ok(rows) = self.rows.lock() else { return "something it needed failed".into() };
+        let broke: Vec<&str> = node
+            .needs
+            .iter()
+            .filter(|d| rows.iter().any(|r| &&r.id == d && r.state == crate::flowruns::NodeState::Failed))
+            .map(String::as_str)
+            .collect();
+        match broke.is_empty() {
+            true => "something it needed failed".into(),
+            false => format!("{} failed", broke.join(", ")),
+        }
+    }
+
     /// Ask the person. Off a terminal there is nobody to ask, so the run *parks*
     /// rather than guessing or hanging — `@flow resume` picks it up with somebody
     /// there. Gating an action behind a question nobody hears is how an unattended
     /// pipeline deadlocks.
     fn ask(&self, show: &str, question: &str) -> NodeOut {
-        if !show.trim().is_empty() {
-            println!("{show}");
-        }
         if !self.interactive {
+            if !show.trim().is_empty() {
+                println!("{show}");
+            }
             return NodeOut {
                 ok: false,
                 parked: true,
@@ -282,7 +350,15 @@ impl FlowDriver<'_> {
         use std::io::Write;
         // The board is quiet and repainting in place; both have to stop for the length of
         // one question, or the answer is typed invisibly over a picture that keeps moving.
+        //
+        // The hold is taken BEFORE the `show` text is printed, not after. Printing first
+        // wrote whatever the node wanted to show straight into the region the board was
+        // repainting, and the next frame then climbed over it — so the one thing the
+        // person was being asked to read was the thing that got eaten.
         let _hold = self.board.hold();
+        if !show.trim().is_empty() {
+            println!("{show}");
+        }
         eprint!("{}{question} [y/N] {}", accent(), reset());
         let _ = std::io::stderr().flush();
         let mut line = String::new();
@@ -386,6 +462,23 @@ impl platform::orchestrator::Driver for FlowDriver<'_> {
         out.ok
     }
 
+    /// A node the scheduler settled without running it — say so on its row.
+    ///
+    /// `prepare` reports the skips it decides itself, but a node BLOCKED behind a failure
+    /// never reaches `prepare` at all: the scheduler settles it and moves on. So the two
+    /// nodes downstream of a failure kept the `○` they were drawn with, and a run that had
+    /// finished looked like a run that was about to continue.
+    fn settled(&self, i: usize, status: platform::orchestrator::Status) {
+        use platform::orchestrator::Status;
+        let node = &self.flow.nodes[i];
+        let (state, why) = match status {
+            Status::Blocked => (crate::flow::board::State::Blocked, self.blocked_by(node)),
+            Status::Skipped => (crate::flow::board::State::Skipped, "every path into it was skipped".to_string()),
+            _ => return,
+        };
+        self.board.settled(&node.id, state, 0, 0, &why);
+    }
+
     fn halted(&self) -> bool {
         if self.cancel.is_cancelled() {
             return true;
@@ -400,19 +493,29 @@ impl platform::orchestrator::Driver for FlowDriver<'_> {
 impl FlowDriver<'_> {
     /// Run a node, retrying a failure up to its `retry` count. Each attempt is a
     /// fresh run; the count survives into the record so a flaky node is visible.
+    ///
+    /// **A machinery failure gets one attempt beyond the declared count.** A node that
+    /// died because the provider returned a 503 has produced no work and learned nothing,
+    /// and the client's own retry has already been exhausted on that one turn — so a whole
+    /// graph used to be lost to a blip on its first node, with `retry = 0` as the default
+    /// and no way for the scheduler to tell that from a wrong answer.
+    ///
+    /// A wrong answer is still not retried. Paying twice for the same wrong answer is not
+    /// reliability, it is a bill.
     fn attempt(&self, node: &crate::flow::Node, w: &NodeWork) -> NodeOut {
-        let mut last = NodeOut::default();
-        for attempt in 0..=node.retry {
-            if attempt > 0 {
-                self.board.retrying(&node.id, attempt, node.retry);
+        let mut budget = Attempts::new(node.retry);
+        let mut made = 0u32;
+        loop {
+            if made > 0 {
+                self.board.retrying(&node.id, made, node.retry.max(made));
             }
-            last = self.once(node, w);
-            last.attempts = attempt + 1;
-            if last.ok || last.parked || self.halted() {
-                break;
+            let mut last = self.once(node, w);
+            made += 1;
+            last.attempts = made;
+            if last.ok || last.parked || self.halted() || !budget.again(made, last.transient) {
+                return last;
             }
         }
-        last
     }
 
     fn once(&self, node: &crate::flow::Node, w: &NodeWork) -> NodeOut {

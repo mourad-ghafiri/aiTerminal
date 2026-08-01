@@ -149,9 +149,18 @@ fn a_node_that_did_not_run_is_told_why_in_one_place() {
     assert_eq!(why_not_run(NodeState::Blocked), "something it needed failed");
     assert_eq!(why_not_run(NodeState::Waiting), "it is waiting for an answer");
     assert_eq!(why_not_run(NodeState::Pending), "it has not run yet");
+    // `Failed` and `Done` used to fall through to "it has not run yet", which is not a
+    // vague answer — it is a WRONG fact about the reader's own run, delivered at the exact
+    // moment they were asking a node that broke what it said. Every state answers for
+    // itself now, so nothing can quietly fall through again.
+    assert_eq!(why_not_run(NodeState::Failed), "it failed before it produced anything");
+    assert_eq!(why_not_run(NodeState::Done), "it finished, but its transcript was not kept");
+    for state in [NodeState::Skipped, NodeState::Blocked, NodeState::Waiting, NodeState::Done, NodeState::Failed] {
+        assert_ne!(why_not_run(state), "it has not run yet", "{state:?} is not 'pending' wearing another name");
+    }
     // Every reason reads as a clause that finishes "nothing to show — …", so both
     // callers can wrap it in their own sentence.
-    for state in [NodeState::Skipped, NodeState::Blocked, NodeState::Waiting, NodeState::Pending, NodeState::Done] {
+    for state in [NodeState::Skipped, NodeState::Blocked, NodeState::Waiting, NodeState::Pending, NodeState::Done, NodeState::Failed] {
         let why = why_not_run(state);
         assert!(!why.is_empty() && why.chars().next().is_some_and(|c| c.is_lowercase()), "{state:?}: {why:?}");
         assert!(!why.ends_with('.'), "{state:?} ends a sentence the caller has not finished: {why:?}");
@@ -233,4 +242,34 @@ fn every_bundled_flow_verifies_clean() {
             assert!(doc.contains(&format!("| {} |", node.id)), "{name} lists node '{}':\n{doc}", node.id);
         }
     }
+}
+
+#[test]
+fn a_node_retries_a_dead_socket_and_not_a_wrong_answer() {
+    use crate::cli::flow::exec::Attempts;
+    // A wrong answer is final. Running the same agent on the same prompt again buys the
+    // same answer for a second bill, and calling that "reliability" is how a flow becomes
+    // expensive without becoming better.
+    let mut answer = Attempts::new(0);
+    assert!(!answer.again(1, false), "a node with retry = 0 that answered badly is done");
+
+    // A transport or provider failure is the machinery, not the work. The client has
+    // already retried that turn twice with backoff, so reaching here means the whole
+    // ladder fell down — and losing an entire graph to a blip on its first node is the
+    // failure that was actually reported.
+    let mut blip = Attempts::new(0);
+    assert!(blip.again(1, true), "the machinery gets one more go");
+    assert!(!blip.again(2, true), "and exactly one — a third climb is an afternoon");
+
+    // The declared count comes first and is spent on either kind, because a file that
+    // says `retry = 2` is asking for two attempts at the WORK.
+    let mut declared = Attempts::new(2);
+    assert!(declared.again(1, false), "attempt 1 of a retry = 2 node");
+    assert!(declared.again(2, false), "attempt 2");
+    assert!(!declared.again(3, false), "then it is done");
+    // …and the spare is still there underneath it for a machinery failure.
+    let mut both = Attempts::new(2);
+    assert!(both.again(1, false) && both.again(2, false));
+    assert!(both.again(3, true), "the declared count is spent, the spare is not");
+    assert!(!both.again(4, true));
 }

@@ -39,7 +39,16 @@ pub(crate) enum State {
     Running,
     Done,
     Failed,
+    /// Its own condition was false.
     Skipped,
+    /// Something it needed failed, so it could never run.
+    ///
+    /// Distinct from [`Skipped`](State::Skipped) because they are different facts about a
+    /// run and a person reads them differently: a skipped node was ruled out by its own
+    /// `when`, a blocked one was ruled out by somebody else's failure. The record has
+    /// always told them apart; the live board drew both as "still waiting", so a finished
+    /// run showed two nodes apparently about to start.
+    Blocked,
     /// Reached an approval with nobody to answer it.
     Parked,
 }
@@ -53,19 +62,26 @@ impl State {
             State::Done => "✓".into(),
             State::Failed => "✗".into(),
             State::Skipped => "·".into(),
+            State::Blocked => "⊘".into(),
             State::Parked => "⏸".into(),
         }
     }
 
-    fn word(self) -> &'static str {
+    pub(crate) fn word(self) -> &'static str {
         match self {
             State::Waiting => "waiting",
             State::Running => "running",
             State::Done => "done",
             State::Failed => "failed",
             State::Skipped => "skipped",
+            State::Blocked => "blocked",
             State::Parked => "waiting for you",
         }
+    }
+
+    /// Settled and not successful — what a board leads with, and what the tally counts.
+    pub(crate) fn went_wrong(self) -> bool {
+        matches!(self, State::Failed | State::Blocked)
     }
 }
 
@@ -449,13 +465,30 @@ fn sep(note: &str) -> String {
     }
 }
 
-/// A tool trace, routed to the node that made it.
+/// Where a tool call is reported.
 ///
-/// `CliToolRunner` prints these straight to stderr for a single agent run, which is
-/// right there and wrong here: four nodes calling tools at once produce four
-/// interleaved streams with nothing to say which is which.
+/// Every run has one — a board routes the line to the node that made it, a single agent
+/// run routes it into the region its answer is painting in. Nothing calls `eprintln!`
+/// for a trace any more: four nodes calling tools at once produce four interleaved
+/// streams with nothing to say which is which, and one node repainting its answer
+/// produces a trace the next repaint climbs over.
 pub(crate) trait ToolTrace: Send + Sync {
+    /// A call that has finished, with what it returned.
     fn tool(&self, line: &str);
+
+    /// A call that has been running long enough to be worth saying so before it returns.
+    ///
+    /// The default says nothing, which is right for a board: a running node is already
+    /// drawn as running. It matters for a plain run, where a 40-second `cargo test`
+    /// otherwise looks exactly like a hang.
+    fn tool_started(&self, _line: &str) {}
+
+    /// The finished line for a call that was announced by [`tool_started`](Self::tool_started).
+    /// A display that can reach back replaces the announcement; one that cannot prints
+    /// both, which is a log telling the truth rather than a screen repeating itself.
+    fn tool_finished(&self, line: &str) {
+        self.tool(line);
+    }
 }
 
 /// One node's end of a [`Board`].
@@ -467,6 +500,12 @@ pub(crate) struct NodeTrace {
 impl ToolTrace for NodeTrace {
     fn tool(&self, line: &str) {
         self.board.tool(&self.node, line);
+    }
+
+    /// A note, not a call: the node has not made another tool call, it is still inside
+    /// the one it is in. Counting it here would report twice the work that happened.
+    fn tool_started(&self, line: &str) {
+        self.board.note(&self.node, line);
     }
 }
 

@@ -8,7 +8,7 @@
 /// `ai agent [<name>]` — the installed agents, or one in full.
 use crate::cli::agentloop::show::clip_tail;
 use crate::cli::format::{outcome_exit, outcome_glyph, run_footer_with};
-use crate::cli::observe::{CliObserver, finish_streamed};
+use crate::cli::observe::{CliObserver, RunView, SharedView, finish_streamed};
 use crate::cli::run::instructions;
 use crate::cli::runner::{build_runner, context_settings, run_scratch};
 use crate::cli::style::{accent, markdown_opts, muted, out_is_tty, reset, term_cols};
@@ -266,31 +266,9 @@ impl Drop for SigintWatch {
     }
 }
 
-/// stdout plus an optional file — the foreground-tracked `@job` tees its
-/// streamed answer into the job log while it plays live in the terminal.
-struct Tee {
-    log: Option<std::fs::File>,
-}
-
-impl std::io::Write for Tee {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let n = std::io::stdout().write(buf)?;
-        if let Some(f) = &mut self.log {
-            let _ = f.write_all(&buf[..n]);
-        }
-        Ok(n)
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        if let Some(f) = &mut self.log {
-            let _ = f.flush();
-        }
-        std::io::stdout().flush()
-    }
-}
-
-/// Run an agent's tool loop headlessly, streaming tokens live (answer → stdout
-/// (+ an optional tee into a job log), reasoning → stderr, tool calls → an
-/// stderr trace), with the header/footer chrome.
+/// Run an agent's tool loop headlessly, streaming tokens live into one region of the
+/// terminal (answer → stdout, tool calls → the same region, reasoning → stderr), with the
+/// header/footer chrome. A foreground-tracked `@job` also keeps a copy in its job log.
 pub(crate) fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::ai::AiSettings, name: &str, prompt: &str, ctx: &str, workspace_root: Option<std::path::PathBuf>, policy: std::sync::Arc<crate::security::Policy>, media: Vec<crate::ai::ImageData>, log: Option<std::fs::File>) -> i32 {
     let Some(mut agent) = build_agent_spec(name, context_settings(cfg)) else {
         eprintln!("aiTerminal: no agent '{name}' — {}", available_agents_hint());
@@ -310,7 +288,12 @@ pub(crate) fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::
     let _sigint = wire_sigint(cancel);
     eprintln!("{}\u{2726} @{name} \u{b7} {}{}", accent(), client.model().id, reset());
     let started = std::time::Instant::now();
-    let mut obs = CliObserver::new(Tee { log }).with_reasoning(cfg.ai_show_reasoning).with_markdown(markdown_opts(out_is_tty()));
+    let view = SharedView::new(RunView::new(Box::new(std::io::stdout()), log, markdown_opts(out_is_tty())));
+    let mut obs = CliObserver::new(view.clone()).with_reasoning(cfg.ai_show_reasoning);
+    // The tool trace goes through the SAME region the answer is painting in. It used to
+    // `eprintln!` past the painter, whose next repaint then climbed over the trace and
+    // erased it — the seam was always here, the single-agent path just never filled it.
+    runner.trace = Some(std::sync::Arc::new(view));
     let run = crate::ai::run_agent(&client, &agent, prompt, ctx, &mut runner, &mut obs);
     finish_streamed(&mut obs, &run.answer);
     let glyph = outcome_glyph(&run.outcome);

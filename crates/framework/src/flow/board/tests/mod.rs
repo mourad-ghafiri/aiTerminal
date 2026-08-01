@@ -224,6 +224,70 @@ fn the_pane_follows_the_node_that_is_working() {
 }
 
 #[test]
+fn a_failed_run_says_what_broke_where_it_stopped_and_why() {
+    // The board, after a run exactly like the one that was reported: the first node
+    // fails, everything after it is blocked, and one arm was ruled out by its condition.
+    //
+    // Four things were wrong with what it drew, and all four are asserted here.
+    for view in ["graph", "list"] {
+        let b = fixture(view);
+        b.running("map", "@explorer");
+        b.tool("map", "\u{2699} fs.list     . \u{b7} 0ms \u{b7} 5 entries");
+        b.settled("map", State::Failed, 11_500, 30_000, "the step budget of 12 ran out");
+        b.settled("left", State::Blocked, 0, 0, "map failed");
+        b.settled("right", State::Blocked, 0, 0, "map failed");
+        b.settled("report", State::Skipped, 0, 0, "not left.failed");
+        let text = painted(&b);
+
+        // 1. The reason was computed, handed over, stored — and then never drawn, because
+        //    time and tokens always won the line. What a failure COST is the least
+        //    interesting thing about it.
+        assert!(text.contains("the step budget of 12 ran out"), "{view}: the card says why:\n{text}");
+
+        // 2. A node the scheduler settled behind the failure kept the ○ it was drawn with,
+        //    so a finished run looked like one about to carry on.
+        assert!(!text.contains('\u{25cb}'), "{view}: nothing is still 'waiting' on a finished run:\n{text}");
+        assert!(text.contains('\u{2298}'), "{view}: blocked has its own mark:\n{text}");
+
+        // 3. `0/4 done` was the whole tally: four nodes' worth of nothing happening, with
+        //    no hint that anything had gone wrong.
+        assert!(text.contains("1 failed"), "{view}: the tally names the failure:\n{text}");
+        assert!(text.contains("2 blocked"), "{view}: and what it took with it:\n{text}");
+        assert!(text.contains("1 skipped"), "{view}: and what ruled itself out:\n{text}");
+    }
+}
+
+#[test]
+fn the_pane_looks_at_the_failure_not_at_whatever_settled_last() {
+    // Everything downstream of a failure settles AFTER it, so "the most recently touched
+    // node" — which sounds neutral — moved the pane off the broken node and onto whichever
+    // branch was ruled out last. The one moment anybody reads a board closely is the
+    // moment something breaks, and the pane was looking the other way.
+    let b = fixture("graph");
+    b.running("map", "@explorer");
+    b.tool("map", "\u{2699} sys.run     cargo test \u{b7} 4.1s \u{b7} 48 lines");
+    b.settled("map", State::Failed, 11_500, 30_000, "the step budget of 12 ran out");
+    b.settled("left", State::Blocked, 0, 0, "map failed");
+    b.settled("report", State::Skipped, 0, 0, "not left.failed");
+    let text = painted(&b);
+    let pane = pane_of(&text);
+    assert!(pane.contains("map"), "the pane is about the node that broke:\n{text}");
+    assert!(pane.contains("cargo test"), "with what it was doing when it did:\n{pane}");
+    assert!(!pane.contains("report"), "not about the branch that settled last:\n{pane}");
+}
+
+/// Just the pane: everything below the picture and above the tally.
+///
+/// Filtering out box-drawing rows is not enough — the header names the critical path, so
+/// a node id in it reads as a pane that is about that node.
+fn pane_of(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let last_box = lines.iter().rposition(|l| l.contains('\u{256f}') || l.contains('\u{2570}') || l.contains('\u{254e}'));
+    let start = last_box.map_or(0, |i| i + 1);
+    lines[start..lines.len().saturating_sub(1)].join("\n")
+}
+
+#[test]
 fn the_pane_keeps_the_last_few_calls_not_only_the_newest() {
     // `note` is one line and is overwritten, which is right for a card and wrong for the
     // pane: what a node HAS BEEN doing is the question, and one line is a stream you can
