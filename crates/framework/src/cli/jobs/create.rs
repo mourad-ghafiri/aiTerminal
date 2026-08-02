@@ -4,7 +4,7 @@ use crate::cli::jobs::args::RunSpec;
 use crate::cli::jobs::schedule::parse_schedule;
 use crate::cli::jobs::shell::run_shell_job;
 use crate::cli::jobs::spawn::{cwd_string, keep_runs, run_prompt_as_agent, unix_now};
-use crate::cli::style::{accent, reset};
+use crate::cli::style::{accent, muted, reset};
 
 pub(crate) fn job_usage() -> String {
     [
@@ -23,7 +23,19 @@ pub(crate) fn job_usage() -> String {
 /// Turn a request into a record, then run it now or leave it armed for its first fire.
 pub(crate) fn create_job(spec: RunSpec) -> i32 {
     let now = unix_now();
-    let (schedule, task, says) = resolve_spec(&spec, now, &crate::ai::plan::read_request);
+    // The one step in creating a job that takes longer than a millisecond: the model
+    // reading the sentence. Everything else here — the record, the arming, the spawn — is
+    // instant, so this is the whole of the wait somebody sits through, and until now it
+    // sat behind a terminal that showed nothing at all.
+    //
+    // Wrapped unconditionally: the branches that never consult a model return before the
+    // spinner's grace is up and draw nothing, which is why no test of "will this be slow"
+    // is needed here.
+    let plan = crate::cli::observe::waiting_on(crate::cli::observe::READING_REQUEST, || {
+        resolve_spec(&spec, now, &crate::ai::plan::read_request)
+    });
+    let Resolved { schedule, task, says, reading } = plan;
+    report_reading(&reading, &spec.request, &says);
 
     let next_at = schedule.as_ref().and_then(|s| s.next_after(now));
     if spec.dry_run {
@@ -81,17 +93,31 @@ pub(crate) fn create_job(spec: RunSpec) -> i32 {
     execute_occurrence(&id, true)
 }
 
+/// A request, resolved into a job.
+///
+/// A struct rather than the tuple this was, because the fourth thing — how the request
+/// came to be read — is what decides whether the person who waited for a model call is
+/// told anything about it, and a fourth anonymous tuple slot is a fact nobody can find.
+pub(crate) struct Resolved {
+    pub(crate) schedule: Option<crate::jobs::Schedule>,
+    pub(crate) task: crate::jobs::Task,
+    /// One line a person can check at a glance: `every day at 00:00 — check the logs`.
+    pub(crate) says: String,
+    pub(crate) reading: crate::ai::plan::Reading,
+}
+
 /// Turn a request into *when to run* and *what to run*, in that order of authority:
 /// explicit flags, then the planner, then the deterministic word parser.
 ///
 /// The planner is passed in rather than called directly so this precedence can be tested
 /// (and driven by a scripted model) without a network — and so `@job` keeps working when
-/// `planner` returns `None`, which is exactly what "no model configured" looks like.
+/// there is no model at all, which is what `Reading::Unasked` is.
 pub(crate) fn resolve_spec(
     spec: &RunSpec,
     now: u64,
-    planner: &dyn Fn(&str, u64) -> Option<crate::ai::plan::Plan>,
-) -> (Option<crate::jobs::Schedule>, crate::jobs::Task, String) {
+    planner: &dyn Fn(&str, u64) -> crate::ai::plan::Reading,
+) -> Resolved {
+    use crate::ai::plan::Reading;
     // Explicit flags are unambiguous, so they win outright and no model is consulted.
     match (spec.schedule.clone(), spec.cmd.clone()) {
         (sched, Some(cmd)) => {
@@ -100,31 +126,70 @@ pub(crate) fn resolve_spec(
             // ./deploy.sh` deployed immediately: the words were captured, echoed back as
             // the request, and then silently dropped — the worst shape a bug can take,
             // because the user was shown their schedule being understood.
-            let sched = sched.or_else(|| parse_schedule(&spec.request, now).0);
-            let says = describe(&sched, &cmd.display());
-            (sched, crate::jobs::Task::Shell(cmd), says)
+            let schedule = sched.or_else(|| parse_schedule(&spec.request, now).0);
+            let says = describe(&schedule, &cmd.display());
+            Resolved { schedule, task: crate::jobs::Task::Shell(cmd), says, reading: Reading::Unasked }
         }
         (Some(sched), None) => {
             let says = describe(&Some(sched.clone()), &spec.request);
-            (Some(sched), agent_task(spec, &spec.request), says)
+            Resolved { schedule: Some(sched), task: agent_task(spec, &spec.request), says, reading: Reading::Unasked }
         }
         // Nothing explicit: let the planner read the sentence, and fall back to the
         // word parser when there is no model (or it answers with nonsense).
         (None, None) => match planner(&spec.request, now) {
-            Some(plan) => {
-                let task = match plan.cmd {
+            Reading::Read(plan) => {
+                let task = match plan.cmd.clone() {
                     Some(cmd) => crate::jobs::Task::Shell(cmd),
                     None => agent_task(spec, &plan.task),
                 };
-                (plan.schedule, task, plan.says)
+                Resolved { schedule: plan.schedule.clone(), task, says: plan.says.clone(), reading: Reading::Read(plan) }
             }
-            None => {
-                let (sched, cleaned) = parse_schedule(&spec.request, now);
-                let says = describe(&sched, &cleaned);
-                (sched, agent_task(spec, &cleaned), says)
+            reading => {
+                let (schedule, cleaned) = parse_schedule(&spec.request, now);
+                let says = describe(&schedule, &cleaned);
+                Resolved { schedule, task: agent_task(spec, &cleaned), says, reading }
             }
         },
     }
+}
+
+/// Say what came of reading the request — when there is anything to say.
+///
+/// Two silences were worth breaking. A planner that was **asked and could not answer**
+/// costs a model round trip somebody waited through, and then falls back to the word
+/// parser with no sign that the wait bought nothing. And a planner that **rewrote the
+/// request** — stripping the timing words, or turning a sentence into a shell command —
+/// changed what the job is, and for an immediate job nothing ever showed the rewrite: the
+/// record went to disk and the agent header took over.
+///
+/// It stays quiet when the reading matches what was typed. Echoing somebody's own
+/// sentence back at them is noise, and noise is what stops the useful line being read.
+fn report_reading(reading: &crate::ai::plan::Reading, typed: &str, says: &str) {
+    use crate::ai::plan::Reading;
+    let (dim, r) = (muted(), reset());
+    match reading {
+        // Nothing was asked, so nothing is owed.
+        Reading::Unasked => {}
+        Reading::Unread => eprintln!("{dim}\u{26a0}  the model could not read that \u{2014} using the words as typed{r}"),
+        Reading::Read(_) if rewritten(typed, says) => eprintln!("{dim}\u{25c8} {says}{r}"),
+        Reading::Read(_) => {}
+    }
+}
+
+/// Whether `says` tells you anything `typed` did not.
+///
+/// Compared on the words that carry meaning, so punctuation and case do not turn an echo
+/// into a report. `says` always carries the schedule (`now — …`), so the test is whether
+/// what remains is the sentence that was typed.
+pub(crate) fn rewritten(typed: &str, says: &str) -> bool {
+    let words = |s: &str| {
+        s.to_ascii_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ")
+    };
+    let typed = words(typed);
+    let said = words(says);
+    // `now — <task>` on a request with no schedule in it: the only difference is the
+    // word this tool added, and that is not something the model decided.
+    !said.ends_with(&typed) || !said.strip_suffix(&typed).is_some_and(|head| head.trim() == "now")
 }
 
 /// The agent task for a request, honoring an explicit `--agent`.

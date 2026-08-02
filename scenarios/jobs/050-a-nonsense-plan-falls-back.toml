@@ -16,3 +16,9 @@ expect_next = "2026-03-10 12:05"
 
 [[step]]
 expect_task = "tidy the desktop"
+
+# And you are TOLD. This reply cost a model round trip somebody sat through — the whole
+# of the wait between pressing Enter and the job existing — and falling silently back to
+# the word parser reports that wait as nothing having happened.
+[[step]]
+expect_reading = "unread"

@@ -295,7 +295,9 @@ fn choose_verifier(
     if spec.no_check || !cfg.loop_propose_check {
         return crate::loops::Verifier::Reviewer;
     }
-    match crate::ai::verify::propose(goal) {
+    // A model call somebody is waiting on, and it happens BEFORE the loop has printed a
+    // word about itself — so without this the terminal is dead from Enter until it lands.
+    match crate::cli::observe::waiting_on(crate::cli::observe::CHOOSING_CHECK, || crate::ai::verify::propose(goal)) {
         // A verifier is supposed to OBSERVE. Anything the guard stops — a deploy, a push —
         // is a command that would change the world to measure it, so it is refused and the
         // reviewer takes over.

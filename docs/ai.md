@@ -818,6 +818,40 @@ registry to keep in step with `caps`, and wrong the day an MCP server exposes a 
 build has never heard of — which still gets a readable line, because arguments have names
 whatever the tool is.
 
+### A wait says what it is for
+
+Most of what a command does is instant — a job's record, its arming, its spawn are all
+under a millisecond. What is not instant is a **model call**, and there are four made
+outside a run's own loop: the planner reading a `@job` request, the verifier proposal
+that opens a `@loop`, the graph built for a `@flow` goal, and a run folding its own
+history when the window fills. Every one of them used to happen with nothing on screen —
+`@job "summarise the logs every morning"` sat on a dead terminal until the model answered.
+
+They all say what they are for now:
+
+```text
+❯ @job summarise the logs every morning
+⠹ reading when to run this…
+⏳ every day at 09:00 — summarise the logs · job 1785371201-90257
+  fires in 14h · list: @job · cancel: @job cancel 1785371201-90257
+```
+
+Not "thinking": these happen before a run exists, and *why* you are waiting is the useful
+part — `reading when to run this` tells you a schedule is being worked out, which is
+exactly what a bare spinner cannot.
+
+The spinner **holds its first frame for a moment**, so work that finishes at once draws
+nothing at all. That is what makes it safe to wrap a call unconditionally: `@job -- echo
+hi` and `@job --every 15m …` never consult a model and show nothing new, without anybody
+having to predict in advance which paths will be slow.
+
+**`@job` also says what it understood** — but only when that differs from what you typed.
+The planner does not just pick a schedule: it strips the timing words out of the task, and
+may turn a sentence into a shell command. That rewrite changes what the job *is*, and for
+an immediate job it was never shown. An echo of your own sentence is noise, so there is
+none. And a planner that was **asked and could not answer** says so rather than falling
+silently back to the word parser — you waited for that call.
+
 ### Something to read while you wait
 
 A run waiting on a model shows a spinner and nothing else, sometimes for a while. One dim

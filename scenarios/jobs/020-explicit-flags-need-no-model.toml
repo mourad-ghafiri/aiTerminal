@@ -21,3 +21,9 @@ expect_task = "./sync.sh"
 
 [[step]]
 expect_next = "2026-03-10 12:15"
+
+# Nothing was asked, so nothing is owed. This is the case that must never be confused
+# with "asked and could not answer": one is instant and promised nothing, the other is a
+# round trip that bought nothing, and for a while they were the same value.
+[[step]]
+expect_reading = "unasked"

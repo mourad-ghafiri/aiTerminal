@@ -34,33 +34,33 @@ fn a_command_job_honours_the_schedule_typed_before_the_dashes() {
     // command path took the flag schedule and never fell back to the word parser.
     // Being shown your schedule and having it ignored is the worst shape this can
     // take — silently running now is not a smaller mistake than running late.
-    let no_model = |_: &str, _: u64| None;
+    let no_model = |_: &str, _: u64| crate::ai::plan::Reading::Unasked;
     let spec = |request: &str| RunSpec {
         request: request.into(),
         cmd: Some(Cmd::Line("./deploy.sh".into())),
         ..Default::default()
     };
 
-    let (sched, task, says) = resolve_spec(&spec("in 2 minutes"), 1_000, &no_model);
-    assert_eq!(sched, Some(Schedule::Once(1_120)), "the typed delay is honoured: {says}");
-    assert!(matches!(task, Task::Shell(_)), "still a command job, not an agent one");
+    let got = resolve_spec(&spec("in 2 minutes"), 1_000, &no_model);
+    assert_eq!(got.schedule, Some(Schedule::Once(1_120)), "the typed delay is honoured: {}", got.says);
+    assert!(matches!(got.task, Task::Shell(_)), "still a command job, not an agent one");
 
-    assert_eq!(resolve_spec(&spec("every hour"), 0, &no_model).0, Some(Schedule::Every(3600)));
-    assert!(matches!(resolve_spec(&spec("at 9"), 0, &no_model).0, Some(Schedule::Once(_))));
+    assert_eq!(resolve_spec(&spec("every hour"), 0, &no_model).schedule, Some(Schedule::Every(3600)));
+    assert!(matches!(resolve_spec(&spec("at 9"), 0, &no_model).schedule, Some(Schedule::Once(_))));
 
     // A flag still wins over the words — it is the unambiguous form.
     let mut flagged = spec("in 2 minutes");
     flagged.schedule = Some(Schedule::Every(60));
-    assert_eq!(resolve_spec(&flagged, 1_000, &no_model).0, Some(Schedule::Every(60)));
+    assert_eq!(resolve_spec(&flagged, 1_000, &no_model).schedule, Some(Schedule::Every(60)));
 
     // And words that are not a schedule still mean "now", exactly as before.
-    let (sched, _, says) = resolve_spec(&spec("deploy the api"), 0, &no_model);
-    assert_eq!(sched, None, "no schedule in those words: {says}");
-    assert!(says.starts_with("now"), "{says}");
+    let got = resolve_spec(&spec("deploy the api"), 0, &no_model);
+    assert_eq!(got.schedule, None, "no schedule in those words: {}", got.says);
+    assert!(got.says.starts_with("now"), "{}", got.says);
 
     // A bare `@job -- <cmd>` is unchanged: run it now.
     let bare = RunSpec { cmd: Some(Cmd::Line("echo hi".into())), ..Default::default() };
-    assert_eq!(resolve_spec(&bare, 0, &no_model).0, None);
+    assert_eq!(resolve_spec(&bare, 0, &no_model).schedule, None);
 }
 
 #[test]
@@ -246,4 +246,110 @@ fn explicit_schedule_flags_are_read_without_a_model() {
     assert!(matches!(sched(&["x", "--cron", "0 9 * * 1-5"]), Some(crate::jobs::Schedule::Cron(_))));
     assert!(matches!(sched(&["x", "--in", "30s"]), Some(crate::jobs::Schedule::Once(_))));
     assert_eq!(sched(&["x"]), None, "no flags → the planner decides");
+}
+
+#[test]
+fn a_wait_prints_nothing_into_a_pipe_and_still_returns_the_work() {
+    use crate::cli::observe::waiting_on;
+    // The whole of `@job`'s dead terminal was one blocking model call with nothing on
+    // screen. `waiting_on` is where every such call goes now — so the first thing it has
+    // to be is invisible everywhere a person is not watching: a pipe, a `--bg` job, a job
+    // log, CI. Under `cargo test` stderr is piped, which is exactly that case.
+    let ran = std::cell::Cell::new(0);
+    let out = waiting_on("reading when to run this\u{2026}", || {
+        ran.set(ran.get() + 1);
+        "the answer"
+    });
+    assert_eq!(out, "the answer", "it returns what the work returned");
+    assert_eq!(ran.get(), 1, "and runs it exactly once");
+
+    // Off a TTY the spinner has no thread at all, so there is nothing that could write.
+    let mut sp = crate::cli::observe::Spinner::start(String::from("x"));
+    assert!(sp.handle.is_none(), "no thread off-TTY");
+    sp.stop();
+}
+
+#[test]
+fn the_three_readings_are_told_apart() {
+    use crate::ai::plan::Reading;
+    use crate::jobs::{Schedule, Task};
+    // `Option<Plan>` could not tell "no model is configured" — instant, nothing promised —
+    // from "it was asked and could not answer", which is a round trip somebody sat
+    // through for nothing. Both fall back to the word parser; only one is worth saying.
+    let spec = |request: &str| RunSpec { request: request.into(), ..Default::default() };
+
+    let unasked = resolve_spec(&spec("check the logs every hour"), 0, &|_, _| Reading::Unasked);
+    assert_eq!(unasked.reading, Reading::Unasked);
+    assert_eq!(unasked.schedule, Some(Schedule::Every(3600)), "the words still carry it");
+
+    let unread = resolve_spec(&spec("check the logs every hour"), 0, &|_, _| Reading::Unread);
+    assert_eq!(unread.reading, Reading::Unread, "asked, and it could not answer");
+    assert_eq!(unread.schedule, Some(Schedule::Every(3600)), "and the fallback is the same");
+
+    // A plan that was read wins outright, and the reading travels with it so the caller
+    // can say what changed.
+    let plan = crate::ai::plan::Plan {
+        schedule: Some(Schedule::Every(900)),
+        task: "check the logs".into(),
+        cmd: None,
+        says: "every 15 minutes — check the logs".into(),
+    };
+    let read = resolve_spec(&spec("check the logs every hour"), 0, &|_, _| Reading::Read(plan.clone()));
+    assert_eq!(read.schedule, Some(Schedule::Every(900)), "the model's reading, not the words'");
+    assert_eq!(read.says, "every 15 minutes — check the logs");
+    assert!(matches!(read.reading, Reading::Read(_)));
+    assert!(matches!(read.task, Task::Agent { .. }));
+
+    // An explicit flag consults no model at all, so there is nothing to report.
+    let flagged = RunSpec { request: "x".into(), schedule: Some(Schedule::Every(60)), ..Default::default() };
+    assert_eq!(resolve_spec(&flagged, 0, &|_, _| Reading::Read(plan.clone())).reading, Reading::Unasked);
+}
+
+#[test]
+fn the_planner_says_whether_it_was_asked_or_merely_failed() {
+    // The distinction, at the one place that knows it: `read_with` is what makes the
+    // call, so it is what can tell "asked and could not answer" from "never asked".
+    // Anywhere further out both look identical, which is how a round trip somebody sat
+    // through came to be reported as nothing having happened.
+    use crate::ai::plan::{read_with, Reading};
+    use platform::transport::ScriptedTransport;
+    let client = |reply: &str| {
+        let turns = vec![crate::ai::provider::text_sse(reply, 5, 5)];
+        crate::ai::Client::new(planner_model(), ScriptedTransport::new(turns))
+    };
+
+    let read = read_with(&client(r#"{"when":{"kind":"every","every_seconds":900},"task":"check the logs","says":"every 15 minutes — check the logs"}"#), "check the logs", 0);
+    assert!(matches!(read, Reading::Read(_)), "{read:?}");
+
+    // Asked, and what came back was not a plan. Every one of these cost a round trip.
+    for reply in ["I'm afraid I can't help with that", "", "{}", "{\"when\":{\"kind\":\"every\",\"every_seconds\":5}}"] {
+        assert_eq!(read_with(&client(reply), "check the logs", 0), Reading::Unread, "{reply:?}");
+    }
+}
+
+/// A keyed model for the planner tests — no network, the transport is scripted.
+fn planner_model() -> crate::ai::AiSettings {
+    std::env::set_var("TT_TEST_PLANNER_KEY", "k");
+    let mut primary = crate::ai::provider::builtin_default().resolve("claude-opus-4-8");
+    primary.api_key_env = "TT_TEST_PLANNER_KEY".into();
+    crate::ai::AiSettings { pool: crate::ai::ModelPool::single(primary) }
+}
+
+#[test]
+fn a_rewrite_is_worth_a_line_and_an_echo_is_not() {
+    use crate::cli::jobs::create::rewritten;
+    // The planner does not only pick a schedule — it strips the timing words, and may
+    // turn a sentence into a shell command. For an immediate job none of that was ever
+    // shown. But echoing somebody's own sentence back at them is noise, and noise is what
+    // stops the useful line being read.
+    assert!(!rewritten("check the logs", "now — check the logs"), "an echo says nothing");
+    assert!(!rewritten("Check the logs!", "now — check the logs"), "case and punctuation are not a rewrite");
+
+    // A schedule was understood: that is the whole point of asking.
+    assert!(rewritten("check the logs at midnight", "every day at 00:00 — check the logs"));
+    // The task itself was rewritten.
+    assert!(rewritten("check the logs", "now — tail -n 200 /var/log/system.log"));
+    // Timing words stripped out of the task, with no schedule found — still a change to
+    // what the job IS, and still worth showing.
+    assert!(rewritten("tomorrow, check the logs", "now — check the logs"));
 }

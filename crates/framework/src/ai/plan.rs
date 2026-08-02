@@ -48,27 +48,52 @@ fn system_prompt(now_local: &str, offset_hours: f64) -> String {
     )
 }
 
-/// Ask the model to read `request`. `None` when there is no model configured, the call
-/// fails, or the reply isn't a plan — every one of which means the caller falls back to the
-/// deterministic parser, so `@job` keeps working with AI switched off entirely.
-pub(crate) fn read_request(request: &str, now: u64) -> Option<Plan> {
+/// What came of asking the model to read a request.
+///
+/// Three answers, not two. This used to be an `Option<Plan>`, where `None` meant both
+/// "no model is configured" — instant, and nothing was ever promised — and "it was asked
+/// and could not answer", which is a model round trip somebody sat through for nothing.
+/// The caller falls back to the word parser either way, but only one of them is worth
+/// saying out loud, and with one value it could not tell which had happened.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Reading {
+    /// Nothing was asked: no model, or nothing to read.
+    Unasked,
+    /// It was asked, and what came back was not a plan.
+    Unread,
+    Read(Plan),
+}
+
+/// Ask the model to read `request`.
+///
+/// Blocking, and the only step in creating a job that takes longer than a millisecond —
+/// so the caller runs it under [`waiting_on`](crate::cli::observe::waiting_on) rather than
+/// leaving the terminal dead until it returns.
+pub(crate) fn read_request(request: &str, now: u64) -> Reading {
     if request.trim().is_empty() {
-        return None;
+        return Reading::Unasked;
     }
     let cfg = crate::config::Config::load();
     let settings = cfg.ai_settings();
-    settings.resolve_key()?;
+    if settings.resolve_key().is_none() {
+        return Reading::Unasked;
+    }
     let client = crate::ai::Client::new(settings, crate::ai::CurlTransport::default());
     read_with(&client, request, now)
 }
 
-/// The planner against a given client — the seam scenarios drive with a scripted transport,
-/// so the request travels the real wire format and comes back through the real decoder.
+/// The planner against a given client — the seam tests and scenarios drive with a scripted
+/// transport, so the request travels the real wire format and comes back through the real
+/// decoder.
+///
+/// It returns [`Reading::Unread`] rather than nothing when the call fails or the reply is
+/// not a plan: **this** is the function that knows a call was made, and a caller told only
+/// "no plan" cannot tell that from having asked nobody.
 pub(crate) fn read_with<T: platform::transport::Transport>(
     client: &crate::ai::Client<T>,
     request: &str,
     now: u64,
-) -> Option<Plan> {
+) -> Reading {
     let offset = platform::os::utc_offset_secs();
     let stamp = corelib::datetime::format(now as i64, "%Y-%m-%d %H:%M", offset);
     let model = client.model().clone();
@@ -85,8 +110,11 @@ pub(crate) fn read_with<T: platform::transport::Transport>(
         // One question, asked once — there is no later turn to reuse anything.
         cache: crate::ai::CacheHints::none(),
     };
-    let reply = client.complete(&req).ok()?;
-    decode(&reply, request, now)
+    let Ok(reply) = client.complete(&req) else { return Reading::Unread };
+    match decode(&reply, request, now) {
+        Some(plan) => Reading::Read(plan),
+        None => Reading::Unread,
+    }
 }
 
 /// Decode the model's reply into a plan. Strict: the object must be readable and its

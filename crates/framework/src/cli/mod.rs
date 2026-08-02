@@ -49,7 +49,7 @@ pub(crate) use crate::cli::style::{accent, bold, danger, md_style, muted, reset,
 #[cfg(test)]
 pub(crate) use crate::cli::{
     agentloop::{drive_loop_for_test, scripted_verdict, LoopState},
-    jobs::{args::{parse_job_args, JobCmd}, create::resolve_spec, shell::guard_refusal},
+    jobs::{args::{parse_job_args, JobCmd}, create::{resolve_spec, Resolved}, shell::guard_refusal},
     run::{command_marker, error_comment, ANSWER_MARK},
 };
 

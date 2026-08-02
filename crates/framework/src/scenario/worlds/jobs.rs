@@ -33,6 +33,9 @@ pub struct JobsWorld {
     sleeper_alive: bool,
     /// The id of the last job this scenario created — every assertion reads it.
     last: Option<String>,
+    /// How the last request came to be read. A scenario asserts this because it is what
+    /// decides whether somebody who waited for a model call is told anything about it.
+    reading: Option<ai::plan::Reading>,
     /// What the last non-creating action produced (`cancel`, `clear`, a guard check).
     outcome: String,
 }
@@ -61,6 +64,7 @@ pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
         policy,
         sleeper_alive: false,
         last: None,
+        reading: None,
         outcome: String::new(),
     }))
 }
@@ -75,6 +79,14 @@ impl World for JobsWorld {
         if world::flag(step, "no_model") == Some(true) {
             self.model_says = None;
             return Ok(());
+        }
+        if let Some(want) = world::text(step, "expect_reading") {
+            let got = match self.reading.as_ref().ok_or("no job has been created yet")? {
+                ai::plan::Reading::Unasked => "unasked",
+                ai::plan::Reading::Unread => "unread",
+                ai::plan::Reading::Read(_) => "read",
+            };
+            return world::expect_eq(got, &want, "how the request was read");
         }
         // ── time ───────────────────────────────────────────────────────────────
         if let Some(secs) = world::int(step, "advance") {
@@ -192,12 +204,15 @@ impl JobsWorld {
         };
         let script = self.model_says.clone();
         let planner = move |request: &str, now: u64| {
-            let reply = script.clone()?;
+            // No script is a machine with no model: nothing was asked, so nothing is owed.
+            let Some(reply) = script.clone() else { return ai::plan::Reading::Unasked };
             let turns = vec![ai::provider::text_sse(&reply, 10, 5)];
             let client = Client::new(planner_settings(), ScriptedTransport::new(turns));
             ai::plan::read_with(&client, request, now)
         };
-        let (schedule, task, says) = crate::cli::resolve_spec(&spec, self.now, &planner);
+        let resolved = crate::cli::resolve_spec(&spec, self.now, &planner);
+        self.reading = Some(resolved.reading.clone());
+        let crate::cli::Resolved { schedule, task, says, .. } = resolved;
         let next_at = schedule.as_ref().and_then(|s| s.next_after(self.now));
         let id = format!("{}-{}", self.now, jobs::list().len());
         let record = Job {

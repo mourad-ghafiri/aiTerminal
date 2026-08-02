@@ -739,3 +739,77 @@ fn the_tool_contract_the_model_is_given_matches_the_loop_that_reads_it() {
     // earlier call's result gets a wrong answer, not an error.
     assert!(s.contains("depend"), "and the dependency caveat:\n{s}");
 }
+
+#[test]
+fn a_compacting_turn_has_its_spinner_up_before_it_folds_anything() {
+    // Compacting is itself a model call, and it used to be made in the gap AFTER the
+    // previous turn's spinner had stopped and BEFORE the next one started — so a run
+    // folding a large history sat on a dead terminal for the length of a summary.
+    //
+    // The host's turn marker is what says "this run is working", and folding its own
+    // history is work. So the rule is: every compaction happens inside a turn that has
+    // already been announced.
+    #[derive(Default)]
+    struct Order {
+        calls: Vec<&'static str>,
+    }
+    impl AgentObserver for Order {
+        fn on_turn_start(&mut self) {
+            self.calls.push("turn");
+        }
+        fn on_compact(&mut self, _r: &CompactionReport) {
+            self.calls.push("compact");
+        }
+        /// The turn's own tokens — what says the announced turn is the one now running.
+        /// Without this the order is unfalsifiable: a compaction on turn five has a
+        /// `turn` before it either way, because turns one to four each emitted one.
+        fn on_delta(&mut self, _t: &str) {
+            if self.calls.last() != Some(&"delta") {
+                self.calls.push("delta");
+            }
+        }
+    }
+
+    let scratch = std::env::temp_dir().join(format!("aiterm-agent-order-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    // Results big enough for the ladder's offload rung to want them (over its 2KB floor)
+    // and small enough that the loop keeps them inline on arrival (under its 8KB one) —
+    // so the transcript really does grow towards the window over several turns, which is
+    // the only way to reach a compaction.
+    struct Chatty;
+    impl ToolRunner for Chatty {
+        fn run(&mut self, _n: &str, _a: &str) -> Result<String, String> {
+            Ok("a line of output that says something about the project\n".repeat(60))
+        }
+    }
+    // Distinct args each turn, so the stuck-loop breaker never fires and the run gets far
+    // enough to need folding.
+    let mut turns: Vec<String> = (0..6).map(|i| text_sse(&format!("@tool sys.run {{\"cmd\":\"step-{i}\"}}"), 1, 1)).collect();
+    turns.push(text_sse("a summary of the work so far", 1, 1));
+    turns.push(text_sse("done.", 1, 1));
+    let client = Client::new(keyed_settings(), ScriptedTransport::new(turns));
+    let agent = AgentSpec {
+        system: String::new(),
+        tools: vec![ToolSpec { name: "sys.run".into(), describe: "x".into() }],
+        max_steps: 8,
+        context_window: 8_192,
+        compact_at: 0.5,
+        scratch: scratch.clone(),
+    };
+    let mut obs = Order::default();
+    let _ = run_agent(&client, &agent, "go", "", &mut Chatty, &mut obs);
+
+    assert!(obs.calls.contains(&"compact"), "the run compacted: {:?}", obs.calls);
+    // A compaction sits INSIDE the turn that was just announced:
+    //
+    //   right   … turn, compact, delta …     the turn is up, then it folds, then it talks
+    //   wrong   … turn, delta, compact, turn …   it folds between two turns, in the dark
+    //
+    // Stated as "a compaction is never immediately followed by the start of a turn",
+    // which is the one thing that differs — a compaction on turn five has SOME `turn`
+    // before it either way, because turns one to four each emitted one.
+    for pair in obs.calls.windows(2) {
+        assert_ne!(pair, ["compact", "turn"], "compacted between two turns, with nothing on screen: {:?}", obs.calls);
+    }
+    let _ = std::fs::remove_dir_all(&scratch);
+}

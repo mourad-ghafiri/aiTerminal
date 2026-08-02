@@ -296,7 +296,9 @@ fn build_for_goal(
     let (dim, r) = (muted(), reset());
     eprintln!("{dim}\u{25c8} {}{r}", crate::i18n::translate("flow.building", &[]));
     let world = crate::cli::flow::world();
-    let built = crate::flow::build::build_with(&client, goal, &agents, &|f| crate::flow::verify::verify(f, &world))?;
+    let built = crate::cli::observe::waiting_on(crate::cli::observe::BUILDING_GRAPH, || {
+        crate::flow::build::build_with(&client, goal, &agents, &|f| crate::flow::verify::verify(f, &world))
+    })?;
     crate::flowruns::write_graph(run_id, &built.toml);
     let name = built.flow.name.clone();
     // How many rounds it took is said out loud when it took more than one. A graph the

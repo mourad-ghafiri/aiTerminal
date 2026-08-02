@@ -28,3 +28,6 @@ expect_says = "every day at 00:00 — check the logs"
 
 [[step]]
 expect_kind = "agent"
+
+[[step]]
+expect_reading = "read"

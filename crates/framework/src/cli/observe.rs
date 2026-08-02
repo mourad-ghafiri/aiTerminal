@@ -7,6 +7,15 @@ pub(crate) use view::{Chrome, RunView, SharedView};
 /// showing three different words for the same state is three things to learn.
 pub(crate) const WAIT: &str = "thinking\u{2026}";
 
+/// What the one-shot calls say while they are waited on.
+///
+/// Not "thinking": these happen before a run exists, and *why* you are waiting is the
+/// useful part. "Reading when to run this" tells you a schedule is being worked out —
+/// which is exactly the question you cannot answer from a spinner alone.
+pub(crate) const READING_REQUEST: &str = "reading when to run this\u{2026}";
+pub(crate) const CHOOSING_CHECK: &str = "working out how to check this\u{2026}";
+pub(crate) const BUILDING_GRAPH: &str = "building a graph for this\u{2026}";
+
 /// What the waiting line says, asked once a frame.
 ///
 /// A Strategy, so the spinner stays a spinner: it knows how to animate one line and how
@@ -49,7 +58,16 @@ impl Waiting for SharedWaiting {
     }
 }
 
-/// A braille spinner on stderr while waiting for the model's first token.
+/// How long the spinner holds its first frame.
+///
+/// Below the threshold where a wait starts to read as a stall, and long enough that work
+/// which finishes at once draws nothing at all. That second half is what lets a caller
+/// wrap a call **unconditionally** — `@job -- echo hi` never consults a model and would
+/// otherwise flash a spinner for two milliseconds, and asking every caller to predict
+/// whether its own work will be slow is how that prediction ends up wrong.
+const GRACE: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// A braille spinner on stderr while something is being waited on.
 /// TTY-only (a piped/background run gets nothing); `stop()` clears its line.
 pub(crate) struct Spinner {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -67,18 +85,31 @@ impl Spinner {
         let dim = muted();
         let handle = std::thread::spawn(move || {
             const FRAMES: [char; 10] = ['\u{280b}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283c}', '\u{2834}', '\u{2826}', '\u{2827}', '\u{2807}', '\u{280f}'];
+            const TICK: std::time::Duration = std::time::Duration::from_millis(80);
             let started = std::time::Instant::now();
             let mut i = 0usize;
+            let mut drew = false;
             while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                let waited = started.elapsed();
+                if waited < GRACE {
+                    std::thread::sleep(TICK.min(GRACE - waited));
+                    continue;
+                }
                 // Clipped to the window. This line is erased with a bare `\r`, so one
                 // that wraps becomes two rows and only the second is ever cleared —
                 // which would leave a trail of half-lines down the terminal.
-                let text = crate::cli::live::clip_to(&label.label(started.elapsed()), crate::cli::term_cols().saturating_sub(3));
+                let text = crate::cli::live::clip_to(&label.label(waited), crate::cli::term_cols().saturating_sub(3));
                 eprint!("\r{dim}{} {text}\x1b[0m\x1b[K", FRAMES[i % FRAMES.len()]);
+                drew = true;
                 i += 1;
-                std::thread::sleep(std::time::Duration::from_millis(80));
+                std::thread::sleep(TICK);
             }
-            eprint!("\r\x1b[K");
+            // Only clear a line something was actually put on. A spinner that never got
+            // past the grace has written nothing, and clearing on its way out would wipe
+            // whatever the caller printed first.
+            if drew {
+                eprint!("\r\x1b[K");
+            }
         });
         Spinner { stop, handle: Some(handle) }
     }
@@ -89,6 +120,23 @@ impl Spinner {
             let _ = h.join();
         }
     }
+}
+
+/// Run `work` with a spinner saying what it is for.
+///
+/// **Every model call a person is waiting on goes through this.** They are the only thing
+/// in this product that takes seconds while nothing moves, and there were four of them —
+/// the job planner, the loop's verifier proposal, the flow builder and a mid-run
+/// compaction — each made from a different place with nothing on screen. One seam, so a
+/// fifth cannot be added silently.
+///
+/// A long wait gets the `[motivation]` aside for free, which is the wait that feature was
+/// built for; a short one draws nothing at all (see [`GRACE`]).
+pub(crate) fn waiting_on<T>(what: &str, work: impl FnOnce() -> T) -> T {
+    let mut spinner = Spinner::start(Motivated::label(what, &crate::config::Config::load()));
+    let out = work();
+    spinner.stop();
+    out
 }
 
 impl Drop for Spinner {

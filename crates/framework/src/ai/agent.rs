@@ -385,6 +385,11 @@ pub fn run_agent<T: Transport>(
         if client.is_cancelled() {
             return finish("_(stopped)_".into(), steps, usage, RunOutcome::Cancelled, model_used);
         }
+        // The turn begins HERE, before the compaction check — because compacting is
+        // itself a model call, and one made in the gap between two turns is a call with
+        // no spinner running and nothing on screen. The host's turn marker is what says
+        // "this run is working", and folding its own history is work.
+        observer.on_turn_start();
         // Compact BEFORE spending a turn, never after: the point is to send a prompt
         // the model can accept, and a check that runs afterwards has already lost the
         // turn it was meant to save.
@@ -400,7 +405,6 @@ pub fn run_agent<T: Transport>(
                 observer.on_compact(&report);
             }
         }
-        observer.on_turn_start();
         // Stream the turn's tokens to the observer as they arrive (answer vs. reasoning);
         // the borrow is released (`drop`) before we call any other observer method below.
         let mut on_part = |thinking: bool, s: &str| {
