@@ -68,6 +68,19 @@ agents (8):
       </div>
 
       <div class="uc">
+        <h3><span class="em">🧩</span>Describe it. Get a workflow.</h3>
+        <p>You do not have to already have the right flow. Name none and <b>one is written for the goal</b> — out of the agents you actually have — then checked before it spends a token. It lives in the run's own record, so you can read exactly what was made for you, and <code>@flow</code> still lists only the five you meant to have.</p>
+        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> explain how the export command works</span>
+<span class="d">◈ no flow named — building a graph for this goal</span>
+<span class="d">◈ built a 3-node graph: read the code, then explain it · @flow show 1785371201-90257</span>
+<span class="a">▸ explain-how-the-export · explain how the export command works</span>
+  <span class="g">╭────────────────────╮</span>    <span class="d">╭────────────────────╮</span>    <span class="d">╭────────────────────╮</span>
+  <span class="g">│ ⠻ read             │</span>    <span class="d">│ ○ draft            │</span>    <span class="d">│ ○ explain          │</span>
+  <span class="g">│ @explorer          │</span><span class="d">───▸│ @writer            │───▸│ @writer            │</span>
+  <span class="g">╰────────────────────╯</span>    <span class="d">╰────────────────────╯</span>    <span class="d">╰────────────────────╯</span></pre>
+      </div>
+
+      <div class="uc">
         <h3><span class="em">🚢</span>Ship a small feature, end to end</h3>
         <p>The <code>build</code> graph plans it, maps the code <em>and</em> your conventions in parallel, edits, runs <em>your</em> tests — and if they fail, loops back through a fixer up to three times before giving up.</p>
         <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> build "add a --json flag to the export command"</span>
@@ -608,6 +621,28 @@ Three tickets: API-231 (rate limits), API-238, INFRA-12.</pre>
     <span class="tag">06 · everyday superpowers</span>
     <h2>The thousand little wins</h2>
     <div class="uc-grid">
+
+      <div class="uc">
+        <h3><span class="em">⏳</span>Never wonder what it is doing</h3>
+        <p>A model call is the only thing here that takes seconds, and every one of them says what it is <em>for</em> rather than leaving a dead terminal. Work that finishes at once shows nothing at all — and while you wait, one dim line teaches you something.</p>
+        <pre><span class="p">❯</span> <span class="ab">@job</span><span class="c"> summarise yesterday's logs tomorrow at 9</span>
+<span class="d">⠹ reading when to run this…</span>
+<span class="a">⧖ every day at 09:00 — summarise yesterday's logs</span>
+<span class="d">  fires in 14h · it survives this terminal</span>
+
+<span class="d">⠹ thinking…  ·  @flow retry &lt;node&gt; re-runs it and everything built on it</span></pre>
+      </div>
+
+      <div class="uc">
+        <h3><span class="em">🩺</span>When it breaks, it says so</h3>
+        <p>A run that hits its step budget still hands back what it found. A node that fails shows <em>why</em> on its card, everything behind it reads <code>⊘ blocked</code>, and the tally counts every state — so a finished run never looks like one still going.</p>
+        <pre>  <span class="e">╭────────────────────╮</span>    <span class="d">╭────────────────────╮</span>
+  <span class="e">│ ✗ read             │</span>    <span class="w">│ ⊘ draft            │</span>
+  <span class="e">│ @explorer          │</span><span class="d">───▸</span><span class="w">│ @writer            │</span>
+  <span class="e">│ ran out of steps   │</span>    <span class="w">│ read failed        │</span>
+  <span class="e">╰────────────────────╯</span>    <span class="w">╰────────────────────╯</span>
+  <span class="d">0/3 done · </span><span class="e">1 failed</span><span class="d"> · </span><span class="w">2 blocked</span></pre>
+      </div>
 
       <div class="uc">
         <h3><span class="em">🏝</span>Work / personal / ops identities</h3>

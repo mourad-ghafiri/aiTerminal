@@ -4,18 +4,24 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>aiTerminal — the film</title>
-<meta name="description" content="A 105-second film: aiTerminal, the fast, light, AI-first terminal written from scratch in Rust. @ai at your prompt, agents that finish the job, your terminal on your phone, and a guard that has the last word.">
+<meta name="description" content="A 90-second film: aiTerminal, the fast, light, AI-first terminal written from scratch in Rust. @ai at your prompt, agents that finish the job, your terminal on your phone, and a guard that has the last word.">
 <link rel="icon" type="image/png" href="assets/icon.png">
 <link rel="stylesheet" href="css/main.css">
 <style>
 /* ============================================================================
-   video.html — a 105-second self-playing product film, built from the site's own
+   video.html — a 90-second self-playing product film, built from the site's own
    replica engine and the same scene builders the showcase uses (js/scenes.js).
    Press play, screen-record the browser, done.
 
-   It is a marketing film, so it is shaped like one: hook → thesis → proof by
-   demonstration → the receipts → one call to action. Every terminal beat is
-   the real behavior, because it runs the real replica — nothing here is a
+   It is a MARKETING film, and that decides everything about it. Ninety seconds
+   buys about thirteen beats, so each one gets one idea, one headline you can
+   read at a glance, and one thing to watch. What it does not get is detail:
+   no byte counts, no millisecond timings, no JSON arguments, no exit codes, no
+   flags. Those are what the docs are for, and on screen they read as noise —
+   the viewer is deciding whether they want this, not learning to drive it.
+
+   Every terminal beat is still the REAL behaviour, because it runs the real
+   replica against output copied from the shipped binary — nothing here is a
    picture of a feature that does not exist.
 
    The film is always dark (`data-theme="dark"` above, and no theme-mode.js):
@@ -154,14 +160,18 @@ body { background: var(--paper); }
 /* wide enough that the phone can stand beside the window without shrinking it
    below a readable pane — the film's stage is 16:9, so the room exists */
 .vterm { width: min(1120px, 95vw); text-align: left; }
-.vcap { min-height: 118px; margin-bottom: 18px; }
-.vcap .tag { display: block; margin-bottom: 8px; }
+/* A marketing caption, not a paragraph of documentation. It is on screen for about
+   five seconds, which is time to read one line — so the headline is large enough to
+   take in at a glance and the sub-line is a single short clause or nothing at all.
+   The height is fixed so the window beneath it never shifts between beats. */
+.vcap { min-height: 96px; margin-bottom: 16px; }
+.vcap .tag { display: block; margin-bottom: 7px; }
 .vcap h2 {
-  font-family: var(--serif); font-size: clamp(24px, 3vw, 34px);
-  font-weight: 600; letter-spacing: -0.015em; line-height: 1.15;
+  font-family: var(--serif); font-size: clamp(30px, 4vw, 46px);
+  font-weight: 600; letter-spacing: -0.02em; line-height: 1.08;
 }
 .vcap h2 em { font-style: italic; color: var(--accent-soft); }
-.vcap p { color: var(--ink-soft); font-size: 15px; margin-top: 6px; max-width: 760px; }
+.vcap p { color: var(--ink-soft); font-size: 16px; margin-top: 8px; max-width: 720px; }
 .vcap p code { font-size: .87em; }
 .vcap.swap .tag, .vcap.swap h2, .vcap.swap p { animation: vcap-in .32s cubic-bezier(.2,.7,.2,1) both; }
 .vcap.swap h2 { animation-delay: .04s; }
@@ -172,29 +182,6 @@ body { background: var(--paper); }
    yields the width (main.css already flexes .stage-rig for the showcase) */
 .vterm .stage-rig { align-items: center; }
 .vterm .stage-phone { transition: opacity .4s ease; }
-
-/* ---------------- the 31-plugin grid ---------------- */
-#scene-plugins h2 {
-  font-family: var(--serif); font-size: clamp(28px, 3.6vw, 42px);
-  font-weight: 600; letter-spacing: -0.015em;
-}
-#scene-plugins .lead { color: var(--ink-soft); font-size: 15px; margin-top: 8px; }
-.vpgrid {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px 12px; width: min(1160px, 95vw); margin-top: 26px; text-align: left;
-}
-.pg {
-  display: flex; gap: 9px; align-items: center;
-  background: var(--surface); border: 1px solid var(--hair);
-  border-left-width: 3px; border-radius: 9px; padding: 7px 11px;
-}
-.pg.gs { border-left-color: #38BDF8; }
-.pg.gd { border-left-color: #4ADE80; }
-.pg.gu { border-left-color: #FF9F0A; }
-.pg.ga { border-left-color: #BF5AF2; }
-.pg span { font-size: 16px; flex: none; width: 22px; text-align: center; }
-.pg b { display: block; font: 700 12px var(--mono); color: var(--ink); }
-.pg i { font-style: normal; display: block; color: var(--muted); font-size: 11px; line-height: 1.35; }
 
 /* ---------------- the receipts ---------------- */
 #scene-proof .lead { color: var(--ink-soft); font-size: 16px; margin-top: 14px; max-width: 820px; }
@@ -280,7 +267,7 @@ body { background: var(--paper); }
       The AI lives at your prompt, behind a guard <b>you</b> control.</p>
     <div class="vfacts">
       <span class="rise" style="--d:1.7s"><b>0</b>external crates</span>
-      <span class="rise" style="--d:1.85s"><b>854</b>unit tests</span>
+      <span class="rise" style="--d:1.85s"><b>1386</b>unit tests</span>
       <span class="rise" style="--d:2.0s"><b>31</b>builtin plugins</span>
       <span class="rise" style="--d:2.15s"><b>19</b>live themes</span>
     </div>
@@ -306,7 +293,7 @@ body { background: var(--paper); }
     </div>
   </section>
 
-  <!-- 03 · the terminal — one window, twelve chapters (+ a phone for @gate) -->
+  <!-- 03 · the terminal — one window, thirteen beats (+ a phone for @gate) -->
   <section class="vcard" id="scene-term">
     <div class="vterm">
       <div class="vcap" id="vcap">
@@ -322,46 +309,6 @@ body { background: var(--paper); }
   </section>
 
   <!-- 04 · all 31 plugins, with a one-line use case each -->
-  <section class="vcard" id="scene-plugins">
-    <span class="tag accent rise" style="--d:.02s">batteries included</span>
-    <h2 class="rise" style="--d:.08s">One terminal. <em>31 builtin plugins.</em></h2>
-    <p class="lead rise" style="--d:.16s">Each one is a <code>plugin.toml</code> — pure data, zero code,
-      nothing slows your prompt. Disable any with <code>@plugin disable &lt;name&gt;</code>.</p>
-    <div class="vpgrid">
-      <div class="pg gs rise" style="--d:0.30s"><span>🎨</span><div><b>syntax-highlight</b><i>commands colorize as you type</i></div></div>
-      <div class="pg gs rise" style="--d:0.34s"><span>👻</span><div><b>autosuggest</b><i>ghost text from your history</i></div></div>
-      <div class="pg gs rise" style="--d:0.39s"><span>🧠</span><div><b>history</b><i>smart, shared, searchable</i></div></div>
-      <div class="pg gs rise" style="--d:0.43s"><span>⌨️</span><div><b>completion</b><i>rich tab completion</i></div></div>
-      <div class="pg gs rise" style="--d:0.48s"><span>✂️</span><div><b>lineedit</b><i>native ⌘/⌥ editing &amp; selection</i></div></div>
-      <div class="pg gs rise" style="--d:0.52s"><span>💡</span><div><b>alias-hints</b><i>reminds you of your own aliases</i></div></div>
-      <div class="pg gs rise" style="--d:0.57s"><span>🚀</span><div><b>prompt</b><i>git-aware, instant</i></div></div>
-      <div class="pg gs rise" style="--d:0.61s"><span>🔼</span><div><b>sudo</b><i>Esc Esc prepends sudo</i></div></div>
-      <div class="pg gs rise" style="--d:0.66s"><span>📁</span><div><b>dir</b><i>smarter cd &amp; listings</i></div></div>
-      <div class="pg gs rise" style="--d:0.71s"><span>🧭</span><div><b>jump</b><i>hop to frecent directories</i></div></div>
-      <div class="pg gs rise" style="--d:0.75s"><span>🌍</span><div><b>term-cwd</b><i>the window follows your cwd</i></div></div>
-      <div class="pg gd rise" style="--d:0.80s"><span>⎇</span><div><b>git</b><i>100+ battle-tested aliases</i></div></div>
-      <div class="pg gd rise" style="--d:0.84s"><span>🐙</span><div><b>github</b><i>gh shortcuts at hand</i></div></div>
-      <div class="pg gd rise" style="--d:0.89s"><span>🐳</span><div><b>docker</b><i>container one-liners</i></div></div>
-      <div class="pg gd rise" style="--d:0.93s"><span>☸️</span><div><b>kubernetes</b><i>kubectl, shortened</i></div></div>
-      <div class="pg gd rise" style="--d:0.98s"><span>🦀</span><div><b>rust</b><i>cargo helpers</i></div></div>
-      <div class="pg gd rise" style="--d:1.02s"><span>🐍</span><div><b>python</b><i>venv &amp; pip helpers</i></div></div>
-      <div class="pg gd rise" style="--d:1.07s"><span>📦</span><div><b>node</b><i>npm / yarn / pnpm helpers</i></div></div>
-      <div class="pg gu rise" style="--d:1.11s"><span>🗜</span><div><b>extract</b><i>x — any archive, no flags</i></div></div>
-      <div class="pg gu rise" style="--d:1.16s"><span>📋</span><div><b>clipboard</b><i>pipe anything to the clipboard</i></div></div>
-      <div class="pg gu rise" style="--d:1.20s"><span>🔐</span><div><b>encode</b><i>base64 / url / hex tools</i></div></div>
-      <div class="pg gu rise" style="--d:1.24s"><span>🔎</span><div><b>web-search</b><i>search the web from the prompt</i></div></div>
-      <div class="pg gu rise" style="--d:1.29s"><span>🌦</span><div><b>weather</b><i>forecast in a command</i></div></div>
-      <div class="pg gu rise" style="--d:1.33s"><span>🕰</span><div><b>world-clock</b><i>timezones at a glance</i></div></div>
-      <div class="pg gu rise" style="--d:1.38s"><span>📝</span><div><b>notes</b><i>quick notes, anywhere</i></div></div>
-      <div class="pg gu rise" style="--d:1.42s"><span>📟</span><div><b>sysinfo</b><i>live system stats</i></div></div>
-      <div class="pg gu rise" style="--d:1.47s"><span>📖</span><div><b>colored-man</b><i>man pages you can read</i></div></div>
-      <div class="pg gu rise" style="--d:1.51s"><span>🧰</span><div><b>common</b><i>everyday one-liners</i></div></div>
-      <div class="pg ga rise" style="--d:1.56s"><span>✦</span><div><b>ai-terminal</b><i>the whole @-command family</i></div></div>
-      <div class="pg ga rise" style="--d:1.60s"><span>🛡</span><div><b>command-guard</b><i>allow · confirm · deny</i></div></div>
-      <div class="pg ga rise" style="--d:1.65s"><span>🕶</span><div><b>redactor</b><i>secrets never leave</i></div></div>
-    </div>
-  </section>
-
   <!-- 05 · the receipts -->
   <section class="vcard" id="scene-proof">
     <span class="tag accent rise" style="--d:.02s">the receipts</span>
@@ -370,9 +317,9 @@ body { background: var(--paper); }
       regex engine, the BM25 ranker, the HTTP transport — all written for this terminal.
       A CI gate fails the build if a single crate ever sneaks in.</p>
     <div class="vproof">
-      <div class="vp rise" style="--d:.40s"><b>0</b><i>external crates</i><p>std only, checked on every build</p></div>
-      <div class="vp rise" style="--d:.50s"><b>854</b><i>unit tests</i><p>plus 173 end-to-end scenarios</p></div>
-      <div class="vp rise" style="--d:.60s"><b>&lt;1s</b><i>cold start</i><p>no Electron, no web view</p></div>
+      <div class="vp rise" style="--d:.40s"><b>0</b><i>external crates</i><p>std only, and a CI gate that proves it</p></div>
+      <div class="vp rise" style="--d:.50s"><b>1386</b><i>unit tests</i><p>plus 280 end-to-end scenarios</p></div>
+      <div class="vp rise" style="--d:.60s"><b>31</b><i>builtin plugins</i><p>pure data — nothing compiles</p></div>
       <div class="vp rise" style="--d:.70s"><b>MIT</b><i>free &amp; open source</i><p>bring any provider — or none</p></div>
     </div>
     <div class="vtrust">
@@ -412,7 +359,7 @@ body { background: var(--paper); }
 <div id="voverlay">
   <img src="assets/icon.png" alt="aiTerminal">
   <h1>aiTerminal — the film</h1>
-  <p>Start your screen recording first, then press play. ≈ 1 min 45 s · best at 1920 × 1080.</p>
+  <p>Start your screen recording first, then press play. <b>90 seconds</b> · best at 1920 × 1080.</p>
   <div class="row">
     <button class="btn dark" id="vplay">▶&nbsp; Play</button>
     <button class="btn" id="vplayfs">⛶&nbsp; Play fullscreen</button>
@@ -424,26 +371,35 @@ body { background: var(--paper); }
 <script src="js/scenes.js"></script>
 <script>
 /* ============================================================================
-   The timeline. One replica window, twelve chapters, a phone that joins for
+   The timeline. One replica window, thirteen beats, a phone that joins for
    @gate — driven by the exact primitives the site's showcase uses, so the film
    and the site can never drift apart.
 
    Order is deliberate, and it is a sales order, not a feature order:
-     ask → delegate → verify → detach → read → LEAVE YOUR DESK → guard →
-     redact → make it yours → it's a real terminal.
-   The two biggest "wait, it does that?" moments (@gate, and the guard blocking
-   the AI) sit in the middle and at the turn, where attention dips.
+     ask → delegate → IT WRITES THE WORKFLOW → parallel → it tells you what
+     broke → verify → detach → LEAVE YOUR DESK → guard → redact → read →
+     make it yours → it's a real terminal.
+
+   The three "wait, it does that?" moments are placed where attention dips: a
+   graph written for you (beat 3), your terminal answering from your phone
+   (beat 8, and it gets the longest hold in the film), and the guard refusing
+   the AI (beat 9). The beat after the first wow is the trust beat — a run
+   saying exactly what broke — because the question a good demo raises is
+   "and when it goes wrong?".
+
+   The budget is spent, not guessed: `RUNTIME` below is the sum of every wait
+   in the timeline, and it is 90.0s. Change a `pause` and it must be re-summed.
    ========================================================================== */
 (() => {
   const $ = (id) => document.getElementById(id);
   const scenes = {
     intro: $("scene-intro"), thesis: $("scene-thesis"), term: $("scene-term"),
-    plugins: $("scene-plugins"), proof: $("scene-proof"), outro: $("scene-outro"),
+    proof: $("scene-proof"), outro: $("scene-outro"),
   };
 
   /* keep in sync with the overlay copy — the progress bar is the only thing
      that has to know the running time up front */
-  const RUNTIME = 105;
+  const RUNTIME = 90;
 
   function show(name) {
     Object.entries(scenes).forEach(([k, s]) => s.classList.toggle("on", k === name));
@@ -463,22 +419,16 @@ body { background: var(--paper); }
   const phoneHost = $("vphone");
   const hidePhone = () => { phoneHost.hidden = true; phoneHost.innerHTML = ""; };
 
-  /* the showcase's step runner, minus the epoch machinery (one straight run) */
+  /* The step runner — the showcase's, minus the epoch machinery (one straight run).
+     Five kinds, and that is the point: a marketing cut has no `tool` step because a
+     tool trace with byte counts and JSON arguments is exactly the detail this film
+     does not show. If a beat ever needs one back, take it from js/showcase.js. */
   async function run(w, steps) {
     for (const st of steps) {
       switch (st.do) {
         case "cmd": await typeCmd(w, st.text, st); break;
         case "out": w.line(st.spans, st.paneIdx); await sleep(st.ms || 120); break;
-        case "stream": await streamLine(w, st.spans, st); break;
-        case "think":
-          await streamLine(w, [DIM(st.text)], { paneIdx: st.paneIdx, speed: 7, prefix: [DIM("∴ ")] });
-          break;
-        case "tool":
-          w.line([DIM(`  ⚙ ${st.name} ${st.args} · ${st.ms}ms · ${st.size}`)], st.paneIdx);
-          await sleep(st.wait || 260);
-          break;
         case "spin": await spinner(w, st.label || "thinking…", st.ms || 800, st); break;
-        case "footer": w.line([S("t-success", st.glyph || "✓"), DIM(" " + st.text)], st.paneIdx); break;
         case "pause": await sleep(st.ms); break;
         case "call": await st.fn(w); break;
       }
@@ -486,124 +436,178 @@ body { background: var(--paper); }
   }
 
   async function film() {
-    /* ---- the hook ---- */
+    /* ---- 0:00 · the hook (5.0s) ---- */
     show("intro");
     $("vwm").classList.add("on");
-    await sleep(6200);
+    await sleep(5600);
 
-    /* ---- the thesis ---- */
+    /* ---- 0:05 · the thesis (4.5s) ---- */
     show("thesis");
-    await sleep(4800);
+    await sleep(5000);
 
-    /* ---- the window rises ---- */
+    /* ---- 0:10.6 · the window rises, and holds the next 66 seconds ---- */
     const w = makeWindow($("vwindow"), {
       tabs: [{ title: "Terminal [project][zsh]", active: true }],
     });
     w.visible = true; /* the film is always on screen */
     show("term");
-    await sleep(450);
+    await sleep(400);
 
-    /* ---- 01 · @ai — the everyday hook ---- */
-    chapter("01 · ask", "<code>@ai</code> — say it in English, <em>run it in your shell</em>",
-      "The command lands at your own prompt, ready to review. No tab switch, no copy-paste, no “which flag was it again?”.");
+    /* ---- 01 · say it, run it (5.0s) ---- */
+    chapter("@ai", "Say it. <em>Run it.</em>",
+      "English at your prompt. The command lands ready to review — you press Enter.");
     await run(w, [
-      { do: "cmd", text: "@ai list every port something is listening on", speed: 13 },
-      { do: "spin", label: "thinking…", ms: 950 },
-      { do: "out", spans: [ACC("❯ "), DIM("press Enter to run (or edit)")] },
+      { do: "cmd", text: "@ai which ports are listening", speed: 11 },
+      { do: "spin", label: "thinking…", ms: 700 },
       { do: "out", spans: [ACC("❯ "), ACC2("lsof -iTCP -sTCP:LISTEN -n -P"), S("t-cursor", "")] },
-      { do: "pause", ms: 2200 },
-    ]);
-
-    /* ---- 02 · @agent — eight specialists, one of them at a time ---- */
-    chapter("02 · agents", "<code>@agent</code> — eight <em>specialists</em>",
-      "Planner, explorer, researcher, coder, tester, reviewer, writer — and the assistant. <code>@agent</code> lists them, <code>@agent &lt;name&gt;</code> shows one in full, <code>@&lt;name&gt;</code> runs it. Each is an editable Markdown file, and each states what it returns, because a workflow chains on that text.");
-    await run(w, [
-      { do: "cmd", text: "@agent", speed: 14 },
-      { do: "out", spans: [FG("agents (8):")] },
-      { do: "out", spans: [FG("  planner    "), DIM(" 7 tools · 10 steps  Turns a goal into a plan with a done-when")] },
-      { do: "out", spans: [FG("  explorer   "), DIM(" 7 tools · 12 steps  Read-only scout — maps the code")] },
-      { do: "out", spans: [FG("  researcher "), DIM("12 tools · 16 steps  Finds sources and reads them")] },
-      { do: "out", spans: [FG("  coder      "), DIM("24 tools · 24 steps  The smallest correct edit, verified")] },
-      { do: "out", spans: [FG("  tester     "), DIM("13 tools · 18 steps  Runs the project's own tests")] },
-      { do: "out", spans: [FG("  reviewer   "), DIM(" 7 tools · 12 steps  Read-only review")] },
-      { do: "out", spans: [FG("  writer     "), DIM("10 tools · 14 steps  Docs and reports — and saves the file")] },
-      { do: "pause", ms: 1400 },
-      { do: "cmd", text: "@coder \"fix the failing parser test\"", speed: 12 },
-      { do: "out", spans: [ACC("✦ @coder"), MUT(" · claude-opus-4-8")] },
-      { do: "spin", label: "thinking…", ms: 850 },
-      { do: "think", text: "The test expects a trailing newline — the parser drops it on the last line…" },
-      { do: "tool", name: "fs.search", args: '{"q":"parse_line"}', ms: 18, size: "2.1KB", wait: 220 },
-      { do: "tool", name: "fs.edit", args: '{"path":"src/parser.rs"}', ms: 6, size: "412B", wait: 220 },
-      { do: "tool", name: "sys.run", args: '{"cmd":"cargo test parser"}', ms: 2100, size: "1.4KB", wait: 260 },
-      { do: "stream", spans: [FG("Fixed — the parser dropped the final line; added the flush in "), ACC2("parse_line()"), FG(".")], speed: 8 },
-      { do: "footer", text: "8.4s · 3 tools · 12.3k in / 1.8k out" },
-      { do: "pause", ms: 2000 },
-    ]);
-
-    /* ---- 03 · @flow — a graph, not a chain ---- */
-    chapter("03 · flows", "<code>@flow</code> — a <em>graph</em> of specialists",
-      "Nodes that need nothing from each other run at the same time. A `run` node is a plain command that costs no tokens, and a condition on the edge decides what happens next.");
-    await run(w, [
-      { do: "call", fn: async (t) => t.clear() },
-      { do: "cmd", text: "@flow review \"the changes on this branch\"", speed: 11 },
-      { do: "out", spans: [ACC("▸"), FG(" flow 'review' · 5 node(s) · 3 in parallel · 4 at a time")] },
-      { do: "spin", label: "map…", ms: 500 },
-      { do: "out", spans: [OK("✓"), DIM(" map · 1.2k in / 340 out")] },
-      { do: "out", spans: [ACC("▶"), DIM(" correctness · security · design — all three at once")] },
-      { do: "spin", label: "three reviewers…", ms: 700 },
-      { do: "out", spans: [OK("✓"), DIM(" security · 2.0k in / 310 out")] },
-      { do: "out", spans: [OK("✓"), DIM(" correctness · 2.2k in / 380 out")] },
-      { do: "out", spans: [OK("✓"), DIM(" design · 1.9k in / 290 out")] },
-      { do: "spin", label: "report…", ms: 450 },
-      { do: "stream", spans: [FG("Two must-fix: parser.rs:88 splits CRLF wrong; cache.rs:41 races the reader.")], speed: 8 },
-      { do: "pause", ms: 2000 },
-    ]);
-
-    /* ---- 04 · @loop — the trust move: the model never grades itself ---- */
-    chapter("04 · loops", "<code>@loop</code> — it stops when <em>your check passes</em>",
-      "Give it a goal and the command that grades it. It iterates, feeds the failure back, and never marks its own homework. The check is any command with an exit status \u2014 which is why the second one here is about prose, not tests.");
-    await run(w, [
-      { do: "cmd", text: "@loop \"make the tests pass\" --check \"cargo test\"", speed: 10 },
-      { do: "out", spans: [FG("▶ iteration 1/5")] },
-      { do: "tool", name: "fs.edit", args: '{"path":"src/config.rs"}', ms: 7, size: "610B", wait: 200 },
-      { do: "out", spans: [DIM("  check: exit=1 · assertion failed: default theme")], ms: 380 },
-      { do: "out", spans: [FG("▶ iteration 2/5")] },
-      { do: "tool", name: "fs.edit", args: '{"path":"src/config.rs"}', ms: 5, size: "188B", wait: 200 },
-      { do: "out", spans: [DIM("  check: exit=0")], ms: 300 },
-      { do: "out", spans: [OK("✓ goal reached after 2 iteration(s)")] },
       { do: "pause", ms: 1500 },
-      { do: "cmd", text: "@loop \"cut intro.md under 200 words\" --agent writer --check \"test $(wc -w < intro.md) -lt 200\"", speed: 9 },
-      { do: "out", spans: [DIM("  verifier: test $(wc -w < intro.md) -lt 200")] },
-      { do: "out", spans: [FG("▶ iteration 1/5")] },
-      { do: "tool", name: "fs.edit", args: '{"path":"intro.md"}', ms: 5, size: "1.2KB", wait: 200 },
-      { do: "out", spans: [DIM("  check: exit=1")], ms: 340 },
-      { do: "out", spans: [FG("▶ iteration 2/5")] },
-      { do: "tool", name: "fs.edit", args: '{"path":"intro.md"}', ms: 4, size: "640B", wait: 200 },
-      { do: "out", spans: [DIM("  check: exit=0")], ms: 300 },
-      { do: "out", spans: [OK("✓ goal reached after 2 iteration(s)")] },
-      { do: "pause", ms: 2100 },
     ]);
 
-    /* ---- 05 · @job — walk away from it ---- */
-    chapter("05 · jobs", "<code>@job</code> — send it to the <em>background</em>",
-      "<code>--bg</code> detaches any agent, flow or loop. Close the tab and go to lunch — the run and its log survive.");
+    /* ---- 02 · eight specialists (5.0s) ---- */
+    chapter("@agent", "Eight <em>specialists.</em>",
+      "A planner, a coder, a tester, a reviewer, a researcher, a writer — each one a file you can edit.");
     await run(w, [
       { do: "call", fn: async (t) => t.clear() },
-      { do: "cmd", text: "@job audit the deps --agent reviewer --bg", speed: 11 },
-      { do: "out", spans: [FG("▶ background job 1753112000-4242")] },
-      { do: "out", spans: [DIM("  monitor: @job  ·  @job log last -f")] },
-      { do: "pause", ms: 600 },
-      { do: "cmd", text: "@job", speed: 13 },
-      { do: "out", spans: [FG("background jobs (3):")] },
-      { do: "out", spans: [FG("  ▶ 1753112000-4242 running   audit the deps … "), DIM("(2m ago · 2m)")] },
-      { do: "out", spans: [OK("  ✓ "), FG("1753111800-4101 done      create a CHANGELOG … "), DIM("(9m ago · 45s)")] },
-      { do: "out", spans: [MUT("  ⏹ "), FG("1753110900-3980 cancelled refactor the CLI … "), DIM("(24m ago · 12s)")] },
+      { do: "cmd", text: "@agent", speed: 13 },
+      { do: "out", spans: [FG("agents (8):")], ms: 90 },
+      { do: "out", spans: [ACC("  @planner    "), DIM("turns a goal into a plan with a done-when")], ms: 90 },
+      { do: "out", spans: [ACC("  @explorer   "), DIM("maps the code and reports back tightly")], ms: 90 },
+      { do: "out", spans: [ACC("  @researcher "), DIM("finds sources, reads them, cites them")], ms: 90 },
+      { do: "out", spans: [ACC("  @coder      "), DIM("the smallest correct edit, verified")], ms: 90 },
+      { do: "out", spans: [ACC("  @tester     "), DIM("runs your project's own tests")], ms: 90 },
+      { do: "out", spans: [ACC("  @reviewer   "), DIM("correctness, security, design")], ms: 90 },
+      { do: "out", spans: [ACC("  @writer     "), DIM("docs and reports — saved to the file")], ms: 90 },
+      { do: "pause", ms: 1900 },
+    ]);
+
+    /* ---- 03 · ★ no workflow? it writes one (6.5s) ---- */
+    chapter("@flow", "No workflow? <em>It writes one.</em>",
+      "Describe what you want. It designs the graph, checks it before spending a token, and runs it.");
+    await run(w, [
+      { do: "call", fn: async (t) => t.clear() },
+      { do: "cmd", text: "@flow explain how the export command works", speed: 10 },
+      { do: "spin", label: "building a graph for this…", ms: 1100 },
+      { do: "out", spans: [ACC("◈"), FG(" built a 3-node graph"), DIM(" · read the code, then explain it")], ms: 320 },
+      { do: "out", spans: [OK("  ╭────────────────────╮    ╭────────────────────╮    ╭────────────────────╮")], ms: 130 },
+      { do: "out", spans: [OK("  │ ⠻ read             │    │ ○ draft            │    │ ○ explain          │")], ms: 130 },
+      { do: "out", spans: [OK("  │ @explorer          │───▸│ @writer            │───▸│ @writer            │")], ms: 130 },
+      { do: "out", spans: [OK("  │ reading src/cli.rs │    │                    │    │                    │")], ms: 130 },
+      { do: "out", spans: [OK("  ╰────────────────────╯    ╰────────────────────╯    ╰────────────────────╯")], ms: 130 },
+      { do: "pause", ms: 4600 },
+    ]);
+
+    /* ---- 04 · work that runs in parallel (5.0s) ---- */
+    chapter("@flow", "Three reviews. <em>One wait.</em>",
+      "Anything that does not depend on anything else runs at the same time.");
+    await run(w, [
+      { do: "call", fn: async (t) => t.clear() },
+      { do: "cmd", text: "@flow review this branch", speed: 11 },
+      { do: "out", spans: [OK("  ╭──────────────────╮    ╭──────────────────╮    ╭──────────────────╮")], ms: 110 },
+      { do: "out", spans: [OK("  │ ✓ map            │    │ ✓ correctness    │    │ ⠻ report         │")], ms: 110 },
+      { do: "out", spans: [OK("  │ @explorer        │───▸│ @reviewer        │───▸│ @reviewer        │")], ms: 110 },
+      { do: "out", spans: [OK("  ╰──────────────────╯  ╎ ╰──────────────────╯    ╰──────────────────╯")], ms: 110 },
+      { do: "out", spans: [OK("                        ╎ ╭──────────────────╮")], ms: 110 },
+      { do: "out", spans: [OK("                        ╎ │ ✓ security       │  "), DIM("← all three at once")], ms: 110 },
+      { do: "out", spans: [OK("                        ╎▸│ @reviewer        │")], ms: 110 },
+      { do: "out", spans: [OK("                        ╎ ╰──────────────────╯")], ms: 110 },
+      { do: "out", spans: [DIM("  3/4 done · 1 running")], ms: 200 },
+      { do: "pause", ms: 2600 },
+    ]);
+
+    /* ---- 05 · ★ and it tells you what broke (5.0s) ---- */
+    chapter("when it breaks", "And it tells you <em>what broke.</em>",
+      "Not a spinner that stopped. The node, the reason, and everything it took with it.");
+    await run(w, [
+      { do: "call", fn: async (t) => t.clear() },
+      { do: "out", spans: [ERR("  ╭────────────────────╮"), OK("    ╭────────────────────╮")], ms: 110 },
+      { do: "out", spans: [ERR("  │ ✗ read             │"), OK("    │ ⊘ draft            │")], ms: 110 },
+      { do: "out", spans: [ERR("  │ @explorer          │"), OK("───▸│ @writer            │")], ms: 110 },
+      { do: "out", spans: [ERR("  │ ran out of steps   │"), WARN("    │ read failed        │")], ms: 110 },
+      { do: "out", spans: [ERR("  ╰────────────────────╯"), OK("    ╰────────────────────╯")], ms: 200 },
+      { do: "out", spans: [DIM("  0/3 done · "), ERR("1 failed"), DIM(" · "), WARN("2 blocked")], ms: 260 },
+      { do: "out", spans: [ERR("  ✗ read failed"), DIM(" — it ran out of steps, and said what it had found")], ms: 200 },
+      { do: "pause", ms: 4200 },
+    ]);
+
+    /* ---- 06 · until your check passes (5.0s) ---- */
+    chapter("@loop", "It stops when <em>your check passes.</em>",
+      "You name what counts as done. It never marks its own homework.");
+    await run(w, [
+      { do: "call", fn: async (t) => t.clear() },
+      { do: "cmd", text: "@loop make the tests pass", speed: 11 },
+      { do: "out", spans: [ACC("▶ iteration 1/5")], ms: 260 },
+      { do: "out", spans: [DIM("  the tests still fail — one assertion")], ms: 420 },
+      { do: "out", spans: [ACC("▶ iteration 2/5")], ms: 260 },
+      { do: "out", spans: [DIM("  fixed it, running them again")], ms: 420 },
+      { do: "out", spans: [OK("✓ goal reached after 2 iterations")], ms: 200 },
       { do: "pause", ms: 2100 },
     ]);
 
-    /* ---- 06 · @md — the terminal reads Markdown ---- */
-    chapter("06 · markdown", "<code>@md</code> — Markdown, <em>rendered in the terminal</em>",
-      "<code>@md render</code> pretty-prints a file, diagrams drawn natively. <code>@md edit</code> is a live split editor — source left, preview right.");
+    /* ---- 07 · walk away from it (4.5s) ---- */
+    chapter("@job", "Walk away <em>from it.</em>",
+      "Detach anything. Close the tab, shut the laptop — it keeps its own log, and picks its own time.");
+    await run(w, [
+      { do: "call", fn: async (t) => t.clear() },
+      { do: "cmd", text: "@job audit the dependencies every monday at 9", speed: 10 },
+      { do: "spin", label: "reading when to run this…", ms: 800 },
+      { do: "out", spans: [ACC("⧖ every monday at 09:00"), DIM(" — audit the dependencies")], ms: 300 },
+      { do: "out", spans: [DIM("  fires in 3d · it survives this terminal")], ms: 200 },
+      { do: "pause", ms: 2000 },
+    ]);
+
+    /* ---- 08 · your terminal, from your phone (8.5s — the wow) ---- */
+    chapter("@gate", "Your terminal, <em>from your phone.</em>",
+      "Pair once. After that a message is a command — in that same shell, wherever you are.");
+    await run(w, [
+      { do: "call", fn: async (t) => {
+          t.clear();
+          t.setTabs([{ title: "Terminal [project][@gate]", active: true }]);
+        } },
+      { do: "cmd", text: "@gate telegram start", speed: 12 },
+      { do: "out", spans: [ACC("  ⬤ telegram gate live"), DIM(" · nothing runs until you pair")], ms: 400 },
+    ]);
+    const g = makePhone(phoneHost);
+    await run(w, [
+      { do: "call", fn: async () => { await g.type("/pair 418-207"); g.send("/pair 418-207"); await sleep(300); } },
+      { do: "call", fn: async () => { g.reply("<b>paired</b> — you are driving <code>mourad-mbp</code>"); await sleep(500); } },
+      { do: "call", fn: async () => { await g.type("run the tests"); g.send("run the tests"); await sleep(260); } },
+      { do: "out", spans: [ACC("  ▸ Mourad: "), FG("run the tests")], ms: 180 },
+      { do: "cmd", text: "cargo test", speed: 13 },
+      { do: "out", spans: [OK("test result: ok"), FG(". 1386 passed; 0 failed")], ms: 240 },
+      { do: "call", fn: async () => { g.reply("✓ <b>1386 passed</b> · 41s"); await sleep(600); } },
+      { do: "call", fn: async (t) => { await g.type("/shot"); g.send("/shot"); await sleep(260); g.photo("the live pane", t); } },
+      { do: "pause", ms: 3400 },
+    ]);
+
+    /* ---- 09 · the guard has the last word (5.0s) ---- */
+    chapter("safety", "The AI proposes. <em>The guard disposes.</em>",
+      "Rules you write, and deny always wins. A model that gets creative still cannot reach your shell.");
+    await run(w, [
+      { do: "call", fn: async (t) => {
+          t.clear(); hidePhone();
+          t.setTabs([{ title: "Terminal [project][zsh]", active: true }]);
+        } },
+      { do: "cmd", text: "@ai force push my branch", speed: 12 },
+      { do: "out", spans: [WARN("⚠ "), DIM("review before running")], ms: 200 },
+      { do: "out", spans: [ACC("❯ "), ACC2("git push --force-with-lease origin fix/parser")], ms: 800 },
+      { do: "cmd", text: "@ai wipe the whole disk", speed: 12 },
+      { do: "out", spans: [ERR("# blocked by the guard")], ms: 200 },
+      { do: "pause", ms: 2100 },
+    ]);
+
+    /* ---- 10 · your secrets never leave (5.0s) ---- */
+    chapter("safety", "Your secrets <em>never leave.</em>",
+      "Keys, tokens and certificates are rewritten on the way out — and the AI still understands the rest.");
+    await run(w, [
+      { do: "call", fn: async (t) => t.clear() },
+      { do: "cmd", text: "@ai why is the staging deploy failing?", speed: 11 },
+      { do: "call", fn: async (t) => buildRedactView(t) },
+      { do: "pause", ms: 3800 },
+    ]);
+
+    /* ---- 11 · markdown, live (4.5s) ---- */
+    chapter("@md", "Markdown, <em>live.</em>",
+      "Write on the left, watch it render on the right — diagrams and all. No model, no network.");
     await run(w, [
       { do: "call", fn: async (t) => {
           t.clear();
@@ -611,192 +615,62 @@ body { background: var(--paper); }
           t.setTabs([{ title: "release.md [@md edit]", active: true }]);
         } },
       { do: "cmd", text: "@md edit release.md", speed: 12 },
-      { do: "pause", ms: 320 },
       { do: "call", fn: async (t) => buildMdEditor(t) },
-      { do: "pause", ms: 3400 },
+      { do: "pause", ms: 3300 },
     ]);
 
-    /* ---- 07 · @gate — the "wait, it does that?" moment ---- */
-    chapter("07 · from your phone", "<code>@gate</code> — leave your desk, <em>keep your terminal</em>",
-      "Pair once with a six-digit code printed in your pane. After that a chat message <em>is</em> a command — in that same shell, with its exit code and how long it took.");
+    /* ---- 12 · make it yours (5.5s) ---- */
+    chapter("make it yours", "19 themes. <em>Switch live.</em>",
+      "Profiles swap your models, your plugins and your saved tabs in one word.");
     await run(w, [
       { do: "call", fn: async (t) => {
-          t.clear();
-          t.setTitle("aiTerminal — @gate telegram");
-          t.setTabs([{ title: "Terminal [project][@gate]", active: true }]);
-        } },
-      { do: "cmd", text: "@gate telegram start", speed: 12 },
-      { do: "out", spans: [ACC("  ⬤ telegram gate live"), DIM(" · @mourad_term_bot")], ms: 260 },
-      { do: "out", spans: [MUT("  pair from the chat: "), ACC2("/pair 418-207"), MUT("   (nothing runs until you do)")], ms: 400 },
-      { do: "out", spans: [MUT("  ▸ unknown chat 8814… — "), WARN("no reply sent"), MUT(" (not paired)")], ms: 700 },
-    ]);
-    const g = makePhone(phoneHost);
-    await run(w, [
-      { do: "call", fn: async () => { await g.type("/pair 418-207"); g.send("/pair 418-207"); } },
-      { do: "call", fn: async () => { g.typing(true); await sleep(520); g.typing(false); } },
-      { do: "call", fn: async () => { g.reply("<b>paired</b> — you are driving <code>mourad-mbp</code>"); await sleep(360); } },
-      { do: "call", fn: async () => {
-          g.menu("Send a command and I'll run it in your terminal.",
-            ["/shot", "/status", "/full", "/help", "/stop"]);
-        } },
-      { do: "out", spans: [MUT("  ▸ Mourad paired from telegram")], ms: 650 },
-
-      /* the chat drives the very shell you are looking at */
-      { do: "call", fn: async () => { await g.type("cargo test"); g.send("cargo test"); await sleep(240); } },
-      { do: "out", spans: [ACC("  ▸ Mourad: "), FG("cargo test")], ms: 200 },
-      { do: "cmd", text: "cargo test", speed: 12 },
-      { do: "out", spans: [OK("test result: ok"), FG(". 854 passed; 0 failed")], ms: 260 },
-      { do: "call", fn: async () => {
-          g.reply("❯ <code>cargo test</code> · ✓ 0 · 41s", "…\ntest result: ok. 854 passed; 0 failed");
-          await sleep(700);
-        } },
-
-      /* …and /shot photographs the live pane, pixel for pixel */
-      { do: "call", fn: async (t) => { await g.type("/shot"); g.send("/shot"); await sleep(300); g.photo("the live pane", t); } },
-      { do: "pause", ms: 1500 },
-    ]);
-
-    /* ---- 08 · @gate attaches to whatever you started ---- */
-    chapter("08 · from your phone", "Drive <em>any</em> program — even <code>claude</code>",
-      "Start Claude Code, Codex, <code>vim</code> or a REPL in that shell and the chat becomes its live screen — one message, edited in place, with buttons for whatever it is asking.");
-    /* a fresh chat for a fresh claim — the pairing story is over, this one is
-       about attaching, and a scrolled-up transcript would only get in the way */
-    w.clear();
-    hidePhone();
-    const g2 = makePhone(phoneHost);
-    let live = null;
-    await run(w, [
-      { do: "out", spans: [ACC("  ⬤ telegram gate live"), DIM(" · paired with Mourad")], ms: 420 },
-      { do: "call", fn: async () => { await g2.type("claude"); g2.send("claude"); await sleep(240); } },
-      { do: "out", spans: [ACC("  ▸ Mourad: "), FG("claude")], ms: 200 },
-      { do: "cmd", text: "claude", speed: 14 },
-      { do: "out", spans: [MUT("  ⬤ attached — the chat is driving claude")], ms: 420 },
-      { do: "call", fn: async () => { g2.reply("▶ <b>attached to claude</b> — send text to type into it."); await sleep(450); } },
-      { do: "call", fn: async () => { await g2.type("add a --json flag to export"); g2.send("add a --json flag to export"); await sleep(320); } },
-      { do: "call", fn: async () => {
-          /* ONE bubble from here on — it is edited, never re-posted */
-          live = g2.live("claude", [
-            ["", "> add a --json flag to export"],
-            ["", ""],
-            ["dim", "✦ Thinking… (esc to interrupt)"],
-          ], [["↑", "↓", "⏎", "esc", "^C", "📷"]]);
-          await sleep(900);
-        } },
-      { do: "call", fn: async () => {
-          live.update([
-            ["", "Edit src/export.rs"],
-            ["ok", "  + #[arg(long)] json: bool"],
-            ["", ""],
-            ["", "Do you want to make this edit?"],
-            ["sel", "❯ 1. Yes"],
-            ["", "  2. Yes, and don't ask again"],
-            ["", "  3. No, tell Claude what to do"],
-          ], [["1 · Yes", "2 · Yes, and…", "3 · No, tell…"], ["↑", "↓", "⏎", "esc", "^C", "📷"]]);
-          await sleep(1500);
-        } },
-      { do: "call", fn: async () => {
-          live.update([
-            ["ok", "✓ Edited src/export.rs"],
-            ["", ""],
-            ["", "Added <code>--json</code> to the export command."],
-            ["dim", "  1 file changed · cargo build ok"],
-          ], [["↑", "↓", "⏎", "esc", "^C", "📷"]]);
-          await sleep(1400);
-        } },
-      { do: "out", spans: [MUT("  ▸ detected from the terminal protocol — no per-app code")], ms: 900 },
-    ]);
-
-    /* ---- 09 · the guard: the AI does not get the last word ---- */
-    chapter("09 · safety", "The AI proposes. <em>The guard disposes.</em>",
-      "allow · ⚠ confirm · ✗ deny, and deny always wins. A model that gets creative still cannot reach your shell.");
-    await run(w, [
-      { do: "call", fn: async (t) => {
-          t.clear(); hidePhone();
-          t.setTitle("aiTerminal");
-          t.setTabs([{ title: "Terminal [project][zsh]", active: true }]);
-        } },
-      { do: "cmd", text: "@ai force push my branch", speed: 12 },
-      { do: "spin", label: "thinking…", ms: 520 },
-      { do: "out", spans: [WARN("⚠ "), DIM("review before running — matches a confirm rule")] },
-      { do: "out", spans: [ACC("❯ "), ACC2("git push --force-with-lease origin fix/parser")], ms: 900 },
-      { do: "cmd", text: "@ai wipe the whole disk", speed: 12 },
-      { do: "spin", label: "thinking…", ms: 480 },
-      { do: "out", spans: [ERR("# blocked by guard: matches a deny rule  /rm -rf \\//")] },
-      { do: "pause", ms: 2000 },
-    ]);
-
-    /* ---- 10 · the redactor: what actually leaves the machine ---- */
-    chapter("10 · safety", "Your secrets <em>never leave the machine</em>",
-      "Keys, tokens, JWTs and PEM blocks are rewritten on the way out — targeted, not blanket, so your connection strings still work and the AI stays useful.");
-    await run(w, [
-      { do: "call", fn: async (t) => t.clear() },
-      { do: "cmd", text: "@ai why is the staging deploy failing?", speed: 12 },
-      { do: "out", spans: [DIM("∴ sending your session — 3 secrets rewritten first")], ms: 300 },
-      { do: "call", fn: async (t) => buildRedactView(t) },
-      { do: "pause", ms: 3800 },
-    ]);
-
-    /* ---- 11 · make it yours ---- */
-    chapter("11 · make it yours", "19 themes · profiles that <em>swap everything</em>",
-      "<code>@theme</code> restyles the window, the prompt, your syntax colors and your running shells. <code>@profile</code> swaps models, plugins and your saved tabs — live.");
-    await run(w, [
-      { do: "call", fn: async (t) => t.clear() },
-      { do: "cmd", text: "@profile work", speed: 12 },
-      { do: "call", fn: async (t) => {
-          t.setTheme("graphite");
-          t.defaultStatus({ profile: "💼 Work", cwd: "~/work/api" });
+          t.clear(); t.setTitle("aiTerminal");
           t.setTabs([{ title: "Terminal [api][zsh]", active: true }, { title: "Terminal [infra][zsh]" }]);
         } },
-      { do: "out", spans: [FG("switched to 'work' — theme, models, plugins and your saved tabs")], ms: 800 },
-      { do: "cmd", text: "@theme nebula", speed: 13, prompt: PROMPT("~/work/api") },
-      ...["nebula", "sunset", "gold", "titanium", "starlight", "midnight"].flatMap((k) => [
+      { do: "cmd", text: "@profile work", speed: 12 },
+      { do: "call", fn: async (t) => { t.setTheme("graphite"); t.defaultStatus({ profile: "💼 Work", cwd: "~/work/api" }); } },
+      { do: "out", spans: [FG("switched — theme, models, plugins and your tabs")], ms: 500 },
+      ...["nebula", "sunset", "gold", "starlight", "midnight"].flatMap((k) => [
         { do: "call", fn: async (t) => { t.setTheme(k); t.note("@theme " + k); } },
-        { do: "pause", ms: 780 },
+        { do: "pause", ms: 620 },
       ]),
     ]);
 
-    /* ---- 12 · …and under all of it, a real terminal ---- */
-    chapter("12 · the terminal", "Splits, tabs, <kbd>⌘P</kbd> — a <em>real</em> terminal",
-      "A from-scratch VT engine on a GPU renderer: every pane its own shell and scrollback, a dockable tab bar, a quick switcher — and near-zero CPU when idle.");
+    /* ---- 13 · and underneath, a real terminal (5.5s) ---- */
+    chapter("the terminal", "And underneath: <em>a real terminal.</em>",
+      "Splits, tabs, a quick switcher, a GPU renderer — and near-zero CPU when it is just sitting there.");
     await run(w, [
       { do: "call", fn: async (t) => {
           t.clear(); t.defaultStatus();
           t.setTabs([{ title: "Terminal [web][zsh]", active: true }, { title: "Terminal [api][zsh]" }]);
         } },
-      { do: "out", spans: [ACC("~/web"), OK(" ⎇ main"), ACC2(" ❯ "), FG("npm run dev")] },
-      { do: "out", spans: [OK("  ➜  ready "), FG("on http://localhost:3000")] },
-      { do: "call", fn: async (t) => { t.note("⌘D — split right"); await sleep(400); t.split(false); } },
-      { do: "cmd", text: "cargo watch -x test", speed: 10, paneIdx: 1 },
-      { do: "out", spans: [OK("    Finished"), FG(" test — 854 passed")], paneIdx: 1 },
+      { do: "out", spans: [ACC("~/web"), OK(" ⎇ main"), ACC2(" ❯ "), FG("npm run dev")], ms: 120 },
+      { do: "out", spans: [OK("  ➜  ready "), FG("on http://localhost:3000")], ms: 200 },
+      { do: "call", fn: async (t) => { t.note("⌘D — split right"); await sleep(300); t.split(false); } },
+      { do: "cmd", text: "cargo watch -x test", speed: 11, paneIdx: 1 },
+      { do: "out", spans: [OK("    Finished"), FG(" test — 1386 passed")], paneIdx: 1, ms: 150 },
       { do: "call", fn: async (t) => {
-          t.note("⌘P — quick switcher"); await sleep(420);
+          t.note("⌘P — quick switcher"); await sleep(320);
           t.openSwitcher("ap", [
             { title: "Terminal [web][zsh]", detail: "~/web" },
             { title: "Terminal [api][zsh]", detail: "~/work/api" },
             { title: "vim · parser.rs", detail: "~/web" },
           ], 1);
         } },
-      { do: "pause", ms: 1100 },
-      { do: "call", fn: async (t) => { t.closeSwitcher(); t.unsplit(); } },
-      { do: "call", fn: async (t) => { t.note("[behavior] tab_bar = left"); t.setTabpos("left"); } },
       { do: "pause", ms: 900 },
-      { do: "call", fn: async (t) => { t.note("[behavior] tab_bar = bottom"); t.setTabpos("bottom"); } },
-      { do: "pause", ms: 900 },
+      { do: "call", fn: async (t) => { t.closeSwitcher(); t.unsplit(); t.setTabpos("left"); t.note("dock the tabs anywhere"); } },
+      { do: "pause", ms: 800 },
       { do: "call", fn: async (t) => t.setTabpos("top") },
-      { do: "pause", ms: 1200 },
+      { do: "pause", ms: 1100 },
     ]);
 
-    /* ---- …and there are 31 plugins in the box ---- */
-    show("plugins");
-    await sleep(6600);
-
-    /* ---- the receipts ---- */
+    /* ---- 1:15 · the receipts (8.0s) ---- */
     show("proof");
-    await sleep(7200);
+    await sleep(8600);
 
-    /* ---- the call to action, then fade to black ---- */
+    /* ---- 1:23 · the call to action, then fade to black (7.0s) ---- */
     show("outro");
-    await sleep(6500);
+    await sleep(8400);
     show(""); /* every scene off — fade to black */
     document.querySelector(".vbar").style.opacity = "0";
     $("vwm").classList.remove("on");

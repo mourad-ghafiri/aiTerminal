@@ -36,13 +36,25 @@ document.addEventListener("DOMContentLoaded", () => {
         case "think":
           await streamLine(w, [DIM(st.text)], { paneIdx: st.paneIdx, speed: 9, prefix: [DIM("∴ ")] });
           break;
-        case "tool":
+        case "tool": {
           /* The real trace shows WHAT a call is acting on, never the argument JSON it
-             arrived as, and a duration in the unit a person would have used. */
+             arrived as, and a duration in the unit a person would have used. The name
+             is padded into a COLUMN so a run of calls reads as a table rather than as
+             ragged prose — which is what the shipped trace does. */
           const dur = st.ms < 1000 ? `${st.ms}ms` : `${(st.ms / 1000).toFixed(1)}s`;
-          w.line([DIM(`  ⚙ ${st.name} ${st.args} · ${dur} · ${st.size}`)], st.paneIdx);
+          const name = st.name.padEnd(11);
+          /* A call still running after a moment says so, and its line is replaced by
+             the finished one — otherwise a long command is indistinguishable from a
+             hang. `slow` marks the calls worth showing that way. */
+          if (st.slow) {
+            const pending = w.line([DIM(`  ⋯ ${name} ${st.args}`)], st.paneIdx);
+            await sleep(st.slow);
+            pending.remove();
+          }
+          w.line([DIM(`  ⚙ ${name} ${st.args} · ${dur} · ${st.size}`)], st.paneIdx);
           await sleep(st.wait || 300);
           break;
+        }
         case "spin": await spinner(w, st.label || "thinking…", st.ms || 900, st); break;
         case "footer":
           w.line([S("t-success", st.glyph || "✓"), DIM(" " + st.text)], st.paneIdx);
@@ -282,7 +294,7 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "tool", name: "todo.set", args: "find it", ms: 3, size: "3 entries" },
           { do: "tool", name: "fs.search", args: '"parse_line"', ms: 18, size: "6 results" },
           { do: "tool", name: "fs.edit", args: "src/parser.rs", ms: 6, size: "1 replaced" },
-          { do: "tool", name: "sys.run", args: "cargo test parser", ms: 2100, size: "exit 0" },
+          { do: "tool", name: "sys.run", args: "cargo test parser", ms: 2100, size: "48 lines", slow: 700 },
           { do: "stream", spans: [FG("The fix: the parser dropped the final line — added the flush in "), ACC2("parse_line()"), FG(".")], speed: 11 },
           { do: "footer", text: "8.4s · 4 tools · 12.3k in / 1.8k out (11.1k cached, 90%)" },
         ]);
@@ -291,15 +303,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
     flow: {
       caption: () => caption("<code>@flow</code> — a <em>graph</em> of agents",
-        "Nodes that need nothing from each other run at the same time, a condition routes on the edge, and one edge points backwards so a failing check loops through a fixer — bounded. Nothing runs until the graph is proved. You watch it <b>as a graph</b>: one band per wave of work, each row carrying its agent, model and cost, the running one pulsing in your theme. Five ship: <b>build · fix · review</b> for code, and <b>research</b> for any question at all. A bare goal is routed by the model, which says which flow and why before spending anything."),
+        "Nodes that need nothing from each other run at the same time, a condition routes on the edge, and one edge points backwards so a failing check loops through a fixer — bounded. Nothing runs until the graph is proved. You watch it <b>as a graph</b>: one band per wave of work, each row carrying its agent, model and cost, the running one pulsing in your theme — and when something breaks, the card says <b>why</b> and everything behind it reads <code>⊘ blocked</code>. Five ship: <b>build · fix · review</b> for code, <b>document</b>, and <b>research</b> for any question at all. <b>Name none and one is written for you</b>: describe the goal and the model designs the graph, which is then held to the same checks a graph you wrote by hand is."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
 
           /* everyday first: a question, not a repo */
-          { do: "cmd", text: "@flow \"which e-bike should I buy for a hilly commute\"" },
-          { do: "out", spans: [ACC("▸ research"), MUT(" — the goal asks for sources and a comparison, not a code change")] },
-          { do: "out", spans: [ACC("▸ research · which e-bike should I buy for a hilly commute")] },
+          { do: "cmd", text: "@flow compare the e-bikes worth buying for a hilly commute" },
+          { do: "spin", label: "building a graph for this…", ms: 900 },
+          { do: "out", spans: [ACC("◈"), FG(" built a 4-node graph"), MUT(" · break the question up, research each part, then compare")] },
+          { do: "out", spans: [MUT("  ← no flow named, so one was designed for the goal — and checked before it spent a token")] },
+          { do: "out", spans: [ACC("▸ compare-the-e-bikes-worth · a hilly commute")] },
           { do: "out", spans: [DIM("  4 nodes · 3 agents · 24 tools · 6 skills · 4 at a time · slowest path plan→gather→compare→report")] },
           { do: "out", spans: [OK("  ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮")], ms: 200 },
           { do: "out", spans: [OK("  │ ✓ plan            ⚙2 │    │ ✓ gather         ⚙11 │    │ ✓ compare         ⚙4 │    │ ✓ report             │")], ms: 200 },
@@ -313,14 +327,13 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "pause", ms: 1200 },
 
           /* then the same engine on code */
-          { do: "cmd", text: "@flow \"add a --json flag to the export command\"" },
-          { do: "out", spans: [ACC("▸ build"), MUT(" — it asks for working code, tested")] },
+          { do: "cmd", text: "@flow build \"add a --json flag to the export command\"" },
           { do: "out", spans: [ACC("▸ build · add a --json flag to the export command")] },
           { do: "out", spans: [DIM("  8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time · slowest path plan→explore→apply→verify→fix")] },
           { do: "out", spans: [OK("  ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮"), ERR("    ╭──────────────────────╮")], ms: 200 },
           { do: "out", spans: [OK("  │ ✓ plan            ⚙3 │    │ ✓ explore        ⚙12 │    │ ✓ apply           ⚙9 │"), ERR("    │ ✗ verify       ⚙6 ×2 │")], ms: 200 },
           { do: "out", spans: [OK("  │ @planner             │───▸│ @explorer            │───▸│ @coder               │"), ERR("───▸│ @tester              │")], ms: 200 },
-          { do: "out", spans: [OK("  │ 4.2s · 3.1k          │  ╎││ 8.1s · 9.4k          │    │ 12.3s · 6.2k         │"), ERR("    │ 9.8s · 4.1k          │")], ms: 200 },
+          { do: "out", spans: [OK("  │ 4.2s · 3.1k          │  ╎││ 8.1s · 9.4k          │    │ 12.3s · 6.2k         │"), ERR("    │ two tests still fail │")], ms: 200 },
           { do: "out", spans: [OK("  ╰──────────────────────╯  ╎│╰──────────────────────╯    ╰──────────────────────╯"), ERR("    ╰──────────────────────╯")], ms: 200 },
           { do: "out", spans: [OK("                            ╎│╭──────────────────────╮")], ms: 200 },
           { do: "out", spans: [OK("                            ╎││ ✓ conventions     ⚙9 │")], ms: 200 },
@@ -330,8 +343,9 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "out", spans: [DIM("                            ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎    ← the fixer sends it back, bounded")] },
           { do: "out", spans: [ERR("  ✗ verify · @tester · claude-sonnet-5")], ms: 200 },
           { do: "out", spans: [DIM("    failed · attempt 2 · 9.8s · 4.1k tokens · 6 tool calls · needs apply")] },
-          { do: "out", spans: [DIM("    ⚙ sys.run cargo test · 2.1s · 62 lines")] },
-          { do: "out", spans: [DIM("  8/8 done · 46.3k tokens · 1m04s")] },
+          { do: "out", spans: [DIM("    ⚙ sys.run     cargo test \u00b7 2.1s \u00b7 62 lines")] },
+          { do: "out", spans: [DIM("  6/8 done · "), ERR("1 failed"), DIM(" · "), WARN("1 blocked"), DIM(" · 46.3k tokens · 1m04s")] },
+          { do: "out", spans: [ERR("  ✗ verify failed"), MUT(" — two tests still fail  ·  the card says why, the tally says what it took with it")] },
           { do: "pause", ms: 900 },
 
           /* and one node of it, on its own */
@@ -542,10 +556,10 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "call", fn: async () => { await g.type("cargo test"); g.send("cargo test"); await sleep(250); } },
           { do: "out", spans: [ACC("  ▸ Mourad: "), FG("cargo test")], ms: 200 },
           { do: "cmd", text: "cargo test", speed: 12 },
-          { do: "out", spans: [OK("test result: ok"), FG(". 854 passed; 0 failed")], ms: 300 },
+          { do: "out", spans: [OK("test result: ok"), FG(". 1386 passed; 0 failed")], ms: 300 },
           { do: "call", fn: async () => {
             g.reply("❯ <code>cargo test</code> · ✓ 0 · 41s",
-              "…\ntest result: ok. 854 passed; 0 failed");
+              "…\ntest result: ok. 1386 passed; 0 failed");
             await sleep(400);
           } },
           { do: "call", fn: async () => {

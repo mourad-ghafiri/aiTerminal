@@ -50,6 +50,7 @@
     <a href="#cmd-flow">@flow</a>
     <a href="#cmd-loop">@loop</a>
     <a href="#cmd-job">@job</a>
+    <a href="#waiting">While you wait</a>
     <a href="#cmd-md">@md</a>
     <a href="#cmd-gate">@gate</a>
     <a href="#cmd-profile">@profile</a>
@@ -220,11 +221,23 @@ The most common causes are cache invalidation and copying node_modules…</code>
 <span class="p">❯</span> @agent researcher          <span class="c"># one in full: tools, skills, what it returns</span>
 <span class="p">❯</span> @coder "fix the failing parser test"
 <span class="a">✦ @coder · claude-opus-4-8</span>
-<span class="c">∴ thinking…</span>
-<span class="c">  ⚙ fs.search "parse_line" · 18ms · 6 results</span>
-<span class="c">  ⚙ fs.edit src/parser.rs · 6ms · 1 replaced</span>
+<span class="c">⠹ thinking…  ·  a cached prompt prefix costs about a tenth of a fresh one</span>
+<span class="c">  ⚙ fs.search   "parse_line" · 18ms · 6 results</span>
+<span class="c">  ⚙ fs.edit     src/parser.rs · 6ms · 1 replaced</span>
+<span class="c">  ⋯ sys.run     cargo test --workspace</span>
 The fix: the parser dropped the final line …
-<span class="c">✓ 8.4s · 2 tools · 12.3k in / 1.8k out</span></code></pre>
+<span class="c">✓ 8.4s · 3 tools · 12.3k in / 1.8k out</span></code></pre>
+    <p><b>One thing writes to that region.</b> The answer repaints in place as it streams while the
+      tool trace has to stay where it was printed, and those used to be two writers on two streams
+      that knew nothing about each other — so the next repaint climbed back over lines it had never
+      painted and ate them. Everything now goes through one sink that takes the live tail off,
+      writes the line, and puts the tail back. <code>@agent</code>, <code>@loop</code> and a
+      foreground <code>@job</code> all draw through it, so all three look alike; a tracked
+      <code>@job</code> keeps a copy of the text in its log, and only the text.</p>
+    <p>A call still running after a moment says so (the <code>⋯</code> row) and its line is replaced
+      when it lands — a forty-second <code>cargo test</code> used to print nothing at all until it
+      was over, which on screen is indistinguishable from a hang. And while you wait, one dim line
+      keeps you company: see <a href="#waiting">a wait says what it is for</a>.</p>
     <p>A tool line says <b>what the call was acting on</b>, not the argument JSON it arrived as —
       <code>fs.read {"path":"crates/framework/src/cli/runn</code> is the wire format cut at a fixed
       width, and it reliably takes the one part you were reading. A long subject is elided in the
@@ -251,8 +264,18 @@ The fix: the parser dropped the final line …
       reads cost one model round trip instead of four. A round trip is the expensive part: each
       one re-sends the whole transcript, which is longer than the last. The one rule is that a
       batch must be <em>independent</em> — a call whose arguments come from an earlier call's
-      result belongs on the next turn. Eight other dialects are accepted for models that will
-      not emit ours, and each is read for <em>every</em> call it carries rather than the first.</p>
+      result belongs on the next turn. Other dialects are accepted for models that will not emit
+      ours — including a bare <code>&lt;tool&gt; {json}</code> line with no marker at all,
+      recognised only when the leading token is a tool <em>this agent declared</em>, so prose that
+      mentions one is still prose — and each is read for <em>every</em> call it carries rather than
+      the first.</p>
+    <p><b>A run that hits a bound still answers.</b> When <code>max_steps</code> runs out — or the
+      stuck-loop breaker fires — the loop spends one more turn with the tools withdrawn, asking for
+      the best answer the transcript supports. The outcome is unchanged (<code>⚠</code> in the
+      footer, exit <code>1</code>), because the bound really did fire; what changes is that you get
+      the findings rather than a sentence about a counter. This matters most inside
+      <code>@flow</code>: a node whose agent ran out of steps used to fail, block everything
+      downstream of it and end the run — after doing most of the work.</p>
     <p><b>Every agent ends by stating what it returns.</b> That is not a style rule: a flow node
       chains on that text, so <code>{{explore.output}}</code> is only as good as the agent's
       discipline. <code>@tester</code> and <code>@reviewer</code> go further and promise a final
@@ -383,16 +406,34 @@ Map the code, review it three ways in parallel, then merge into one verdict
       work is kept. An <code>approve</code> node asks on a terminal; detached, it parks the run as
       <code>waiting</code> instead of deadlocking a background job.</p>
 
-    <h3>A goal on its own</h3>
-    <pre><code><span class="p">❯</span> @flow "Research LLM memory techniques"
-<span class="a">▸ research</span> <span class="c">— the goal asks for sources and a comparison, not a code change</span></code></pre>
-    <p>A flow name can never contain a space, so <b>one quoted argument that does is a goal</b>,
-      never a mistyped name. The model reads it against the installed flows' descriptions and names
-      one; the choice and its reason print <b>before the first node runs</b>, and
-      <code>--dry-run</code> shows them for nothing. If no flow fits, that is an error listing them
-      — never a flow chosen by falling back to a favourite. Loose words are still a name:
-      <code>@flow revieew the parser</code> is an error suggesting <code>review</code>, not a graph
-      run over your repository.</p>
+    <h3 id="flow-goal">A goal on its own — the graph gets built</h3>
+    <pre><code><span class="p">❯</span> @flow explain how the export command works
+<span class="c">◈ no flow named — building a graph for this goal</span>
+<span class="c">◈ built a 3-node graph: read the code, then explain it · @flow show 1785371201-90257</span>
+<span class="a">▸ explain-how-the-export · explain how the export command works</span></code></pre>
+    <p>You do not have to already have the right flow. Name none and <b>one is written for this
+      goal</b> — by the model, out of the agents this machine actually has — and then held to every
+      check a graph you wrote by hand is held to: it goes through the same parser and the same
+      verifier, so an agent that does not exist, an edge that points nowhere and a command the guard
+      refuses are all caught <b>before a token is spent running it</b>. When the checker refuses it,
+      its own errors are handed back for <b>one</b> more attempt; a second failure prints them and
+      stops, having spent two small calls and no agent runs.</p>
+    <p>The graph lives in the run's own record (<code>ai/flow-runs/&lt;id&gt;/flow.toml</code>), so
+      <code>@flow show</code>, <code>node</code>, <code>log</code>, <code>retry</code> and
+      <code>resume</code> all work on it and you can read exactly what was made for you — and
+      <code>@flow</code> keeps listing the five flows you meant to have rather than filling up with
+      one-off graphs. A build the checker refused is kept too: seeing what it tried to make of your
+      sentence is the fastest way to understand what it misread.</p>
+    <p><b>The first word decides</b>, against what you have installed:</p>
+    <div class="table-wrap"><table>
+      <tr><th>You typed</th><th>What happens</th></tr>
+      <tr><td><code>@flow document this project</code></td><td><code>document</code> is a flow you have → it runs, with <code>this project</code> as its input</td></tr>
+      <tr><td><code>@flow revieew the parser</code></td><td>close enough to <code>review</code> to be a typo → refused, with the suggestion</td></tr>
+      <tr><td><code>@flow explain this project</code></td><td>neither → the whole line is a goal, and a graph is built for it</td></tr>
+    </table></div>
+    <p>The typo guard is why the third row is safe. <code>@flow revieew the parser</code> must never
+      quietly become a different flow — and it must not become a <em>goal</em> either, because
+      building and running a graph for a misspelling is the same footgun in a newer coat.</p>
 
     <h3>Watching it run</h3>
     <p>A chain can narrate itself; a graph cannot. Four nodes start together and finish in whatever
@@ -437,7 +478,17 @@ Map the code, review it three ways in parallel, then merge into one verdict
     <p><b>The slowest path</b> on the header line is the chain that decides the wall clock. On a
       graph that overlaps work that is <em>not</em> the slowest node — a slow node with three fast
       ones beside it costs nothing extra — and it cannot be read off the picture, so it is stated.</p>
-    <p>Under the cards, a <b>pane follows whichever node is working</b> (or worked last): its agent,
+    <p><b>A run that goes wrong says so, on the card and in the tally.</b> A settled failure's
+      third line is <em>why</em> it stopped rather than what it cost — the cost of a failure is the
+      least interesting thing about it. A node that could never run because something it needed
+      failed is drawn <code>⊘ blocked</code>, in amber, distinct from the <code>·</code> of a node
+      its own condition ruled out; nothing is left reading "waiting" on a run that has finished. And
+      the tally names every state, not only the two that are going well:</p>
+    <pre><code>  <span class="c">0/5 done · </span><span class="r">1 failed</span><span class="c"> · </span><span class="w">2 blocked</span><span class="c"> · 2 skipped · 30.0k tokens · 11.5s</span></code></pre>
+    <p>The footer under the board then names the first node that failed and the first line of what
+      it said, because by the time you read a footer the board has usually scrolled.</p>
+    <p>Under the cards, a <b>pane follows whichever node is working</b> — and when something breaks,
+      <b>the one that broke</b>: its agent,
       model, state, attempt, elapsed, cost, what it needs, and the last few tool calls it made. A
       card is three lines and has to hold a name; these are the questions asked of a run that is
       going wrong, which is the only time anybody watches a board closely. There is no selection
@@ -564,6 +615,43 @@ background jobs (3):
       <code>scheduled · running · done · failed · cancelled · died · missed</code> — a crashed
       job's record heals on the next list, and <code>@job clear</code> prunes everything that is
       neither running nor scheduled.</p>
+
+    <h2 id="waiting">A wait says what it is for</h2>
+    <p>Most of what a command does is instant — a job's record, its arming, its spawn are all under
+      a millisecond. What is not instant is a <b>model call</b>, and there are four made outside a
+      run's own loop: the planner reading a <code>@job</code> request, the verifier proposal that
+      opens a <code>@loop</code>, the graph built for a <code>@flow</code> goal, and a run folding
+      its own history when the window fills. Every one of them used to happen with nothing on
+      screen — <code>@job "summarise the logs every morning"</code> sat on a dead terminal until the
+      model answered.</p>
+    <pre><code><span class="p">❯</span> @job summarise the logs every morning
+<span class="c">⠹ reading when to run this…</span>
+<span class="a">⧖ every day at 09:00 — summarise the logs</span> <span class="c">· job 1785371201-90257</span>
+<span class="c">  fires in 14h · list: @job · cancel: @job cancel 1785371201-90257</span></code></pre>
+    <p>Not "thinking": these happen before a run exists, and <em>why</em> you are waiting is the
+      useful part. The spinner also <b>holds its first frame for a moment</b>, so work that finishes
+      at once draws nothing at all — <code>@job -- echo hi</code> and <code>@job --every 15m …</code>
+      never consult a model and show nothing new.</p>
+    <p><b><code>@job</code> also says what it understood</b> — but only when that differs from what
+      you typed. The planner does not just pick a schedule: it strips the timing words out of the
+      task, and may turn a sentence into a shell command. That rewrite changes what the job
+      <em>is</em>. An echo of your own sentence is noise, so there is none. And a planner that was
+      <b>asked and could not answer</b> says so rather than falling silently back to the word
+      parser — you waited for that call.</p>
+
+    <h3>Something to read while you wait</h3>
+    <pre><code><span class="c">⠹ thinking…  ·  @flow retry &lt;node&gt; re-runs it and everything built on it</span>
+<span class="c">⠹ thinking…  ·  "Simplicity is prerequisite for reliability" — Dijkstra</span></code></pre>
+    <p>One dim line keeps you company. It <b>costs no rows</b> — it rides inside the spinner's own
+      line, or one constant row under a flow board — it <b>only appears while nothing else is
+      happening</b> (silent until a wait has lasted <code>after</code>, gone the instant the answer
+      starts, so a run that answers in three seconds never shows one), and it <b>cannot reach
+      anything but a screen</b>: a pipe, a <code>--bg</code> job, a job log and CI never see one.</p>
+    <p>The lines are written <b>by the model</b>, once, into <code>cache/motivation.toml</code> and
+      reused — in the background, so no run ever waits for them. Tips are drawn from this tool's own
+      command list rather than imagined, which is what stops a "tip" teaching you a flag that does
+      not exist. With no model configured there is no cache and the feature is simply absent.
+      <code>[motivation]</code> turns it off, picks which kinds to draw from, and sets both timings.</p>
 
     <h2 id="cmd-md">@md — read &amp; live-edit Markdown</h2>
     <p><b>Needs nothing</b> — no model, no network, no config.</p>
@@ -1003,6 +1091,7 @@ confirm_quit       = <span class="s">true</span></code></pre>
       <tr><td><code>[jobs]</code></td><td><code>max_concurrent</code> · <code>keep_runs</code> · <code>max_log_bytes</code></td></tr>
       <tr><td><code>[loop]</code></td><td><code>max</code> · <code>timeout</code> · <code>check_timeout</code> · <code>keep_runs</code> · <code>propose_check</code> (let the AI infer a verifier command)</td></tr>
       <tr><td><code>[flow]</code></td><td><code>concurrency</code> (nodes in flight at once) · <code>timeout</code> · <code>node_timeout</code> · <code>keep_runs</code> · <code>max_map</code> (the ceiling on a fan-out) · <code>view</code> (<code>graph</code> | <code>list</code> — how a run is watched and drawn)</td></tr>
+      <tr><td><code>[motivation]</code></td><td><code>enabled</code> · <code>kinds</code> (<code>tips</code> | <code>facts</code> | <code>quotes</code> | <code>encouragement</code>) · <code>after</code> · <code>every</code> — one dim line beside the spinner while a run waits, written by the model into <code>cache/motivation.toml</code> and reused; absent with no model</td></tr>
       <tr><td><code>[md]</code></td><td><code>syntax</code> · <code>image_max_rows</code> · <code>remote_images</code></td></tr>
       <tr><td><code>[plugins]</code></td><td><code>enabled</code> · <code>disabled = [...]</code></td></tr>
       <tr><td><code>[shell]</code></td><td><code>integration</code></td></tr>
@@ -1412,7 +1501,7 @@ scope   = <span class="s">"ai"</span></code></pre>
       its child; the regex engine is step-budgeted; a panic degrades to one dropped frame.</p>
 
     <h2 id="testing">Testing</h2>
-    <p><b>1350 unit tests</b> and <b>275 scenarios</b>, running in a few seconds with no network and
+    <p><b>1386 unit tests</b> and <b>280 scenarios</b>, running in a few seconds with no network and
       no API key. A unit test proves a function; a <b>scenario</b> proves a product — a real user
       journey written as TOML and played against the real code.</p>
     <pre><code><span class="p">❯</span> cargo test --workspace                          <span class="c"># everything</span>
@@ -1425,8 +1514,8 @@ scope   = <span class="s">"ai"</span></code></pre>
     <p>The distinction earns its keep. When <code>@gate</code> shipped with a large unit suite and
       users still hit bugs, 35 scenarios against that same code found <b>22 defects</b> — failures
       of product behaviour that a unit test is structurally unable to see. There is now a folder of
-      scenarios per feature: <code>gate</code> 35 · <code>markdown</code> 28 · <code>flow</code> 27 ·
-      <code>ai</code> 27 · <code>terminal</code> 22 · <code>jobs</code> 20 · <code>cli</code> 18 ·
+      scenarios per feature: <code>gate</code> 35 · <code>flow</code> 29 · <code>markdown</code> 28 ·
+      <code>ai</code> 28 · <code>cli</code> 24 · <code>terminal</code> 22 · <code>jobs</code> 20 ·
       <code>config</code> 16 · <code>security</code> 15 · <code>plugins</code> 14 ·
       <code>loop</code> 13 · <code>shell</code> 10 · <code>keymap</code> 10 · <code>theme</code> 8 ·
       <code>memory</code> 8. Each folder asserts a minimum count, so coverage cannot silently shrink.</p>
