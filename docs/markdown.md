@@ -5,6 +5,13 @@ every AI answer — goes through one engine in `corelib::md`. It reads GitHub-fl
 Markdown *and* the HTML subset GitHub allows, so a real README renders as a document rather
 than as syntax.
 
+"Every AI answer" includes the ones you read back later: a flow's answer, `@flow node`,
+and `@flow log` / `@loop log` / `@job log`. Those files are documents on disk, and one
+rule decides how each is shown — **Markdown is what an agent writes**. A command's output
+is not, so it is passed through untouched rather than re-wrapped, and a `#` line printed by
+a program stays a comment. Rendering is for the person at the terminal: **a pipe always
+gets the source unchanged**, which is what keeps `@flow review "…" > review.md` honest.
+
 ```sh
 @md render README.md      # the whole file, drawn
 @md edit notes.md         # source left, live preview right

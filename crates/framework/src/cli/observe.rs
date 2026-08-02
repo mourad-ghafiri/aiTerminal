@@ -412,10 +412,16 @@ pub(crate) fn finish_streamed(obs: &mut CliObserver, answer: &str) {
     obs.settle();
     let a = answer.trim();
     obs.view.with(|v| {
-        if !a.is_empty() && !v.shown().contains(a) {
-            v.raw(a);
-            v.raw("\n");
+        if a.is_empty() || v.shown().contains(a) {
+            return;
         }
+        // Through the view's own sink, not past it. An answer that arrived in one piece
+        // is the same Markdown as one that arrived in a thousand, and printing this one
+        // verbatim was how a run that ended in an error showed its explanation as
+        // syntax while every run that streamed showed a document.
+        v.answer(a);
+        v.answer("\n");
+        v.seal();
     });
 }
 

@@ -324,3 +324,88 @@ fn a_node_retries_a_dead_socket_and_not_a_wrong_answer() {
     assert!(both.again(3, true), "the declared count is spent, the spare is not");
     assert!(!both.again(4, true));
 }
+
+// ── what a run SHOWS, and whether it is a document ───────────────────────
+//
+// One rule, read off the graph rather than sniffed out of the text: an agent writes
+// Markdown, a command writes whatever its command wrote.
+
+/// A graph with one node of every kind, so the rule can be asked about each.
+fn mixed_flow() -> crate::flow::Flow {
+    crate::flow::parse(
+        "mixed",
+        r#"
+description = "one of each"
+
+[[node]]
+id     = "draft"
+agent  = "writer"
+prompt = "Write it up: {{input}}"
+
+[[node]]
+id    = "build"
+run   = "true"
+needs = ["draft"]
+
+[[node]]
+id     = "ok"
+kind   = "approve"
+needs  = ["build"]
+show   = "{{draft.output}}"
+prompt = "Ship it?"
+"#,
+    )
+    .expect("the fixture parses")
+}
+
+#[test]
+fn only_an_agent_node_answers_in_markdown() {
+    let flow = mixed_flow();
+    let kind_of = |id: &str| flow.nodes[flow.index(id).expect(id)].kind.clone();
+    assert!(matches!(kind_of("draft"), crate::flow::Kind::Agent { .. }), "an agent's answer is drawn");
+    assert!(!matches!(kind_of("build"), crate::flow::Kind::Agent { .. }), "a command's output is not");
+    assert!(!matches!(kind_of("ok"), crate::flow::Kind::Agent { .. }), "and neither is a y/N");
+
+    // Which of them the flow's answer comes from is what decides how it is printed —
+    // `final`, else the last leaf. Here that is the approval, so `@flow mixed …` prints
+    // its word rather than re-wrapping it as prose.
+    let answer = flow.answer_node().expect("a graph has an answer");
+    assert_eq!(flow.nodes[answer].id, "ok");
+}
+
+#[test]
+fn an_approval_draws_what_an_agent_wrote_and_never_a_build_log() {
+    use crate::cli::flow::exec::shows_markdown;
+    let flow = mixed_flow();
+    let show_of = |id: &str| match &flow.nodes[flow.index(id).expect(id)].kind {
+        crate::flow::Kind::Approve { show, .. } => show.clone(),
+        _ => panic!("{id} is not an approval"),
+    };
+    // The shipped shape: an approval holds up the draft the node before it wrote.
+    assert!(shows_markdown(&flow, &show_of("ok")), "a draft is a document");
+
+    // The other one. `{{build.output}}` is a command's output, and re-wrapping the log
+    // somebody is being asked to approve is the opposite of showing it to them.
+    let log = crate::flow::tmpl::Template::parse("{{build.output}}").expect("parses");
+    assert!(!shows_markdown(&flow, &log));
+
+    // A template that quotes nothing is the flow author's own prose.
+    let prose = crate::flow::tmpl::Template::parse("**Ready** to deploy.").expect("parses");
+    assert!(shows_markdown(&flow, &prose));
+    // And one that quotes the run's input, which is a person's sentence.
+    let asked = crate::flow::tmpl::Template::parse("You asked: {{input}}").expect("parses");
+    assert!(shows_markdown(&flow, &asked));
+}
+
+#[test]
+fn a_commands_output_is_fenced_before_a_document_carries_it() {
+    use crate::cli::flow::show::fence;
+    // Four backticks, because output containing a three-backtick line is an ordinary
+    // thing for a command to print — and a fence it closes early spills the rest of the
+    // log back out as prose.
+    let block = fence("$ cargo test\n```\nnot a fence, just output\n```");
+    assert!(block.starts_with("````\n") && block.ends_with("\n````"), "{block:?}");
+    assert!(block.contains("```\nnot a fence"), "the inner backticks survive: {block:?}");
+    // What went in comes out, once the wrapper is off.
+    assert_eq!(block.trim_start_matches("````\n").trim_end_matches("\n````"), "$ cargo test\n```\nnot a fence, just output\n```");
+}

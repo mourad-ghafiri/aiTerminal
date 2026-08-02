@@ -92,6 +92,7 @@ fn fixture(id: &str, task: Task, schedule: Option<Schedule>) -> Job {
         status: if schedule.is_some() { "scheduled".into() } else { "running".into() },
         cmd: "check the logs".into(),
         says: "every day at 00:00 — check the logs".into(),
+        markdown: matches!(task, Task::Agent { .. }),
         task,
         cwd: "/tmp".into(),
         started: 1_700_000_000,
@@ -227,4 +228,24 @@ fn durations_read_at_a_glance() {
     assert_eq!(human_age(90), "1m");
     assert_eq!(human_age(7200), "2h");
     assert_eq!(human_age(200_000), "2d");
+}
+
+#[test]
+fn whether_a_job_writes_markdown_survives_the_record() {
+    let (_h, _home) = crate::test_home::lock_home("jobs-markdown");
+    // An agent answers in Markdown, and `@job log` has to know that hours later, in a
+    // different process, with only the record to go on.
+    let agent = fixture("400-1", Task::Agent { text: "audit the deps".into(), agent: "reviewer".into() }, None);
+    write("400-1", &agent);
+    assert!(read("400-1").unwrap().markdown, "an agent's log is a document");
+
+    // A command's output is not prose. A `#` line in it is a comment, and drawing it as a
+    // heading would be the reader inventing something the command never said.
+    let shell = fixture("400-2", Task::Shell(Cmd::Line("git status".into())), None);
+    write("400-2", &shell);
+    assert!(!read("400-2").unwrap().markdown, "a command's log is its output");
+    assert!(
+        !std::fs::read_to_string(dir("400-2").unwrap().join("job.toml")).unwrap().contains("markdown"),
+        "and nothing is written down about a job that has nothing to say"
+    );
 }

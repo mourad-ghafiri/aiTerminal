@@ -220,6 +220,7 @@ impl JobsWorld {
             status: if next_at.is_some() { "scheduled".into() } else { "running".into() },
             cmd: spec.request.clone(),
             says,
+            markdown: matches!(task, jobs::Task::Agent { .. }),
             task,
             cwd: "/tmp".into(),
             started: self.now,

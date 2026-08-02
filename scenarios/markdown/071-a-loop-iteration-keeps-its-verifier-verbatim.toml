@@ -1,0 +1,19 @@
+name = "a loop iteration is drawn, and the verifier it quotes is not"
+tags = ["markdown", "loop"]
+
+# The shape `loops::write_iteration` appends per iteration. Two kinds of text in one
+# document, and the difference matters: the maker wrote prose, the verifier printed a
+# compiler's output — and re-wrapping that would move the caret marker off its column.
+
+[[step]]
+markdown = ["## iteration 2", "", "Widened the guard in `parse`.", "", "### verifier", "", "```", "error[E0308]: mismatched types", " --> src/parse.rs:41:9", "  |", "41 |     let n: u32 = read()?;", "  |            ^^^ expected `u32`", "```"]
+
+[[step]]
+expect_contains = ["iteration 2", "Widened the guard", "verifier"]
+
+# Every character the verifier printed, on its own line, in its own column.
+[[step]]
+expect_contains = ["error[E0308]: mismatched types", " --> src/parse.rs:41:9", "  |            ^^^ expected `u32`"]
+
+[[step]]
+expect_not_contains = ["## iteration", "### verifier", "```"]

@@ -158,14 +158,6 @@ impl RunView {
         &self.shown
     }
 
-    /// Write `text` verbatim to the screen with no bookkeeping — the final answer of a run
-    /// that never streamed one (an error, a cancel, an empty stream).
-    pub(crate) fn raw(&mut self, text: &str) {
-        let _ = self.screen.write_all(text.as_bytes());
-        let _ = self.screen.flush();
-        self.to_log(text);
-    }
-
     fn to_log(&mut self, text: &str) {
         if let Some(f) = &mut self.log {
             let _ = f.write_all(text.as_bytes());

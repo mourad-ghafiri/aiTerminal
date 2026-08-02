@@ -53,6 +53,8 @@ pub(crate) fn create_job(spec: RunSpec) -> i32 {
         status: if scheduled { "scheduled".into() } else { "running".into() },
         cmd: if spec.request.trim().is_empty() { task_line(&task) } else { spec.request.clone() },
         says,
+        // An agent answers in Markdown; a command writes whatever it writes.
+        markdown: matches!(task, crate::jobs::Task::Agent { .. }),
         task,
         cwd: cwd_string(),
         started: now,

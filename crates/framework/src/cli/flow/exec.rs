@@ -82,7 +82,9 @@ pub(crate) enum NodeWork {
     /// An agent run, or one run per item when the node fans out.
     Agent { agent: String, prompts: Vec<String> },
     Run { commands: Vec<String> },
-    Approve { show: String, question: String },
+    /// `markdown` is settled where the TEMPLATE is still in hand — by the time `show` is
+    /// a `String` nobody can tell whether it quotes a draft or a build log.
+    Approve { show: String, question: String, markdown: bool },
     /// A resume: this node already ran, and its answer is read back from disk.
     Replay(Box<NodeOut>),
 }
@@ -335,10 +337,10 @@ impl FlowDriver<'_> {
     /// rather than guessing or hanging — `@flow resume` picks it up with somebody
     /// there. Gating an action behind a question nobody hears is how an unattended
     /// pipeline deadlocks.
-    fn ask(&self, show: &str, question: &str) -> NodeOut {
+    fn ask(&self, show: &str, question: &str, markdown: bool) -> NodeOut {
         if !self.interactive {
             if !show.trim().is_empty() {
-                println!("{show}");
+                crate::cli::md::show_answer(show, markdown);
             }
             return NodeOut {
                 ok: false,
@@ -357,7 +359,7 @@ impl FlowDriver<'_> {
         // person was being asked to read was the thing that got eaten.
         let _hold = self.board.hold();
         if !show.trim().is_empty() {
-            println!("{show}");
+            crate::cli::md::show_answer(show, markdown);
         }
         eprint!("{}{question} [y/N] {}", accent(), reset());
         let _ = std::io::stderr().flush();
@@ -421,7 +423,7 @@ impl platform::orchestrator::Driver for FlowDriver<'_> {
             crate::flow::Kind::Agent { agent, prompt } => NodeWork::Agent { agent: agent.clone(), prompts: each(prompt) },
             crate::flow::Kind::Run { command } => NodeWork::Run { commands: each(command) },
             crate::flow::Kind::Approve { show, question } => {
-                NodeWork::Approve { show: fill(show, None), question: question.clone() }
+                NodeWork::Approve { show: fill(show, None), question: question.clone(), markdown: shows_markdown(self.flow, show) }
             }
         })
     }
@@ -521,7 +523,7 @@ impl FlowDriver<'_> {
     fn once(&self, node: &crate::flow::Node, w: &NodeWork) -> NodeOut {
         match w {
             NodeWork::Replay(out) => (**out).clone(),
-            NodeWork::Approve { show, question } => self.ask(show, question),
+            NodeWork::Approve { show, question, markdown } => self.ask(show, question, *markdown),
             NodeWork::Run { commands } => join(commands.iter().map(|c| self.one_command(c, node)).collect()),
             NodeWork::Agent { agent, prompts } => {
                 // One prompt is the common case; several mean the node fans out, and
@@ -613,6 +615,25 @@ pub(crate) fn board_nodes(flow: &crate::flow::Flow) -> Vec<crate::flow::board::B
         .collect()
 }
 
+/// Whether what an `approve` node shows is a document.
+///
+/// An approval exists to put something in front of a person, and what it usually puts
+/// there is the draft the node before it wrote — so it is drawn. The exception is a
+/// template quoting a `run` node: that is a command's output, and re-wrapping the build
+/// log somebody is being asked to approve is the opposite of showing it to them.
+///
+/// A template that quotes no node at all is the flow author's own prose, which is
+/// Markdown by the same argument every other authored string here is.
+pub(crate) fn shows_markdown(flow: &crate::flow::Flow, show: &crate::flow::tmpl::Template) -> bool {
+    use crate::flow::tmpl::{Field, Ref};
+    show.refs().into_iter().all(|r| match r {
+        Ref::Node { id, field: Field::Output } => {
+            flow.index(id).is_some_and(|i| matches!(flow.nodes[i].kind, crate::flow::Kind::Agent { .. }))
+        }
+        _ => true,
+    })
+}
+
 /// What a node is, in the few characters the board gives it.
 fn describe_node(node: &crate::flow::Node) -> String {
     match &node.kind {
@@ -641,7 +662,7 @@ fn asked_text(w: &NodeWork) -> String {
     match w {
         NodeWork::Agent { prompts, .. } => prompts.join("\n\n---\n\n"),
         NodeWork::Run { commands } => commands.join("\n"),
-        NodeWork::Approve { show, question } => format!("{show}\n\n{question}"),
+        NodeWork::Approve { show, question, .. } => format!("{show}\n\n{question}"),
         NodeWork::Replay(_) => String::new(),
     }
 }

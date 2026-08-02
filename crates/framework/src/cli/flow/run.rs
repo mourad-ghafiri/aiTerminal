@@ -217,9 +217,17 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
 
     // The answer: the node the flow says is its answer, printed to stdout so the
     // whole thing composes with a pipe like every other command here.
-    if let Some(answer) = flow.answer_node().and_then(|i| result.results[i].as_ref()) {
-        if !answer.output.trim().is_empty() {
-            println!("{}", answer.output.trim());
+    //
+    // Drawn as the document it is when an AGENT wrote it — which is what an agent always
+    // writes, diagrams included. A `run` node's answer is its command's output, and
+    // re-wrapping a build log is not rendering it. Either way a pipe gets the bytes
+    // unchanged, so `@flow review … > review.md` still writes what the model wrote.
+    if let Some(i) = flow.answer_node() {
+        let markdown = matches!(flow.nodes[i].kind, crate::flow::Kind::Agent { .. });
+        if let Some(answer) = result.results[i].as_ref() {
+            if !answer.output.trim().is_empty() {
+                crate::cli::md::show_answer(answer.output.trim(), markdown);
+            }
         }
     }
     let (tin, tout) = record.tokens();

@@ -82,40 +82,9 @@ pub(crate) fn loop_log(id: &str, follow: bool) -> i32 {
         return 0;
     };
     let alive = || matches!(crate::loops::read(&id), Some(r) if r.is_live());
-    tail_log(&path, follow, &alive)
-}
-
-/// Print a log, then (with `follow`) keep printing what is appended while `live` holds.
-pub(crate) fn tail_log(path: &std::path::Path, follow: bool, live: &dyn Fn() -> bool) -> i32 {
-    use std::io::{Read, Seek, Write};
-    let Ok(mut f) = std::fs::File::open(path) else {
-        eprintln!("aiTerminal: can't read {}", path.display());
-        return 1;
-    };
-    let mut text = String::new();
-    let _ = f.read_to_string(&mut text);
-    print!("{text}");
-    let _ = std::io::stdout().flush();
-    if !follow {
-        return 0;
-    }
-    let mut at = f.stream_position().unwrap_or(0);
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        if let Ok(meta) = std::fs::metadata(path) {
-            if meta.len() > at {
-                let _ = f.seek(std::io::SeekFrom::Start(at));
-                let mut more = String::new();
-                let _ = f.read_to_string(&mut more);
-                print!("{more}");
-                let _ = std::io::stdout().flush();
-                at = meta.len();
-            }
-        }
-        if !live() {
-            return 0;
-        }
-    }
+    // Always a document: `write_iteration` composes one, with the verifier's raw output
+    // already fenced inside it.
+    crate::cli::logs::show_log(&path, follow, true, &alive)
 }
 
 /// Clip a single line to `max` display columns, ellipsising the middle-end.

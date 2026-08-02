@@ -4,6 +4,32 @@ use crate::cli::style::{md_width, muted, reset};
 /// The fenced-block language the AI uses for diagrams (kept internal — never shown to users).
 pub(crate) const DIAGRAM_LANG: &str = "mermaid";
 
+/// One rendered chunk as terminal bytes: text as text, a diagram drawn (natively where we
+/// can, box art everywhere else), an image placed against the document's own directory.
+///
+/// ONE emitter, because three things turn a [`Chunk`](corelib::md::Chunk) into bytes — the
+/// live tail of a streaming answer, a whole document, and a run's log read back — and three
+/// copies of this match is three chances for a diagram to be drawn in one of them and shown
+/// as syntax in another.
+///
+/// `tty` is what the caller knows about its own stream, not a guess: off a terminal there
+/// is no host to place pixels for, so a diagram is drawn in box characters and an image
+/// keeps its `▣ alt` placeholder.
+pub(crate) fn write_chunk(w: &mut dyn std::io::Write, c: corelib::md::Chunk, base: &Path, tty: bool) {
+    let bytes = match c {
+        corelib::md::Chunk::Text(t) => t,
+        corelib::md::Chunk::Diagram(src) => match tty {
+            true => diagram_output(&src),
+            false => diagram_text(&src),
+        },
+        corelib::md::Chunk::Image { src, fallback, .. } => match tty {
+            true => image_output(&src, &fallback, base),
+            false => fallback,
+        },
+    };
+    let _ = w.write_all(bytes.as_bytes());
+}
+
 /// True when `pend` begins a diagram fence that hasn't been closed yet.
 pub(crate) fn is_open_diagram_fence(pend: &str) -> bool {
     let mut lines = pend.lines();

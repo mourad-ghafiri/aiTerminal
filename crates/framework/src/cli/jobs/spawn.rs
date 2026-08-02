@@ -27,6 +27,11 @@ pub(crate) fn spawn_background(args: &[String]) -> i32 {
         status: "running".into(),
         cmd: args.iter().filter(|a| a.as_str() != "--bg").cloned().collect::<Vec<_>>().join(" "),
         says: String::new(),
+        // Everything detached here is an AI run — `@ai --bg`, `@flow --bg`, `@loop --bg` —
+        // and every one of them writes its answer as Markdown into this log. The task
+        // below cannot say so: it records the shell command that really runs, which is
+        // this binary re-invoked.
+        markdown: true,
         // What actually runs, recorded honestly — `@job show` prints the real command.
         task: crate::jobs::Task::Shell(crate::jobs::Cmd::Argv(
             std::iter::once(exe.display().to_string()).chain(child_args.iter().cloned()).collect(),

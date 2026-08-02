@@ -1,4 +1,4 @@
-use crate::cli::agentloop::show::{clip_tail, tail_log};
+use crate::cli::agentloop::show::clip_tail;
 use crate::cli::flow::args::{FlowCmd, FlowSpec, flow_usage, parse_flow_args};
 use crate::cli::flow::exec::board_nodes;
 use crate::cli::flow::{checked_flow, flow_names, load_flow, print_report, run_graph};
@@ -350,20 +350,43 @@ fn flow_node(id: &str, node: &str) -> i32 {
             }
         }
     }
-    // The transcript, verbatim: the file already reads as "## asked / ## answered".
+    // The transcript: the file already reads as "## asked / ## answered". A node with no
+    // agent behind it did not write prose — it wrote a command's output — so that half
+    // goes in as a block, and the renderer draws it instead of re-wrapping a build log.
+    let said = |text: &str| match state.agent.is_empty() {
+        true => fence(text),
+        false => text.to_string(),
+    };
     match run.node_log(&state.id).and_then(|p| std::fs::read_to_string(p).ok()) {
         // Its own `# <node>` heading would repeat the one above it.
-        Some(text) => doc.push_str(text.split_once('\n').map_or(text.as_str(), |(_, rest)| rest)),
+        Some(text) => {
+            let body = text.split_once('\n').map_or(text.as_str(), |(_, rest)| rest);
+            doc.push_str(&match (state.agent.is_empty(), body.split_once("\n## answered\n")) {
+                // What was ASKED is still the prompt somebody wrote; only the answer is
+                // the command's.
+                (true, Some((asked, answered))) => format!("{asked}\n## answered\n\n{}\n", fence(answered)),
+                _ => body.to_string(),
+            });
+        }
         // No transcript file. The record still carries the head of what the node said, and
         // on a node that FAILED that is the one thing anybody came here to read — so it is
         // shown rather than thrown away in favour of a sentence about a missing file.
         None if !state.output.trim().is_empty() => {
-            doc.push_str(&format!("{}\n\n_The full transcript was not kept._\n", state.output.trim()))
+            doc.push_str(&format!("{}\n\n_The full transcript was not kept._\n", said(state.output.trim())))
         }
         None => doc.push_str(&format!("_Nothing to show \u{2014} {}._\n", why_not_run(state.state))),
     }
     print_markdown(&doc, &crate::config::Config::flow_runs_dir());
     0
+}
+
+/// A command's output as a block, for a document that has to carry it.
+///
+/// Four backticks, not three: output containing a three-backtick line of its own is an
+/// ordinary thing for a command to print, and it would otherwise close a fence it never
+/// opened — spilling the rest of the log back out as prose.
+pub(crate) fn fence(text: &str) -> String {
+    format!("````\n{}\n````", text.trim_matches('\n'))
 }
 
 /// `@flow watch [<id>]` — follow a run that is still going.
@@ -520,9 +543,12 @@ fn flow_log(id: &str, node: Option<&str>, follow: bool) -> i32 {
         }
         return 2;
     };
+    // An agent writes Markdown; a `run` node writes whatever its command wrote, and the
+    // record already says which this was — a node with no agent had none.
+    let markdown = run.node(&wanted).is_some_and(|n| !n.agent.is_empty());
     let id = run.id.clone();
     let alive = || matches!(crate::flowruns::read(&id), Some(r) if r.is_live());
-    tail_log(&path, follow, &alive)
+    crate::cli::logs::show_log(&path, follow, markdown, &alive)
 }
 
 /// The stderr lines for a node the run has no log for — the two cases kept apart.

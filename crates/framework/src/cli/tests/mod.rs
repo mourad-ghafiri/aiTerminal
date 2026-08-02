@@ -5,6 +5,7 @@
 mod display;
 mod flow;
 mod jobs;
+mod logs;
 mod loops;
 mod run;
 mod subcommands;

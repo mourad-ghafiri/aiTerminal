@@ -1,0 +1,24 @@
+name = "a job's run log reads as what the agent wrote, header and outcome included"
+tags = ["markdown", "jobs"]
+
+# What `jobs/create.rs` writes around every occurrence — a `#` header naming the task and
+# the folder, the agent's own answer, and a one-line verdict at the bottom. `@job log`
+# hands the whole file to the renderer, so all three have to come out as themselves.
+
+[[step]]
+markdown = ["# @reviewer audit the dependencies", "# in /work/api at 2026-08-02 09:00", "", "## Findings", "", "| package | note |", "| --- | --- |", "| tokio | pinned to 1.42 |", "", "Nothing needs action.", "", "✓ done"]
+
+# The header is a heading, not a hash.
+[[step]]
+expect_contains = ["@reviewer audit the dependencies", "in /work/api at 2026-08-02 09:00"]
+
+# The table is a table — cells and a rule, not pipes.
+[[step]]
+expect_contains = ["package", "tokio", "pinned to 1.42", "Findings", "Nothing needs action."]
+
+# And the verdict is still the last thing you read, which is the point of writing it.
+[[step]]
+expect_contains = ["✓ done"]
+
+[[step]]
+expect_not_contains = ["# @reviewer", "## Findings", "| --- |"]

@@ -324,6 +324,13 @@ it warns about the rest.
 `--view graph|list` works on any of the drawing verbs. Without it they use `[flow]
 view`, which ships as `graph`.
 
+**What a run says is drawn as the document it is.** An agent answers in Markdown and
+mermaid, so the flow's answer, `@flow node` and `@flow log` all render it — headings,
+tables, bullets, and diagrams as pictures. A `run` node did not write prose, it wrote its
+command's output, and that is passed through untouched. Either way a **pipe gets the
+source unchanged**, so `@flow review "…" > review.md` writes the Markdown the model wrote.
+See [markdown.md](markdown.md).
+
 ### Five flows ship
 
 | Flow | What it does |
@@ -631,6 +638,10 @@ So a run is readable, reviewable and continuable:
 ❯ @loop clear                        # prune finished runs
 ```
 
+`@loop log` draws each iteration as the document the maker wrote — and quotes the verifier's
+own output verbatim inside it, because a compiler's caret belongs in its column. Piped, you
+get the file.
+
 A run stopped by Ctrl+C, a timeout or the cap resumes from where it stopped rather than paying
 for the whole thing again.
 
@@ -716,6 +727,10 @@ honestly. `[jobs] max_concurrent` bounds how much a due fleet can start at a tim
 
 Foreground `@job` runs play with the full live chrome *and* tee their output into the run
 log. `--bg` detaches; it also works on any `@<agent>`, `@flow`, or `@loop` invocation.
+
+`@job log` knows which of the two it is holding: an **agent's** log is drawn as the document
+it is, and a **command's** output is passed through untouched — a `#` line printed by a
+program is a comment, not a heading. Piped, both give you the file.
 
 Each job is a folder under `~/.aiTerminal/ai/jobs/<id>/` — `job.toml` (what to run, when,
 and how the last run went) and `runs/<n>.md`, one log per occurrence. Plain TOML you can

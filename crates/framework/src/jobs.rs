@@ -240,6 +240,14 @@ pub(crate) struct Job {
     /// The planner's sentence, when the AI read the request.
     pub says: String,
     pub task: Task,
+    /// Whether this job's log is a Markdown document — what an agent writes — or the raw
+    /// output of a command.
+    ///
+    /// A reader cannot tell by looking, and must not try: a shell job that prints a `#`
+    /// line is not writing a heading. Nor can it be read off [`Task`], because a detached
+    /// `@ai --bg` / `@flow --bg` / `@loop --bg` is recorded honestly as the shell command
+    /// it really is — this binary, re-run. So the creator, which knows, writes it down.
+    pub markdown: bool,
     pub cwd: String,
     pub started: u64,
     pub finished: Option<u64>,
@@ -321,6 +329,9 @@ pub(crate) fn write(id: &str, job: &Job) {
     if !job.says.is_empty() {
         pairs.push(("says".into(), Toml::Str(job.says.clone())));
     }
+    if job.markdown {
+        pairs.push(("markdown".into(), Toml::Bool(true)));
+    }
     match &job.task {
         Task::Agent { text, agent } => {
             pairs.push(("kind".into(), Toml::Str("agent".into())));
@@ -395,6 +406,7 @@ pub(crate) fn read(id: &str) -> Option<Job> {
         status: doc.get("status").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
         cmd,
         says: s("says"),
+        markdown: doc.get("markdown").and_then(|v| v.as_bool()).unwrap_or(false),
         task,
         cwd: s("cwd"),
         started: i("started").unwrap_or(0).max(0) as u64,

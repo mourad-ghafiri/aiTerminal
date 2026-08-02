@@ -1,5 +1,5 @@
 use std::path::Path;
-use crate::cli::media::{DIAGRAM_LANG, diagram_output, diagram_text, image_output};
+use crate::cli::media::{DIAGRAM_LANG, write_chunk};
 use crate::cli::style::{md_style, md_width, out_is_tty, term_rows};
 
 /// `@md` — view and edit Markdown files at the prompt. `render <file>` pretty-prints it (styled,
@@ -77,31 +77,51 @@ fn md_render(path: Option<&String>) -> i32 {
 /// document meant it.
 pub(crate) fn print_markdown(text: &str, base: &Path) {
     use std::io::Write;
-    let tty = out_is_tty();
+    let mut out = std::io::stdout().lock();
+    write_markdown(&mut out, text, base, out_is_tty());
+    let _ = out.flush();
+}
+
+/// [`print_markdown`], against any writer and told what its stream is — so what a
+/// terminal gets and what a pipe gets are both things a test can read back.
+pub(crate) fn write_markdown(w: &mut dyn std::io::Write, text: &str, base: &Path, tty: bool) {
     let style = if tty { md_style() } else { corelib::md::Style { enabled: false, ..corelib::md::Style::default() } };
     let mut sr = corelib::md::StreamRenderer::new(style, md_width(), &[DIAGRAM_LANG]);
     // The whole document is in hand, so every reference and footnote resolves wherever
     // it is defined — including below the text that uses it.
     sr.seed(corelib::md::scan_defs(text));
+    for c in sr.push(text) {
+        write_chunk(w, c, base, tty);
+    }
+    for c in sr.finish() {
+        write_chunk(w, c, base, tty);
+    }
+}
+
+/// Show what a run produced: drawn on a terminal, byte-for-byte unchanged in a pipe.
+///
+/// The second half is the whole difference between this and [`print_markdown`]. `@md
+/// render` is a VIEWER — piping it plain text is the documented point of it. A run's
+/// answer is CONTENT, and `@flow review … > review.md` has to write the Markdown the
+/// model wrote, not one terminal's re-wrapping of it.
+///
+/// `markdown` is what the caller knows about what it is holding, never a guess about the
+/// text: an agent writes Markdown, a command writes whatever it writes, and reflowing a
+/// build log is not rendering it.
+pub(crate) fn show_answer(text: &str, markdown: bool) {
+    use std::io::Write;
     let mut out = std::io::stdout().lock();
-    let mut emit = |chunks: Vec<corelib::md::Chunk>| {
-        for c in chunks {
-            match c {
-                corelib::md::Chunk::Text(t) => {
-                    let _ = out.write_all(t.as_bytes());
-                }
-                corelib::md::Chunk::Diagram(src) => {
-                    let d = if tty { diagram_output(&src) } else { diagram_text(&src) };
-                    let _ = out.write_all(d.as_bytes());
-                }
-                corelib::md::Chunk::Image { src, fallback, .. } => {
-                    let d = if tty { image_output(&src, &fallback, base) } else { fallback };
-                    let _ = out.write_all(d.as_bytes());
-                }
-            }
-        }
-    };
-    emit(sr.push(text));
-    emit(sr.finish());
+    write_answer(&mut out, text, markdown, out_is_tty());
     let _ = out.flush();
+}
+
+/// [`show_answer`]'s decision and its rendering, against any writer.
+pub(crate) fn write_answer(w: &mut dyn std::io::Write, text: &str, markdown: bool, tty: bool) {
+    if markdown && tty {
+        // No document directory — an answer is not a file — so only absolute paths and
+        // (when allowed) remote images can resolve.
+        write_markdown(w, text, Path::new("."), true);
+        return;
+    }
+    let _ = writeln!(w, "{text}");
 }

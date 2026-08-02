@@ -126,6 +126,7 @@ fn a_job_run_is_never_silent_about_what_happened() {
         status: "running".into(),
         cmd: "get me the weather".into(),
         says: String::new(),
+        markdown: true,
         task: crate::jobs::Task::Agent { agent: "coder".into(), text: "get me the weather".into() },
         cwd: "/tmp".into(),
         started: 0,

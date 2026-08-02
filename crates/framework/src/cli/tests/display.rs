@@ -232,6 +232,26 @@ fn a_tool_only_turn_never_prints_the_protocol_and_never_repeats_itself() {
 }
 
 #[test]
+fn an_answer_that_never_streamed_is_drawn_like_one_that_did() {
+    // A run that errored, was cancelled, or produced its whole answer in one piece hands
+    // the text to `finish_streamed` instead of streaming it. It used to go straight past
+    // the view onto the screen — so the run that ended badly, which is the one you most
+    // want to read, was the one that showed its explanation as syntax.
+    let explanation = "## What went wrong\n\nThe step budget of **12** ran out.";
+    let (mut obs, screen) = observer(true);
+    crate::cli::observe::finish_streamed(&mut obs, explanation);
+    let drawn = screen.text();
+    assert!(!drawn.contains("## What went wrong"), "the heading is drawn: {drawn:?}");
+    assert!(!drawn.contains("**12**"), "and so is the emphasis: {drawn:?}");
+    assert!(drawn.contains("What went wrong") && drawn.contains("step budget"), "{drawn:?}");
+
+    // Off a terminal there is no renderer, and the words come through as written.
+    let (mut obs, screen) = observer(false);
+    crate::cli::observe::finish_streamed(&mut obs, explanation);
+    assert!(screen.text().contains("## What went wrong"), "{:?}", screen.text());
+}
+
+#[test]
 fn a_turn_boundary_finalizes_the_tail_so_nothing_is_drawn_twice() {
     // The renderer keeps the in-progress block and re-renders it on every token. A turn
     // that ends without that block being committed leaves it there — so the NEXT turn's

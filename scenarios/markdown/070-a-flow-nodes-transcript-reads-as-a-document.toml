@@ -1,0 +1,34 @@
+name = "a flow node's transcript reads back as a document, diagram and all"
+tags = ["markdown", "flow", "stream"]
+
+# The exact shape `flowruns::write_node` puts on disk — `# <node>`, `## asked`,
+# `## answered` — because that is what `@flow log` and `@flow node` hand to the renderer.
+# It used to reach the screen as syntax: a person asking what their own agent said was
+# shown `## answered` and six lines of diagram source.
+
+[[step]]
+markdown = ["# read", "", "## asked", "", "Map the export command.", "", "## answered", "", "It runs in **two** stages:", "", "- parse the flags", "- write the rows"]
+
+# Both halves of the transcript survive — what it was asked, and what it said.
+[[step]]
+expect_contains = ["read", "Map the export command.", "asked", "answered"]
+
+# The prose is drawn: emphasis is emphasis and a bullet is a bullet.
+[[step]]
+expect_contains = ["two", "•", "parse the flags", "write the rows"]
+
+[[step]]
+expect_not_contains = ["## answered", "**two**", "- parse"]
+
+# The other half of the promise: our AI features answer in Markdown AND mermaid, so a
+# transcript carrying a diagram hands it to the drawing engine rather than showing its
+# source. This is the path `@flow log` reads a growing transcript through.
+[[step]]
+stream = ["# read<LF><LF>## answered<LF><LF>```mermaid<LF>flowchart TD<LF>", "  A[flags] --> B[rows]<LF>```<LF>"]
+
+[[step]]
+expect_diagrams = ["flowchart TD<LF>  A[flags] --> B[rows]"]
+
+# And nothing of the fence is left in the text beside it.
+[[step]]
+expect_stream = ["read", "────────────────────────────────────────────────────────────", "", "answered", "────────────────────────────────────────────────────────────", ""]

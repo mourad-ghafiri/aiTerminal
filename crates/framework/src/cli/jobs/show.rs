@@ -29,37 +29,8 @@ pub(crate) fn job_log(id: &str, follow: bool) -> i32 {
         }
         return 0;
     }
-    use std::io::{Read, Seek, Write};
-    let Ok(mut f) = std::fs::File::open(&path) else {
-        eprintln!("aiTerminal: can't read {}", path.display());
-        return 1;
-    };
-    let mut text = String::new();
-    let _ = f.read_to_string(&mut text);
-    print!("{text}");
-    let _ = std::io::stdout().flush();
-    if !follow {
-        return 0;
-    }
-    // Follow: poll for growth while the job is still live, so `-f` ends by itself.
-    let mut at = f.stream_position().unwrap_or(0);
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        if let Ok(meta) = std::fs::metadata(&path) {
-            if meta.len() > at {
-                let _ = f.seek(std::io::SeekFrom::Start(at));
-                let mut more = String::new();
-                let _ = f.read_to_string(&mut more);
-                print!("{more}");
-                let _ = std::io::stdout().flush();
-                at = meta.len();
-            }
-        }
-        match crate::jobs::read(&id) {
-            Some(j) if j.status == "running" => {}
-            _ => return 0,
-        }
-    }
+    let running = || matches!(crate::jobs::read(&id), Some(j) if j.status == "running");
+    crate::cli::logs::show_log(&path, follow, job.markdown, &running)
 }
 
 /// `@job show <id>` — everything the record knows, in the order a person asks it.

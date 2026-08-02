@@ -1,5 +1,5 @@
 use std::path::Path;
-use crate::cli::media::{DIAGRAM_LANG, diagram_output, image_output, is_open_diagram_fence};
+use crate::cli::media::{DIAGRAM_LANG, is_open_diagram_fence, write_chunk as write_media_chunk};
 use crate::cli::observe::Spinner;
 use crate::cli::style::{err_is_tty, md_style, md_width, muted, reset, term_rows};
 
@@ -118,20 +118,12 @@ impl LiveMarkdown {
         LiveMarkdown { sr: corelib::md::StreamRenderer::new(style, width, &[DIAGRAM_LANG]), style, width, max_rows: if max_rows == 0 { 40 } else { max_rows }, painted: 0 }
     }
 
+    /// A streamed answer has no document directory, so only absolute paths and (when
+    /// allowed) remote images can resolve. A live tail exists only on a terminal — it is
+    /// built from `err_is_tty()`/`out_is_tty()` and is `None` off one — so the host is
+    /// always there to draw for.
     fn write_chunk(w: &mut dyn std::io::Write, c: corelib::md::Chunk) {
-        match c {
-            corelib::md::Chunk::Text(t) => {
-                let _ = w.write_all(t.as_bytes());
-            }
-            corelib::md::Chunk::Diagram(s) => {
-                let _ = w.write_all(diagram_output(&s).as_bytes());
-            }
-            // A streamed answer has no document directory; only absolute paths and
-            // (when allowed) remote images can resolve.
-            corelib::md::Chunk::Image { src, fallback, .. } => {
-                let _ = w.write_all(image_output(&src, &fallback, Path::new(".")).as_bytes());
-            }
-        }
+        write_media_chunk(w, c, Path::new("."), true);
     }
 
     /// Render the in-progress block for the live tail (a placeholder for an open diagram fence
