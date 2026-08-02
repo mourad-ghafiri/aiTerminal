@@ -186,6 +186,35 @@ body { background: var(--paper); }
 .vterm .stage-rig { align-items: center; }
 .vterm .stage-phone { transition: opacity .4s ease; }
 
+/* ---------------- the 31-plugin grid ----------------
+   Five seconds is not long enough to READ thirty-one cards, and it is not meant
+   to be: what lands is the wall of them arriving at once. So the stagger is
+   tight — every card is in by ~1.9s, leaving three seconds to take in the
+   shape of it. The names are the real ones, read out of builtin/plugins/. */
+#scene-plugins h2 {
+  font-family: var(--serif); font-size: clamp(28px, 3.6vw, 42px);
+  font-weight: 600; letter-spacing: -0.015em;
+}
+#scene-plugins .lead { color: var(--ink-soft); font-size: 15.5px; margin-top: 8px; max-width: 760px; }
+.vpgrid {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 12px; width: min(1160px, 95vw); margin-top: 26px; text-align: left;
+}
+.pg {
+  display: flex; gap: 9px; align-items: center;
+  background: var(--surface); border: 1px solid var(--hair);
+  border-left-width: 3px; border-radius: 9px; padding: 7px 11px;
+}
+/* one accent per family, so the grid reads as four groups at a glance */
+.pg.gs { border-left-color: #38BDF8; }
+.pg.gd { border-left-color: #4ADE80; }
+.pg.gu { border-left-color: #FF9F0A; }
+.pg.ga { border-left-color: #BF5AF2; }
+.pg span { font-size: 15px; flex: none; width: 20px; text-align: center; }
+.pg b { display: block; font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+.pg i { font-style: normal; display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+@media (max-width: 1100px) { .vpgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
 /* ---------------- the receipts ---------------- */
 #scene-proof .lead { color: var(--ink-soft); font-size: 16px; margin-top: 14px; max-width: 820px; }
 .vproof {
@@ -312,6 +341,48 @@ body { background: var(--paper); }
   </section>
 
   <!-- 04 · all 31 plugins, with a one-line use case each -->
+
+  <!-- 05 · batteries included -->
+  <section class="vcard" id="scene-plugins">
+    <span class="tag accent rise" style="--d:.02s">batteries included</span>
+    <h2 class="rise" style="--d:.08s">One terminal. <em>Thirty-one plugins.</em></h2>
+    <p class="lead rise" style="--d:.16s">Every one is a <code>plugin.toml</code> — pure data. Nothing compiles,
+      nothing slows your prompt, and <code>@plugin disable &lt;name&gt;</code> turns any of them off.</p>
+    <div class="vpgrid">
+      <div class="pg gs rise" style="--d:0.30s"><span>🎨</span><div><b>syntax-highlight</b><i>valid vs unknown, as you type</i></div></div>
+      <div class="pg gs rise" style="--d:0.35s"><span>👻</span><div><b>autosuggest</b><i>ghost text from your history</i></div></div>
+      <div class="pg gs rise" style="--d:0.40s"><span>🧠</span><div><b>history</b><i>type a prefix, ↑ walks the matches</i></div></div>
+      <div class="pg gs rise" style="--d:0.45s"><span>⌨️</span><div><b>completion</b><i>rich tab completion, aliases too</i></div></div>
+      <div class="pg gs rise" style="--d:0.50s"><span>✂️</span><div><b>lineedit</b><i>⌥/⌘ arrows, shift-select, replace</i></div></div>
+      <div class="pg gs rise" style="--d:0.55s"><span>💡</span><div><b>alias-hints</b><i>the shorter alias you forgot you wrote</i></div></div>
+      <div class="pg gs rise" style="--d:0.60s"><span>🚀</span><div><b>prompt</b><i>user@host, CPU, memory, clock</i></div></div>
+      <div class="pg gs rise" style="--d:0.65s"><span>🔼</span><div><b>sudo</b><i>Esc Esc adds it — or takes it back</i></div></div>
+      <div class="pg gs rise" style="--d:0.70s"><span>📁</span><div><b>dir</b><i>navigation, dir history, mkcd</i></div></div>
+      <div class="pg gs rise" style="--d:0.75s"><span>🧭</span><div><b>jump</b><i>hop to a directory by name</i></div></div>
+      <div class="pg gs rise" style="--d:0.80s"><span>🌍</span><div><b>term-cwd</b><i>the window follows your cwd</i></div></div>
+      <div class="pg gd rise" style="--d:0.85s"><span>⎇</span><div><b>git</b><i>100+ aliases and a live segment</i></div></div>
+      <div class="pg gd rise" style="--d:0.90s"><span>🐙</span><div><b>github</b><i>PRs, issues, runs, gists, codespaces</i></div></div>
+      <div class="pg gd rise" style="--d:0.95s"><span>🐳</span><div><b>docker</b><i>containers, images, compose, exec-in</i></div></div>
+      <div class="pg gd rise" style="--d:1.00s"><span>☸️</span><div><b>kubernetes</b><i>the whole kubectl matrix, plus helm</i></div></div>
+      <div class="pg gd rise" style="--d:1.05s"><span>🦀</span><div><b>rust</b><i>cargo build/test/clippy/watch, shortened</i></div></div>
+      <div class="pg gd rise" style="--d:1.10s"><span>🐍</span><div><b>python</b><i>venv, pip, pytest, uv and poetry</i></div></div>
+      <div class="pg gd rise" style="--d:1.15s"><span>📦</span><div><b>node</b><i>npm / yarn / pnpm, and a script lister</i></div></div>
+      <div class="pg gu rise" style="--d:1.20s"><span>🗜</span><div><b>extract</b><i>x — any archive, no flags to remember</i></div></div>
+      <div class="pg gu rise" style="--d:1.25s"><span>📋</span><div><b>clipboard</b><i>pipe anything to or from the clipboard</i></div></div>
+      <div class="pg gu rise" style="--d:1.30s"><span>🔐</span><div><b>encode</b><i>base64 · hex · url · json · sha</i></div></div>
+      <div class="pg gu rise" style="--d:1.35s"><span>🔎</span><div><b>web-search</b><i>18 engines from the prompt</i></div></div>
+      <div class="pg gu rise" style="--d:1.40s"><span>🌦</span><div><b>weather</b><i>the forecast in a command</i></div></div>
+      <div class="pg gu rise" style="--d:1.45s"><span>🕰</span><div><b>world-clock</b><i>timezones at a glance</i></div></div>
+      <div class="pg gu rise" style="--d:1.50s"><span>📝</span><div><b>notes</b><i>capture a note without leaving the shell</i></div></div>
+      <div class="pg gu rise" style="--d:1.55s"><span>📟</span><div><b>sysinfo</b><i>battery segment and a vitals dashboard</i></div></div>
+      <div class="pg gu rise" style="--d:1.60s"><span>📖</span><div><b>colored-man</b><i>man pages you can actually read</i></div></div>
+      <div class="pg gu rise" style="--d:1.65s"><span>🧰</span><div><b>common</b><i>the one-liners you type every day</i></div></div>
+      <div class="pg ga rise" style="--d:1.70s"><span>✦</span><div><b>ai-terminal</b><i>the whole @-command family</i></div></div>
+      <div class="pg ga rise" style="--d:1.75s"><span>🛡</span><div><b>command-guard</b><i>allow · confirm · deny</i></div></div>
+      <div class="pg ga rise" style="--d:1.80s"><span>🕶</span><div><b>redactor</b><i>secrets never leave the machine</i></div></div>
+    </div>
+  </section>
+
   <!-- 05 · the receipts -->
   <section class="vcard" id="scene-proof">
     <span class="tag accent rise" style="--d:.02s">the receipts</span>
@@ -376,13 +447,14 @@ body { background: var(--paper); }
 <script>
 /* ============================================================================
    The timeline. One replica window, thirteen beats, a phone that joins for
-   @gate — driven by the exact primitives the site's showcase uses, so the film
-   and the site can never drift apart.
+   @gate, and three full-screen cards to close on — the plugin wall, the
+   receipts, the call to action. Driven by the exact primitives the site's
+   showcase uses, so the film and the site can never drift apart.
 
    Order is deliberate, and it is a sales order, not a feature order:
      ask → delegate → IT WRITES THE WORKFLOW → parallel → it tells you what
      broke → verify → detach → LEAVE YOUR DESK → guard → redact → read →
-     make it yours → it's a real terminal.
+     make it yours → it's a real terminal → batteries included.
 
    The three "wait, it does that?" moments are placed where attention dips: a
    graph written for you (beat 3), your terminal answering from your phone
@@ -398,7 +470,7 @@ body { background: var(--paper); }
   const $ = (id) => document.getElementById(id);
   const scenes = {
     intro: $("scene-intro"), thesis: $("scene-thesis"), term: $("scene-term"),
-    proof: $("scene-proof"), outro: $("scene-outro"),
+    plugins: $("scene-plugins"), proof: $("scene-proof"), outro: $("scene-outro"),
   };
 
   /* keep in sync with the overlay copy — the progress bar is the only thing
@@ -751,13 +823,21 @@ body { background: var(--paper); }
       { do: "pause", ms: 1100 },
     ]);
 
-    /* ---- 1:15 · the receipts (8.0s) ---- */
-    show("proof");
-    await sleep(8600);
+    /* ---- 14 · batteries included (5.0s) ----
+       Thirty-one cards arriving at once. Nobody reads them in five seconds and
+       nobody is meant to — the wall IS the claim. Paid for out of the two holds
+       below, which carried the most dead air in the film: their own animations
+       are finished inside two seconds. */
+    show("plugins");
+    await sleep(5000);
 
-    /* ---- 1:23 · the call to action, then fade to black (7.0s) ---- */
+    /* ---- 1:15 · the receipts (4.6s) ---- */
+    show("proof");
+    await sleep(4600);
+
+    /* ---- 1:23 · the call to action, then fade to black (7.4s) ---- */
     show("outro");
-    await sleep(8400);
+    await sleep(7400);
     show(""); /* every scene off — fade to black */
     document.querySelector(".vbar").style.opacity = "0";
     $("vwm").classList.remove("on");
