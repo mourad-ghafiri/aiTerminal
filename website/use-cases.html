@@ -52,55 +52,94 @@
     <h2>From "could you…" to merged</h2>
     <div class="uc-grid">
 
-      <div class="uc">
+      <div class="uc wide">
         <h3><span class="em">🧑‍🔬</span>Pick the right specialist</h3>
         <p><code>@agent</code> is the roster: eight of them, each with its tools, its step cap and what it returns. Run any one with <code>@&lt;name&gt;</code>. They are Markdown files, so the list is yours to change.</p>
-        <pre><span class="p">❯</span> <span class="ab">@agent</span>
+        <pre class="board"><span class="p">❯</span> <span class="ab">@agent</span>
 agents (8):
-  ai          <span class="d">19 tools ·  6 steps  General assistant — a command to review, or an answer</span>
-  coder       <span class="d">24 tools · 24 steps  Senior engineer — the smallest correct edit, verified</span>
-  explorer    <span class="d"> 7 tools · 12 steps  Read-only scout — maps the code and reports tightly</span>
-  planner     <span class="d"> 7 tools · 10 steps  Turns a goal into a plan with a concrete done-when</span>
-  researcher  <span class="d">12 tools · 16 steps  Finds sources, reads them, reports what they say</span>
-  reviewer    <span class="d"> 7 tools · 12 steps  Read-only review — correctness, security, design</span>
-  tester      <span class="d">13 tools · 18 steps  Runs the project's own tests, reports what happened</span>
-  writer      <span class="d">10 tools · 14 steps  Docs and reports — and saves the file</span></pre>
+<span class="d">  served by claude-sonnet-5</span>
+
+  <span class="a">@ai          </span><span class="d">19 tools · 6 steps</span>
+      General assistant — concise Markdown answers, with commands to review.
+
+  <span class="a">@coder       </span><span class="d">25 tools · 8 skills · 24 steps</span>
+      Senior engineer + orchestrator — explores, makes the smallest correct edit, verifies,
+      delegates.
+      <span class="d">skills   concise · planning · orchestration · code-review · testing · verification · debugging · git</span>
+
+  <span class="a">@explorer    </span><span class="d">7 tools · 1 skill · 12 steps</span>
+      Fast read-only scout — maps the relevant code and reports back tightly.
+      <span class="d">skills   concise</span>
+
+  <span class="a">@planner     </span><span class="d">7 tools · 4 skills · 10 steps</span>
+      Turns a goal into a short plan with acceptance criteria — reads, never writes.
+      <span class="d">skills   concise · planning · research · orchestration</span>
+
+  <span class="a">@researcher  </span><span class="d">12 tools · 3 skills · 16 steps</span>
+      Finds sources, reads them, and reports what they actually say — with links.
+      <span class="d">skills   concise · research · writing</span>
+
+  <span class="a">@reviewer    </span><span class="d">7 tools · 5 skills · 12 steps</span>
+      Read-only code review — correctness, security, tests, design.
+      <span class="d">skills   concise · code-review · security-review · verification · writing</span>
+
+  <span class="a">@tester      </span><span class="d">13 tools · 4 skills · 18 steps</span>
+      Writes and runs tests; reproduces a failure, then fixes it.
+      <span class="d">skills   concise · verification · testing · debugging</span>
+
+  <span class="a">@writer      </span><span class="d">10 tools · 2 skills · 14 steps</span>
+      Writes documentation and reports for the person who will read them — and saves the file.
+      <span class="d">skills   concise · writing</span>
+
+<span class="d">one in full:  @agent &lt;name&gt;   ·  run one:  @&lt;name&gt; "&lt;task&gt;"</span></pre>
       </div>
 
-      <div class="uc">
+      <div class="uc wide">
         <h3><span class="em">🧩</span>Describe it. Get a workflow.</h3>
         <p>You do not have to already have the right flow. Name none and <b>one is written for the goal</b> — out of the agents you actually have — then checked before it spends a token. It lives in the run's own record, so you can read exactly what was made for you, and <code>@flow</code> still lists only the five you meant to have.</p>
-        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> explain how the export command works</span>
+        <pre class="board"><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> explain how the export command works</span>
 <span class="d">◈ no flow named — building a graph for this goal</span>
-<span class="d">◈ built a 3-node graph: read the code, then explain it · @flow show 1785371201-90257</span>
-<span class="a">▸ explain-how-the-export · explain how the export command works</span>
-  <span class="g">╭────────────────────╮</span>    <span class="d">╭────────────────────╮</span>    <span class="d">╭────────────────────╮</span>
-  <span class="g">│ ⠻ read             │</span>    <span class="d">│ ○ draft            │</span>    <span class="d">│ ○ explain          │</span>
-  <span class="g">│ @explorer          │</span><span class="d">───▸│ @writer            │───▸│ @writer            │</span>
-  <span class="g">╰────────────────────╯</span>    <span class="d">╰────────────────────╯</span>    <span class="d">╰────────────────────╯</span></pre>
+<span class="d">◈ built a 3-node graph: read the code, write it up, check every claim · @flow show 1785371201-90257</span>
+<span class="d">  3 nodes · 3 agents · 24 tools · 8 skills · 4 at a time · slowest path read→draft→check</span>
+  <span class="a">╭────────────────────────────────╮</span>    <span class="d">╭────────────────────────────────╮</span>    <span class="d">╭────────────────────────────────╮</span>
+  <span class="a">│</span> <span class="a">⠼ read</span>                      <span class="d">⚙6</span> <span class="a">│</span>    <span class="d">│</span> <span class="d">○ draft</span>                        <span class="d">│</span>    <span class="d">│</span> <span class="d">○ check</span>                        <span class="d">│</span>
+  <span class="a">│</span> <span class="d">@explorer · claude-sonnet-5</span>    <span class="a">│</span><span class="d">───▸│</span> <span class="d">@writer · claude-sonnet-5</span>      <span class="d">│───▸│</span> <span class="d">@reviewer · claude-sonnet-5</span>    <span class="d">│</span>
+  <span class="a">│</span> <span class="d">⚙ fs.read src/export.rs</span>        <span class="a">│</span>    <span class="d">│</span> <span class="d"> </span>                              <span class="d">│</span>    <span class="d">│</span> <span class="d"> </span>                              <span class="d">│</span>
+  <span class="a">╰────────────────────────────────╯</span>    <span class="d">╰────────────────────────────────╯</span>    <span class="d">╰────────────────────────────────╯</span>
+
+<span class="a">  ⠋</span><span class="a"> read · @explorer · claude-sonnet-5</span>
+<span class="d">    running · 6 tool calls</span>
+<span class="d">    ⚙ fs.search "export" · 14ms · 6 results</span>
+<span class="d">    ⚙ fs.read src/export.rs · 9ms · 8.2KB</span>
+<span class="d">    ⚙ fs.read src/cli.rs · 7ms · 6.0KB</span>
+  <span class="d">0/3 done</span><span class="d"> · </span><span class="d">1 running</span></pre>
       </div>
 
-      <div class="uc">
+      <div class="uc wide">
         <h3><span class="em">🚢</span>Ship a small feature, end to end</h3>
         <p>The <code>build</code> graph plans it, maps the code <em>and</em> your conventions in parallel, edits, runs <em>your</em> tests — and if they fail, loops back through a fixer up to three times before giving up.</p>
-        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> build "add a --json flag to the export command"</span>
+        <pre class="board"><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> build "add a --json flag to the export command"</span>
 <span class="a">▸ build · add a --json flag to the export command</span>
-  <span class="d">8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time · slowest path plan→apply→verify</span>
-  <span class="g">╭──────────────────────╮</span>    <span class="a">╭──────────────────────╮</span>    <span class="d">╭──────────────────────╮</span>
-  <span class="g">│ ✓ plan            ⚙3 │</span>    <span class="a">│ ⠻ apply           ⚙4 │</span>    <span class="d">│ ○ verify             │</span>
-  <span class="g">│ @planner             │</span><span class="g">───▸</span><span class="a">│ @coder               │</span><span class="d">───▸│ @tester              │</span>
-  <span class="g">│ 4.2s · 3.1k          │</span>  <span class="d">╎</span><span class="a">│ ⚙ fs.edit src/cli.rs │</span>    <span class="d">│                      │</span>
-  <span class="g">╰──────────────────────╯</span>  <span class="d">╎</span><span class="a">╰──────────────────────╯</span>    <span class="d">╰──────────────────────╯</span>
-                          <span class="d">╎</span><span class="g">╭──────────────────────╮</span>
-                          <span class="d">╎</span><span class="g">│ ✓ explore        ⚙12 │</span>
-                          <span class="d">╎▸</span><span class="g">│ @explorer            │</span>
-                          <span class="d">╎ </span><span class="g">│ 8.1s · 9.4k          │</span>
-                          <span class="d">╎ </span><span class="g">╰──────────────────────╯</span>
-  <span class="a">⠻ apply · @coder · claude-opus-5</span>
-    <span class="d">running · 18.4s · 9.1k tokens · 4 tool calls · needs plan, explore</span>
-    <span class="d">⚙ fs.read src/cli.rs · 9ms · 6KB</span>
-    <span class="d">⚙ fs.edit src/cli.rs · 12ms · 1.4KB</span>
-  <span class="d">3/8 done · 1 running · 21.3k tokens · 24.6s</span></pre>
+<span class="d">  8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time · slowest path plan→explore→apply→verify→review→summary</span>
+  <span class="g">╭────────────────╮</span>    <span class="g">╭────────────────╮</span>    <span class="a">╭────────────────╮</span>    <span class="d">╭────────────────╮</span>    <span class="d">╭────────────────╮</span>    <span class="d">╭────────────────╮</span>
+  <span class="g">│</span> <span class="g">✓ plan</span>      <span class="d">⚙3</span> <span class="g">│</span>    <span class="g">│</span> <span class="g">✓ explore</span>  <span class="d">⚙12</span> <span class="g">│</span>    <span class="a">│</span> <span class="a">⠼ apply</span>     <span class="d">⚙4</span> <span class="a">│</span>    <span class="d">│</span> <span class="d">○ verify</span>       <span class="d">│</span>    <span class="d">│</span> <span class="d">○ fix</span>          <span class="d">│</span>    <span class="d">│</span> <span class="d">○ summary</span>      <span class="d">│</span>
+  <span class="g">│</span> <span class="d">@planner</span>       <span class="g">│───▸│</span> <span class="d">@explorer</span>      <span class="g">│───▸</span><span class="a">│</span> <span class="d">@coder</span>         <span class="a">│</span><span class="d">───▸│</span> <span class="d">@tester</span>        <span class="d">│───▸│</span> <span class="d">@coder</span>         <span class="d">│╌╎</span> <span class="d">▸│</span> <span class="d">@writer</span>        <span class="d">│</span>
+  <span class="g">│</span> <span class="d">4.2s · 3.1k</span>    <span class="g">│</span>   <span class="g">││</span> <span class="d">8.1s · 9.4k</span>    <span class="g">│</span>   <span class="g">│</span><span class="a">│</span> <span class="d">⚙ fs.edit src…</span> <span class="a">│</span>  <span class="d">╎</span> <span class="d">│</span> <span class="d"> </span>              <span class="d">│</span>   <span class="d">││</span> <span class="d">when verify.o…</span> <span class="d">│</span> <span class="d">╎</span> <span class="d">││</span> <span class="d"> </span>              <span class="d">│</span>
+  <span class="g">╰────────────────╯</span>   <span class="g">│╰────────────────╯</span>   <span class="g">│</span><span class="a">╰────────────────╯</span>  <span class="d">╎</span> <span class="d">╰────────────────╯</span>   <span class="d">│╰────────────────╯</span> <span class="d">╎</span> <span class="d">│╰────────────────╯</span>
+                       <span class="g">│</span>                     <span class="g">│</span>                    <span class="d">╎</span>                      <span class="d">│</span>                   <span class="d">╎</span> <span class="d">│</span>
+                       <span class="g">│╭────────────────╮</span>   <span class="g">│</span>                    <span class="d">╎</span>                      <span class="d">│╭────────────────╮</span> <span class="d">╎</span> <span class="d">│</span>
+                       <span class="g">││</span> <span class="g">✓ conventions</span>  <span class="g">│</span>   <span class="g">│</span>                    <span class="d">╎</span>                      <span class="d">││</span> <span class="d">○ review</span>       <span class="d">│</span> <span class="d">╎</span> <span class="d">│</span>
+                       <span class="g">▸│</span> <span class="d">@explorer</span>      <span class="g">│───┘</span>                    <span class="d">╎</span>                      <span class="d">▸│</span> <span class="d">@reviewer</span>      <span class="d">│───┘</span>
+                        <span class="g">│</span> <span class="d">7.6s · 8.8k</span>    <span class="g">│</span>                        <span class="d">╎</span>                       <span class="d">│</span> <span class="d">when verify.o…</span> <span class="d">│</span> <span class="d">╎</span>
+                        <span class="g">╰────────────────╯</span>                        <span class="d">╎</span>                       <span class="d">╰────────────────╯</span> <span class="d">╎</span>
+                                                                  <span class="d">╎</span>                                          <span class="d">╎</span>
+                                                                  <span class="d">╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎</span>
+<span class="a">  ⠋</span><span class="a"> apply · @coder · claude-sonnet-5</span>
+<span class="d">    running · 4 tool calls · needs explore, conventions</span>
+<span class="d">    ⚙ fs.read src/export.rs · 9ms · 8.2KB</span>
+<span class="d">    ⚙ fs.edit src/export.rs · 12ms · 1 replaced</span>
+<span class="d">    ⚙ fs.edit src/cli.rs · 11ms · 1 replaced</span>
+  <span class="d">3/8 done</span><span class="d"> · </span><span class="d">1 running</span><span class="d"> · 21.3k tokens</span><span class="d"> · 24.6s</span></pre>
       </div>
 
       <div class="uc">
@@ -179,21 +218,24 @@ Reproduced: rounding applied before the zero-check …</pre>
 <span class="p">❯</span> <span class="ab">@flow</span><span class="c"> ship "add rate limiting to the login route"</span></pre>
       </div>
 
-      <div class="uc">
+      <div class="uc wide">
         <h3><span class="em">🔎</span>Answer a question properly, with sources</h3>
         <p>The <code>research</code> graph splits the question into sub-questions, researches each <em>at the same time</em>, then reports what the sources actually say — including where they disagree and what it could not establish.</p>
-        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> "Research LLM memory techniques"</span>
+        <pre class="board"><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> "Research LLM memory techniques"</span>
 <span class="a">▸ research</span> <span class="d">— the goal asks for sources and a comparison, not a code change</span>
-  <span class="d">4 nodes · 3 agents · 24 tools · 6 skills · 4 at a time · slowest path plan→gather→compare→report</span>
-  <span class="g">╭──────────────────────╮</span>    <span class="a">╭──────────────────────╮</span>    <span class="d">╭──────────────────────╮</span>    <span class="d">╭──────────────────────╮</span>
-  <span class="g">│ ✓ plan            ⚙2 │</span>    <span class="a">│ ⠻ gather             │</span>    <span class="d">│ ○ compare            │</span>    <span class="d">│ ○ report             │</span>
-  <span class="g">│ @planner             │</span><span class="g">───▸</span><span class="a">│ @researcher × 5      │</span><span class="d">───▸│ @researcher          │───▸│ @writer              │</span>
-  <span class="g">│ 3.1s · 1.2k          │</span>    <span class="a">│ ⚙ web.search         │</span>    <span class="d">│                      │    │                      │</span>
-  <span class="g">╰──────────────────────╯</span>    <span class="a">╰──────────────────────╯</span>    <span class="d">╰──────────────────────╯    ╰──────────────────────╯</span>
-  <span class="a">⠻ gather · @researcher · claude-sonnet-5</span>
-    <span class="d">running · 12.0s · 5 tool calls · needs plan</span>
-    <span class="d">⚙ web.search "LLM memory architectures" · 480ms</span>
-    <span class="d">⚙ web.read arxiv.org/abs/2404.… · 1.2s · 44KB</span></pre>
+<span class="d">  4 nodes · 3 agents · 24 tools · 6 skills · 4 at a time · slowest path plan→gather→compare→report</span>
+  <span class="g">╭───────────────────────────╮</span>    <span class="a">╭───────────────────────────╮</span>    <span class="d">╭───────────────────────────╮</span>    <span class="d">╭───────────────────────────╮</span>
+  <span class="g">│</span> <span class="g">✓ plan</span>                 <span class="d">⚙2</span> <span class="g">│</span>    <span class="a">│</span> <span class="a">⠼ gather</span>               <span class="d">⚙5</span> <span class="a">│</span>    <span class="d">│</span> <span class="d">○ compare</span>                 <span class="d">│</span>    <span class="d">│</span> <span class="d">○ report</span>                  <span class="d">│</span>
+  <span class="g">│</span> <span class="d">@planner</span>                  <span class="g">│───▸</span><span class="a">│</span> <span class="d">@researcher</span>               <span class="a">│</span><span class="d">───▸│</span> <span class="d">@researcher</span>               <span class="d">│───▸│</span> <span class="d">@writer · claude-sonnet-5</span> <span class="d">│</span>
+  <span class="g">│</span> <span class="d">3.1s · 1.2k</span>               <span class="g">│</span>    <span class="a">│</span> <span class="d">⚙ web.search "LLM memory…</span> <span class="a">│</span>    <span class="d">│</span> <span class="d"> </span>                         <span class="d">│</span>    <span class="d">│</span> <span class="d"> </span>                         <span class="d">│</span>
+  <span class="g">╰───────────────────────────╯</span>    <span class="a">╰───────────────────────────╯</span>    <span class="d">╰───────────────────────────╯</span>    <span class="d">╰───────────────────────────╯</span>
+
+<span class="a">  ⠋</span><span class="a"> gather · @researcher · claude-sonnet-5</span>
+<span class="d">    running · 5 tool calls · needs plan</span>
+<span class="d">    ⚙ web.search "LLM memory architectures" · 480ms · 8 results</span>
+<span class="d">    ⚙ web.read arxiv.org/abs/2404.… · 1.2s · 44KB</span>
+<span class="d">    ⚙ web.read arxiv.org/abs/2405.… · 940ms · 31KB</span>
+  <span class="d">1/4 done</span><span class="d"> · </span><span class="d">1 running</span><span class="d"> · 1.2k tokens</span><span class="d"> · 12.0s</span></pre>
       </div>
 
       <div class="uc">
@@ -633,15 +675,22 @@ Three tickets: API-231 (rate limits), API-238, INFRA-12.</pre>
 <span class="d">⠹ thinking…  ·  @flow retry &lt;node&gt; re-runs it and everything built on it</span></pre>
       </div>
 
-      <div class="uc">
+      <div class="uc wide">
         <h3><span class="em">🩺</span>When it breaks, it says so</h3>
         <p>A run that hits its step budget still hands back what it found. A node that fails shows <em>why</em> on its card, everything behind it reads <code>⊘ blocked</code>, and the tally counts every state — so a finished run never looks like one still going.</p>
-        <pre>  <span class="e">╭────────────────────╮</span>    <span class="d">╭────────────────────╮</span>
-  <span class="e">│ ✗ read             │</span>    <span class="w">│ ⊘ draft            │</span>
-  <span class="e">│ @explorer          │</span><span class="d">───▸</span><span class="w">│ @writer            │</span>
-  <span class="e">│ ran out of steps   │</span>    <span class="w">│ read failed        │</span>
-  <span class="e">╰────────────────────╯</span>    <span class="w">╰────────────────────╯</span>
-  <span class="d">0/3 done · </span><span class="e">1 failed</span><span class="d"> · </span><span class="w">2 blocked</span></pre>
+        <pre class="board"><span class="d">  3 nodes · 3 agents · 24 tools · 8 skills · 4 at a time · slowest path read→draft→check</span>
+  <span class="e">╭────────────────────────────────╮</span>    <span class="w">╭────────────────────────────────╮</span>    <span class="w">╭────────────────────────────────╮</span>
+  <span class="e">│</span> <span class="e">✗ read</span>                     <span class="d">⚙16</span> <span class="e">│</span>    <span class="w">│</span> <span class="w">⊘ draft</span>                        <span class="w">│</span>    <span class="w">│</span> <span class="w">⊘ check</span>                        <span class="w">│</span>
+  <span class="e">│</span> <span class="d">@explorer · claude-sonnet-5</span>    <span class="e">│───▸</span><span class="w">│</span> <span class="d">@writer · claude-sonnet-5</span>      <span class="w">│───▸│</span> <span class="d">@reviewer · claude-sonnet-5</span>    <span class="w">│</span>
+  <span class="e">│</span> <span class="d">the step budget of 12 ran out</span>  <span class="e">│</span>    <span class="w">│</span> <span class="d">something it needed failed</span>     <span class="w">│</span>    <span class="w">│</span> <span class="d">something it needed failed</span>     <span class="w">│</span>
+  <span class="e">╰────────────────────────────────╯</span>    <span class="w">╰────────────────────────────────╯</span>    <span class="w">╰────────────────────────────────╯</span>
+
+<span class="e">  ✗</span><span class="a"> read · @explorer · claude-sonnet-5</span>
+<span class="d">    failed · 11.5s · 30.0k tokens · 16 tool calls</span>
+<span class="d">    ⚙ fs.search "export" · 14ms · 6 results</span>
+<span class="d">    ⚙ fs.read src/export.rs · 9ms · 8.2KB</span>
+<span class="d">    ⚙ fs.read src/format.rs · 8ms · 4.1KB</span>
+  <span class="d">0/3 done</span><span class="d"> · </span><span class="e">1 failed</span><span class="d"> · </span><span class="w">2 blocked</span><span class="d"> · 30.0k tokens</span><span class="d"> · 11.6s</span></pre>
       </div>
 
       <div class="uc">
@@ -764,9 +813,9 @@ api/handlers/. Register it in ROUTES, add a table test…</pre>
       </div>
 
       <div class="uc">
-        <h3><span class="em">🛒</span>Research a decision, with real sources</h3>
+        <h3><span class="em">🔎</span>Get a real answer, with real sources</h3>
         <p>The <code>research</code> flow splits your question into parts, looks each one up <em>in parallel</em>, then reports what the sources say — and where they disagree.</p>
-        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> "which e-bike for a hilly commute under €2000"</span>
+        <pre><span class="p">❯</span> <span class="ab">@flow</span><span class="c"> "what is a landlord actually required to fix, and how fast"</span>
 <span class="a">▸ research</span> <span class="d">— asks for sources and a comparison</span>
   <span class="g">✓</span> plan     <span class="d">@planner      → 5 sub-questions</span>
   <span class="g">✓</span> gather   <span class="d">@researcher   × 5, at once</span>

@@ -97,6 +97,9 @@ function makeWindow(root, opts = {}) {
   switcher.appendChild(swPanel);
   const note = el("div", "rw-note");
 
+  /* toggled, not added: the window host is reused, so a scene that wants the
+     extra rows must not leave them behind for the next one. */
+  root.classList.toggle("tall", !!o.tall);
   root.append(titlebar, tabbar, main, statusbar, switcher, note);
 
   const w = {
@@ -260,17 +263,23 @@ async function typeCmd(w, text, { prompt, paneIdx, speed = 30 } = {}) {
   return l;
 }
 
-async function spinner(w, label, ms, { paneIdx } = {}) {
+/* `aside` is the motivation line: it rides INSIDE the spinner's own row, so it
+   costs no rows and never scrolls, and it only appears once the wait has lasted
+   `after` — a run that answers quickly shows one exactly never. */
+async function spinner(w, label, ms, { paneIdx, aside, after = 1200 } = {}) {
   await waitVisible(w);
   const l = el("div", "rw-line");
   const f = el("span", "t-dim", SPINNER_FRAMES[0]);
-  l.append(f, spanEl(DIM(" " + label)));
+  const text = spanEl(DIM(" " + label));
+  l.append(f, text);
   w.pane(paneIdx).appendChild(l);
   trim(w.pane(paneIdx));
   let i = 0;
   const iv = setInterval(() => { f.textContent = SPINNER_FRAMES[(i = (i + 1) % 10)]; }, 80);
+  const late = aside ? setTimeout(() => { text.textContent = " " + label + " \u00b7 " + aside; }, after) : 0;
   await sleep(ms);
   clearInterval(iv);
+  clearTimeout(late);
   l.remove();
 }
 

@@ -170,7 +170,7 @@ api_key  = <span class="s">"sk-…"</span>             <span class="c"># or "$MY
     <div class="table-wrap"><table>
       <tr><th>You want to</th><th>Type</th><th>Needs</th></tr>
       <tr><td>understand a long PDF, or a photo of a page</td><td><code>@ai summarise @~/Downloads/lease.pdf</code></td><td>a model whose entry declares <code>enable_document</code> (images: <code>enable_vision</code>) — otherwise the file is <b>dropped</b></td></tr>
-      <tr><td>research a decision, with real sources</td><td><code>@flow research "which e-bike for a hilly commute"</code></td><td><code>[ai] network = true</code>. Search is <b>keyless</b> — no extra account</td></tr>
+      <tr><td>research a decision, with real sources</td><td><code>@flow research "what changed in the tokio 1.42 release"</code></td><td><code>[ai] network = true</code>. Search is <b>keyless</b> — no extra account</td></tr>
       <tr><td>tidy or rename a pile of files</td><td><code>@ai move every screenshot into folders by month</code></td><td>a model. <code>@ai</code> <b>proposes</b> the command and preloads it for you to read</td></tr>
       <tr><td>read a long web page</td><td><code>@researcher "what does this say — &lt;url&gt;"</code></td><td><code>[ai] network = true</code></td></tr>
       <tr><td>draft something, saved to a file</td><td><code>@writer "turn @notes.md into a brief at brief.md"</code></td><td>a model</td></tr>
@@ -442,24 +442,26 @@ Map the code, review it three ways in parallel, then merge into one verdict
       <b>a rank is a column</b>. What runs first is on the left, what runs at the same time stacks in
       one column, and the arrows only ever point the way the work moves.</p>
     <pre><code><span class="a">▸ build · add a --json flag to the export command</span>
-  <span class="c">8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time · slowest path plan→apply→verify→summary</span>
-  <span class="g">╭──────────────────────────╮</span>    <span class="g">╭──────────────────────────╮</span>    <span class="a">╭──────────────────────────╮</span>
-  <span class="g">│ ✓ plan                ⚙3 │</span>    <span class="g">│ ✓ explore            ⚙12 │</span>    <span class="a">│ ⠻ apply               ⚙4 │</span>
-  <span class="g">│</span> <span class="c">@planner · sonnet-5      </span><span class="g">│───▸│</span> <span class="c">@explorer · sonnet-5     </span><span class="g">│───▸</span><span class="a">│</span> <span class="c">@coder · opus-5          </span><span class="a">│</span>
-  <span class="g">│</span> <span class="c">4.2s · 9.0k              </span><span class="g">│</span>  <span class="c">╎</span><span class="g">││</span> <span class="c">8.1s · 6.9k              </span><span class="g">│</span>  <span class="c">╎</span><span class="a">││</span> <span class="c">⚙ fs.edit src/cli.rs     </span><span class="a">│</span>
-  <span class="g">╰──────────────────────────╯</span>  <span class="c">╎</span><span class="g">│╰──────────────────────────╯</span>  <span class="c">╎</span><span class="a">│╰──────────────────────────╯</span>
-                                <span class="c">╎</span><span class="g">│╭──────────────────────────╮</span>  <span class="c">╎</span><span class="a">│</span>
-                                <span class="c">╎</span><span class="g">││ ✓ conventions         ⚙9 │</span>  <span class="c">╎</span><span class="a">│</span>
-                                <span class="c">╎▸</span><span class="g">│</span> <span class="c">@explorer · sonnet-5     </span><span class="g">│──</span><span class="c">╎</span><span class="a">┘</span>
-                                <span class="c">╎ </span><span class="g">│</span> <span class="c">7.6s · 8.8k              </span><span class="g">│</span>  <span class="c">╎</span>
-                                <span class="c">╎ </span><span class="g">╰──────────────────────────╯</span>  <span class="c">╎</span>
-                                <span class="c">╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎</span>
-  <span class="a">⠻ apply · @coder · claude-opus-5</span>
-    <span class="c">running · attempt 2 · 18.4s · 9.1k tokens · 4 tool calls · needs plan, explore</span>
-    <span class="c">⚙ fs.read src/cli.rs · 9ms · 6KB</span>
-    <span class="c">⚙ fs.edit src/cli.rs · 12ms · 1 replaced</span>
-    <span class="c">⚙ sys.run cargo test · 2.1s · 48 lines</span>
-  <span class="c">3/8 done · 1 running · 21.3k tokens · 24.6s</span></code></pre>
+<span class="c">  8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time · slowest path plan→explore→apply→verify→review→summary</span>
+  <span class="g">╭────────────────╮</span>    <span class="g">╭────────────────╮</span>    <span class="a">╭────────────────╮</span>    <span class="c">╭────────────────╮</span>    <span class="c">╭────────────────╮</span>    <span class="c">╭────────────────╮</span>
+  <span class="g">│</span> <span class="g">✓ plan</span>      <span class="c">⚙3</span> <span class="g">│</span>    <span class="g">│</span> <span class="g">✓ explore</span>  <span class="c">⚙12</span> <span class="g">│</span>    <span class="a">│</span> <span class="a">⠼ apply</span>  <span class="c">⚙4 ×2</span> <span class="a">│</span>    <span class="c">│</span> <span class="c">○ verify</span>       <span class="c">│</span>    <span class="c">│</span> <span class="c">○ fix</span>          <span class="c">│</span>    <span class="c">│</span> <span class="c">○ summary</span>      <span class="c">│</span>
+  <span class="g">│</span> <span class="c">@planner</span>       <span class="g">│───▸│</span> <span class="c">@explorer</span>      <span class="g">│───▸</span><span class="a">│</span> <span class="c">@coder</span>         <span class="a">│</span><span class="c">───▸│</span> <span class="c">@tester</span>        <span class="c">│───▸│</span> <span class="c">@coder</span>         <span class="c">│╌╎</span> <span class="c">▸│</span> <span class="c">@writer</span>        <span class="c">│</span>
+  <span class="g">│</span> <span class="c">4.2s · 3.1k</span>    <span class="g">│</span>   <span class="g">││</span> <span class="c">8.1s · 9.4k</span>    <span class="g">│</span>   <span class="g">│</span><span class="a">│</span> <span class="c">⚙ fs.edit src…</span> <span class="a">│</span>  <span class="c">╎</span> <span class="c">│</span> <span class="c"> </span>              <span class="c">│</span>   <span class="c">││</span> <span class="c">when verify.o…</span> <span class="c">│</span> <span class="c">╎</span> <span class="c">││</span> <span class="c"> </span>              <span class="c">│</span>
+  <span class="g">╰────────────────╯</span>   <span class="g">│╰────────────────╯</span>   <span class="g">│</span><span class="a">╰────────────────╯</span>  <span class="c">╎</span> <span class="c">╰────────────────╯</span>   <span class="c">│╰────────────────╯</span> <span class="c">╎</span> <span class="c">│╰────────────────╯</span>
+                       <span class="g">│</span>                     <span class="g">│</span>                    <span class="c">╎</span>                      <span class="c">│</span>                   <span class="c">╎</span> <span class="c">│</span>
+                       <span class="g">│╭────────────────╮</span>   <span class="g">│</span>                    <span class="c">╎</span>                      <span class="c">│╭────────────────╮</span> <span class="c">╎</span> <span class="c">│</span>
+                       <span class="g">││</span> <span class="g">✓ conventions</span>  <span class="g">│</span>   <span class="g">│</span>                    <span class="c">╎</span>                      <span class="c">││</span> <span class="c">○ review</span>       <span class="c">│</span> <span class="c">╎</span> <span class="c">│</span>
+                       <span class="g">▸│</span> <span class="c">@explorer</span>      <span class="g">│───┘</span>                    <span class="c">╎</span>                      <span class="c">▸│</span> <span class="c">@reviewer</span>      <span class="c">│───┘</span>
+                        <span class="g">│</span> <span class="c">7.6s · 8.8k</span>    <span class="g">│</span>                        <span class="c">╎</span>                       <span class="c">│</span> <span class="c">when verify.o…</span> <span class="c">│</span> <span class="c">╎</span>
+                        <span class="g">╰────────────────╯</span>                        <span class="c">╎</span>                       <span class="c">╰────────────────╯</span> <span class="c">╎</span>
+                                                                  <span class="c">╎</span>                                          <span class="c">╎</span>
+                                                                  <span class="c">╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎</span>
+<span class="a">  ⠋</span><span class="a"> apply · @coder · claude-sonnet-5</span>
+<span class="c">    running · attempt 2 · 4 tool calls · needs explore, conventions</span>
+<span class="c">    ⚙ fs.read src/export.rs · 9ms · 8.2KB</span>
+<span class="c">    ⚙ fs.edit src/export.rs · 12ms · 1 replaced</span>
+<span class="c">    ⚙ sys.run cargo test · 2.1s · 48 lines</span>
+  <span class="c">3/8 done</span><span class="c"> · </span><span class="c">1 running</span><span class="c"> · 21.3k tokens</span><span class="c"> · 24.6s</span></code></pre>
     <p><b>The shape.</b> <code>explore</code> and <code>conventions</code> share a column because
       they run at the same time; <code>apply</code> is to their right because it waits for both.
       Depth is horizontal position and nothing else — it used to be reading order, so two cards side

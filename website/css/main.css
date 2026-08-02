@@ -376,6 +376,9 @@ kbd {
 .rw[data-tabpos="right"] .rw-tabbar { border-left: 1px solid var(--t-border); }
 .rw[data-tabpos="left"] .rw-tab, .rw[data-tabpos="right"] .rw-tab { max-width: none; padding: 6px 12px; }
 
+/* A graph board needs rows the way a terminal has them. Only the scenes that
+   draw one ask for this — everything else reads better at the default height. */
+.rw.tall { height: 640px; }
 .rw-main { flex: 1; display: flex; min-height: 0; }
 .rw-body {
   flex: 1; min-width: 0; display: flex; gap: 8px; padding: 8px; /* PAD = PANE_GUTTER = 8 */
@@ -421,9 +424,14 @@ kbd {
 .rw-md-gutter { flex: none; width: 1.6em; margin-right: 12px; text-align: right; color: var(--t-muted); opacity: .5; }
 .rw-md-tilde { color: var(--t-muted); opacity: .45; }
 .rw-md-h1, .rw-md-fence { color: var(--t-accent2); }
-.rw-md-li { color: var(--t-fg); }
+.rw-md-li, .rw-md-text { color: var(--t-fg); }
 .rw-md-code { color: var(--t-muted); }
-.rw-md-title { color: var(--t-fg); font-weight: 700; }
+/* The renderer's own palette: an accent heading in bold, inline code in accent2,
+   an accent bullet — what `@md render` actually prints, so the preview half and
+   the printed half are one renderer rather than two opinions. */
+.rw-md-title { color: var(--t-accent); font-weight: 700; }
+.rw-md-para { color: var(--t-fg); }
+.rw-md-inline { color: var(--t-accent2); }
 .rw-md-rule { color: var(--t-muted); opacity: .55; }
 .rw-md-gap { height: .5em; }
 .rw-md-bullet { color: var(--t-fg); }
@@ -888,6 +896,9 @@ footer { padding: 34px 0 46px; color: var(--muted); font-size: 13.5px; border-to
 .uc-cat .tag { display: block; margin-bottom: 4px; }
 .uc-cat h2 { font-family: var(--serif); font-size: clamp(22px, 3vw, 30px); font-weight: 600; letter-spacing: -0.01em; }
 .uc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+/* A card holding a board takes the whole row. The board is drawn at the width a
+   real terminal has, and half a graph in half a column is worse than no graph. */
+.uc-grid .uc.wide { grid-column: 1 / -1; }
 .uc {
   background: var(--surface); border: 1px solid var(--hair); border-radius: 13px;
   padding: 18px 18px 16px;
@@ -905,6 +916,11 @@ footer { padding: 34px 0 46px; color: var(--muted); font-size: 13.5px; border-to
   font-family: var(--mono); font-size: 12px; line-height: 1.7;
   color: #F2F4F8; white-space: pre-wrap; word-break: break-word;
 }
+/* A board is a picture, not prose: re-flowing it to fit the card would mangle
+   the very thing it is showing. So it keeps its lines and scrolls inside its own
+   box — which is what a terminal too narrow for the cards does too, and the page
+   still never scrolls sideways because of it. */
+.uc pre.board { white-space: pre; word-break: normal; }
 .uc pre .p { color: var(--accent); }        /* prompt / path */
 .uc pre .c { color: var(--accent-soft); }    /* command args / chevron-2 */
 .uc pre .ab { color: var(--accent); font-weight: 700; } /* @command */
@@ -913,6 +929,11 @@ footer { padding: 34px 0 46px; color: var(--muted); font-size: 13.5px; border-to
 .uc pre .g { color: #30D158; }
 .uc pre .w { color: #FF9F0A; }
 .uc pre .e { color: #FF453A; }
+/* A running node's card is drawn in the accent — the one colour the board's
+   palette was still missing here, so a live run read as plain body text.
+   `--accent`, not `--accent2`: that variable is scoped to the replica window and
+   resolves to nothing on this page, which is how the gap went unnoticed. */
+.uc pre .a { color: var(--accent); }
 @media (max-width: 860px) { .uc-grid { grid-template-columns: 1fr; } }
 
 /* reveal — subtle, once */
@@ -1003,6 +1024,7 @@ img, video, svg, canvas { max-width: 100%; height: auto; }
   /* The replica window and the phone mock are scale models of the real app —
      shrink the type with the frame so the same rows still fit. */
   .rw { height: 400px; font-size: 10.5px; }
+  .rw.tall { height: 460px; }
   .ph { height: 400px; }
   .rw[data-tabpos="left"] .rw-tabbar, .rw[data-tabpos="right"] .rw-tabbar { width: 96px; }
   .rw-tab { max-width: 140px; }

@@ -81,6 +81,7 @@ document.addEventListener("DOMContentLoaded", () => {
           line.lastChild.remove(); // the cursor: the line is sent
           break;
         }
+        case "board": await board(w, st, () => myEpoch === epoch); break;
         case "pause": await sleep(st.ms); break;
         case "call": await st.fn(w); break;
       }
@@ -91,6 +92,154 @@ document.addEventListener("DOMContentLoaded", () => {
     w.line([ACC(cwd + " "), ACC2("❯ "), FG("git status -sb")]);
     w.line([OK("## main...origin/main")]);
   };
+
+  /* One agent's three lines, as `@agent` prints them: a blank line, the padded
+     name with its counts, the description WRAPPED and indented under it, and the
+     skills spliced into its prompt. The wrap width is the binary's — a roster
+     that reflowed differently here would be a roster describing another tool. */
+  function agentRows(agents) {
+    const WRAP = 88;
+    const out = [];
+    agents.forEach(([name, counts, desc, skills]) => {
+      out.push({ do: "out", spans: [] });
+      out.push({ do: "out", spans: [ACC("  @" + name.padEnd(12)), DIM(counts)], ms: 50 });
+      let line = "";
+      desc.split(" ").forEach((word) => {
+        if ((line + " " + word).trim().length > WRAP) { out.push({ do: "out", spans: [FG("      " + line)], ms: 30 }); line = word; }
+        else line = (line ? line + " " : "") + word;
+      });
+      if (line) out.push({ do: "out", spans: [FG("      " + line)], ms: 30 });
+      if (skills) out.push({ do: "out", spans: [DIM("      skills   " + skills)], ms: 40 });
+    });
+    return out;
+  }
+
+  /* ---------------- the live flow board ----------------
+     The board is not typed out here — it is LAID OUT by js/board.js, the port of
+     the terminal's own geometry, and painted into the pane through the same span
+     classes everything else uses. So a frame here is the frame the binary paints
+     at that width: cards reflow, edges rejoin, and when the window is too narrow
+     for cards the dense list takes over, exactly as it does in the product. */
+
+  const INK = { g: OK, e: ERR, w: WARN, a: ACC, d: MUT, null: FG };
+
+  /* The pane in the replica's own cells — columns AND rows, measured rather than
+     assumed, because the board reflows on both and the showcase is read at
+     1440px and on a phone. Below a certain size the terminal stops drawing cards
+     and prints the dense list instead; giving `board.js` the real numbers is
+     what lets the demo do the same rather than draw past its own edge. */
+  function paneSize(w) {
+    const pane = w.pane();
+    const probe = el("div", "rw-line");
+    probe.appendChild(spanEl(FG("M".repeat(80))));
+    probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre";
+    pane.appendChild(probe);
+    const box = probe.getBoundingClientRect();
+    probe.remove();
+    const cell = box.width / 80;
+    const width = pane.clientWidth || pane.getBoundingClientRect().width;
+    const height = pane.clientHeight || pane.getBoundingClientRect().height;
+    return {
+      cols: cell > 0 ? Math.max(Math.floor(width / cell) - 1, 24) : 100,
+      rows: box.height > 0 ? Math.max(Math.floor(height / box.height), 8) : 24,
+    };
+  }
+
+  /* One beat of a run: fold this step's states into the model, then hold the
+     frame while the spinner turns — redrawing in place, which is what makes it
+     read as a run rather than as a screenshot. */
+  async function board(w, st, alive) {
+    const m = st.model;
+    /* A scene declares a GRAPH; what has happened to it accumulates here, so a
+       beat only has to name what changed. */
+    ["state", "note", "calls", "attempts", "ms", "tokens", "trace"].forEach((k) => { m[k] = m[k] || {}; });
+    Object.assign(m.state, st.state || st.states || {});
+    Object.assign(m.calls, st.calls || {});
+    Object.assign(m.attempts, st.attempts || {});
+    /* A node that has just finished stops being live and becomes a cost, so its
+       in-flight note goes — before this beat's own notes are applied, because a
+       failure that says WHY must survive settling. */
+    Object.entries(st.settle || {}).forEach(([id, got]) => {
+      m.ms[id] = got.ms;
+      m.tokens[id] = got.tokens;
+      delete m.note[id];
+    });
+    Object.assign(m.note, st.note || {});
+    if (st.elapsed) m.elapsed = st.elapsed;
+
+    const { cols, rows: rowsAvailable } = paneSize(w);
+    m.rowsAvailable = rowsAvailable;
+    /* ONE region per run, repainted — the same rule the terminal follows. The
+       rows are kept on the model, so the next beat redraws these lines rather
+       than printing a second board under the first; a pane that was cleared (or
+       scrolled its top away) drops them and starts a fresh region. */
+    if (!m.rows || !m.rows.length || !m.rows[0].isConnected) m.rows = [];
+    const held = m.rows;
+    const FRAME = 90; // the terminal's own spinner period
+    /* The last frame sleeps only the remainder, so a beat lasts exactly what it
+       was budgeted — the film's running time is a sum, not an estimate. */
+    const hold = Math.max(st.ms || 1200, FRAME);
+    for (let t = 0; t < hold; t += FRAME) {
+      if (!alive()) return;
+      const rows = drawBoard(m, cols, Math.floor(t / FRAME));
+      rows.forEach((runs, i) => {
+        const spans = runs.map((r) => (INK[r.cls] || FG)(r.text));
+        if (held[i]) {
+          held[i].innerHTML = "";
+          spans.forEach((s) => held[i].appendChild(spanEl(s)));
+        } else held[i] = w.line(spans);
+      });
+      /* A frame with fewer rows than the last one must not leave a tail. */
+      held.splice(rows.length).forEach((l) => l.remove());
+      await sleep(Math.min(FRAME, hold - t));
+    }
+  }
+
+  /* `@flow graph document` — transcribed from the binary's own output, because
+     the diagram renderer draws this, not the board: the shape, the conditions on
+     the edges, the bounded `up to 2x` loop back to `check`, and a table of what
+     every node can reach. It costs nothing and asks no model. */
+  const GRAPH_DOCUMENT = [
+    { do: "out", spans: [ACC("document")], ms: 45 },
+    { do: "out", spans: [MUT("────────────────────────────────────────────────────────────")], ms: 45 },
+    { do: "out", spans: [], ms: 45 },
+    { do: "out", spans: [FG("Read the real code, write the doc, and check every claim against the source")], ms: 45 },
+    { do: "out", spans: [], ms: 45 },
+    { do: "out", spans: [FG("5 nodes · loops · 30m · 400000 tokens · needs an input")], ms: 45 },
+    { do: "out", spans: [], ms: 45 },
+    { do: "out", spans: [], ms: 45 },
+    { do: "out", spans: [FG("           ┌────────────────┐")], ms: 45 },
+    { do: "out", spans: [FG("           │ read @explorer │")], ms: 45 },
+    { do: "out", spans: [FG("           └────────────────┘")], ms: 45 },
+    { do: "out", spans: [FG("                    │")], ms: 45 },
+    { do: "out", spans: [FG("                    │")], ms: 45 },
+    { do: "out", spans: [FG("                    ▼")], ms: 45 },
+    { do: "out", spans: [FG("            ┌───────┴───────┐")], ms: 45 },
+    { do: "out", spans: [FG("            │ draft @writer │")], ms: 45 },
+    { do: "out", spans: [FG("            └───────────────┘")], ms: 45 },
+    { do: "out", spans: [FG("                    │")], ms: 45 },
+    { do: "out", spans: [FG("                    │")], ms: 45 },
+    { do: "out", spans: [FG("                    ▼")], ms: 45 },
+    { do: "out", spans: [FG("           ┌────────┴────────┐up to 2x")], ms: 45 },
+    { do: "out", spans: [FG("           │ check @reviewer │◀╎")], ms: 45 },
+    { do: "out", spans: [FG("           └─────────────────┘ ╎")], ms: 45 },
+    { do: "out", spans: [FG("       VERDICT: FAIL│          ╎")], ms: 45 },
+    { do: "out", spans: [FG("          ┌─────────┴─────────┐╎")], ms: 45 },
+    { do: "out", spans: [FG("          ▼      VERDICT: PASS▼╎")], ms: 45 },
+    { do: "out", spans: [FG(" ┌────────┴───────┐   ┌───────┴───────┐")], ms: 45 },
+    { do: "out", spans: [FG(" │ revise @writer │╌╌╌│╌final @writer │")], ms: 45 },
+    { do: "out", spans: [FG(" └────────────────┘   └───────────────┘")], ms: 45 },
+    { do: "out", spans: [], ms: 45 },
+    { do: "out", spans: [MUT("╭────────┬───────────┬────────────────────────────────┬─────────────────────╮")], ms: 45 },
+    { do: "out", spans: [MUT("│"), FG(" node   "), MUT("│"), FG(" runs      "), MUT("│"), FG(" when                           "), MUT("│"), FG(" reaches             "), MUT("│")], ms: 45 },
+    { do: "out", spans: [MUT("├────────┼───────────┼────────────────────────────────┼─────────────────────┤")], ms: 45 },
+    { do: "out", spans: [MUT("│"), FG(" read   "), MUT("│"), FG(" @explorer "), MUT("│"), FG(" —                              "), MUT("│"), FG(" 7 tools · 1 skill   "), MUT("│")], ms: 45 },
+    { do: "out", spans: [MUT("│"), FG(" draft  "), MUT("│"), FG(" @writer   "), MUT("│"), FG(" —                              "), MUT("│"), FG(" 10 tools · 2 skills "), MUT("│")], ms: 45 },
+    { do: "out", spans: [MUT("│"), FG(" check  "), MUT("│"), FG(" @reviewer "), MUT("│"), FG(" —                              "), MUT("│"), FG(" 7 tools · 5 skills  "), MUT("│")], ms: 45 },
+    { do: "out", spans: [MUT("│"), FG(" revise "), MUT("│"), FG(" @writer   "), MUT("│"), FG(" check = VERDICT: FAIL · ↺ che… "), MUT("│"), FG(" 10 tools · 2 skills "), MUT("│")], ms: 45 },
+    { do: "out", spans: [MUT("│"), FG(" final  "), MUT("│"), FG(" @writer   "), MUT("│"), FG(" check = VERDICT: PASS          "), MUT("│"), FG(" 10 tools · 2 skills "), MUT("│")], ms: 45 },
+    { do: "out", spans: [MUT("╰────────┴───────────┴────────────────────────────────┴─────────────────────╯")], ms: 45 },
+  ];
 
   const caption = (title, text, extra = "") => {
     captionEl.innerHTML =
@@ -234,19 +383,38 @@ document.addEventListener("DOMContentLoaded", () => {
 
     ai: {
       caption: () => caption("<code>@ai</code> — ask, review, run",
-        "One guarded command per request, preloaded at your prompt. Risky → ⚠ confirm. Catastrophic → blocked."),
+        "One guarded command per request, <b>preloaded at your prompt</b> rather than run behind your back: press Enter, or edit it first. Risky → <b>⚠ review before running</b>. Catastrophic → blocked outright. Ask a question instead and it answers as live Markdown. And while you wait, one dim line rides <em>inside</em> the spinner — a tip, a fact, a quote — costing no rows and gone the moment the answer starts."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
-          { do: "cmd", text: "@ai list every port something is listening on" },
-          { do: "spin", label: "thinking…", ms: 1000 },
+
+          /* The everyday case: a command you would have had to look up. */
+          { do: "cmd", text: "@ai which ports are listening, and what is holding them" },
+          { do: "spin", label: "thinking…", ms: 1400 },
           { do: "out", spans: [ACC("❯ "), DIM("press Enter to run (or edit)")] },
           { do: "out", spans: [ACC("❯ "), ACC2("lsof -iTCP -sTCP:LISTEN -n -P"), S("t-cursor", "")] },
-          { do: "pause", ms: 1200 },
+          { do: "pause", ms: 1400 },
+
+          /* Something with teeth: the guard does not block it, it makes you look. */
+          { do: "cmd", text: "@ai drop every stopped container and its volumes" },
+          { do: "spin", label: "thinking…", ms: 2600, aside: "a prompt prefix the provider already cached costs about a tenth as much" },
+          { do: "out", spans: [WARN("⚠ "), DIM("review before running (or edit)")] },
+          { do: "out", spans: [ACC("❯ "), ACC2("docker container prune -f && docker volume prune -f"), S("t-cursor", "")] },
+          { do: "out", spans: [MUT("  ← the guard classified it: not blocked, but not run for you either")] },
+          { do: "pause", ms: 1500 },
+
+          /* A question, not a command — the answer streams as live Markdown. */
+          { do: "cmd", text: "@ai why would a container restart-loop with exit 137?" },
+          { do: "spin", label: "thinking…", ms: 1000 },
+          { do: "stream", spans: [FG("137 is 128+9 — the kernel sent SIGKILL, almost always the OOM killer. Check "), ACC2("docker inspect --format '{{.State.OOMKilled}}'"), FG(" first; if it is true, the memory limit is the bug, not the app.")], speed: 10 },
+          { do: "footer", text: "3.1s · 1.4k in / 310 out (1.1k cached, 79%)" },
+          { do: "pause", ms: 1300 },
+
+          /* Files ride the request: an image goes to a vision model as an image. */
           { do: "cmd", text: "@ai what does this diagram show? @design/arch.png" },
           { do: "out", spans: [DIM("  📎 arch.png → vision block (1.2 MB)")] },
           { do: "spin", label: "thinking…", ms: 1000 },
-          { do: "stream", spans: [FG("A four-layer architecture: corelib → platform → framework → app.")], speed: 11 },
+          { do: "stream", spans: [FG("A four-layer architecture: corelib → platform → framework → app. Nothing points back up a layer.")], speed: 11 },
         ]);
       },
     },
@@ -259,36 +427,47 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "pause", ms: 300 },
           { do: "cmd", text: "@agent" },
           { do: "out", spans: [FG("agents (8):")] },
-          { do: "out", spans: [FG("  ai         "), DIM("19 tools ·  6 steps  General assistant — a command to review, or an answer")], ms: 60 },
-          { do: "out", spans: [FG("  coder      "), DIM("24 tools · 24 steps  Senior engineer — the smallest correct edit, verified")], ms: 60 },
-          { do: "out", spans: [FG("  explorer   "), DIM(" 7 tools · 12 steps  Read-only scout — maps the code and reports tightly")], ms: 60 },
-          { do: "out", spans: [FG("  planner    "), DIM(" 7 tools · 10 steps  Turns a goal into a plan with a concrete done-when")], ms: 60 },
-          { do: "out", spans: [FG("  researcher "), DIM("12 tools · 16 steps  Finds sources, reads them, reports what they say")], ms: 60 },
-          { do: "out", spans: [FG("  reviewer   "), DIM(" 7 tools · 12 steps  Read-only review — correctness, security, design")], ms: 60 },
-          { do: "out", spans: [FG("  tester     "), DIM("13 tools · 18 steps  Runs the project's own tests, reports what happened")], ms: 60 },
-          { do: "out", spans: [FG("  writer     "), DIM("10 tools · 14 steps  Docs and reports — and saves the file")], ms: 60 },
+          { do: "out", spans: [MUT("  served by claude-sonnet-5")], ms: 200 },
+          /* The roster as the binary prints it: a blank line, the name with its
+             counts, the description wrapped and indented UNDER it, then the
+             skills spliced into its prompt. Counts read out of the frontmatter
+             in builtin/ai/agents/ — they are not decoration, they are what the
+             agent may reach. */
+          ...agentRows([
+            ["ai", "19 tools · 6 steps", "General assistant — concise Markdown answers, with commands to review.", ""],
+            ["coder", "25 tools · 8 skills · 24 steps", "Senior engineer + orchestrator — explores, makes the smallest correct edit, verifies, delegates.", "concise · planning · orchestration · code-review · testing · verification · debugging · git"],
+            ["explorer", "7 tools · 1 skill · 12 steps", "Fast read-only scout — maps the relevant code and reports back tightly.", "concise"],
+            ["planner", "7 tools · 4 skills · 10 steps", "Turns a goal into a short plan with acceptance criteria — reads, never writes.", "concise · planning · research · orchestration"],
+            ["researcher", "12 tools · 3 skills · 16 steps", "Finds sources, reads them, and reports what they actually say — with links.", "concise · research · writing"],
+            ["reviewer", "7 tools · 5 skills · 12 steps", "Read-only code review — correctness, security, tests, design.", "concise · code-review · security-review · verification · writing"],
+            ["tester", "13 tools · 4 skills · 18 steps", "Writes and runs tests; reproduces a failure, then fixes it.", "concise · verification · testing · debugging"],
+            ["writer", "10 tools · 2 skills · 14 steps", "Writes documentation and reports for the person who will read them — and saves the file.", "concise · writing"],
+          ]),
+          { do: "out", spans: [] },
+          { do: "out", spans: [MUT("one in full:  @agent <name>   ·  run one:  @<name> \"<task>\"")] },
           { do: "pause", ms: 1000 },
 
-          /* everyday: nothing here is about code */
-          { do: "cmd", text: "@researcher \"which cordless drills do reviewers actually rate, and why\"" },
-          { do: "out", spans: [ACC("✦ @researcher"), MUT(" · claude-opus-4-8")] },
-          { do: "tool", name: "web.search", args: '"cordless drill reviews 2026"', ms: 340, size: "8 results" },
-          { do: "tool", name: "web.read", args: "https://…/tool-reviews", ms: 1180, size: "18KB" },
-          { do: "tool", name: "web.read", args: "https://…/teardown", ms: 940, size: "11KB" },
-          { do: "stream", spans: [FG("Three names recur, for two different reasons — and one of them is a rebrand. Sources and dates below; I could not confirm the torque figure anywhere.")], speed: 10 },
-          { do: "footer", text: "14.2s · 3 tools · 9.1k in / 1.4k out (7.6k cached, 83%)" },
+          /* A read-only specialist on the change you are about to push. */
+          { do: "cmd", text: "@reviewer \"review the changes on this branch\"" },
+          { do: "out", spans: [ACC("✦ @reviewer"), MUT(" · claude-sonnet-5")] },
+          { do: "tool", name: "sys.run", args: "git diff main...HEAD", ms: 42, size: "214 lines" },
+          { do: "tool", name: "fs.read", args: "src/export.rs", ms: 5, size: "8.2KB" },
+          { do: "tool", name: "fs.search", args: '"write_all"', ms: 16, size: "4 results" },
+          { do: "stream", spans: [FG("Two must-fix. export.rs:88 writes before it checks the flag, so --json emits a header twice; cache.rs:41 drops the lock before the read. The rest is fine.")], speed: 10 },
+          { do: "footer", text: "9.4s · 3 tools · 11.2k in / 1.1k out (8.6k cached, 77%)" },
           { do: "pause", ms: 1100 },
 
-          { do: "cmd", text: "@writer \"turn @notes.md into a one-page brief at brief.md\"" },
-          { do: "out", spans: [ACC("✦ @writer"), MUT(" · claude-opus-4-8")] },
-          { do: "tool", name: "fs.read", args: "notes.md", ms: 4, size: "3.9KB" },
-          { do: "tool", name: "fs.write", args: "brief.md", ms: 6, size: "2.1KB" },
-          { do: "stream", spans: [FG("Wrote brief.md — one page, the decision first. Two claims I could not check are marked.")], speed: 10 },
+          /* One that reads the web rather than the repo — and cites what it read. */
+          { do: "cmd", text: "@researcher \"what actually changed in the tokio 1.42 release\"" },
+          { do: "out", spans: [ACC("✦ @researcher"), MUT(" · claude-sonnet-5")] },
+          { do: "tool", name: "web.search", args: '"tokio 1.42 changelog"', ms: 340, size: "8 results" },
+          { do: "tool", name: "web.read", args: "https://…/tokio/releases", ms: 980, size: "31KB" },
+          { do: "stream", spans: [FG("Three changes matter to you: the runtime metrics are stable, task::block_in_place is cheaper, and one io_uring path is gated. Links below; the fourth item I could not confirm.")], speed: 10 },
           { do: "pause", ms: 1100 },
 
           /* and the same harness on code */
           { do: "cmd", text: "@coder \"fix the failing parser test\"" },
-          { do: "out", spans: [ACC("✦ @coder"), MUT(" · claude-opus-4-8")] },
+          { do: "out", spans: [ACC("✦ @coder"), MUT(" · claude-sonnet-5")] },
           { do: "spin", label: "thinking…", ms: 900 },
           { do: "think", text: "The test expects a trailing newline — the parser drops it on the last line…" },
           { do: "tool", name: "todo.set", args: "find it", ms: 3, size: "3 entries" },
@@ -302,94 +481,88 @@ document.addEventListener("DOMContentLoaded", () => {
     },
 
     flow: {
+      /* A graph wants rows. A real terminal has forty of them; this window is
+         given enough that the cards fit at a desktop width — and when they do
+         not (a phone), `board.js` falls back to the dense list, exactly as the
+         terminal does. */
+      opts: { tall: true },
       caption: () => caption("<code>@flow</code> — a <em>graph</em> of agents",
-        "Nodes that need nothing from each other run at the same time, a condition routes on the edge, and one edge points backwards so a failing check loops through a fixer — bounded. Nothing runs until the graph is proved. You watch it <b>as a graph</b>: one band per wave of work, each row carrying its agent, model and cost, the running one pulsing in your theme — and when something breaks, the card says <b>why</b> and everything behind it reads <code>⊘ blocked</code>. Five ship: <b>build · fix · review</b> for code, <b>document</b>, and <b>research</b> for any question at all. <b>Name none and one is written for you</b>: describe the goal and the model designs the graph, which is then held to the same checks a graph you wrote by hand is."),
+        "Nodes that need nothing from each other run at the same time, a condition routes on the edge, and one edge points backwards so a failing check loops through a fixer — bounded. Nothing runs until the graph is proved. You watch it <b>as a graph</b>: a rank is a column, each card carrying its agent, its model and what it has cost, the running one pulsing in your theme — and when something breaks, the card says <b>why</b> and everything behind it reads <code>⊘ blocked</code>. Five ship: <b>build · fix · review</b> for code, <b>document</b>, and <b>research</b>. <b>Name none and one is written for you</b>: describe the goal and the model designs the graph, which is then held to the same checks a graph you wrote by hand is."),
       demo(w, myEpoch) {
+        /* The board below is not typed out — it is LAID OUT, by the port of the
+           terminal's own geometry in js/board.js, and diffed byte for byte
+           against what the binary paints. So it animates the way a run does:
+           states change, the board is redrawn, the trail goes green behind it. */
+        const built = {
+          nodes: [
+            { id: "read",    what: "@explorer", model: "claude-sonnet-5", needs: [] },
+            { id: "draft",   what: "@writer",   model: "claude-sonnet-5", needs: ["read"] },
+            { id: "check",   what: "@reviewer", model: "claude-sonnet-5", needs: ["draft"] },
+          ],
+          tools: 24, skills: 8, concurrency: 4, slowest: ["read", "draft", "check"],
+        };
+        /* builtin/ai/flows/review.toml, node for node: three reviewers that need
+           only `map`, so they share a rank — and a report that needs all three. */
+        const reviewFlow = {
+          nodes: [
+            { id: "map",         what: "@explorer", model: "claude-sonnet-5", needs: [] },
+            { id: "correctness", what: "@reviewer", model: "claude-sonnet-5", needs: ["map"] },
+            { id: "security",    what: "@reviewer", model: "claude-sonnet-5", needs: ["map"] },
+            { id: "design",      what: "@reviewer", model: "claude-sonnet-5", needs: ["map"] },
+            { id: "report",      what: "@reviewer", model: "claude-sonnet-5", needs: ["correctness", "security", "design"] },
+          ],
+          tools: 14, skills: 6, concurrency: 4, slowest: ["map", "correctness", "report"],
+        };
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
 
-          /* everyday first: a question, not a repo */
-          { do: "cmd", text: "@flow compare the e-bikes worth buying for a hilly commute" },
-          { do: "spin", label: "building a graph for this…", ms: 900 },
-          { do: "out", spans: [ACC("◈"), FG(" built a 4-node graph"), MUT(" · break the question up, research each part, then compare")] },
-          { do: "out", spans: [MUT("  ← no flow named, so one was designed for the goal — and checked before it spent a token")] },
-          { do: "out", spans: [ACC("▸ compare-the-e-bikes-worth · a hilly commute")] },
-          { do: "out", spans: [DIM("  4 nodes · 3 agents · 24 tools · 6 skills · 4 at a time · slowest path plan→gather→compare→report")] },
-          { do: "out", spans: [OK("  ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮")], ms: 200 },
-          { do: "out", spans: [OK("  │ ✓ plan            ⚙2 │    │ ✓ gather         ⚙11 │    │ ✓ compare         ⚙4 │    │ ✓ report             │")], ms: 200 },
-          { do: "out", spans: [OK("  │ @planner             │───▸│ @researcher × 5      │───▸│ @researcher          │───▸│ @writer              │")], ms: 200 },
-          { do: "out", spans: [OK("  │ 3.1s · 1.2k          │    │ 21.6s · 18.9k        │    │ 8.2s · 6.4k          │    │ 6.7s · 3.1k          │")], ms: 900 },
-          { do: "out", spans: [OK("  ╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯    ╰──────────────────────╯")], ms: 200 },
-          { do: "out", spans: [OK("  ✓ report · @writer · claude-sonnet-5")], ms: 200 },
-          { do: "out", spans: [DIM("    done · 6.7s · 3.1k tokens · needs compare")] },
-          { do: "out", spans: [DIM("  4/4 done · 29.6k tokens · 40.4s")] },
-          { do: "stream", spans: [FG("Two real contenders, and the reason is the motor, not the battery. Where the sources disagree is called out; one spec I could not confirm.")], speed: 10 },
-          { do: "pause", ms: 1200 },
+          /* No flow named — one is designed for the goal, and checked before it
+             is allowed to spend anything. Both lines are the binary's own. */
+          { do: "cmd", text: "@flow document how the export command works" },
+          { do: "out", spans: [MUT("◈ no flow named — building a graph for this goal")] },
+          { do: "spin", label: "building a graph for this…", ms: 1100 },
+          { do: "out", spans: [MUT("◈ built a 3-node graph: read the code, write it up, check every claim · @flow show 1785639076-20816")] },
+          { do: "board", model: built, states: { read: "running" },
+            note: { read: "⚙ fs.search \"export\"" }, calls: { read: 3 }, ms: 900 },
+          { do: "board", model: built, states: { read: "running" },
+            note: { read: "⚙ fs.read src/export.rs" }, calls: { read: 7 }, ms: 900 },
+          { do: "board", model: built, states: { read: "done", draft: "running" },
+            settle: { read: { ms: 8100, tokens: 9400 } }, calls: { read: 11, draft: 2 },
+            note: { draft: "⚙ fs.write docs/export.md" }, ms: 1100 },
+          { do: "board", model: built, states: { read: "done", draft: "done", check: "running" },
+            settle: { draft: { ms: 12300, tokens: 6200 } }, calls: { check: 4 },
+            note: { check: "⚙ fs.read docs/export.md" }, ms: 1100 },
+          { do: "board", model: built, states: { read: "done", draft: "done", check: "done" },
+            settle: { check: { ms: 6700, tokens: 3100 } }, elapsed: "27.1s", ms: 1600 },
+          { do: "stream", spans: [FG("Wrote docs/export.md — every claim points at a line in src/export.rs. Two options were undocumented; both are now, with their real defaults.")], speed: 10 },
+          { do: "pause", ms: 1400 },
 
-          /* then the same engine on code */
-          { do: "cmd", text: "@flow build \"add a --json flag to the export command\"" },
-          { do: "out", spans: [ACC("▸ build · add a --json flag to the export command")] },
-          { do: "out", spans: [DIM("  8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time · slowest path plan→explore→apply→verify→fix")] },
-          { do: "out", spans: [OK("  ╭──────────────────────╮    ╭──────────────────────╮    ╭──────────────────────╮"), ERR("    ╭──────────────────────╮")], ms: 200 },
-          { do: "out", spans: [OK("  │ ✓ plan            ⚙3 │    │ ✓ explore        ⚙12 │    │ ✓ apply           ⚙9 │"), ERR("    │ ✗ verify       ⚙6 ×2 │")], ms: 200 },
-          { do: "out", spans: [OK("  │ @planner             │───▸│ @explorer            │───▸│ @coder               │"), ERR("───▸│ @tester              │")], ms: 200 },
-          { do: "out", spans: [OK("  │ 4.2s · 3.1k          │  ╎││ 8.1s · 9.4k          │    │ 12.3s · 6.2k         │"), ERR("    │ two tests still fail │")], ms: 200 },
-          { do: "out", spans: [OK("  ╰──────────────────────╯  ╎│╰──────────────────────╯    ╰──────────────────────╯"), ERR("    ╰──────────────────────╯")], ms: 200 },
-          { do: "out", spans: [OK("                            ╎│╭──────────────────────╮")], ms: 200 },
-          { do: "out", spans: [OK("                            ╎││ ✓ conventions     ⚙9 │")], ms: 200 },
-          { do: "out", spans: [OK("                            ╎▸│ @explorer            │")], ms: 200 },
-          { do: "out", spans: [OK("                            ╎ │ 7.6s · 8.8k          │")], ms: 200 },
-          { do: "out", spans: [OK("                            ╎ ╰──────────────────────╯")], ms: 200 },
-          { do: "out", spans: [DIM("                            ╎╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╎    ← the fixer sends it back, bounded")] },
-          { do: "out", spans: [ERR("  ✗ verify · @tester · claude-sonnet-5")], ms: 200 },
-          { do: "out", spans: [DIM("    failed · attempt 2 · 9.8s · 4.1k tokens · 6 tool calls · needs apply")] },
-          { do: "out", spans: [DIM("    ⚙ sys.run     cargo test \u00b7 2.1s \u00b7 62 lines")] },
-          { do: "out", spans: [DIM("  6/8 done · "), ERR("1 failed"), DIM(" · "), WARN("1 blocked"), DIM(" · 46.3k tokens · 1m04s")] },
-          { do: "out", spans: [ERR("  ✗ verify failed"), MUT(" — two tests still fail  ·  the card says why, the tally says what it took with it")] },
-          { do: "pause", ms: 900 },
+          /* The shipped `review` flow: three reviewers on one rank, so they run at
+             the same time — and one of them failing is the beat a demo skips. */
+          { do: "cmd", text: "@flow review \"the changes on this branch\"" },
+          { do: "call", fn: (t) => t.clear() },
+          { do: "board", model: reviewFlow, states: { map: "done", correctness: "running", security: "running", design: "running" },
+            settle: { map: { ms: 6400, tokens: 7100 } },
+            calls: { map: 9, correctness: 4, security: 3, design: 2 },
+            note: { correctness: "⚙ fs.read src/export.rs", security: "⚙ fs.search \"unwrap(\"", design: "⚙ fs.read src/cache.rs" }, ms: 2400 },
+          { do: "board", model: reviewFlow,
+            states: { map: "done", correctness: "failed", security: "done", design: "done", report: "blocked" },
+            settle: { correctness: { ms: 11200, tokens: 8300 }, security: { ms: 9100, tokens: 6600 }, design: { ms: 7800, tokens: 5200 } },
+            note: { correctness: "2 blockers — export.rs:88, cache.rs:41", report: "something it needed failed" },
+            elapsed: "31.4s", ms: 2400 },
+          { do: "out", spans: [MUT("  ← three reviewers on one rank, one round of wall clock")] },
+          { do: "out", spans: [MUT("  ← the card says why, the pane says what it cost, and nothing behind it burns a token")] },
+          { do: "pause", ms: 1600 },
 
-          /* and one node of it, on its own */
-          { do: "cmd", text: "@flow node last verify" },
-          { do: "out", spans: [FG("verify · ✓ done")] },
-          { do: "out", spans: [DIM("@tester · claude-sonnet-5 · 2 attempts · 9.1s · 4.0k · 6 tool calls")] },
-          { do: "out", spans: [DIM("after apply · feeds fix, review")] },
-          { do: "stream", spans: [FG("VERDICT: PASS — 214 tests, 0 failures. The new --json path is covered by three of them.")], speed: 10 },
-          { do: "pause", ms: 1000 },
-
-          /* free, and needs no model at all */
-          { do: "cmd", text: "@flow graph build" },
-          { do: "out", spans: [DIM("        ┌───────────────┐")] },
-          { do: "out", spans: [DIM("        │ plan @planner │")] },
-          { do: "out", spans: [DIM("        └───────┬───────┘")] },
-          { do: "out", spans: [DIM("      ┌─────────┴─────────┐")] },
-          { do: "out", spans: [DIM("      ▼                   ▼")] },
-          { do: "out", spans: [DIM(" ┌────┴─────┐   ┌─────────┴─────────┐")] },
-          { do: "out", spans: [DIM(" │ explore  │   │    conventions    │")] },
-          { do: "out", spans: [DIM(" └────┬─────┘   └─────────┬─────────┘")] },
-          { do: "out", spans: [DIM("      └─────────┬─────────┘")] },
-          { do: "out", spans: [DIM("                ▼")] },
-          { do: "out", spans: [DIM("        ┌───────┴────────┐ up to 3x")] },
-          { do: "out", spans: [DIM("        │ verify @tester │◀╌╌╌┐")] },
-          { do: "out", spans: [DIM("        └───────┬────────┘    ╎")] },
-          { do: "out", spans: [DIM("   VERDICT: FAIL│VERDICT: PASS ╎")] },
-          { do: "out", spans: [DIM("      ┌─────────┴─────────┐   ╎")] },
-          { do: "out", spans: [DIM("      ▼                   ▼   ╎")] },
-          { do: "out", spans: [DIM(" ┌────┴─────┐   ┌──────────┴───────┐")] },
-          { do: "out", spans: [DIM(" │ fix      │╌╌╌│ review @reviewer │")] },
-          { do: "out", spans: [DIM(" └──────────┘   └──────────────────┘")] },
-          { do: "out", spans: [DIM("╭─────────────┬───────────┬────────────────────────┬─────────────────────╮")] },
-          { do: "out", spans: [DIM("│ node        │ runs      │ when                   │ reaches             │")] },
-          { do: "out", spans: [DIM("├─────────────┼───────────┼────────────────────────┼─────────────────────┤")] },
-          { do: "out", spans: [DIM("│ plan        │ @planner  │ —                      │ 7 tools · 4 skills  │")] },
-          { do: "out", spans: [DIM("│ explore     │ @explorer │ —                      │ 7 tools · 1 skill   │")] },
-          { do: "out", spans: [DIM("│ conventions │ @explorer │ —                      │ 7 tools · 1 skill   │")] },
-          { do: "out", spans: [DIM("│ apply       │ @coder    │ —                      │ 25 tools · 8 skills │")] },
-          { do: "out", spans: [DIM("│ verify      │ @tester   │ —                      │ 13 tools · 4 skills │")] },
-          { do: "out", spans: [DIM("│ fix         │ @coder    │ verify = VERDICT: FAIL │ 25 tools · 8 skills │")] },
-          { do: "out", spans: [DIM("│ review      │ @reviewer │ verify = VERDICT: PASS │ 7 tools · 5 skills  │")] },
-          { do: "out", spans: [DIM("│ summary     │ @writer   │ —                      │ 10 tools · 2 skills │")] },
-          { do: "out", spans: [DIM("╰─────────────┴───────────┴────────────────────────┴─────────────────────╯")] },
-          { do: "out", spans: [MUT("  ← @flow graph and @flow check need no model and spend nothing")] },
+          /* Free, and needs no model at all: the shape, the conditions, and what
+             every node can reach — before you spend anything on running it. */
+          { do: "cmd", text: "@flow graph document" },
+          { do: "call", fn: (t) => t.clear() },
+          ...GRAPH_DOCUMENT,
+          { do: "pause", ms: 1400 },
+          { do: "cmd", text: "@flow check build" },
+          { do: "out", spans: [OK("  ✓ build"), DIM(" · 8 node(s) · worst case 21 agent run(s)")] },
+          { do: "out", spans: [MUT("  ← @flow check and @flow graph spend nothing and need no model")] },
         ]);
       },
     },
@@ -430,35 +603,47 @@ document.addEventListener("DOMContentLoaded", () => {
 
     job: {
       caption: () => caption("<code>@job</code> — say what to do, and when",
-        "The AI reads the schedule out of your sentence <em>once</em>, at creation, and writes it into the record as cron — so every run after that is plain arithmetic. Recurring jobs survive a reboot: a missed one catches up exactly once. And a job that runs a <em>command</em> (<code>@job -- …</code>) needs no model at all."),
+        "The AI reads the schedule out of your sentence <em>once</em>, at creation, and writes it into the record as cron — so every run after that is plain arithmetic. You <b>watch it think</b>: the one step that takes real time says so, and if it rewrote your sentence it tells you what it heard. Recurring jobs survive a reboot; a missed one catches up exactly once. And a job that runs a <em>command</em> (<code>@job -- …</code>) never touches a model."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
 
-          /* plain English, no repo anywhere near it */
-          { do: "cmd", text: '@job "every Monday at 9, summarise what landed in ~/Documents/inbox into ~/Documents/weekly.md"' },
-          { do: "out", spans: [FG("⧖ every Monday at 09:00 — summarise what landed in ~/Documents/inbox … · job 1753112060-4302")] },
-          { do: "out", spans: [DIM("  cron 0 9 * * 1  ·  fires in 3d  ·  list: @job  ·  cancel: @job cancel 1753112060-4302")] },
-          { do: "pause", ms: 900 },
+          /* The reactive beat: the model reading the sentence is the whole of the
+             wait, so it is the thing the terminal shows — and then it says what it
+             heard, because a rewrite changes what the job IS. */
+          { do: "cmd", text: '@job "audit the dependencies every Monday at 9 and write it to ~/reports/deps.md"' },
+          { do: "spin", label: "reading when to run this…", ms: 1100 },
+          { do: "out", spans: [MUT("◈ every Monday at 09:00 — audit the dependencies into ~/reports/deps.md")] },
+          { do: "out", spans: [ACC("⧖ every Monday at 09:00 — audit the dependencies into ~/reports/deps.md · job 1785639076-20816")] },
+          { do: "out", spans: [FG("  fires in 3d · list: @job · cancel: @job cancel 1785639076-20816")] },
+          { do: "pause", ms: 1100 },
 
-          { do: "cmd", text: '@job "summarize the kafka logs into ~/reports/kafka.md every hour"' },
-          { do: "out", spans: [FG("⧖ every hour — summarize the kafka logs into ~/reports/kafka.md · job 1753112100-4310")] },
-          { do: "out", spans: [DIM("  fires in 1h  ·  cron 0 * * * *")] },
-          { do: "pause", ms: 900 },
+          /* A sentence it could not read is not silently guessed at — the word
+             parser answers instead, and you are told it did. */
+          { do: "cmd", text: '@job "tail the deploy log when the release cuts"' },
+          { do: "spin", label: "reading when to run this…", ms: 900 },
+          { do: "out", spans: [MUT("⚠  the model could not read that — using the words as typed")] },
+          { do: "out", spans: [ACC("⧖ tail the deploy log · job 1785639140-20834")] },
+          { do: "out", spans: [FG("  fires in 1m · list: @job · cancel: @job cancel 1785639140-20834")] },
+          { do: "pause", ms: 1100 },
 
-          { do: "cmd", text: "@job --every 15m -- ./sync.sh" },
-          { do: "out", spans: [FG("⧖ every 15m — ./sync.sh · job 1753112140-4318")] },
-          { do: "out", spans: [DIM("  fires in 15m  ·  no model needed to run this one")] },
-          { do: "pause", ms: 900 },
+          /* No sentence to read, so no model, so no wait at all. */
+          { do: "cmd", text: "@job --every 15m -- ./scripts/sync-fixtures.sh" },
+          { do: "out", spans: [ACC("⧖ ./scripts/sync-fixtures.sh · job 1785639201-20851")] },
+          { do: "out", spans: [FG("  fires in 15m · list: @job · cancel: @job cancel 1785639201-20851")] },
+          { do: "out", spans: [MUT("  ← a command job asks no model and costs nothing")] },
+          { do: "pause", ms: 1000 },
 
+          /* `@job` with nothing after it: the list, exactly as it prints. */
           { do: "cmd", text: "@job" },
           { do: "out", spans: [FG("background jobs (4):")] },
-          { do: "out", spans: [FG("  ⧖ 1753112060-4302 scheduled summarise what landed in ~/Documents… "), DIM("(fires in 3d)")] },
-          { do: "out", spans: [DIM("      cron 0 9 * * 1  ·  4 run(s)  ·  last ok")] },
-          { do: "out", spans: [FG("  ⧖ 1753112100-4310 scheduled summarize the kafka logs … "), DIM("(fires in 48m)")] },
-          { do: "out", spans: [DIM("      cron 0 * * * *  ·  12 run(s)  ·  last ok")] },
-          { do: "out", spans: [FG("  ▶ 1753112000-4242 running   audit the deps … "), DIM("(2m ago · 2m)")] },
-          { do: "out", spans: [OK("  ✓ "), FG("1753111800-4101 done      create a CHANGELOG … "), DIM("(9m ago · 45s)")] },
+          { do: "out", spans: [FG("  ⧖ 1785639076-20816 scheduled audit the dependencies every Monday at 9…  "), DIM("(fires in 3d)")] },
+          { do: "out", spans: [DIM("      every Monday at 09:00 · 4 run(s) · last ok")] },
+          { do: "out", spans: [FG("  ⧖ 1785639201-20851 scheduled ./scripts/sync-fixtures.sh  "), DIM("(fires in 12m)")] },
+          { do: "out", spans: [DIM("      every 15m · 96 run(s) · last ok")] },
+          { do: "out", spans: [FG("  ▶ 1785638840-20705 running   regenerate the API docs  "), DIM("(2m ago · 2m)")] },
+          { do: "out", spans: [FG("  ✓ 1785638102-20544 done      summarise yesterday's CI failures  "), DIM("(4h ago · 51s)")] },
+          { do: "out", spans: [DIM("      1 run(s) · last ok")] },
           { do: "out", spans: [MUT("  ← @job log <id> -f follows one like a log file")] },
         ]);
       },
@@ -474,17 +659,39 @@ document.addEventListener("DOMContentLoaded", () => {
           /* First half: `@md render` — what the file looks like read, not edited. This is the
              binary's own output for the very document the editor opens next. */
           { do: "cmd", text: "@md render release.md" },
-          { do: "out", spans: [FG("Release plan")] },
-          { do: "out", spans: [MUT("\u2500".repeat(48))] },
-          { do: "out", spans: [] },
-          { do: "out", spans: [ACC("\u2022 "), FG("cut the branch")] },
-          { do: "out", spans: [ACC("\u2022 "), FG("run the suite")] },
-          { do: "out", spans: [] },
-          { do: "out", spans: [ACC(" \u250c\u2500\u2500\u2500\u2510   \u250c\u2500\u2500\u2500\u2510   \u250c\u2500\u2500\u2500\u2510")] },
-          { do: "out", spans: [ACC(" \u2502 A \u2502"), MUT("\u2500\u2500\u25b6"), ACC("\u2524 B \u2502"), MUT("\u2500\u2500\u25b6"), ACC("\u2524 C \u2502")] },
-          { do: "out", spans: [ACC(" \u2514\u2500\u2500\u2500\u2518   \u2514\u2500\u2500\u2500\u2518   \u2514\u2500\u2500\u2500\u2518")] },
-          { do: "out", spans: [] },
-          { do: "out", spans: [MUT("  \u2190 a file longer than the window opens a scrollable pager instead")] },
+          { do: "out", spans: [ACC("Release 0.9 — the graph you can watch")], ms: 45 },
+          { do: "out", spans: [MUT("\u2500".repeat(60))], ms: 45 },
+          { do: "out", spans: [], ms: 45 },
+          { do: "out", spans: [FG("The exporter now speaks JSON, and "), ACC2("@flow"), FG(" draws itself while it runs.")], ms: 45 },
+          { do: "out", spans: [], ms: 45 },
+          { do: "out", spans: [ACC("What changed")], ms: 45 },
+          { do: "out", spans: [MUT("\u2500".repeat(60))], ms: 45 },
+          { do: "out", spans: [], ms: 45 },
+          /* The renderer's own table: ROUNDED corners, muted rules, a bold header
+             row, and inline code still coloured inside a cell. */
+          { do: "out", spans: [MUT("╭────────┬───────────────────────────────────────────┬───────╮")], ms: 45 },
+          { do: "out", spans: [MUT("│"), FG(" Area   "), MUT("│"), FG(" Change                                    "), MUT("│"), FG(" Issue "), MUT("│")], ms: 45 },
+          { do: "out", spans: [MUT("├────────┼───────────────────────────────────────────┼───────┤")], ms: 45 },
+          { do: "out", spans: [MUT("│"), FG(" export "), MUT("│"), ACC2(" --json"), FG(" emits one object per row           "), MUT("│"), FG(" #412  "), MUT("│")], ms: 45 },
+          { do: "out", spans: [MUT("│"), FG(" flow   "), MUT("│"), FG(" the board redraws in place                "), MUT("│"), FG(" #418  "), MUT("│")], ms: 45 },
+          { do: "out", spans: [MUT("│"), FG(" jobs   "), MUT("│"), FG(" creation is reactive, not a frozen prompt "), MUT("│"), FG(" #421  "), MUT("│")], ms: 45 },
+          { do: "out", spans: [MUT("╰────────┴───────────────────────────────────────────┴───────╯")], ms: 45 },
+          { do: "out", spans: [], ms: 45 },
+          { do: "out", spans: [ACC("• "), FG("Breaking: "), ACC2("--format=csv"), FG(" is now "), ACC2("--format csv")], ms: 45 },
+          { do: "out", spans: [ACC("• "), FG("Sixty-one tests were added; none were weakened")], ms: 45 },
+          { do: "out", spans: [ACC("• "), ACC2("cargo test"), FG(" is green on 1.86 and on nightly")], ms: 45 },
+          { do: "out", spans: [], ms: 45 },
+          { do: "out", spans: [ACC("│"), FG(" Upgrade with "), ACC2("brew upgrade aiterminal"), FG(".")], ms: 45 },
+          { do: "out", spans: [], ms: 45 },
+          { do: "out", spans: [ACC("The release train")], ms: 45 },
+          { do: "out", spans: [MUT("\u2500".repeat(60))], ms: 45 },
+          { do: "out", spans: [], ms: 45 },
+          /* A ```mermaid fence, drawn in the terminal — no browser, no export step. */
+          { do: "out", spans: [FG(" ┌─────┐   ┌──────┐   ┌─────┐   ┌─────────┐")], ms: 45 },
+          { do: "out", spans: [FG(" │ cut │──▶┤ test │──▶┤ tag │──▶┤ publish │")], ms: 45 },
+          { do: "out", spans: [FG(" └─────┘   └──────┘   └─────┘   └─────────┘")], ms: 45 },
+          { do: "out", spans: [], ms: 45 },
+          { do: "out", spans: [MUT("  \u2190 that diagram is a "), ACC2("```mermaid"), MUT(" block, drawn natively \u2014 and a file longer than the window opens a pager")], ms: 45 },
           { do: "pause", ms: 1500 },
           /* Second half: the same document, live. The preview on the right renders the
              source on the left — including the diagram. */

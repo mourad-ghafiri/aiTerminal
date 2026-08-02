@@ -26,20 +26,27 @@ function buildMdEditor(w) {
   pane.innerHTML = "";
   const root = el("div", "rw-md");
 
-  // Status bar: " release.md ●  (9L)" … "saved release.md"
+  // Status bar: " release.md ●  (21L)" … "saved release.md"
   const bar = el("div", "rw-md-bar");
   bar.append(spanEl(S("t-fg", " release.md")), spanEl(S("t-error", " ●")),
-    spanEl(S("t-muted", "  (9L)")));
+    spanEl(S("t-muted", "  (21L)")));
   bar.appendChild(el("span", "rw-md-bar-r", "saved release.md"));
 
   const bodyRow = el("div", "rw-md-body");
 
-  // Left: the raw Markdown source, with the gutter. Nine lines, then `~` past the end.
+  // Left: the raw Markdown source, with the gutter, then `~` past the end of the buffer.
   const ed = el("div", "rw-md-ed");
+  /* The head of the very file `@md render` just printed — the same document,
+     which is what makes the preview a preview rather than a second demo. */
   const src = [
-    ["# Release plan", "h1"], ["", ""],
-    ["- cut the branch", "li"], ["- run the suite", "li"], ["", ""],
-    ["```mermaid", "fence"], ["flowchart LR", "code"], ["  A --> B --> C", "code"], ["```", "fence"],
+    ["# Release 0.9 — the graph you can watch", "h1"], ["", ""],
+    ["The exporter now speaks JSON, and `@flow`", "text"],
+    ["draws itself while it runs.", "text"], ["", ""],
+    ["## What changed", "h1"], ["", ""],
+    ["- **Breaking**: `--format=csv` is now", "li"],
+    ["  `--format csv`", "li"], ["", ""],
+    ["```mermaid", "fence"], ["flowchart LR", "code"],
+    ["  cut --> test --> tag --> publish", "code"], ["```", "fence"],
   ];
   src.forEach(([t, k], i) => {
     const row = el("div", "rw-md-row");
@@ -53,17 +60,27 @@ function buildMdEditor(w) {
 
   // Right: the rendered preview — the same document, drawn.
   const pv = el("div", "rw-md-pv");
-  pv.appendChild(el("div", "rw-md-title", "Release plan"));
+  pv.appendChild(el("div", "rw-md-title", "Release 0.9 — the graph you can watch"));
   pv.appendChild(el("div", "rw-md-rule", "──────────────────────"));
   pv.appendChild(el("div", "rw-md-gap", ""));
-  ["cut the branch", "run the suite"].forEach((s) => {
-    const li = el("div", "rw-md-bullet");
-    li.append(el("span", "mk", "\u2022"), el("span", null, " " + s));
-    pv.appendChild(li);
-  });
+  const para = el("div", "rw-md-para");
+  para.append(el("span", null, "The exporter now speaks JSON, and "),
+    el("span", "rw-md-inline", "@flow"), el("span", null, " draws itself while it runs."));
+  pv.appendChild(para);
   pv.appendChild(el("div", "rw-md-gap", ""));
+  pv.appendChild(el("div", "rw-md-title", "What changed"));
+  pv.appendChild(el("div", "rw-md-rule", "──────────────────────"));
+  pv.appendChild(el("div", "rw-md-gap", ""));
+  const li = el("div", "rw-md-bullet");
+  li.append(el("span", "mk", "\u2022"), el("span", null, " "), el("b", null, "Breaking"),
+    el("span", null, ": "), el("span", "rw-md-inline", "--format=csv"),
+    el("span", null, " is now "), el("span", "rw-md-inline", "--format csv"));
+  pv.appendChild(li);
+  pv.appendChild(el("div", "rw-md-gap", ""));
+  /* The fence on the left, drawn on the right — a preview that showed something
+     its own source does not describe would be a drawing of a feature. */
   const dg = el("div", "rw-md-diagram");
-  ["A", "B", "C"].forEach((n, i) => {
+  ["cut", "test", "tag", "publish"].forEach((n, i) => {
     if (i) dg.appendChild(el("span", "rw-md-arrow", "\u2500\u2500\u25b6"));
     dg.appendChild(el("span", "rw-md-node", n));
   });

@@ -177,7 +177,10 @@ body { background: var(--paper); }
 .vcap.swap h2 { animation-delay: .04s; }
 .vcap.swap p { animation-delay: .08s; }
 @keyframes vcap-in { from { opacity: 0; transform: translateY(10px); } }
-.vterm .rw { height: min(500px, 56vh); font-size: 13.5px; }
+/* Tall enough for a graph: the parallel beat draws five cards over three ranks,
+   and below ~24 rows the board does what the terminal does — falls back to the
+   dense list, which is honest but is not the picture that beat is selling. */
+.vterm .rw { height: min(560px, 62vh); font-size: 13.5px; }
 /* the phone joins the shot for @gate and leaves again; the window simply
    yields the width (main.css already flexes .stage-rig for the showcase) */
 .vterm .stage-rig { align-items: center; }
@@ -368,6 +371,7 @@ body { background: var(--paper); }
 
 <script src="js/themes.js"></script>
 <script src="js/replica.js"></script>
+<script src="js/board.js"></script>
 <script src="js/scenes.js"></script>
 <script>
 /* ============================================================================
@@ -420,20 +424,97 @@ body { background: var(--paper); }
   const hidePhone = () => { phoneHost.hidden = true; phoneHost.innerHTML = ""; };
 
   /* The step runner — the showcase's, minus the epoch machinery (one straight run).
-     Five kinds, and that is the point: a marketing cut has no `tool` step because a
+     Six kinds, and that is the point: a marketing cut has no `tool` step because a
      tool trace with byte counts and JSON arguments is exactly the detail this film
-     does not show. If a beat ever needs one back, take it from js/showcase.js. */
+     does not show. If a beat ever needs one back, take it from js/showcase.js.
+
+     `board` is the exception that earns its place: the graph beats are drawn by
+     js/board.js — the port of the terminal's own layout — so the film shows the
+     picture the product paints rather than an artist's impression of it. */
+  const INK = { g: OK, e: ERR, w: WARN, a: ACC, d: DIM, null: FG };
+
+  async function board(w, st) {
+    const m = st.model;
+    ["state", "note", "calls", "attempts", "ms", "tokens", "trace"].forEach((k) => { m[k] = m[k] || {}; });
+    Object.assign(m.state, st.states || {});
+    Object.entries(st.settle || {}).forEach(([id, got]) => {
+      m.ms[id] = got.ms; m.tokens[id] = got.tokens; delete m.note[id];
+    });
+    Object.assign(m.note, st.note || {});
+    Object.assign(m.calls, st.calls || {});
+    if (st.elapsed) m.elapsed = st.elapsed;
+
+    const pane = w.pane();
+    const probe = el("div", "rw-line");
+    probe.appendChild(spanEl(FG("M".repeat(80))));
+    probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre";
+    pane.appendChild(probe);
+    const box = probe.getBoundingClientRect();
+    probe.remove();
+    const cols = Math.max(Math.floor(pane.clientWidth / (box.width / 80)) - 1, 24);
+    m.rowsAvailable = Math.max(Math.floor(pane.clientHeight / box.height), 8);
+
+    /* One region, repainted — the rule the terminal follows. */
+    if (!m.rows || !m.rows.length || !m.rows[0].isConnected) m.rows = [];
+    const held = m.rows;
+    const FRAME = 90;
+    /* The last frame sleeps only the remainder, so a beat lasts exactly what it
+       was budgeted — the film's running time is a sum, not an estimate. */
+    const hold = Math.max(st.ms || 1200, FRAME);
+    for (let t = 0; t < hold; t += FRAME) {
+      const rows = drawBoard(m, cols, Math.floor(t / FRAME));
+      rows.forEach((runs, i) => {
+        const spans = runs.map((r) => (INK[r.cls] || FG)(r.text));
+        if (held[i]) {
+          held[i].innerHTML = "";
+          spans.forEach((sp) => held[i].appendChild(spanEl(sp)));
+        } else held[i] = w.line(spans);
+      });
+      held.splice(rows.length).forEach((l) => l.remove());
+      await sleep(Math.min(FRAME, hold - t));
+    }
+  }
+
   async function run(w, steps) {
     for (const st of steps) {
       switch (st.do) {
         case "cmd": await typeCmd(w, st.text, st); break;
         case "out": w.line(st.spans, st.paneIdx); await sleep(st.ms || 120); break;
         case "spin": await spinner(w, st.label || "thinking…", st.ms || 800, st); break;
+        case "board": await board(w, st); break;
         case "pause": await sleep(st.ms); break;
         case "call": await st.fn(w); break;
       }
     }
   }
+
+  /* The graphs the film draws, node for node from builtin/ai/flows/. */
+  const BUILT = {
+    nodes: [
+      { id: "read",  what: "@explorer", model: "claude-sonnet-5", needs: [] },
+      { id: "draft", what: "@writer",   model: "claude-sonnet-5", needs: ["read"] },
+      { id: "check", what: "@reviewer", model: "claude-sonnet-5", needs: ["draft"] },
+    ],
+    tools: 24, skills: 8, concurrency: 4, slowest: ["read", "draft", "check"],
+  };
+  const REVIEW = {
+    nodes: [
+      { id: "map",         what: "@explorer", model: "claude-sonnet-5", needs: [] },
+      { id: "correctness", what: "@reviewer", model: "claude-sonnet-5", needs: ["map"] },
+      { id: "security",    what: "@reviewer", model: "claude-sonnet-5", needs: ["map"] },
+      { id: "design",      what: "@reviewer", model: "claude-sonnet-5", needs: ["map"] },
+      { id: "report",      what: "@reviewer", model: "claude-sonnet-5", needs: ["correctness", "security", "design"] },
+    ],
+    tools: 14, skills: 6, concurrency: 4, slowest: ["map", "correctness", "report"],
+  };
+  const BROKEN = {
+    nodes: [
+      { id: "read",  what: "@explorer", model: "claude-sonnet-5", needs: [] },
+      { id: "draft", what: "@writer",   model: "claude-sonnet-5", needs: ["read"] },
+      { id: "check", what: "@reviewer", model: "claude-sonnet-5", needs: ["draft"] },
+    ],
+    tools: 24, skills: 8, concurrency: 4, slowest: ["read", "draft", "check"],
+  };
 
   async function film() {
     /* ---- 0:00 · the hook (5.0s) ---- */
@@ -469,15 +550,19 @@ body { background: var(--paper); }
     await run(w, [
       { do: "call", fn: async (t) => t.clear() },
       { do: "cmd", text: "@agent", speed: 13 },
+      /* Eight rows for eight agents, each line the shipped description cut to
+         film length — a roster that named seven would be a roster of another
+         tool. The pause pays for the extra row, so the beat is the same length. */
       { do: "out", spans: [FG("agents (8):")], ms: 90 },
-      { do: "out", spans: [ACC("  @planner    "), DIM("turns a goal into a plan with a done-when")], ms: 90 },
-      { do: "out", spans: [ACC("  @explorer   "), DIM("maps the code and reports back tightly")], ms: 90 },
+      { do: "out", spans: [ACC("  @ai         "), DIM("concise answers, and commands you review")], ms: 90 },
+      { do: "out", spans: [ACC("  @planner    "), DIM("a goal becomes a plan with a done-when")], ms: 90 },
+      { do: "out", spans: [ACC("  @explorer   "), DIM("read-only scout — maps the code, reports tightly")], ms: 90 },
       { do: "out", spans: [ACC("  @researcher "), DIM("finds sources, reads them, cites them")], ms: 90 },
       { do: "out", spans: [ACC("  @coder      "), DIM("the smallest correct edit, verified")], ms: 90 },
-      { do: "out", spans: [ACC("  @tester     "), DIM("runs your project's own tests")], ms: 90 },
-      { do: "out", spans: [ACC("  @reviewer   "), DIM("correctness, security, design")], ms: 90 },
-      { do: "out", spans: [ACC("  @writer     "), DIM("docs and reports — saved to the file")], ms: 90 },
-      { do: "pause", ms: 1900 },
+      { do: "out", spans: [ACC("  @tester     "), DIM("writes and runs your project's own tests")], ms: 90 },
+      { do: "out", spans: [ACC("  @reviewer   "), DIM("correctness, security, tests, design")], ms: 90 },
+      { do: "out", spans: [ACC("  @writer     "), DIM("docs and reports — and it saves the file")], ms: 90 },
+      { do: "pause", ms: 1810 },
     ]);
 
     /* ---- 03 · ★ no workflow? it writes one (6.5s) ---- */
@@ -487,13 +572,16 @@ body { background: var(--paper); }
       { do: "call", fn: async (t) => t.clear() },
       { do: "cmd", text: "@flow explain how the export command works", speed: 10 },
       { do: "spin", label: "building a graph for this…", ms: 1100 },
-      { do: "out", spans: [ACC("◈"), FG(" built a 3-node graph"), DIM(" · read the code, then explain it")], ms: 320 },
-      { do: "out", spans: [OK("  ╭────────────────────╮    ╭────────────────────╮    ╭────────────────────╮")], ms: 130 },
-      { do: "out", spans: [OK("  │ ⠻ read             │    │ ○ draft            │    │ ○ explain          │")], ms: 130 },
-      { do: "out", spans: [OK("  │ @explorer          │───▸│ @writer            │───▸│ @writer            │")], ms: 130 },
-      { do: "out", spans: [OK("  │ reading src/cli.rs │    │                    │    │                    │")], ms: 130 },
-      { do: "out", spans: [OK("  ╰────────────────────╯    ╰────────────────────╯    ╰────────────────────╯")], ms: 130 },
-      { do: "pause", ms: 4600 },
+      { do: "out", spans: [DIM("◈ built a 3-node graph: read the code, write it up, check every claim")], ms: 320 },
+      /* 2400 + 1500 + 1350 = the 5250ms this beat has always held. */
+      { do: "board", model: BUILT, states: { read: "running" }, calls: { read: 6 },
+        note: { read: "⚙ fs.read src/export.rs" }, ms: 2400 },
+      { do: "board", model: BUILT, states: { read: "done", draft: "running" },
+        settle: { read: { ms: 8100, tokens: 9400 } }, calls: { read: 11, draft: 2 },
+        note: { draft: "⚙ fs.write docs/export.md" }, ms: 1500 },
+      { do: "board", model: BUILT, states: { read: "done", draft: "done", check: "done" },
+        settle: { draft: { ms: 12300, tokens: 6200 }, check: { ms: 6700, tokens: 3100 } },
+        calls: { check: 4 }, elapsed: "27.1s", ms: 1350 },
     ]);
 
     /* ---- 04 · work that runs in parallel (5.0s) ---- */
@@ -502,16 +590,14 @@ body { background: var(--paper); }
     await run(w, [
       { do: "call", fn: async (t) => t.clear() },
       { do: "cmd", text: "@flow review this branch", speed: 11 },
-      { do: "out", spans: [OK("  ╭──────────────────╮    ╭──────────────────╮    ╭──────────────────╮")], ms: 110 },
-      { do: "out", spans: [OK("  │ ✓ map            │    │ ✓ correctness    │    │ ⠻ report         │")], ms: 110 },
-      { do: "out", spans: [OK("  │ @explorer        │───▸│ @reviewer        │───▸│ @reviewer        │")], ms: 110 },
-      { do: "out", spans: [OK("  ╰──────────────────╯  ╎ ╰──────────────────╯    ╰──────────────────╯")], ms: 110 },
-      { do: "out", spans: [OK("                        ╎ ╭──────────────────╮")], ms: 110 },
-      { do: "out", spans: [OK("                        ╎ │ ✓ security       │  "), DIM("← all three at once")], ms: 110 },
-      { do: "out", spans: [OK("                        ╎▸│ @reviewer        │")], ms: 110 },
-      { do: "out", spans: [OK("                        ╎ ╰──────────────────╯")], ms: 110 },
-      { do: "out", spans: [DIM("  3/4 done · 1 running")], ms: 200 },
-      { do: "pause", ms: 2600 },
+      /* 2000 + 1680 = the 3680ms this beat has always held. */
+      { do: "board", model: REVIEW, states: { map: "done", correctness: "running", security: "running", design: "running" },
+        settle: { map: { ms: 6400, tokens: 7100 } }, calls: { map: 9, correctness: 4, security: 3, design: 2 },
+        note: { correctness: "⚙ fs.read src/export.rs", security: "⚙ fs.search \"unwrap(\"", design: "⚙ fs.read src/cache.rs" },
+        ms: 2000 },
+      { do: "board", model: REVIEW, states: { map: "done", correctness: "done", security: "done", design: "done", report: "running" },
+        settle: { correctness: { ms: 11200, tokens: 8300 }, security: { ms: 9100, tokens: 6600 }, design: { ms: 7800, tokens: 5200 } },
+        calls: { report: 2 }, ms: 1680 },
     ]);
 
     /* ---- 05 · ★ and it tells you what broke (5.0s) ---- */
@@ -519,14 +605,15 @@ body { background: var(--paper); }
       "Not a spinner that stopped. The node, the reason, and everything it took with it.");
     await run(w, [
       { do: "call", fn: async (t) => t.clear() },
-      { do: "out", spans: [ERR("  ╭────────────────────╮"), OK("    ╭────────────────────╮")], ms: 110 },
-      { do: "out", spans: [ERR("  │ ✗ read             │"), OK("    │ ⊘ draft            │")], ms: 110 },
-      { do: "out", spans: [ERR("  │ @explorer          │"), OK("───▸│ @writer            │")], ms: 110 },
-      { do: "out", spans: [ERR("  │ ran out of steps   │"), WARN("    │ read failed        │")], ms: 110 },
-      { do: "out", spans: [ERR("  ╰────────────────────╯"), OK("    ╰────────────────────╯")], ms: 200 },
-      { do: "out", spans: [DIM("  0/3 done · "), ERR("1 failed"), DIM(" · "), WARN("2 blocked")], ms: 260 },
-      { do: "out", spans: [ERR("  ✗ read failed"), DIM(" — it ran out of steps, and said what it had found")], ms: 200 },
-      { do: "pause", ms: 4200 },
+      /* 1600 + 1500 + 200 + 2000 = the 5300ms this beat has always held. */
+      { do: "board", model: BROKEN, states: { read: "running" }, calls: { read: 12 },
+        note: { read: "⚙ fs.read src/export.rs" }, ms: 1600 },
+      { do: "board", model: BROKEN, states: { read: "failed", draft: "blocked", check: "blocked" },
+        settle: { read: { ms: 11500, tokens: 30000 } }, calls: { read: 16 },
+        note: { read: "the step budget of 12 ran out", draft: "something it needed failed", check: "something it needed failed" },
+        elapsed: "11.6s", ms: 1500 },
+      { do: "out", spans: [ERR("✗ read failed"), DIM(" — it ran out of steps, and said what it had found")], ms: 200 },
+      { do: "pause", ms: 2000 },
     ]);
 
     /* ---- 06 · until your check passes (5.0s) ---- */
