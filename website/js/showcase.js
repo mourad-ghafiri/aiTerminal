@@ -495,7 +495,7 @@ document.addEventListener("DOMContentLoaded", () => {
          terminal does. */
       opts: { tall: true },
       caption: () => caption("<code>@flow</code> — a <em>graph</em> of agents",
-        "Nodes that need nothing from each other run at the same time, a condition routes on the edge, and one edge points backwards so a failing check loops through a fixer — bounded. Nothing runs until the graph is proved. You watch it <b>as a graph</b>: a rank is a column, each card carrying its agent, its model and what it has cost, the running one pulsing in your theme — and when something breaks, the card says <b>why</b> and everything behind it reads <code>⊘ blocked</code>. Five ship: <b>build · fix · review</b> for code, <b>document</b>, and <b>research</b>. <b>Name none and one is written for you</b>: describe the goal and the model designs the graph, which is then held to the same checks a graph you wrote by hand is."),
+        "Nodes that need nothing from each other run at the same time, and a failing check loops back through a fixer — <b>bounded</b>. Nothing runs until the graph is proved. Five ship: <b>build · fix · review · document · research</b> — or <b>name none, and one is written for your goal</b>, checked the same way."),
       demo(w, myEpoch) {
         /* The board below is not typed out — it is LAID OUT, by the port of the
            terminal's own geometry in js/board.js, and diffed byte for byte
