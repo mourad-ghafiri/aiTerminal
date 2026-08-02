@@ -31,7 +31,15 @@ document.addEventListener("DOMContentLoaded", () => {
       if (myEpoch !== epoch) return;
       switch (st.do) {
         case "cmd": await typeCmd(w, st.text, st); break;
-        case "out": w.line(st.spans, st.paneIdx); await sleep(st.ms || 120); break;
+        case "out": {
+          /* `dense` marks a line that is part of a PICTURE — a diagram, a table,
+             a board. Box-drawing glyphs only close into boxes when the line box
+             is the cell, so those rows get the terminal's own tight metrics. */
+          const line = w.line(st.spans, st.paneIdx);
+          if (st.dense) line.classList.add("board");
+          await sleep(st.ms || 120);
+          break;
+        }
         case "stream": await streamLine(w, st.spans, st); break;
         case "think":
           await streamLine(w, [DIM(st.text)], { paneIdx: st.paneIdx, speed: 9, prefix: [DIM("∴ ")] });
@@ -130,7 +138,7 @@ document.addEventListener("DOMContentLoaded", () => {
      what lets the demo do the same rather than draw past its own edge. */
   function paneSize(w) {
     const pane = w.pane();
-    const probe = el("div", "rw-line");
+    const probe = el("div", "rw-line board");
     probe.appendChild(spanEl(FG("M".repeat(80))));
     probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre";
     pane.appendChild(probe);
@@ -187,7 +195,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (held[i]) {
           held[i].innerHTML = "";
           spans.forEach((s) => held[i].appendChild(spanEl(s)));
-        } else held[i] = w.line(spans);
+        } else { held[i] = w.line(spans); held[i].classList.add("board"); }
       });
       /* A frame with fewer rows than the last one must not leave a tail. */
       held.splice(rows.length).forEach((l) => l.remove());
@@ -200,45 +208,45 @@ document.addEventListener("DOMContentLoaded", () => {
      the edges, the bounded `up to 2x` loop back to `check`, and a table of what
      every node can reach. It costs nothing and asks no model. */
   const GRAPH_DOCUMENT = [
-    { do: "out", spans: [ACC("document")], ms: 45 },
-    { do: "out", spans: [MUT("────────────────────────────────────────────────────────────")], ms: 45 },
-    { do: "out", spans: [], ms: 45 },
-    { do: "out", spans: [FG("Read the real code, write the doc, and check every claim against the source")], ms: 45 },
-    { do: "out", spans: [], ms: 45 },
-    { do: "out", spans: [FG("5 nodes · loops · 30m · 400000 tokens · needs an input")], ms: 45 },
-    { do: "out", spans: [], ms: 45 },
-    { do: "out", spans: [], ms: 45 },
-    { do: "out", spans: [FG("           ┌────────────────┐")], ms: 45 },
-    { do: "out", spans: [FG("           │ read @explorer │")], ms: 45 },
-    { do: "out", spans: [FG("           └────────────────┘")], ms: 45 },
-    { do: "out", spans: [FG("                    │")], ms: 45 },
-    { do: "out", spans: [FG("                    │")], ms: 45 },
-    { do: "out", spans: [FG("                    ▼")], ms: 45 },
-    { do: "out", spans: [FG("            ┌───────┴───────┐")], ms: 45 },
-    { do: "out", spans: [FG("            │ draft @writer │")], ms: 45 },
-    { do: "out", spans: [FG("            └───────────────┘")], ms: 45 },
-    { do: "out", spans: [FG("                    │")], ms: 45 },
-    { do: "out", spans: [FG("                    │")], ms: 45 },
-    { do: "out", spans: [FG("                    ▼")], ms: 45 },
-    { do: "out", spans: [FG("           ┌────────┴────────┐up to 2x")], ms: 45 },
-    { do: "out", spans: [FG("           │ check @reviewer │◀╎")], ms: 45 },
-    { do: "out", spans: [FG("           └─────────────────┘ ╎")], ms: 45 },
-    { do: "out", spans: [FG("       VERDICT: FAIL│          ╎")], ms: 45 },
-    { do: "out", spans: [FG("          ┌─────────┴─────────┐╎")], ms: 45 },
-    { do: "out", spans: [FG("          ▼      VERDICT: PASS▼╎")], ms: 45 },
-    { do: "out", spans: [FG(" ┌────────┴───────┐   ┌───────┴───────┐")], ms: 45 },
-    { do: "out", spans: [FG(" │ revise @writer │╌╌╌│╌final @writer │")], ms: 45 },
-    { do: "out", spans: [FG(" └────────────────┘   └───────────────┘")], ms: 45 },
-    { do: "out", spans: [], ms: 45 },
-    { do: "out", spans: [MUT("╭────────┬───────────┬────────────────────────────────┬─────────────────────╮")], ms: 45 },
-    { do: "out", spans: [MUT("│"), FG(" node   "), MUT("│"), FG(" runs      "), MUT("│"), FG(" when                           "), MUT("│"), FG(" reaches             "), MUT("│")], ms: 45 },
-    { do: "out", spans: [MUT("├────────┼───────────┼────────────────────────────────┼─────────────────────┤")], ms: 45 },
-    { do: "out", spans: [MUT("│"), FG(" read   "), MUT("│"), FG(" @explorer "), MUT("│"), FG(" —                              "), MUT("│"), FG(" 7 tools · 1 skill   "), MUT("│")], ms: 45 },
-    { do: "out", spans: [MUT("│"), FG(" draft  "), MUT("│"), FG(" @writer   "), MUT("│"), FG(" —                              "), MUT("│"), FG(" 10 tools · 2 skills "), MUT("│")], ms: 45 },
-    { do: "out", spans: [MUT("│"), FG(" check  "), MUT("│"), FG(" @reviewer "), MUT("│"), FG(" —                              "), MUT("│"), FG(" 7 tools · 5 skills  "), MUT("│")], ms: 45 },
-    { do: "out", spans: [MUT("│"), FG(" revise "), MUT("│"), FG(" @writer   "), MUT("│"), FG(" check = VERDICT: FAIL · ↺ che… "), MUT("│"), FG(" 10 tools · 2 skills "), MUT("│")], ms: 45 },
-    { do: "out", spans: [MUT("│"), FG(" final  "), MUT("│"), FG(" @writer   "), MUT("│"), FG(" check = VERDICT: PASS          "), MUT("│"), FG(" 10 tools · 2 skills "), MUT("│")], ms: 45 },
-    { do: "out", spans: [MUT("╰────────┴───────────┴────────────────────────────────┴─────────────────────╯")], ms: 45 },
+    { do: "out", spans: [ACC("document")], ms: 45, dense: true },
+    { do: "out", spans: [MUT("────────────────────────────────────────────────────────────")], ms: 45, dense: true },
+    { do: "out", spans: [], ms: 45, dense: true },
+    { do: "out", spans: [FG("Read the real code, write the doc, and check every claim against the source")], ms: 45, dense: true },
+    { do: "out", spans: [], ms: 45, dense: true },
+    { do: "out", spans: [FG("5 nodes · loops · 30m · 400000 tokens · needs an input")], ms: 45, dense: true },
+    { do: "out", spans: [], ms: 45, dense: true },
+    { do: "out", spans: [], ms: 45, dense: true },
+    { do: "out", spans: [FG("           ┌────────────────┐")], ms: 45, dense: true },
+    { do: "out", spans: [FG("           │ read @explorer │")], ms: 45, dense: true },
+    { do: "out", spans: [FG("           └────────────────┘")], ms: 45, dense: true },
+    { do: "out", spans: [FG("                    │")], ms: 45, dense: true },
+    { do: "out", spans: [FG("                    │")], ms: 45, dense: true },
+    { do: "out", spans: [FG("                    ▼")], ms: 45, dense: true },
+    { do: "out", spans: [FG("            ┌───────┴───────┐")], ms: 45, dense: true },
+    { do: "out", spans: [FG("            │ draft @writer │")], ms: 45, dense: true },
+    { do: "out", spans: [FG("            └───────────────┘")], ms: 45, dense: true },
+    { do: "out", spans: [FG("                    │")], ms: 45, dense: true },
+    { do: "out", spans: [FG("                    │")], ms: 45, dense: true },
+    { do: "out", spans: [FG("                    ▼")], ms: 45, dense: true },
+    { do: "out", spans: [FG("           ┌────────┴────────┐up to 2x")], ms: 45, dense: true },
+    { do: "out", spans: [FG("           │ check @reviewer │◀╎")], ms: 45, dense: true },
+    { do: "out", spans: [FG("           └─────────────────┘ ╎")], ms: 45, dense: true },
+    { do: "out", spans: [FG("       VERDICT: FAIL│          ╎")], ms: 45, dense: true },
+    { do: "out", spans: [FG("          ┌─────────┴─────────┐╎")], ms: 45, dense: true },
+    { do: "out", spans: [FG("          ▼      VERDICT: PASS▼╎")], ms: 45, dense: true },
+    { do: "out", spans: [FG(" ┌────────┴───────┐   ┌───────┴───────┐")], ms: 45, dense: true },
+    { do: "out", spans: [FG(" │ revise @writer │╌╌╌│╌final @writer │")], ms: 45, dense: true },
+    { do: "out", spans: [FG(" └────────────────┘   └───────────────┘")], ms: 45, dense: true },
+    { do: "out", spans: [], ms: 45, dense: true },
+    { do: "out", spans: [MUT("╭────────┬───────────┬────────────────────────────────┬─────────────────────╮")], ms: 45, dense: true },
+    { do: "out", spans: [MUT("│"), FG(" node   "), MUT("│"), FG(" runs      "), MUT("│"), FG(" when                           "), MUT("│"), FG(" reaches             "), MUT("│")], ms: 45, dense: true },
+    { do: "out", spans: [MUT("├────────┼───────────┼────────────────────────────────┼─────────────────────┤")], ms: 45, dense: true },
+    { do: "out", spans: [MUT("│"), FG(" read   "), MUT("│"), FG(" @explorer "), MUT("│"), FG(" —                              "), MUT("│"), FG(" 7 tools · 1 skill   "), MUT("│")], ms: 45, dense: true },
+    { do: "out", spans: [MUT("│"), FG(" draft  "), MUT("│"), FG(" @writer   "), MUT("│"), FG(" —                              "), MUT("│"), FG(" 10 tools · 2 skills "), MUT("│")], ms: 45, dense: true },
+    { do: "out", spans: [MUT("│"), FG(" check  "), MUT("│"), FG(" @reviewer "), MUT("│"), FG(" —                              "), MUT("│"), FG(" 7 tools · 5 skills  "), MUT("│")], ms: 45, dense: true },
+    { do: "out", spans: [MUT("│"), FG(" revise "), MUT("│"), FG(" @writer   "), MUT("│"), FG(" check = VERDICT: FAIL · ↺ che… "), MUT("│"), FG(" 10 tools · 2 skills "), MUT("│")], ms: 45, dense: true },
+    { do: "out", spans: [MUT("│"), FG(" final  "), MUT("│"), FG(" @writer   "), MUT("│"), FG(" check = VERDICT: PASS          "), MUT("│"), FG(" 10 tools · 2 skills "), MUT("│")], ms: 45, dense: true },
+    { do: "out", spans: [MUT("╰────────┴───────────┴────────────────────────────────┴─────────────────────╯")], ms: 45, dense: true },
   ];
 
   const caption = (title, text, extra = "") => {
@@ -522,6 +530,8 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "out", spans: [MUT("◈ no flow named — building a graph for this goal")] },
           { do: "spin", label: "building a graph for this…", ms: 1100 },
           { do: "out", spans: [MUT("◈ built a 3-node graph: read the code, write it up, check every claim · @flow show 1785639076-20816")] },
+          /* Every run opens with this line: the flow's name and what it was given. */
+          { do: "out", spans: [ACC("▸ document-how-the-export · how the export command works")] },
           { do: "board", model: built, states: { read: "running" },
             note: { read: "⚙ fs.search \"export\"" }, calls: { read: 3 }, ms: 900 },
           { do: "board", model: built, states: { read: "running" },
@@ -539,8 +549,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
           /* The shipped `review` flow: three reviewers on one rank, so they run at
              the same time — and one of them failing is the beat a demo skips. */
-          { do: "cmd", text: "@flow review \"the changes on this branch\"" },
           { do: "call", fn: (t) => t.clear() },
+          { do: "cmd", text: "@flow review \"the changes on this branch\"" },
+          { do: "out", spans: [ACC("▸ review · the changes on this branch")] },
           { do: "board", model: reviewFlow, states: { map: "done", correctness: "running", security: "running", design: "running" },
             settle: { map: { ms: 6400, tokens: 7100 } },
             calls: { map: 9, correctness: 4, security: 3, design: 2 },
@@ -556,8 +567,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
           /* Free, and needs no model at all: the shape, the conditions, and what
              every node can reach — before you spend anything on running it. */
-          { do: "cmd", text: "@flow graph document" },
           { do: "call", fn: (t) => t.clear() },
+          { do: "cmd", text: "@flow graph document" },
           ...GRAPH_DOCUMENT,
           { do: "pause", ms: 1400 },
           { do: "cmd", text: "@flow check build" },
@@ -669,27 +680,27 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "out", spans: [], ms: 45 },
           /* The renderer's own table: ROUNDED corners, muted rules, a bold header
              row, and inline code still coloured inside a cell. */
-          { do: "out", spans: [MUT("╭────────┬───────────────────────────────────────────┬───────╮")], ms: 45 },
-          { do: "out", spans: [MUT("│"), FG(" Area   "), MUT("│"), FG(" Change                                    "), MUT("│"), FG(" Issue "), MUT("│")], ms: 45 },
-          { do: "out", spans: [MUT("├────────┼───────────────────────────────────────────┼───────┤")], ms: 45 },
-          { do: "out", spans: [MUT("│"), FG(" export "), MUT("│"), ACC2(" --json"), FG(" emits one object per row           "), MUT("│"), FG(" #412  "), MUT("│")], ms: 45 },
-          { do: "out", spans: [MUT("│"), FG(" flow   "), MUT("│"), FG(" the board redraws in place                "), MUT("│"), FG(" #418  "), MUT("│")], ms: 45 },
-          { do: "out", spans: [MUT("│"), FG(" jobs   "), MUT("│"), FG(" creation is reactive, not a frozen prompt "), MUT("│"), FG(" #421  "), MUT("│")], ms: 45 },
-          { do: "out", spans: [MUT("╰────────┴───────────────────────────────────────────┴───────╯")], ms: 45 },
+          { do: "out", spans: [MUT("╭────────┬───────────────────────────────────────────┬───────╮")], ms: 45, dense: true },
+          { do: "out", spans: [MUT("│"), FG(" Area   "), MUT("│"), FG(" Change                                    "), MUT("│"), FG(" Issue "), MUT("│")], ms: 45, dense: true },
+          { do: "out", spans: [MUT("├────────┼───────────────────────────────────────────┼───────┤")], ms: 45, dense: true },
+          { do: "out", spans: [MUT("│"), FG(" export "), MUT("│"), ACC2(" --json"), FG(" emits one object per row           "), MUT("│"), FG(" #412  "), MUT("│")], ms: 45, dense: true },
+          { do: "out", spans: [MUT("│"), FG(" flow   "), MUT("│"), FG(" the board redraws in place                "), MUT("│"), FG(" #418  "), MUT("│")], ms: 45, dense: true },
+          { do: "out", spans: [MUT("│"), FG(" jobs   "), MUT("│"), FG(" creation is reactive, not a frozen prompt "), MUT("│"), FG(" #421  "), MUT("│")], ms: 45, dense: true },
+          { do: "out", spans: [MUT("╰────────┴───────────────────────────────────────────┴───────╯")], ms: 45, dense: true },
           { do: "out", spans: [], ms: 45 },
           { do: "out", spans: [ACC("• "), FG("Breaking: "), ACC2("--format=csv"), FG(" is now "), ACC2("--format csv")], ms: 45 },
           { do: "out", spans: [ACC("• "), FG("Sixty-one tests were added; none were weakened")], ms: 45 },
           { do: "out", spans: [ACC("• "), ACC2("cargo test"), FG(" is green on 1.86 and on nightly")], ms: 45 },
           { do: "out", spans: [], ms: 45 },
-          { do: "out", spans: [ACC("│"), FG(" Upgrade with "), ACC2("brew upgrade aiterminal"), FG(".")], ms: 45 },
+          { do: "out", spans: [ACC("│"), FG(" Upgrade with "), ACC2("brew upgrade aiterminal"), FG(".")], ms: 45, dense: true },
           { do: "out", spans: [], ms: 45 },
           { do: "out", spans: [ACC("The release train")], ms: 45 },
           { do: "out", spans: [MUT("\u2500".repeat(60))], ms: 45 },
           { do: "out", spans: [], ms: 45 },
           /* A ```mermaid fence, drawn in the terminal — no browser, no export step. */
-          { do: "out", spans: [FG(" ┌─────┐   ┌──────┐   ┌─────┐   ┌─────────┐")], ms: 45 },
-          { do: "out", spans: [FG(" │ cut │──▶┤ test │──▶┤ tag │──▶┤ publish │")], ms: 45 },
-          { do: "out", spans: [FG(" └─────┘   └──────┘   └─────┘   └─────────┘")], ms: 45 },
+          { do: "out", spans: [FG(" ┌─────┐   ┌──────┐   ┌─────┐   ┌─────────┐")], ms: 45, dense: true },
+          { do: "out", spans: [FG(" │ cut │──▶┤ test │──▶┤ tag │──▶┤ publish │")], ms: 45, dense: true },
+          { do: "out", spans: [FG(" └─────┘   └──────┘   └─────┘   └─────────┘")], ms: 45, dense: true },
           { do: "out", spans: [], ms: 45 },
           { do: "out", spans: [MUT("  \u2190 that diagram is a "), ACC2("```mermaid"), MUT(" block, drawn natively \u2014 and a file longer than the window opens a pager")], ms: 45 },
           { do: "pause", ms: 1500 },

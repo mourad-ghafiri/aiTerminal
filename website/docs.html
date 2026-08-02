@@ -147,7 +147,7 @@ api_key  = <span class="s">"sk-…"</span>             <span class="c"># or "$MY
       strategies and per-model tuning.</p>
 
     <h2 id="layout">The <code>~/.aiTerminal</code> folder</h2>
-    <pre><code>~/.aiTerminal/
+    <pre class="board"><code>~/.aiTerminal/
 ├── config.toml        <span class="c"># the one config file (+ per-profile overlays)</span>
 ├── profiles/          <span class="c"># &lt;id&gt;/{profile.toml, config.toml, workspace.toml}</span>
 ├── themes/            <span class="c"># 19 builtin + yours</span>
@@ -361,7 +361,7 @@ max    = 3</code></pre>
     <p>A picture answers "what runs after what" and nothing else. The questions people arrive with
       are <i>which agent is behind that box</i>, <i>what can it reach</i>, and <i>what is the
       condition on that arrow</i> — so those are the columns.</p>
-    <pre><code><span class="p">❯</span> @flow graph review
+    <pre class="board"><code><span class="p">❯</span> @flow graph review
 
 review
 ────────────────────────────────────────────────────────────
@@ -441,7 +441,7 @@ Map the code, review it three ways in parallel, then merge into one verdict
       So you watch it as <b>the graph it is</b> — and the layout <em>is</em> the graph, not the file:
       <b>a rank is a column</b>. What runs first is on the left, what runs at the same time stacks in
       one column, and the arrows only ever point the way the work moves.</p>
-    <pre><code><span class="a">▸ build · add a --json flag to the export command</span>
+    <pre class="board"><code><span class="a">▸ build · add a --json flag to the export command</span>
 <span class="c">  8 nodes · 6 agents · 69 tools · 24 skills · 4 at a time · slowest path plan→explore→apply→verify→review→summary</span>
   <span class="g">╭────────────────╮</span>    <span class="g">╭────────────────╮</span>    <span class="a">╭────────────────╮</span>    <span class="c">╭────────────────╮</span>    <span class="c">╭────────────────╮</span>    <span class="c">╭────────────────╮</span>
   <span class="g">│</span> <span class="g">✓ plan</span>      <span class="c">⚙3</span> <span class="g">│</span>    <span class="g">│</span> <span class="g">✓ explore</span>  <span class="c">⚙12</span> <span class="g">│</span>    <span class="a">│</span> <span class="a">⠼ apply</span>  <span class="c">⚙4 ×2</span> <span class="a">│</span>    <span class="c">│</span> <span class="c">○ verify</span>       <span class="c">│</span>    <span class="c">│</span> <span class="c">○ fix</span>          <span class="c">│</span>    <span class="c">│</span> <span class="c">○ summary</span>      <span class="c">│</span>
@@ -667,7 +667,7 @@ background jobs (3):
     <h3><code>@md render</code></h3>
     <p>This is the real output, at 72 columns — headings get a rule, tables are drawn, and the
       mermaid block becomes a diagram:</p>
-    <pre><code><span class="p">❯</span> @md render release.md
+    <pre class="board"><code><span class="p">❯</span> @md render release.md
 <span class="a">Release plan</span>
 <span class="c">────────────────────────────────────────────────────────────</span>
 
@@ -697,7 +697,7 @@ background jobs (3):
     <p>A full-screen split: the raw Markdown with a gutter on the left, the rendered preview on
       the right, re-rendered as you type. The status bar carries the file, a <span class="w">●</span>
       when there are unsaved edits, and the line count; the bar at the foot is the whole keymap.</p>
-    <pre><code><span class="p">❯</span> @md edit release.md
+    <pre class="board"><code><span class="p">❯</span> @md edit release.md
 
 <span class="a"> release.md ●  (10L)                                        saved release.md </span>
   1 │ # Release plan          │ <span class="a">Release plan</span>
@@ -798,7 +798,7 @@ README.md  crates  docs
       buttons for whatever it is currently asking. Anything you type is typed into the program and
       submitted. When it exits, the gate detaches and you are back at the shell.</p>
 
-    <pre><code><span class="p">You ▸</span> claude
+    <pre class="board"><code><span class="p">You ▸</span> claude
 <span class="p">Bot ◂</span> <span class="ok">▶ attached to claude</span> — it has taken over the terminal.
 
 <span class="p">You ▸</span> add a --json flag to the export command

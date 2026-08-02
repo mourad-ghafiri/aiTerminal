@@ -445,7 +445,7 @@ body { background: var(--paper); }
     if (st.elapsed) m.elapsed = st.elapsed;
 
     const pane = w.pane();
-    const probe = el("div", "rw-line");
+    const probe = el("div", "rw-line board");
     probe.appendChild(spanEl(FG("M".repeat(80))));
     probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre";
     pane.appendChild(probe);
@@ -468,7 +468,7 @@ body { background: var(--paper); }
         if (held[i]) {
           held[i].innerHTML = "";
           spans.forEach((sp) => held[i].appendChild(spanEl(sp)));
-        } else held[i] = w.line(spans);
+        } else { held[i] = w.line(spans); held[i].classList.add("board"); }
       });
       held.splice(rows.length).forEach((l) => l.remove());
       await sleep(Math.min(FRAME, hold - t));

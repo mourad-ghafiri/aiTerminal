@@ -281,6 +281,10 @@ footer { border-top: 1px solid var(--border); margin-top: 70px; padding: 40px 0 
   background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
   padding: 16px 18px; overflow-x: auto; margin: 14px 0; font-size: 13px; line-height: 1.6;
 }
+/* A block that draws boxes is a picture: its glyphs only tile into a box when
+   the line box is the cell. At the reading line-height above, every vertical
+   falls short of the row below and a card becomes a pair of broken brackets. */
+.docs-main pre.board { line-height: 1; }
 .docs-main pre code { background: none; border: none; padding: 0; color: var(--fg); }
 .docs-main pre .c { color: var(--muted); }       /* comment */
 .docs-main pre .k { color: var(--accent2); }      /* key / flag */

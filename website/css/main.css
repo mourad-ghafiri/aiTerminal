@@ -378,7 +378,7 @@ kbd {
 
 /* A graph board needs rows the way a terminal has them. Only the scenes that
    draw one ask for this — everything else reads better at the default height. */
-.rw.tall { height: 640px; }
+.rw.tall { height: 600px; }
 .rw-main { flex: 1; display: flex; min-height: 0; }
 .rw-body {
   flex: 1; min-width: 0; display: flex; gap: 8px; padding: 8px; /* PAD = PANE_GUTTER = 8 */
@@ -399,6 +399,21 @@ kbd {
 @keyframes rw-pane-enter { from { opacity: 0; transform: scale(.97); } }
 
 .rw-line { white-space: pre-wrap; word-break: break-word; min-height: 1.35em; }
+/* A board is a CELL GRID, not prose. Two things break it at the pane's reading
+   metrics: box-drawing glyphs only tile into a box when the line box IS the cell
+   — at 1.35 the verticals fall short of the row below and every card reads as a
+   pair of broken brackets — and a wrapped row turns a picture into confetti. So
+   a board row gets the terminal's own tight cell and never wraps. The smaller
+   size is not decoration either: it buys the columns the cards need to reach
+   their full width, which is what lets each one show its model. */
+.rw-line.board {
+  line-height: 1; min-height: 0;
+  white-space: pre; word-break: normal;
+}
+/* The smaller cell is only for a window narrower than a terminal — it buys the
+   columns the cards need to reach full width and show their model. A window
+   already wide enough (the film's) keeps the pane's own size. */
+.rw.tall .rw-line.board { font-size: .88em; }
 .t-fg { color: var(--t-fg); } .t-muted { color: var(--t-muted); }
 .t-dim { color: var(--t-muted); opacity: .92; }
 .t-accent { color: var(--t-accent); } .t-accent-b { color: var(--t-accent); font-weight: 700; }
@@ -920,7 +935,13 @@ footer { padding: 34px 0 46px; color: var(--muted); font-size: 13.5px; border-to
    the very thing it is showing. So it keeps its lines and scrolls inside its own
    box — which is what a terminal too narrow for the cards does too, and the page
    still never scrolls sideways because of it. */
-.uc pre.board { white-space: pre; word-break: normal; }
+.uc pre.board {
+  white-space: pre; word-break: normal;
+  /* …and the terminal's own cell: at the block's reading line-height the
+     verticals never reach the row below and every card reads as broken
+     brackets. A picture needs its glyphs to tile. */
+  line-height: 1;
+}
 .uc pre .p { color: var(--accent); }        /* prompt / path */
 .uc pre .c { color: var(--accent-soft); }    /* command args / chevron-2 */
 .uc pre .ab { color: var(--accent); font-weight: 700; } /* @command */
@@ -1024,7 +1045,7 @@ img, video, svg, canvas { max-width: 100%; height: auto; }
   /* The replica window and the phone mock are scale models of the real app —
      shrink the type with the frame so the same rows still fit. */
   .rw { height: 400px; font-size: 10.5px; }
-  .rw.tall { height: 460px; }
+  .rw.tall { height: 440px; }
   .ph { height: 400px; }
   .rw[data-tabpos="left"] .rw-tabbar, .rw[data-tabpos="right"] .rw-tabbar { width: 96px; }
   .rw-tab { max-width: 140px; }
