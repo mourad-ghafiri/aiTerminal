@@ -186,7 +186,7 @@ fn a_word_that_merely_begins_like_the_marker_still_prints() {
 #[test]
 fn spinner_is_inert_off_tty_and_stops_cleanly() {
     // Under `cargo test` stderr is piped → no thread, no frames; stop is a no-op.
-    let mut sp = Spinner::start("waiting".into());
+    let mut sp = Spinner::start(String::from("waiting"));
     assert!(sp.handle.is_none(), "no animation off-TTY (piped/background runs stay clean)");
     sp.stop();
 }

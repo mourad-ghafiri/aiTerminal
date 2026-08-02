@@ -33,6 +33,7 @@ pub(crate) mod record;
 pub mod keymap;
 pub mod loops;
 pub mod mdedit;
+pub(crate) mod motivation;
 pub mod plugin;
 pub mod procio;
 pub mod profile;

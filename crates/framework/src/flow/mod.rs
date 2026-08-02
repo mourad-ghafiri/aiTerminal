@@ -18,9 +18,9 @@
 //! difference between finding a typo now and finding it after three agent runs.
 
 pub(crate) mod board;
+pub(crate) mod build;
 pub(crate) mod doc;
 pub(crate) mod expr;
-pub(crate) mod pick;
 pub(crate) mod render;
 pub(crate) mod tmpl;
 pub(crate) mod verify;

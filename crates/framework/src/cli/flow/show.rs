@@ -1,7 +1,7 @@
 use crate::cli::agentloop::show::{clip_tail, tail_log};
 use crate::cli::flow::args::{FlowCmd, FlowSpec, flow_usage, parse_flow_args};
 use crate::cli::flow::exec::board_nodes;
-use crate::cli::flow::{checked_flow, flow_names, load_flow, print_report};
+use crate::cli::flow::{checked_flow, flow_names, load_flow, print_report, run_graph};
 use crate::cli::flow::run::run_flow_cli;
 use crate::cli::jobs::spawn::spawn_background;
 use crate::cli::md::print_markdown;
@@ -9,7 +9,7 @@ use crate::cli::style::{err_is_tty, md_width, muted, reset};
 
 /// `ai flow …` — the whole surface. `args` includes the leading "flow" word.
 pub(crate) fn ai_flow_cmd(args: &[String]) -> i32 {
-    let cmd = match parse_flow_args(&args[1..]) {
+    let cmd = match parse_flow_args(&args[1..], &flow_names()) {
         Ok(cmd) => cmd,
         Err(e) => {
             eprintln!("aiTerminal: {e}");
@@ -217,7 +217,7 @@ fn flow_show(id: &str, picture: &crate::flow::doc::Picture) -> i32 {
     // The definition may have been edited since — a node the file no longer has means
     // the drawing would be of a graph this run never was. Then the record is the only
     // truth, and the table alone is what can honestly be shown.
-    match load_flow(&run.flow) {
+    match run_graph(&run) {
         Ok(flow) if flow.nodes.iter().all(|n| run.node(&n.id).is_some()) => {
             print_flow_doc(&flow, Some(&run), *picture);
         }
@@ -328,7 +328,7 @@ fn flow_node(id: &str, node: &str) -> i32 {
         doc.push_str(&format!("**{}**\n\n", facts.join(" \u{b7} ")));
     }
     // Where it sits in the graph — the part the record cannot know on its own.
-    if let Ok(flow) = load_flow(&run.flow) {
+    if let Ok(flow) = run_graph(&run) {
         if let Some(def) = flow.nodes.iter().find(|n| n.id == state.id) {
             let mut edges = Vec::new();
             if !def.needs.is_empty() {
@@ -380,7 +380,7 @@ fn flow_watch(id: &str, view: &str) -> i32 {
         false => id.to_string(),
     };
     let Some(run) = resolved_run(&id) else { return 2 };
-    let Ok(flow) = load_flow(&run.flow) else {
+    let Ok(flow) = run_graph(&run) else {
         eprintln!("aiTerminal: flow '{}' is no longer installed, so its run cannot be drawn", run.flow);
         return 2;
     };
@@ -390,6 +390,7 @@ fn flow_watch(id: &str, view: &str) -> i32 {
         err_is_tty(),
         view,
         run.concurrency,
+        crate::motivation::for_run(&crate::config::Config::load()),
     );
     eprintln!("{}{}{}", muted(), crate::i18n::translate("flow.watching", &[run.id.clone()]), reset());
     // Watching is not owning. Ctrl-C here has always left the run alone, and nothing ever
@@ -451,7 +452,7 @@ fn apply_record(board: &std::sync::Arc<crate::flow::board::Board>, node: &crate:
 /// and then handed to the ordinary resume path.
 fn flow_retry(id: &str, node: &str) -> i32 {
     let Some(mut run) = resolved_run(id) else { return 2 };
-    let flow = match load_flow(&run.flow) {
+    let flow = match run_graph(&run) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("aiTerminal: {e}");
@@ -508,7 +509,7 @@ fn flow_log(id: &str, node: Option<&str>, follow: bool) -> i32 {
     // someone reaching for `@flow log last` almost always wants.
     let wanted = match node {
         Some(n) => n.to_string(),
-        None => match load_flow(&run.flow).ok().and_then(|f| f.answer_node().map(|i| f.nodes[i].id.clone())) {
+        None => match run_graph(&run).ok().and_then(|f| f.answer_node().map(|i| f.nodes[i].id.clone())) {
             Some(id) => id,
             None => run.nodes.last().map(|n| n.id.clone()).unwrap_or_default(),
         },

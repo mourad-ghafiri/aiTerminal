@@ -1,0 +1,44 @@
+name = "a goal with no flow name has a graph built for it"
+tags = ["flow", "building"]
+
+# `@flow explain this project` names no flow, and there is no reason it should have to.
+# The graph is BUILT for the goal — by the model, out of the agents this machine actually
+# has — and then held to every check a graph somebody wrote by hand is held to.
+#
+# What comes back here is a real flow document. It goes through the real parser and the
+# real verifier, and nothing about it is special afterwards.
+
+[setup]
+agents = ["explorer", "writer", "reviewer"]
+
+[[step]]
+flows_installed = ["build: implement and test a change", "research: answer a question with sources"]
+
+[[step]]
+model_writes = """
+description = "read the code, then explain it"
+input = "required"
+
+[[node]]
+id = "read"
+agent = "explorer"
+prompt = "Map what {{input}} actually does"
+
+[[node]]
+id = "explain"
+agent = "writer"
+needs = ["read"]
+final = true
+prompt = "Explain it: {{read.output}}"
+"""
+
+[[step]]
+goal = "explain this project"
+
+# The document is kept verbatim, because it is what gets written beside the run — a
+# re-serialized flow would be a different file from the one that ran.
+[[step]]
+expect_built = ["id = \"read\"", "agent = \"explorer\"", "final = true"]
+
+[[step]]
+expect_built_nodes = 2

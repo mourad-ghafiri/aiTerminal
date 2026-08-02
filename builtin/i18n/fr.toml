@@ -47,6 +47,9 @@ cleared = "{0} exécution(s) de flux terminée(s) supprimée(s)"
 resume_hint = "reprendre là où elle s'est arrêtée :  @flow resume {0}"
 node_hint = "un nœud :  @flow node {0} <nœud>  ·  sa sortie :  @flow log {0} <nœud>  ·  le relancer :  @flow retry {0} <nœud>"
 watching = "suivi de {0} — l'affichage se met à jour à chaque nœud terminé"
+building = "aucun flow nommé — construction d'un graphe pour cet objectif"
+built = "graphe de {0} nœud(s) construit : {1} · @flow show {2}"
+built_kept = "le graphe qu'il a tenté de construire est conservé :  @flow show {0}"
 
 [theme]
 switched = "thème '{0}' appliqué au profil '{1}' — une fenêtre ouverte se restyle en une seconde"

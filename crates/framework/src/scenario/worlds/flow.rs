@@ -44,12 +44,14 @@ pub struct FlowWorld {
     approvals: Vec<(String, bool)>,
     verdict: Option<verify::Report>,
     outcome: Option<Outcome>,
-    /// What the model would reply when asked to route a bare goal.
-    routes: Option<String>,
-    /// The flows a goal is routed between: `(name, description)`.
+    /// What the model replies when asked to WRITE a graph for a goal, one entry per
+    /// round — several of them drive the repair loop.
+    writes: Vec<String>,
+    /// The flows this machine has installed: `(name, description)`. A goal is built for,
+    /// not routed to, so these only decide what the first word after `@flow` means.
     catalogue: Vec<(String, String)>,
-    /// The last routing decision, or why there was not one.
-    routed: Option<Result<(String, String), String>>,
+    /// The last graph built for a goal, or why there was not one.
+    built: Option<Result<crate::flow::build::Built, String>>,
     /// How tall the window is, for the card view's fit check. `0` = as tall as it likes.
     window_rows: usize,
 }
@@ -90,9 +92,9 @@ pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
         approvals: Vec::new(),
         verdict: None,
         outcome: None,
-        routes: None,
+        writes: Vec::new(),
         catalogue: Vec::new(),
-        routed: None,
+        built: None,
         window_rows: 0,
     }))
 }
@@ -157,41 +159,44 @@ impl World for FlowWorld {
             return Ok(());
         }
 
-        // ── routing a bare goal ────────────────────────────────────────────────
+        // ── a goal with no flow name ───────────────────────────────────────────
         if let Some(items) = world::list(step, "flows_installed") {
             self.catalogue = pairs(items)?;
             return Ok(());
         }
-        if let Some(json) = world::text(step, "model_routes") {
-            self.routes = Some(json);
+        // What the model replies with when asked to write a graph. One step per ROUND,
+        // in order, so a scenario drives the repair loop by queueing two of them — a
+        // flow document is a multi-line string, and an array of those is not something
+        // this file format expresses on one line.
+        if let Some(text) = world::text(step, "model_writes") {
+            self.writes.push(text);
             return Ok(());
         }
         if let Some(goal) = world::text(step, "goal") {
-            // The real rule: a single argument with a space in it is a goal, never a
-            // flow name, because no flow can be called that.
-            if !crate::flow::pick::is_goal(&goal) {
-                return Err(format!("{goal:?} would be read as a flow name, not a goal"));
-            }
-            self.routed = Some(match &self.routes {
-                Some(reply) => {
-                    let turns = vec![crate::ai::provider::text_sse(reply, 10, 5)];
-                    let client = crate::ai::Client::new(model_settings(), ScriptedTransport::new(turns));
-                    crate::flow::pick::choose_with(&client, &goal, &self.catalogue)
-                }
-                None => Err("no model is configured".into()),
-            });
+            self.built = Some(self.build_goal(&goal));
+            // Spent. The next goal in the same scenario queues its own rounds, and one
+            // that queues none is a machine with no model — which is a case worth having.
+            self.writes.clear();
             return Ok(());
         }
-        if let Some(want) = world::text(step, "expect_routed_to") {
-            return match self.routed.as_ref().ok_or("no goal was routed yet")? {
-                Ok((name, _)) => world::expect_eq(name, &want, "the flow the goal was routed to"),
-                Err(e) => Err(format!("the goal was not routed at all: {e}")),
+        if let Some(want) = world::list(step, "expect_built") {
+            return match self.built.as_ref().ok_or("no goal was built for yet")? {
+                Ok(built) => world::expect_contains(&built.toml, &want, "the graph that was built"),
+                Err(e) => Err(format!("nothing was built at all: {e}")),
             };
         }
-        if let Some(want) = world::list(step, "expect_not_routed") {
-            return match self.routed.as_ref().ok_or("no goal was routed yet")? {
-                Ok((name, _)) => Err(format!("expected no route, got '{name}'")),
-                Err(e) => world::expect_contains(e, &want, "why the goal was not routed"),
+        if let Some(n) = world::int(step, "expect_built_nodes") {
+            let built = self.built.as_ref().ok_or("no goal was built for yet")?;
+            let flow = &built.as_ref().map_err(|e| format!("nothing was built: {e}"))?.flow;
+            return world::expect_eq(&flow.nodes.len().to_string(), &n.to_string(), "the graph's node count");
+        }
+        if let Some(want) = world::list(step, "expect_not_built") {
+            return match self.built.as_ref().ok_or("no goal was built for yet")? {
+                // A graph that came back REFUSED is "not built" too: the run does not
+                // happen, and the reason is the checker's, which is what to assert on.
+                Ok(b) if !b.report.ok() => world::expect_contains(&b.report.errors.join("\n"), &want, "why it was refused"),
+                Ok(b) => Err(format!("expected no graph, got {} node(s)", b.flow.nodes.len())),
+                Err(e) => world::expect_contains(e, &want, "why nothing was built"),
             };
         }
 
@@ -380,6 +385,33 @@ impl verify::World for FlowWorld {
 }
 
 impl FlowWorld {
+    /// Build a graph for `goal` through the REAL builder, against a scripted transport.
+    ///
+    /// The verifier is the real one too, against this scenario's own agents and guard —
+    /// so a scenario that scripts a graph naming an agent it did not install watches the
+    /// same refusal a person would get, rather than a stub agreeing with it.
+    fn build_goal(&self, goal: &str) -> Result<crate::flow::build::Built, String> {
+        if self.writes.is_empty() {
+            return Err("no model is configured".into());
+        }
+        let agents: Vec<crate::ai::defs::Agent> = self
+            .agents
+            .iter()
+            .map(|name| crate::ai::defs::Agent {
+                name: name.clone(),
+                description: format!("the {name}"),
+                system: String::new(),
+                tools: vec!["fs.read".into()],
+                skills: Vec::new(),
+                prompts: Vec::new(),
+                max_steps: 6,
+            })
+            .collect();
+        let turns = self.writes.iter().map(|w| crate::ai::provider::text_sse(w, 20, 40)).collect();
+        let client = crate::ai::Client::new(model_settings(), ScriptedTransport::new(turns));
+        crate::flow::build::build_with(&client, goal, &agents, &|f| verify::verify(f, self))
+    }
+
     /// Replay the run through the board's off-TTY rendering — the same state machine a
     /// pipe, a `--bg` job log and CI all get, with no cursor moves in the way.
     fn board_lines(&self) -> Result<Vec<String>, String> {
@@ -544,7 +576,7 @@ impl FlowWorld {
                 mcps: 0,
             })
             .collect();
-        let board = Board::new("scenario".into(), nodes, false, view, self.concurrency);
+        let board = Board::new("scenario".into(), nodes, false, view, self.concurrency, crate::motivation::Muse::silent());
         // A run is optional: the shape of a flow is worth asserting before it has run,
         // which is exactly what a board drawn from the file alone shows.
         if let Some(outcome) = self.outcome.as_ref() {

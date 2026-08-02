@@ -4,10 +4,10 @@ use crate::cli::agents::wire_sigint;
 use crate::cli::flow::args::FlowSpec;
 use platform::orchestrator::Driver as _;
 use crate::cli::flow::exec::{FlowDriver, board_nodes};
-use crate::cli::flow::{checked_flow, flow_names, load_flow, print_report};
+use crate::cli::flow::{checked_flow, flow_names, print_report};
 use crate::cli::flow::show::{print_flow_doc, stdin_is_tty};
 use crate::cli::format::run_footer_with;
-use crate::cli::style::{accent, err_is_tty, muted, reset};
+use crate::cli::style::{err_is_tty, muted, reset};
 
 /// `aiTerminal ai flow <name> "<input>"` — verify, then run the graph.
 pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
@@ -27,31 +27,11 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
         },
         None => None,
     };
-    // A goal with no flow name: ask the model which of the installed graphs it wants,
-    // and say so out loud before anything runs.
-    let mut routed: Option<String> = None;
-    let name = match prior.as_ref() {
-        Some(p) => p.flow.clone(),
-        None if !spec.name.is_empty() => spec.name.clone(),
-        None => {
-            let catalogue: Vec<(String, String)> = flow_names()
-                .into_iter()
-                .filter_map(|n| load_flow(&n).ok().map(|f| (n, f.description)))
-                .collect();
-            match crate::flow::pick::choose(&spec.input, &catalogue) {
-                Ok((picked, why)) => {
-                    routed = Some(why);
-                    picked
-                }
-                Err(e) => {
-                    eprintln!("aiTerminal: {e}");
-                    eprintln!("  name one instead:  {}", catalogue.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(" · "));
-                    return 2;
-                }
-            }
-        }
-    };
-    let (flow, report) = match checked_flow(&name) {
+    // The run's id exists BEFORE its graph does. A goal with no flow name has no
+    // installed flow behind it, so the graph is written into the run's own folder — and
+    // there is no folder to write it into until the run has been named.
+    let run_id = prior.as_ref().map_or_else(crate::flowruns::new_id, |p| p.id.clone());
+    let (name, flow, report) = match resolve_graph(&prior, &spec, &run_id) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("aiTerminal: {e}");
@@ -61,6 +41,11 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
     if !report.ok() {
         eprintln!("aiTerminal: flow '{name}' cannot run:");
         print_report(&name, &report, flow.nodes.len());
+        // A graph that was built for this goal was written down before it was checked,
+        // so the thing that would not run is still there to look at.
+        if crate::flowruns::read(&run_id).is_some_and(|r| r.was_built()) {
+            eprintln!("  {}", crate::i18n::translate("flow.built_kept", &[run_id.clone()]));
+        }
         return 2;
     }
     let input = prior.as_ref().map_or(spec.input.clone(), |p| p.input.clone());
@@ -79,9 +64,6 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
 
     if spec.dry_run {
         let (dim, r) = (muted(), reset());
-        if let Some(why) = &routed {
-            println!("{dim}chosen for this goal \u{2014} {why}{r}");
-        }
         print_flow_doc(&flow, None, crate::flow::doc::Picture::named(&view));
         println!(
             "\n  {dim}bounds{r}    {} \u{b7} {concurrency} at a time{}",
@@ -106,8 +88,8 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
     let workspace = std::env::current_dir().ok();
 
     // The record exists from the first moment, so a run killed at node one is still
-    // something you can look at.
-    let run_id = prior.as_ref().map_or_else(crate::flowruns::new_id, |p| p.id.clone());
+    // something you can look at. `run_id` was decided at the top — a second one here
+    // would orphan the graph a built flow has already written into the first one's folder.
     let rows: Vec<crate::flowruns::NodeRun> = flow
         .nodes
         .iter()
@@ -149,11 +131,6 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
     let sigint = wire_sigint(cancel.clone());
     let _clock = wire_deadline(cancel.clone(), timeout);
     let (dim, r) = (muted(), reset());
-    if let Some(why) = &routed {
-        // The pick is printed BEFORE the first node, so a wrong one is a line to read
-        // rather than three nodes to sit through.
-        eprintln!("{}\u{25B8} {name}{r} {dim}\u{2014} {why}{r}", accent());
-    }
     if !replay.is_empty() {
         eprintln!("{dim}\u{21ba} resuming {run_id} \u{2014} {} node(s) already done{r}", replay.len());
     }
@@ -174,6 +151,7 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
         err_is_tty(),
         &view,
         concurrency,
+        crate::motivation::for_run(&cfg),
     );
     board.start();
 
@@ -269,6 +247,68 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
         "waiting" => 0,
         _ => 1,
     }
+}
+
+/// Which graph this run uses, and where it came from.
+///
+/// Three sources, one place that knows about all three: a resume takes the record's
+/// (which may be the record's own), a named flow is loaded from `ai/flows/`, and a goal
+/// with no name has one **built** for it. Everything downstream — bounds, the board, the
+/// record, `resume` — is the same afterwards, which is the point of resolving it here
+/// rather than teaching each of them about the difference.
+fn resolve_graph(
+    prior: &Option<crate::flowruns::Run>,
+    spec: &FlowSpec,
+    run_id: &str,
+) -> Result<(String, crate::flow::Flow, crate::flow::verify::Report), String> {
+    if let Some(p) = prior {
+        let flow = crate::cli::flow::run_graph(p)?;
+        let (flow, report) = crate::cli::flow::verified(flow)?;
+        return Ok((p.flow.clone(), flow, report));
+    }
+    if !spec.name.is_empty() {
+        let (flow, report) = checked_flow(&spec.name)?;
+        return Ok((spec.name.clone(), flow, report));
+    }
+    build_for_goal(&spec.input, run_id)
+}
+
+/// Build a graph for a goal and write it into the run's own record.
+///
+/// Written BEFORE it is verified, and returned even when the verifier refuses it, so a
+/// goal that did not become a run still leaves the graph it tried to become. "Show me
+/// what it made of that" is the first thing anybody asks.
+fn build_for_goal(
+    goal: &str,
+    run_id: &str,
+) -> Result<(String, crate::flow::Flow, crate::flow::verify::Report), String> {
+    let cfg = crate::config::Config::load();
+    let settings = cfg.ai_settings();
+    if settings.resolve_key().is_none() {
+        return Err(format!(
+            "a goal with no flow name has its graph built by the model, and none is configured\n  {}\n  or name one:  {}",
+            crate::ai::setup_hint(&settings),
+            flow_names().join(" \u{b7} ")
+        ));
+    }
+    let agents = crate::ai::defs::load_agents(&crate::config::Config::agents_dir());
+    let client = crate::ai::Client::new(settings, crate::ai::CurlTransport::default());
+    let (dim, r) = (muted(), reset());
+    eprintln!("{dim}\u{25c8} {}{r}", crate::i18n::translate("flow.building", &[]));
+    let world = crate::cli::flow::world();
+    let built = crate::flow::build::build_with(&client, goal, &agents, &|f| crate::flow::verify::verify(f, &world))?;
+    crate::flowruns::write_graph(run_id, &built.toml);
+    let name = built.flow.name.clone();
+    // How many rounds it took is said out loud when it took more than one. A graph the
+    // checker sent back and the model fixed is worth a second look before it spends
+    // anything — which is the whole reason the record keeps the document.
+    let tries = match built.repairs {
+        0 => String::new(),
+        n => format!(" ({} fix{})", n, if n == 1 { "" } else { "es" }),
+    };
+    let says = crate::i18n::translate("flow.built", &[built.flow.nodes.len().to_string(), built.flow.description.clone(), run_id.to_string()]);
+    eprintln!("{dim}\u{25c8} {says}{tries}{r}");
+    Ok((name, built.flow, built.report))
 }
 
 /// The first node that failed, and the first line of what it said — `✗ read failed —

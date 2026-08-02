@@ -56,6 +56,9 @@ cleared = "cleared {0} finished flow run(s)"
 resume_hint = "carry on where it stopped:  @flow resume {0}"
 node_hint = "one node:  @flow node {0} <node>  ·  its output:  @flow log {0} <node>  ·  run it again:  @flow retry {0} <node>"
 watching = "watching {0} — it repaints as each node lands"
+building = "no flow named — building a graph for this goal"
+built = "built a {0}-node graph: {1} · @flow show {2}"
+built_kept = "the graph it tried to build is kept:  @flow show {0}"
 
 [theme]
 switched = "theme '{0}' applied to profile '{1}' — a running window restyles within a second"

@@ -148,6 +148,19 @@ pub struct Config {
     /// row per node). Anything else is read as `graph`: a misspelt setting should leave
     /// you with the better picture, not the worse one.
     pub flow_view: String,
+    /// `[motivation] enabled` — show a line beside the spinner while a run waits on a
+    /// model. On by default. It costs nothing to a run: the lines come from a cache the
+    /// model writes in the background, and with no model configured there is no cache
+    /// and the feature is simply absent.
+    pub motivation_enabled: bool,
+    /// `[motivation] kinds` — which lines to draw from: `tips`, `facts`, `quotes`,
+    /// `encouragement`. An empty list means none, which is the other way to turn it off.
+    pub motivation_kinds: Vec<String>,
+    /// `[motivation] after` — how long a wait must last before anything is said, in
+    /// seconds. A run that answers quickly never shows a line at all.
+    pub motivation_after: u64,
+    /// `[motivation] every` — how long one line stays before the next, in seconds.
+    pub motivation_every: u64,
     /// The primary-model pool: each `[[ai.model]]` table contributes one candidate
     /// (id + optional provider qualifier + weight + per-model overrides). Empty →
     /// the catalog's default model as a single-entry pool.
@@ -277,6 +290,12 @@ impl Default for Config {
             flow_keep_runs: 20,
             flow_max_map: 32,
             flow_view: "graph".into(),
+            motivation_enabled: true,
+            motivation_kinds: crate::motivation::Kind::all().iter().map(|k| k.word().to_string()).collect(),
+            // Long enough that a quick answer is never interrupted, short enough that a
+            // real wait is not silent.
+            motivation_after: 6,
+            motivation_every: 15,
             md_remote_images: false,
             md_image_max_rows: 20,
             md_syntax: true,
@@ -324,3 +343,16 @@ impl Default for Config {
 
 #[cfg(test)]
 mod tests;
+
+impl Config {
+    /// `[motivation]`, as the feature needs it — the words in the config turned into the
+    /// types, once, so nothing downstream reads a setting a second time.
+    pub(crate) fn motivation(&self) -> crate::motivation::Settings {
+        crate::motivation::Settings {
+            enabled: self.motivation_enabled,
+            kinds: self.motivation_kinds.iter().filter_map(|w| crate::motivation::Kind::read(w)).collect(),
+            after: std::time::Duration::from_secs(self.motivation_after),
+            every: std::time::Duration::from_secs(self.motivation_every),
+        }
+    }
+}

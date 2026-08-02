@@ -4,13 +4,14 @@ use super::*;
 /// Adding one is a line here and a function below — never an edit to a single long
 /// walk over the whole document.
 type Section = fn(&mut Config, &Toml);
-const SECTIONS: [(&str, Section); 15] = [
+const SECTIONS: [(&str, Section); 16] = [
     ("appearance", apply_appearance),
     ("behavior", apply_behavior),
     ("md", apply_md),
     ("jobs", apply_jobs),
     ("loop", apply_loop),
     ("flow", apply_flow),
+    ("motivation", apply_motivation),
     ("ai", apply_ai),
     ("gates", apply_gates),
     ("plugins", apply_plugins),
@@ -173,6 +174,30 @@ fn apply_flow(c: &mut Config, f: &Toml) {
         if matches!(v.trim().to_ascii_lowercase().as_str(), "graph" | "list") {
             c.flow_view = v.trim().to_ascii_lowercase();
         }
+    }
+}
+
+/// `[motivation]` — the line shown beside a spinner while you wait.
+///
+/// Every key is clamped rather than trusted: `after = "0s"` would put a line up before
+/// the run has drawn breath, and `every = "1s"` would flicker one row of the terminal at
+/// reading speed. Both are the difference between a feature and an irritation.
+fn apply_motivation(c: &mut Config, m: &Toml) {
+    if let Some(v) = m.get("enabled").and_then(|v| v.as_bool()) {
+        c.motivation_enabled = v;
+    }
+    if let Some(v) = m.get("after").and_then(|v| v.as_str()).and_then(corelib::datetime::duration) {
+        c.motivation_after = v.clamp(2, 120);
+    }
+    if let Some(v) = m.get("every").and_then(|v| v.as_str()).and_then(corelib::datetime::duration) {
+        c.motivation_every = v.clamp(5, 600);
+    }
+    // An empty list is a real answer — "none of them" — and is how somebody turns the
+    // whole thing off without arguing with `enabled`. A word nobody recognises is
+    // dropped, so one typo does not silence the rest.
+    if let Some(list) = m.get("kinds").and_then(|v| v.as_array()) {
+        c.motivation_kinds =
+            list.iter().filter_map(|v| v.as_str()).filter_map(crate::motivation::Kind::read).map(|k| k.word().to_string()).collect();
     }
 }
 

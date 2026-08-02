@@ -20,7 +20,10 @@ pub(crate) struct TerminalSink {
 impl TerminalSink {
     pub(crate) fn new(show_reasoning: bool) -> Self {
         TerminalSink {
-            spinner: Some(Spinner::start("thinking\u{2026}".into())),
+            spinner: Some(Spinner::start(crate::cli::observe::Motivated::label(
+                crate::cli::observe::WAIT,
+                &crate::config::Config::load(),
+            ))),
             live: err_is_tty().then(|| LiveMarkdown::new(md_style(), md_width(), term_rows().saturating_sub(2))),
             raw: String::new(),
             show_reasoning,
@@ -89,6 +92,17 @@ pub(crate) fn erase_seq(painted: usize) -> String {
     }
     s.push_str("\x1b[0J");
     s
+}
+
+/// `s` in at most `max` columns, elided with `…` when it will not fit.
+///
+/// For anything drawn on a line that is erased with a bare `\r`: a line wider than the
+/// window wraps into two visual rows, and only the last of them is ever cleared.
+pub(crate) fn clip_to(s: &str, max: usize) -> String {
+    if s.chars().count() <= max || max == 0 {
+        return s.to_string();
+    }
+    format!("{}\u{2026}", s.chars().take(max.saturating_sub(1)).collect::<String>())
 }
 
 /// Clamp a rendered tail to at most `max_rows` screen lines (keeping the newest), returning the

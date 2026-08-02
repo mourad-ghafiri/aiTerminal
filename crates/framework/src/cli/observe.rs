@@ -3,6 +3,52 @@ pub(crate) mod view;
 use crate::cli::style::{err_is_tty, muted, reset};
 pub(crate) use view::{Chrome, RunView, SharedView};
 
+/// What a run says while it is waiting on the model. One string, because three commands
+/// showing three different words for the same state is three things to learn.
+pub(crate) const WAIT: &str = "thinking\u{2026}";
+
+/// What the waiting line says, asked once a frame.
+///
+/// A Strategy, so the spinner stays a spinner: it knows how to animate one line and how
+/// long it has been animating it, and nothing about what that line is for. A plain
+/// `String` is the fixed-label case; [`Motivated`] is the one that has something to add.
+pub(crate) trait Waiting: Send {
+    /// The label, `waited` into the wait.
+    fn label(&mut self, waited: std::time::Duration) -> String;
+}
+
+impl Waiting for Box<dyn Waiting> {
+    fn label(&mut self, waited: std::time::Duration) -> String {
+        (**self).label(waited)
+    }
+}
+
+impl Waiting for String {
+    fn label(&mut self, _waited: std::time::Duration) -> String {
+        self.clone()
+    }
+}
+
+/// A label a run keeps and each of its turns borrows.
+///
+/// A run has one spinner per turn, and each spinner owns its label for as long as it
+/// animates. The label cannot be owned by the spinner, though: it carries the aside
+/// rotation, and one rebuilt per turn would open every turn on the same line.
+#[derive(Clone)]
+pub(crate) struct SharedWaiting(std::sync::Arc<std::sync::Mutex<Box<dyn Waiting>>>);
+
+impl SharedWaiting {
+    pub(crate) fn new(label: Box<dyn Waiting>) -> SharedWaiting {
+        SharedWaiting(std::sync::Arc::new(std::sync::Mutex::new(label)))
+    }
+}
+
+impl Waiting for SharedWaiting {
+    fn label(&mut self, waited: std::time::Duration) -> String {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).label(waited)
+    }
+}
+
 /// A braille spinner on stderr while waiting for the model's first token.
 /// TTY-only (a piped/background run gets nothing); `stop()` clears its line.
 pub(crate) struct Spinner {
@@ -11,7 +57,8 @@ pub(crate) struct Spinner {
 }
 
 impl Spinner {
-    pub(crate) fn start(label: String) -> Spinner {
+    pub(crate) fn start(label: impl Waiting + 'static) -> Spinner {
+        let mut label = label;
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         if !err_is_tty() {
             return Spinner { stop, handle: None };
@@ -20,9 +67,14 @@ impl Spinner {
         let dim = muted();
         let handle = std::thread::spawn(move || {
             const FRAMES: [char; 10] = ['\u{280b}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283c}', '\u{2834}', '\u{2826}', '\u{2827}', '\u{2807}', '\u{280f}'];
+            let started = std::time::Instant::now();
             let mut i = 0usize;
             while !flag.load(std::sync::atomic::Ordering::Relaxed) {
-                eprint!("\r{dim}{} {label}\x1b[0m\x1b[K", FRAMES[i % FRAMES.len()]);
+                // Clipped to the window. This line is erased with a bare `\r`, so one
+                // that wraps becomes two rows and only the second is ever cleared —
+                // which would leave a trail of half-lines down the terminal.
+                let text = crate::cli::live::clip_to(&label.label(started.elapsed()), crate::cli::term_cols().saturating_sub(3));
+                eprint!("\r{dim}{} {text}\x1b[0m\x1b[K", FRAMES[i % FRAMES.len()]);
                 i += 1;
                 std::thread::sleep(std::time::Duration::from_millis(80));
             }
@@ -42,6 +94,39 @@ impl Spinner {
 impl Drop for Spinner {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+/// The waiting label with something to read beside it.
+///
+/// `thinking… · a prompt prefix the provider already cached costs about 1/10th`
+///
+/// The base label never goes away: what a run is doing is the point, and the aside is a
+/// guest on the same line. When the muse has nothing to say — the wait is young, the pool
+/// is empty, the feature is off — this is exactly the plain label it was before.
+pub(crate) struct Motivated {
+    base: String,
+    muse: crate::motivation::Muse,
+}
+
+impl Motivated {
+    /// A label for this run. Falls back to the plain one when nothing could ever be
+    /// shown, so no caller pays for a muse it will not use.
+    pub(crate) fn label(base: &str, cfg: &crate::config::Config) -> Box<dyn Waiting> {
+        let muse = crate::motivation::for_run(cfg);
+        match muse.mute() {
+            true => Box::new(base.to_string()),
+            false => Box::new(Motivated { base: base.to_string(), muse }),
+        }
+    }
+}
+
+impl Waiting for Motivated {
+    fn label(&mut self, waited: std::time::Duration) -> String {
+        match self.muse.line(waited) {
+            Some(line) => format!("{} \u{b7} {line}", self.base),
+            None => self.base.clone(),
+        }
     }
 }
 
@@ -67,6 +152,9 @@ pub(crate) struct CliObserver {
     suppress_turn: bool,
     /// The waiting spinner for the current turn (stopped on the first token).
     spinner: Option<Spinner>,
+    /// The label every turn's spinner animates — one per RUN, shared with each spinner
+    /// in turn, because it carries the aside rotation.
+    waiting: SharedWaiting,
     /// Whether the current thinking burst already printed its `∴` marker.
     thinking_open: bool,
     /// Print the raw reasoning text (`[ai] show_reasoning`). Default `false`: reasoning is
@@ -77,12 +165,18 @@ pub(crate) struct CliObserver {
 impl CliObserver {
     /// A run drawn into `view`.
     pub(crate) fn new(view: SharedView) -> Self {
-        CliObserver { view, pending: String::new(), suppress_line: false, suppress_turn: false, spinner: None, thinking_open: false, show_reasoning: false }
+        CliObserver { view, pending: String::new(), suppress_line: false, suppress_turn: false, spinner: None, waiting: SharedWaiting::new(Box::new(WAIT.to_string())), thinking_open: false, show_reasoning: false }
     }
 
     /// Opt into streaming the model's raw reasoning text (off by default).
     pub(crate) fn with_reasoning(mut self, show: bool) -> Self {
         self.show_reasoning = show;
+        self
+    }
+
+    /// Give the wait something to say — `[motivation]`, resolved once for the whole run.
+    pub(crate) fn with_motivation(mut self, cfg: &crate::config::Config) -> Self {
+        self.waiting = SharedWaiting::new(Motivated::label(WAIT, cfg));
         self
     }
 
@@ -209,7 +303,7 @@ impl crate::ai::AgentObserver for CliObserver {
         // A fresh model turn: spin until its first token arrives.
         self.thinking_open = false;
         self.wake();
-        self.spinner = Some(Spinner::start("thinking\u{2026}".into()));
+        self.spinner = Some(Spinner::start(self.waiting.clone()));
     }
 
     fn on_delta(&mut self, text: &str) {

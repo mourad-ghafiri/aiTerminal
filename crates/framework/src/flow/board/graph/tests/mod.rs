@@ -8,7 +8,7 @@ fn rows_of(b: &std::sync::Arc<Board>) -> Vec<Row> {
 }
 
 fn head(p: &Palette, rows: usize) -> Head<'_> {
-    Head { palette: p, elapsed: std::time::Duration::from_secs(1), concurrency: 4, width: 6, rows }
+    Head { palette: p, elapsed: std::time::Duration::from_secs(1), concurrency: 4, width: 6, rows, aside: None }
 }
 
 #[test]

@@ -41,6 +41,9 @@ pub(crate) fn fixture(view: &str) -> Arc<Board> {
         false,
         view,
         4,
+        // Silent: an aside is company for a person watching, and these tests are not one.
+        // Its row is asserted on its own, where the height contract can be stated.
+        crate::motivation::Muse::silent(),
     )
 }
 
@@ -156,6 +159,7 @@ fn a_repaint_lands_back_on_the_first_row_and_leaves_nothing_behind() {
             true, // live: the repainting path
             view,
             4,
+            crate::motivation::Muse::silent(),
         );
 
         let mut out: Vec<u8> = Vec::new();
@@ -276,6 +280,45 @@ fn the_pane_looks_at_the_failure_not_at_whatever_settled_last() {
     assert!(!pane.contains("report"), "not about the branch that settled last:\n{pane}");
 }
 
+#[test]
+fn an_aside_is_one_constant_row_and_never_reaches_a_log() {
+    // The line that keeps somebody company while a graph works. Two things about it are
+    // structural rather than cosmetic.
+    //
+    // Its row is CONSTANT: present whether or not there is anything to say. The repaint
+    // erases with a line count measured a frame ago, so a board that grew when a line
+    // arrived would erase one row short of itself and leave the rest on screen.
+    let p = crate::flow::board::view::Palette::default();
+    let head = |aside: Option<&str>| crate::flow::board::view::Head {
+        palette: &p,
+        elapsed: std::time::Duration::from_secs(1),
+        concurrency: 4,
+        width: 6,
+        rows: 0,
+        aside: aside.map(str::to_string),
+    };
+    assert_eq!(head(Some("a fact")).aside_row(80).len(), 1);
+    assert_eq!(head(Some("")).aside_row(80).len(), 1, "blank, but still a row");
+    assert_eq!(head(Some("a fact")).aside_rows(), 1);
+
+    // And with the feature off there is no row at all — nobody pays a line for something
+    // they turned off.
+    assert!(head(None).aside_row(80).is_empty());
+    assert_eq!(head(None).aside_rows(), 0);
+
+    // A line wider than the window is clipped, because a board row that wraps is two
+    // visual rows the repaint counts as one.
+    let long = "x".repeat(400);
+    let row = &head(Some(&long)).aside_row(40)[0];
+    assert!(crate::flow::board::view::visible_width(row) <= 40, "{row:?}");
+
+    // Off a terminal the board prints `[node] event` lines and draws nothing, so a pipe,
+    // a `--bg` job log and CI never see one. The fixture builds a non-live board.
+    let b = fixture("graph");
+    b.settled("map", State::Done, 100, 100, "");
+    assert!(!painted(&b).contains("\u{2026}x"), "no aside is drawn into a board nobody is watching");
+}
+
 /// Just the pane: everything below the picture and above the tally.
 ///
 /// Filtering out box-drawing rows is not enough — the header names the critical path, so
@@ -331,6 +374,7 @@ fn a_held_board_paints_nothing_so_an_answer_can_be_typed() {
         true, // live: the repainting path is the one that has to fall silent
         "graph",
         1,
+        crate::motivation::Muse::silent(),
     );
     let mut before: Vec<u8> = Vec::new();
     b.paint_into(&mut before, 80, 24);
@@ -364,7 +408,7 @@ fn the_board_never_paints_taller_than_the_window() {
             ..BoardNode::default()
         })
         .collect();
-    let b = Board::new("deep · a long chain".into(), many, true, "graph", 1);
+    let b = Board::new("deep · a long chain".into(), many, true, "graph", 1, crate::motivation::Muse::silent());
     for window in [8usize, 12, 24, 50] {
         let mut out: Vec<u8> = Vec::new();
         b.paint_into(&mut out, 80, window);

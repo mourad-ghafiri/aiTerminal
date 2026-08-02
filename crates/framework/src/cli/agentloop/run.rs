@@ -217,7 +217,7 @@ pub(crate) fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
         None,
         crate::cli::style::markdown_opts(crate::cli::style::out_is_tty()),
     ));
-    let mut obs = CliObserver::new(view.clone()).with_reasoning(cfg.ai_show_reasoning);
+    let mut obs = CliObserver::new(view.clone()).with_reasoning(cfg.ai_show_reasoning).with_motivation(&cfg);
     runner.trace = Some(std::sync::Arc::new(view));
     let run = drive_loop(&client, &maker, &mut runner, &mut obs, goal, &mut state, verifier.command(), verify);
     let _ = { use std::io::Write; std::io::stdout().write_all(b"\n") };

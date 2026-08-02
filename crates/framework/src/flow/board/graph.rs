@@ -58,6 +58,7 @@ impl View for GraphView {
         lines.extend(compose(&canvas, &paint, head.palette));
         lines.extend(pane(rows, head, cols));
         lines.push(summary(rows, head, cols));
+        lines.extend(head.aside_row(cols));
         lines.join("\n")
     }
 }
@@ -72,7 +73,11 @@ impl View for GraphView {
 fn fits(grid: &Grid, head: &Head, cols: usize) -> bool {
     // Two rows go to the header and the tally; one more is the prompt the board is
     // printed above, which must not be pushed off the top.
-    let budget = if head.rows > 0 { head.rows.saturating_sub(3 + PANE_H) } else { BLIND_BUDGET };
+    // Three for the header, the tally and the prompt the board is printed above; the
+    // pane; and the aside's row when there is one. A budget that forgot the aside would
+    // let a board through that is one row taller than the window, which scrolls its own
+    // top away and leaves the repaint climbing into somebody else's output.
+    let budget = if head.rows > 0 { head.rows.saturating_sub(3 + PANE_H + head.aside_rows()) } else { BLIND_BUDGET };
     grid.cards.len() > 1 && grid.h <= budget && grid.w <= cols
 }
 

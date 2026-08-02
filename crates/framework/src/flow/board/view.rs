@@ -81,6 +81,31 @@ pub(crate) struct Head<'a> {
     pub rows: usize,
     /// The id column's width, so both views line their columns up the same way.
     pub width: usize,
+    /// The line to keep somebody company while the graph works, if there is one.
+    ///
+    /// An `Option` rather than a `String`, because the difference decides the board's
+    /// HEIGHT: with the feature on there is always a row for it, blank or not, and with
+    /// it off there is no row at all. A height that changed as a line arrived would be a
+    /// height the repaint cannot erase with the count it measured a frame ago.
+    pub aside: Option<String>,
+}
+
+impl Head<'_> {
+    /// The rows the aside costs — `1` when the feature is on, `0` when it is not.
+    pub fn aside_rows(&self) -> usize {
+        usize::from(self.aside.is_some())
+    }
+
+    /// The aside's row, blank when it has nothing to say. Never returned when the
+    /// feature is off, so the caller can extend with it unconditionally.
+    pub fn aside_row(&self, cols: usize) -> Vec<String> {
+        let (dim, r) = (&self.palette.muted, &self.palette.reset);
+        match &self.aside {
+            None => Vec::new(),
+            Some(text) if text.trim().is_empty() => vec![String::new()],
+            Some(text) => vec![format!("  {dim}{}{r}", clip(text, cols.saturating_sub(2)))],
+        }
+    }
 }
 
 /// One way of drawing a board.

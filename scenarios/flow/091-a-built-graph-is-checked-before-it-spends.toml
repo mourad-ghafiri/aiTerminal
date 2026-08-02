@@ -1,0 +1,100 @@
+name = "a built graph is checked before it spends, and repaired once"
+tags = ["flow", "building", "errors"]
+
+# The whole reason this is safe to do at all. A graph the model invented thirty seconds
+# ago goes through the SAME verifier a hand-written one does, so an agent that does not
+# exist and an edge that points nowhere are caught before a token is spent running it.
+#
+# And the verifier is the repair channel: its errors are written for a person to read, so
+# they are handed straight back for ONE more attempt. One, because errors that specific
+# are either usable or they are not, and every further round buys the same refusal again.
+
+[setup]
+agents = ["explorer", "writer"]
+
+# Round one needs a node that was never declared. Round two fixes exactly that.
+[[step]]
+model_writes = """
+description = "explain it"
+input = "required"
+
+[[node]]
+id = "read"
+agent = "explorer"
+prompt = "Map {{input}}"
+
+[[node]]
+id = "explain"
+agent = "writer"
+needs = ["summarise"]
+final = true
+prompt = "Explain {{read.output}}"
+"""
+
+[[step]]
+model_writes = """
+description = "explain it"
+input = "required"
+
+[[node]]
+id = "read"
+agent = "explorer"
+prompt = "Map {{input}}"
+
+[[node]]
+id = "explain"
+agent = "writer"
+needs = ["read"]
+final = true
+prompt = "Explain {{read.output}}"
+"""
+
+[[step]]
+goal = "explain this project"
+
+[[step]]
+expect_built_nodes = 2
+
+[[step]]
+expect_built = ["needs = [\"read\"]"]
+
+# An agent this machine does not have is refused, both rounds. The model naming a
+# plausible one is not the same as having it, and nothing runs on the difference.
+[[step]]
+model_writes = """
+description = "explain it"
+input = "required"
+
+[[node]]
+id = "explain"
+agent = "novelist"
+final = true
+prompt = "Explain {{input}}"
+"""
+
+[[step]]
+model_writes = """
+description = "explain it"
+input = "required"
+
+[[node]]
+id = "explain"
+agent = "novelist"
+final = true
+prompt = "Explain {{input}}"
+"""
+
+[[step]]
+goal = "ship this to production"
+
+[[step]]
+expect_not_built = ["novelist"]
+
+# With no model there is nothing to build with, and that is said rather than guessed at.
+# It is the case the old router got wrong for you: a goal, a machine with no key, and an
+# error that read as though you had mistyped something.
+[[step]]
+goal = "order me a coffee"
+
+[[step]]
+expect_not_built = ["no model"]

@@ -83,6 +83,24 @@ view         = "graph" # how a run is watched and drawn. "graph" shows the shape
                        # and "list" shows one dense row per node. `--view` overrides it
                        # per command.
 
+[motivation]
+# While you wait on a model, ONE dim line keeps you company — a tip about this tool, a
+# fact worth knowing, a short quote. It rides inside the spinner's own line, so it costs
+# no rows, never scrolls, and is gone the moment the answer starts. A run that answers in
+# three seconds never shows one at all. Off a terminal (a pipe, `--bg`, a job log, CI) it
+# does not exist.
+#
+# The lines are written by the model, once, into `cache/motivation.toml` and reused —
+# in the background, so no run ever waits for them. With no model configured there is no
+# cache and the feature is simply absent.
+enabled = true         # false turns the whole thing off
+kinds   = ["tips", "facts", "quotes", "encouragement"]
+                       # which to draw from. "tips" are about aiTerminal itself, written
+                       # from its real command list. An empty list [] means none of them,
+                       # which is the other way to switch it off.
+after   = "6s"         # stay silent until a wait has lasted this long (2s–2m)
+every   = "15s"        # how long one line stays before the next (5s–10m)
+
 # Custom keybindings — rebind any built-in action (snake_case; full list of action
 # names in docs/keybindings.md). Uncomment and add [[keybinding]] tables:
 # [[keybinding]]

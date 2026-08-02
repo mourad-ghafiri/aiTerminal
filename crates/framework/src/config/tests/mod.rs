@@ -586,3 +586,57 @@ fn seeded_config_writes_no_bare_ai_key_after_a_model_table() {
         }
     }
 }
+
+#[test]
+fn motivation_is_configurable_and_every_bound_is_clamped() {
+    use crate::motivation::Kind;
+    let mut c = Config::default();
+    // The default is on, with everything to draw from.
+    assert!(c.motivation_enabled);
+    assert_eq!(c.motivation().kinds.len(), Kind::all().len());
+
+    c.apply_toml("[motivation]\nenabled = false\nkinds = [\"tips\", \"quotes\"]\nafter = \"20s\"\nevery = \"2m\"\n");
+    assert!(!c.motivation_enabled);
+    assert_eq!(c.motivation().kinds, vec![Kind::Tip, Kind::Quote]);
+    assert_eq!(c.motivation_after, 20);
+    assert_eq!(c.motivation_every, 120);
+
+    // The bounds are clamped rather than trusted. `after = "0s"` would put a line up
+    // before the run has drawn breath and `every = "1s"` would flicker a row of the
+    // terminal at reading speed — both are the difference between a feature and an
+    // irritation, and neither is something to leave to a config file.
+    let mut c = Config::default();
+    c.apply_toml("[motivation]\nafter = \"0s\"\nevery = \"1s\"\n");
+    assert_eq!(c.motivation_after, 2);
+    assert_eq!(c.motivation_every, 5);
+
+    // An empty list is a real answer — "none of them" — and is the other way to switch
+    // it off. A word nobody recognises is dropped, so one typo does not silence the rest.
+    let mut c = Config::default();
+    c.apply_toml("[motivation]\nkinds = [\"facts\", \"jokes\"]\n");
+    assert_eq!(c.motivation().kinds, vec![Kind::Fact]);
+    c.apply_toml("[motivation]\nkinds = []\n");
+    assert!(c.motivation().kinds.is_empty());
+    // Unreadable durations keep the default rather than becoming zero.
+    let mut c = Config::default();
+    c.apply_toml("[motivation]\nafter = \"soon\"\n");
+    assert_eq!(c.motivation_after, Config::default().motivation_after);
+}
+
+#[test]
+fn the_seeded_config_documents_the_motivation_section() {
+    // The shipped `config.toml` is the reference — a setting the code reads and the file
+    // never mentions is a setting nobody will find.
+    let (_h, _home) = crate::test_home::lock_home("cfg-motivation-seed");
+    Config::ensure_default();
+    let text = std::fs::read_to_string(Config::path()).expect("seeded");
+    assert!(text.contains("[motivation]"), "the section is there");
+    for key in ["enabled", "kinds", "after", "every"] {
+        assert!(text.contains(&format!("{key} ")), "{key} is documented");
+    }
+    // And what it documents is what the code actually reads.
+    let c = Config::load();
+    assert!(c.motivation_enabled);
+    assert_eq!(c.motivation_after, 6);
+    assert_eq!(c.motivation_every, 15);
+}

@@ -1,11 +1,25 @@
 use crate::cli::flow::args::{FlowCmd, parse_flow_args};
+
+/// The flows these tests pretend are installed. Passed in rather than read from disk, so
+/// what the first word after `@flow` means is a fact about the arguments and the
+/// catalogue and nothing else.
+const INSTALLED: &[&str] = &["build", "document", "fix", "research", "review", "ship"];
+
+fn installed() -> Vec<String> {
+    INSTALLED.iter().map(|s| s.to_string()).collect()
+}
+
+/// `parse_flow_args` against [`INSTALLED`].
+fn parse_flow_args_at(args: &[String]) -> Result<FlowCmd, String> {
+    parse_flow_args(args, &installed())
+}
 use crate::cli::flow::{checked_flow, flow_names, load_flow};
 use crate::cli::flow::show::{flow_cast, flow_check, no_output_message, why_not_run};
 
 #[test]
 fn every_flow_subcommand_is_told_from_a_flow_name() {
     let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let parse = |xs: &[&str]| parse_flow_args(&a(xs)).expect("parses");
+    let parse = |xs: &[&str]| parse_flow_args_at(&a(xs)).expect("parses");
     assert_eq!(parse(&[]), FlowCmd::List);
     assert_eq!(parse(&["list"]), FlowCmd::List);
     assert_eq!(parse(&["check"]), FlowCmd::Check(None), "no name checks them all");
@@ -22,13 +36,13 @@ fn every_flow_subcommand_is_told_from_a_flow_name() {
     );
     assert_eq!(parse(&["log"]), FlowCmd::Log { id: "last".into(), node: None, follow: false });
     // `graph` with nothing to draw is an error, not a guess.
-    assert!(parse_flow_args(&a(&["graph"])).is_err());
+    assert!(parse_flow_args_at(&a(&["graph"])).is_err());
 }
 
 #[test]
 fn a_node_can_be_named_on_its_own_or_alongside_its_run() {
     let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let parse = |xs: &[&str]| parse_flow_args(&a(xs)).expect("parses");
+    let parse = |xs: &[&str]| parse_flow_args_at(&a(xs)).expect("parses");
     // Naming the node alone is the common case: a run id is not something anyone
     // retypes when they only ever look at the newest one.
     assert_eq!(parse(&["node", "verify"]), FlowCmd::Node { id: "last".into(), node: "verify".into() });
@@ -38,14 +52,14 @@ fn a_node_can_be_named_on_its_own_or_alongside_its_run() {
     assert_eq!(parse(&["nodes", "1700-1"]), FlowCmd::Nodes("1700-1".into()));
     assert_eq!(parse(&["watch"]), FlowCmd::Watch { id: "last".into(), view: None });
     // Both verbs act on ONE node, so neither guesses which when none is named.
-    assert!(parse_flow_args(&a(&["node"])).is_err());
-    assert!(parse_flow_args(&a(&["retry"])).is_err());
+    assert!(parse_flow_args_at(&a(&["node"])).is_err());
+    assert!(parse_flow_args_at(&a(&["retry"])).is_err());
 }
 
 #[test]
 fn the_view_flag_is_never_mistaken_for_a_positional_word() {
     let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let parse = |xs: &[&str]| parse_flow_args(&a(xs)).expect("parses");
+    let parse = |xs: &[&str]| parse_flow_args_at(&a(xs)).expect("parses");
     // THE reason `--view` is lifted out before anything else: read positionally,
     // `list` here would become the run id and `@flow show --view list` would look
     // for a run called "list".
@@ -64,15 +78,52 @@ fn the_view_flag_is_never_mistaken_for_a_positional_word() {
     }
     // A word it does not know is refused rather than quietly ignored: a flag
     // somebody typed is a thing they meant.
-    let err = parse_flow_args(&a(&["show", "--view", "tree"])).unwrap_err();
+    let err = parse_flow_args_at(&a(&["show", "--view", "tree"])).unwrap_err();
     assert!(err.contains("graph") && err.contains("list"), "{err}");
-    assert!(parse_flow_args(&a(&["show", "--view"])).is_err(), "and it needs a word");
+    assert!(parse_flow_args_at(&a(&["show", "--view"])).is_err(), "and it needs a word");
+}
+
+#[test]
+fn the_first_word_decides_whether_this_is_a_flow_or_a_goal() {
+    // `@flow explain this project` used to answer "no flow 'explain'". Only a SINGLE
+    // argument containing a space counted as a goal, and nobody types quotes in a
+    // terminal — so the natural phrasing read as a flow name plus its input, and failed
+    // as a typo. The first word decides now, against what is actually installed.
+    let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let run = |xs: &[&str]| match parse_flow_args_at(&a(xs)).expect("parses") {
+        FlowCmd::Run(spec) => *spec,
+        other => panic!("expected a run, got {other:?}"),
+    };
+
+    // A flow you have: it runs, and the rest is its input. Unchanged.
+    let spec = run(&["document", "this", "project"]);
+    assert_eq!((spec.name.as_str(), spec.input.as_str()), ("document", "this project"));
+    assert_eq!(run(&["build"]).name, "build", "and a bare name is still a bare name");
+
+    // Neither a flow nor a near-miss: the WHOLE line is a goal, however it was typed.
+    // These two are the same request and only one of them used to be understood.
+    for typed in [vec!["explain", "this", "project"], vec!["explain this project"]] {
+        let spec = run(&typed);
+        assert_eq!(spec.name, "", "{typed:?} names no flow");
+        assert_eq!(spec.input, "explain this project", "{typed:?}");
+    }
+    // Flags still work around a goal, and never land inside it.
+    let spec = run(&["explain", "this", "--dry-run", "project"]);
+    assert!(spec.dry_run && spec.name.is_empty());
+    assert_eq!(spec.input, "explain this project");
+
+    // And the guard that has always been here does not move. A misspelling must never
+    // quietly become a different flow — and it must not become a GOAL either, because
+    // building and running a graph for a typo is the same footgun in a newer coat.
+    let err = parse_flow_args_at(&a(&["revieew", "the", "parser"])).expect_err("a typo is not a goal");
+    assert!(err.contains("did you mean 'review'"), "{err}");
+    assert!(err.contains("built for it"), "and it says what the other door is: {err}");
 }
 
 #[test]
 fn a_quoted_input_arrives_verbatim_and_loose_words_rejoin() {
     let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let run = |xs: &[&str]| match parse_flow_args(&a(xs)).expect("parses") {
+    let run = |xs: &[&str]| match parse_flow_args_at(&a(xs)).expect("parses") {
         FlowCmd::Run(spec) => *spec,
         other => panic!("expected a run, got {other:?}"),
     };

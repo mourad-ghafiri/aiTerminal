@@ -203,7 +203,7 @@ is run by a scenario**, so nothing is advertised that nobody has typed.
 
 ## 🧪 Tested
 
-**1366 unit tests** and **279 scenarios**, in a few seconds, with no network and no API key.
+**1381 unit tests** and **280 scenarios**, in a few seconds, with no network and no API key.
 
 A unit test proves a function; a **scenario** proves a *product*. Scenarios are real user
 journeys written as TOML and played against the real code — *a destructive suggestion is

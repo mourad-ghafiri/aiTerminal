@@ -94,7 +94,10 @@ pub(crate) struct FlowSpec {
 /// Subcommands win over flow names, and a flow file named after one is refused by
 /// the verifier — so `@flow show` is never ambiguous, and the ambiguity is reported
 /// where it can be explained rather than resolved by a coin toss.
-pub(crate) fn parse_flow_args(raw: &[String]) -> Result<FlowCmd, String> {
+/// `installed` is passed in rather than read from disk, so the whole rule is a pure
+/// function of (what was typed, what exists) — which is what lets the cases below be a
+/// table in a test instead of a config directory in a fixture.
+pub(crate) fn parse_flow_args(raw: &[String], installed: &[String]) -> Result<FlowCmd, String> {
     // `--view` is lifted out FIRST, because every subcommand accepts it and because a
     // flag's value must never be mistaken for a positional word: `@flow show --view
     // list` would otherwise read "list" as the run id.
@@ -176,20 +179,55 @@ pub(crate) fn parse_flow_args(raw: &[String]) -> Result<FlowCmd, String> {
     let Some((name, rest)) = words.split_first() else {
         return Err("a flow needs a name or a goal — `@flow` on its own lists them".into());
     };
-    // `@flow "make the export emit JSON"` — one argument with a space in it is a goal,
-    // because no flow can be called that. The model routes it, and prints its choice.
-    if rest.is_empty() && crate::flow::pick::is_goal(name) {
-        spec.input = name.clone();
-        return Ok(FlowCmd::Run(Box::new(spec)));
+    match first_word(name, installed) {
+        // `@flow document this project` — a flow you have, and the rest is its input.
+        // One argument keeps its flag-looking words (`@flow ship "raise --max to 10"`);
+        // several loose ones are a sentence to rejoin.
+        First::Flow => {
+            spec.name = name.clone();
+            spec.input = match rest {
+                [only] => only.clone(),
+                many => many.join(" "),
+            };
+        }
+        // `@flow revieew the parser` — the guard that has always been here. A typo must
+        // never quietly become a different flow, and it must never become a GOAL either:
+        // building and running a graph for a misspelling is the same footgun wearing a
+        // newer coat.
+        First::Typo(did_you_mean) => {
+            return Err(format!("no flow '{name}'{did_you_mean}\n  or say what you want done and one will be built for it"))
+        }
+        // Anything else is a goal, however it was typed — `@flow explain this project`
+        // and `@flow "explain this project"` are the same request, and only one of them
+        // used to be understood.
+        First::Goal => spec.input = std::iter::once(name).chain(rest).cloned().collect::<Vec<_>>().join(" "),
     }
-    spec.name = name.clone();
-    // One argument is the input as typed, so `@flow ship "raise --max to 10"` keeps
-    // its flag-looking words; several loose words are a sentence to rejoin.
-    spec.input = match rest {
-        [only] => only.clone(),
-        many => many.join(" "),
-    };
     Ok(FlowCmd::Run(Box::new(spec)))
+}
+
+/// What the first word after `@flow` turns out to be.
+enum First {
+    /// A flow that is installed.
+    Flow,
+    /// Close enough to one that it is a misspelling, not a goal — carrying the
+    /// suggestion, ready to print.
+    Typo(String),
+    /// Neither: the whole line is something to build a graph for.
+    Goal,
+}
+
+/// Read the first word. `installed` is passed in so the rule is testable without a
+/// config directory — which is also what makes the table of cases in the tests possible.
+fn first_word(word: &str, installed: &[String]) -> First {
+    if installed.iter().any(|n| n == word) {
+        return First::Flow;
+    }
+    let refs: Vec<&str> = installed.iter().map(String::as_str).collect();
+    match crate::flow::verify::nearest(word, &refs) {
+        // `nearest` returns an empty string when nothing is close.
+        s if s.trim().is_empty() => First::Goal,
+        did_you_mean => First::Typo(did_you_mean),
+    }
 }
 
 pub(crate) fn flow_usage() -> String {

@@ -1,0 +1,97 @@
+name = "a graph built for a goal is read back from its own record"
+tags = ["cli", "flow", "building"]
+
+# `@flow explain this project` names no flow, so the graph is written FOR the run and
+# lives nowhere else — not in `ai/flows/`, not in the `@flow` listing. That is the whole
+# point of the choice: your five flows stay the five you meant to have.
+#
+# It only works if every reader knows to look in the record first. `show`, `nodes`,
+# `node`, `log` and `retry` all resolve a run's graph through one function, and this is
+# the scenario that says so: the graph below exists in exactly one place, and every verb
+# below has to find it there.
+
+[setup]
+home = "flow-built"
+
+[[step]]
+record_flow_run = "run-built"
+flow = "explain-this-project"
+input = "explain this project"
+nodes = ["read:done", "explain:done"]
+graph = """
+description = "read the code, then explain it"
+input = "required"
+
+[[node]]
+id = "read"
+agent = "explorer"
+prompt = "Map what {{input}} actually does"
+
+[[node]]
+id = "explain"
+agent = "writer"
+needs = ["read"]
+final = true
+prompt = "Explain it: {{read.output}}"
+"""
+
+[[step]]
+expect_flow_runs = 1
+
+# It is in the run's folder, and it is the only copy.
+[[step]]
+expect_file = ".aiTerminal/ai/flow-runs/run-built/flow.toml"
+
+[[step]]
+expect_no_file = ".aiTerminal/ai/flows/explain-this-project.toml"
+
+# `show` draws the graph from the record and the costs from the run — it fails if either
+# half cannot be found, which is what makes it the strongest of these.
+[[step]]
+run = "@flow show run-built"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@flow nodes run-built"
+
+[[step]]
+expect_exit = 0
+
+# `node` needs the graph to say where a node sits — what it feeds and what it waited on.
+[[step]]
+run = "@flow node run-built read"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@flow log run-built"
+
+[[step]]
+expect_exit = 0
+
+# And `retry` needs it most of all: what to invalidate is computed from the edges, so a
+# graph it could not find would reset the wrong nodes — or none.
+[[step]]
+run = "@flow retry run-built read"
+
+[[step]]
+expect_flow_node_state = ["run-built", "read", "pending"]
+
+[[step]]
+expect_flow_node_state = ["run-built", "explain", "pending"]
+
+# The listing is untouched by any of it: a built graph is a run's business.
+[[step]]
+run = "@flow"
+
+[[step]]
+expect_exit = 0
+
+[[step]]
+run = "@flow clear"
+
+[[step]]
+expect_flow_runs = 0

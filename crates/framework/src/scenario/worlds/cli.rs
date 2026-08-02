@@ -230,6 +230,11 @@ impl CliWorld {
                 crate::flowruns::write_node(id, node, "the prompt", &format!("what {node} concluded, in full"));
             }
         }
+        // A graph that lives ONLY in the run's record — what `@flow <goal>` produces.
+        // Written before the record, because every reader looks for it there first.
+        if let Some(graph) = world::text(step, "graph") {
+            crate::flowruns::write_graph(id, &graph);
+        }
         let run = crate::flowruns::Run {
             id: id.to_string(),
             flow,

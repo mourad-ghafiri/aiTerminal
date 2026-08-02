@@ -183,6 +183,39 @@ impl Run {
         let path = crate::record::child(&dir(&self.id)?, "nodes", node, "md")?;
         path.exists().then_some(path)
     }
+
+    /// The graph this run was built with, when it was built FOR this run rather than
+    /// loaded from a file somebody wrote.
+    ///
+    /// A goal with no flow name has no installed flow behind it, so the graph is written
+    /// into the record and lives nowhere else. Everything that reads a run's shape asks
+    /// here first — which is also what makes `resume` and `retry` work on one, since both
+    /// need the graph back and neither can look it up by name.
+    pub fn own_graph(&self) -> Option<PathBuf> {
+        let path = dir(&self.id)?.join(GRAPH_FILE);
+        path.exists().then_some(path)
+    }
+
+    /// Whether this run's graph was built for it. Read off the file rather than kept as
+    /// a field: a record that says "built" beside a directory with no graph in it is a
+    /// record that has come apart, and there is no way for a fact to disagree with itself
+    /// when there is only one of it.
+    pub fn was_built(&self) -> bool {
+        self.own_graph().is_some()
+    }
+}
+
+/// The graph a run carries, when it carries one.
+const GRAPH_FILE: &str = "flow.toml";
+
+/// Put the graph a run was built with beside its record.
+///
+/// Written BEFORE the graph is verified, so a build that was refused is still there to
+/// read — "show me what it tried to make of that" is the first question anybody asks of a
+/// goal that did not turn into a run.
+pub(crate) fn write_graph(id: &str, toml: &str) {
+    let Some(dir) = dir(id) else { return };
+    crate::record::save(&dir.join(GRAPH_FILE), toml);
 }
 
 /// This run's folder — see [`crate::record::folder`] for why the id is charset-checked.

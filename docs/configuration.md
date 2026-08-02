@@ -32,6 +32,7 @@ ai/                    everything AI:
   sessions/<id>/         per-folder AI memory: session.md (recent-run digest),
                          memory/ (folder-scoped), meta.toml — restored on return
 cache/                 regenerable caches (cloned repos for web.read;
+                       motivation.toml — the lines shown while a run waits;
                        offload/<run>/ — tool output compaction lifted out of
                        context, re-readable with fs.read)
 logs/                  daily diagnostic logs
@@ -55,6 +56,7 @@ AI works for you.
 | `[jobs]` | `max_concurrent` (jobs running at once), `keep_runs` (per-occurrence logs kept), `max_log_bytes` (cap per run log) — see [ai.md](ai.md#job--say-what-to-do-and-when) |
 | `[loop]` | `max`, `timeout`, `check_timeout`, `keep_runs`, `propose_check` (let the AI infer a verifier command) — see [ai.md](ai.md#loop--iterate-until-it-verifies) |
 | `[flow]` | `concurrency` (nodes in flight at once), `timeout`, `node_timeout`, `keep_runs`, `max_map` (the ceiling on a fan-out), `view` (`graph` \| `list` — how a run is watched and drawn) — see [ai.md](ai.md#flow--a-workflow-declared-as-a-graph) |
+| `[motivation]` | `enabled`, `kinds` (`tips` \| `facts` \| `quotes` \| `encouragement`), `after`, `every` — one dim line beside the spinner while a run waits, written by the model into `cache/motivation.toml` and reused; absent with no model — see [ai.md](ai.md#something-to-read-while-you-wait) |
 | `[plugins]` | `enabled`, `disabled = ["name", …]` |
 | `[shell]` | `integration` (master switch for injected aliases/snippets/colors) |
 | `[registry]` | `dir` — where the bundled `builtin/` lives (empty = auto-resolve) |

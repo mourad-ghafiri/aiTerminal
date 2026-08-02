@@ -1,31 +1,10 @@
 use crate::cli::agentloop::args::{LoopCmd, parse_loop_args};
 use crate::cli::agentloop::{LoopOutcome, LoopState, drive_loop, fnv1a, loop_prompt, reviewer_passed, run_check, tail};
-use crate::cli::flow::args::{FlowCmd, parse_flow_args};
+use crate::cli::flow::args::parse_flow_args;
 use super::{NoTools, drive, keyed_settings, maker, scripted, state, verdict};
 
 #[test]
-fn one_argument_with_a_space_in_it_is_a_goal_not_a_name() {
-    let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let run = |xs: &[&str]| match parse_flow_args(&a(xs)).expect("parses") {
-        FlowCmd::Run(spec) => *spec,
-        other => panic!("expected a run, got {other:?}"),
-    };
-    // No flow can be called this, so it is a goal for the model to route.
-    let spec = run(&["Build a SaaS landing page end to end"]);
-    assert_eq!(spec.name, "", "no flow was named");
-    assert_eq!(spec.input, "Build a SaaS landing page end to end");
-    // Flags still work around it.
-    let spec = run(&["Research LLM memory techniques", "--dry-run"]);
-    assert!(spec.dry_run && spec.name.is_empty());
-    // A single word is still a flow name, and loose words are still an error case
-    // resolved by name — the typo footgun does not return through this door.
-    assert_eq!(run(&["build"]).name, "build");
-    assert_eq!(run(&["revieew", "the", "parser"]).name, "revieew");
-}
-
-#[test]
 fn a_bound_you_asked_for_and_a_bound_you_got_are_the_same_thing() {
-    use parse_flow_args;
     let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     // A value that cannot be read is an error naming the flag — never a silent
     // default, which would run the flow with a bound the user did not choose.
@@ -36,12 +15,12 @@ fn a_bound_you_asked_for_and_a_bound_you_got_are_the_same_thing() {
         (vec!["f", "--concurrency", "lots"], "--concurrency"),
         (vec!["f", "--timeout", "--bg"], "--timeout needs a value"),
     ] {
-        let err = parse_flow_args(&a(&args)).map(|_| ()).expect_err(&format!("{args:?} must not parse"));
+        let err = parse_flow_args(&a(&args), &[]).map(|_| ()).expect_err(&format!("{args:?} must not parse"));
         assert!(err.contains(want), "{args:?} said {err:?}");
     }
-    assert!(parse_flow_args(&a(&[])).is_ok());
+    assert!(parse_flow_args(&a(&[]), &[]).is_ok());
     // And a name is required: `@flow --bg` alone asks for nothing.
-    assert!(parse_flow_args(&a(&["--bg"])).is_err());
+    assert!(parse_flow_args(&a(&["--bg"]), &[]).is_err());
 }
 
 #[test]

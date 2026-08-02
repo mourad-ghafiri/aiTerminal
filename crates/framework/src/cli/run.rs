@@ -194,7 +194,7 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
     // Q&A streams straight to stdout; the chrome (spinner, dim thinking, token
     // footer) rides stderr so a piped answer stays clean.
     let started = std::time::Instant::now();
-    let mut spinner = Some(Spinner::start("thinking\u{2026}".into()));
+    let mut spinner = Some(Spinner::start(crate::cli::observe::Motivated::label(crate::cli::observe::WAIT, &cfg)));
     let (dim, r) = (muted(), reset());
     let mut thinking_open = false;
     let (mut tin, mut tout) = (0u64, 0u64);

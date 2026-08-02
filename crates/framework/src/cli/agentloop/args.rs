@@ -121,7 +121,7 @@ pub(crate) fn parse_loop_args(args: &[String]) -> Result<LoopCmd, String> {
     Ok(LoopCmd::Run(Box::new(spec)))
 }
 
-fn loop_usage() -> String {
+pub(crate) fn loop_usage() -> String {
     [
         "usage: @loop \"<goal>\"                 iterate until the goal verifies",
         "       @loop … --check \"<cmd>\"        the verifier: exit 0 = done",

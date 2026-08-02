@@ -172,6 +172,10 @@ pub(crate) struct Board {
     /// Set while an approval is being typed: the ticker keeps running but paints nothing,
     /// because the reader owns the cursor until the answer arrives.
     held: Arc<AtomicBool>,
+    /// Something to read while the graph works. Behind its own lock because the ticker
+    /// asks it for a line on every frame and a display must never be the reason a run
+    /// stops.
+    muse: Mutex<crate::motivation::Muse>,
     /// The widest node id, so the columns line up.
     width: usize,
     concurrency: usize,
@@ -181,7 +185,12 @@ pub(crate) struct Board {
 
 impl Board {
     /// Build a board for `nodes`, in graph order, drawn in the named view.
-    pub fn new(title: String, nodes: Vec<BoardNode>, live: bool, view: &str, concurrency: usize) -> Arc<Board> {
+    ///
+    /// `muse` is handed in rather than fetched. A display that reads the config to
+    /// decorate itself is a display that does file I/O the moment it is constructed —
+    /// which is both the wrong responsibility and, in a test suite that swaps `$HOME`
+    /// around, a way to seed somebody else's home from under them.
+    pub fn new(title: String, nodes: Vec<BoardNode>, live: bool, view: &str, concurrency: usize, muse: crate::motivation::Muse) -> Arc<Board> {
         let width = nodes.iter().map(|n| n.id.chars().count()).max().unwrap_or(4).clamp(4, 18);
         let rows = nodes
             .into_iter()
@@ -208,6 +217,7 @@ impl Board {
             stop: Arc::new(AtomicBool::new(false)),
             ticker: Mutex::new(None),
             quiet: Mutex::new(None),
+            muse: Mutex::new(muse),
             held: Arc::new(AtomicBool::new(false)),
             width,
             concurrency: concurrency.max(1),
@@ -421,12 +431,24 @@ impl Board {
     pub fn draw_in(&self, cols: usize, window_rows: usize) -> String {
         let Ok(rows) = self.rows.lock() else { return String::new() };
         let frame = *self.frame.lock().unwrap_or_else(|e| e.into_inner());
+        // Asked once per frame, off the board's own clock: a graph that finishes in
+        // three seconds is never interrupted, and one that is still going after a while
+        // has a line to read under it.
+        let elapsed = self.started.elapsed();
+        let aside = {
+            let mut muse = self.muse.lock().unwrap_or_else(|e| e.into_inner());
+            match muse.mute() {
+                true => None,
+                false => Some(muse.line(elapsed).unwrap_or_default().to_string()),
+            }
+        };
         let head = view::Head {
             palette: &self.palette,
-            elapsed: self.started.elapsed(),
+            elapsed,
             concurrency: self.concurrency,
             width: self.width,
             rows: window_rows,
+            aside,
         };
         self.view.render(&rows, &head, frame, cols)
     }

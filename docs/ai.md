@@ -341,21 +341,40 @@ project's own runner. That is what makes them yours rather than somebody else's.
 needs `[ai] network = true`. Its search is **keyless** (DuckDuckGo's HTML endpoint), so
 there is no second account to create.
 
-### A goal on its own
+### A goal on its own — the graph gets built
 
 ```text
-❯ @flow "Research LLM memory techniques"
-▸ research — the goal asks for sources and a comparison, not a code change
+❯ @flow explain how the export command works
+◈ no flow named — building a graph for this goal
+◈ built a 3-node graph: read the code, then explain it · @flow show 1785371201-90257
+▸ explain-how-the-export · explain how the export command works
 ```
 
-A flow name can never contain a space, so **one quoted argument that does is a goal**,
-never a mistyped name. The model reads it against the installed flows' descriptions and
-names one; the choice and its reason print **before the first node runs**, and
-`--dry-run` shows them for nothing. If no flow fits, that is an error listing them —
-never a flow chosen by falling back to a favourite.
+You do not have to already have the right flow. Name none and **one is written for this
+goal** — by the model, out of the agents this machine actually has — and then held to
+every check a graph you wrote by hand is held to: it goes through the same parser and the
+same verifier, so an agent that does not exist, an edge that points nowhere and a command
+the guard refuses are all caught before a token is spent running it. When the checker
+refuses it, its own errors are handed back for **one** more attempt; a second failure
+prints them and stops, having spent two small calls and no agent runs.
 
-Loose words are still a name: `@flow revieew the parser` is an error suggesting
-`review`, not a graph run over your repository.
+The graph lives in the run's own record (`ai/flow-runs/<id>/flow.toml`), so `@flow show`,
+`node`, `log`, `retry` and `resume` all work on it and you can read exactly what was made
+for you — and `@flow` keeps listing the five flows you meant to have rather than filling
+up with one-off graphs. A build the checker refused is kept too: seeing what it tried to
+make of your sentence is the fastest way to understand what it misread.
+
+**The first word decides**, against what you have installed:
+
+| You typed | What happens |
+| --- | --- |
+| `@flow document this project` | `document` is a flow you have → it runs, with `this project` as its input |
+| `@flow revieew the parser` | close enough to `review` to be a typo → refused, with the suggestion |
+| `@flow explain this project` | neither → the whole line is a goal, and a graph is built for it |
+
+The typo guard is why the third row is safe. `@flow revieew the parser` must never
+quietly become a different flow — and it must not become a *goal* either, because
+building and running a graph for a misspelling is the same footgun in a newer coat.
 
 ### The graph is a document, not just a picture
 
@@ -798,6 +817,39 @@ Nothing in that knows a tool by name. A table of per-tool formatters would be a 
 registry to keep in step with `caps`, and wrong the day an MCP server exposes a tool this
 build has never heard of — which still gets a readable line, because arguments have names
 whatever the tool is.
+
+### Something to read while you wait
+
+A run waiting on a model shows a spinner and nothing else, sometimes for a while. One dim
+line keeps you company:
+
+```text
+⠹ thinking…  ·  @flow retry <node> re-runs it and everything built on it
+⠹ thinking…  ·  a prompt prefix the provider already cached costs about a tenth
+⠹ thinking…  ·  "Simplicity is prerequisite for reliability" — Dijkstra
+```
+
+Three things make it company rather than noise, and all three are structural rather than
+a matter of taste:
+
+- **It costs no rows.** It rides inside the spinner's own line, or one constant row under
+  a flow board. Nothing scrolls, nothing accumulates, nothing survives the run.
+- **It only appears while nothing else is happening.** Silent until a wait has lasted
+  `after` (6s), and gone the instant the answer starts — a run that answers in three
+  seconds never shows one at all.
+- **It cannot reach anything but a screen.** The spinner is TTY-only and the board row is
+  drawn only for a live board, so a pipe, a `--bg` job, a job log, a flow record and CI
+  never see one.
+
+The lines are written **by the model**, once, into `cache/motivation.toml` and reused —
+in the background, so no run ever waits for them. Tips are drawn from this tool's own
+command list rather than imagined, which is what stops a "tip" teaching you a flag that
+does not exist. With no model configured there is no cache and the feature is simply
+absent; there is no canned fallback, because a stock line pretending to be a fresh one is
+worse than a plain spinner.
+
+`[motivation]` in the config turns it off, picks which kinds to draw from, and sets both
+timings — see [configuration.md](configuration.md#configtoml-sections).
 
 A **`@flow`** shows a live board — the graph, drawn as cards and repainted in place (see
 [Watching it run](#watching-it-run)); a **`@loop`** shows each iteration and a footer

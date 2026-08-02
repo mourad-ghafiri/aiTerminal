@@ -75,6 +75,15 @@ struct FlowWorld {
     agents: Vec<crate::ai::defs::Agent>,
 }
 
+/// The world the verifier checks against — the installed agents and the command guard.
+///
+/// Exposed because building a graph verifies it too, and a graph built against a
+/// different world than the one that will run it is a graph that passes here and is
+/// refused there.
+pub(crate) fn world() -> impl crate::flow::verify::World {
+    FlowWorld::build()
+}
+
 impl FlowWorld {
     fn build() -> FlowWorld {
         let cfg = crate::config::Config::load();
@@ -105,9 +114,33 @@ impl crate::flow::verify::World for FlowWorld {
 
 /// Load and verify in one step — the gate every path that spends money goes through.
 pub(crate) fn checked_flow(name: &str) -> Result<(crate::flow::Flow, crate::flow::verify::Report), String> {
-    let flow = load_flow(name)?;
+    verified(load_flow(name)?)
+}
+
+/// Verify a flow however it was come by — read from `ai/flows/`, or built for a goal and
+/// never written there at all. One gate, so a graph nobody wrote by hand is held to
+/// exactly the checks one written by hand is.
+pub(crate) fn verified(flow: crate::flow::Flow) -> Result<(crate::flow::Flow, crate::flow::verify::Report), String> {
     let report = crate::flow::verify::verify(&flow, &FlowWorld::build());
     Ok((flow, report))
+}
+
+/// The graph a RUN was made with.
+///
+/// Two places it can come from and one function that knows it: the record's own
+/// `flow.toml` when the graph was built for that run, and `ai/flows/<name>.toml` when it
+/// was a flow somebody installed. Every reader — `show`, `nodes`, `node`, `log`, `retry`,
+/// `watch`, `resume` — comes through here, which is what lets all of them work on a built
+/// graph without any of them knowing there is such a thing.
+pub(crate) fn run_graph(run: &crate::flowruns::Run) -> Result<crate::flow::Flow, String> {
+    match run.own_graph() {
+        Some(path) => {
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| format!("run {}: its own graph cannot be read: {e}", run.id))?;
+            crate::flow::parse(&run.flow, &text)
+        }
+        None => load_flow(&run.flow),
+    }
 }
 
 /// Print a verification report. Errors first: they are why nothing ran.

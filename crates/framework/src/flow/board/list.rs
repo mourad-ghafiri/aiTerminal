@@ -49,6 +49,7 @@ impl View for ListView {
             lines.push(trim_row(&line, r));
         }
         lines.push(summary(rows, head, cols));
+        lines.extend(head.aside_row(cols));
         lines.join("\n")
     }
 }
