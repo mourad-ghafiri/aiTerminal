@@ -530,10 +530,22 @@ body { background: var(--paper); }
      `board` is the exception that earns its place: the graph beats are drawn by
      js/board.js — the port of the terminal's own layout — so the film shows the
      picture the product paints rather than an artist's impression of it. */
-  const INK = { g: OK, e: ERR, w: WARN, a: ACC, d: DIM, null: FG };
+  /* `ab` is the breathing emphasis a running card's title pulses with. */
+  const INK = { g: OK, e: ERR, w: WARN, a: ACC, d: DIM, ab: (t) => S("t-accent-b", t), null: FG };
 
   async function board(w, st) {
     const m = st.model;
+    /* One region per run, repainted — the rule the terminal follows. A region
+       that is gone (the pane was cleared, or the rail replayed this beat) means
+       a fresh RUN: the models are shared consts, so what the last play
+       accumulated — states, costs, the frozen clock — must not leak into it. */
+    if (!m.rows || !m.rows.length || !m.rows[0].isConnected) {
+      m.rows = [];
+      ["state", "note", "calls", "attempts", "ms", "tokens", "trace"].forEach((k) => { m[k] = {}; });
+      delete m.elapsed;
+      delete m.aside;
+      m.clockMs = 0;
+    }
     ["state", "note", "calls", "attempts", "ms", "tokens", "trace"].forEach((k) => { m[k] = m[k] || {}; });
     Object.assign(m.state, st.states || {});
     Object.entries(st.settle || {}).forEach(([id, got]) => {
@@ -542,6 +554,10 @@ body { background: var(--paper); }
     Object.assign(m.note, st.note || {});
     Object.assign(m.calls, st.calls || {});
     if (st.elapsed) m.elapsed = st.elapsed;
+    /* The muse's aside: "" reserves the blank bottom row the feature always
+       costs, text is a line from the pool — one constant row, as the terminal
+       draws it. Absence keeps what the previous beat said. */
+    if ("aside" in st) m.aside = st.aside;
 
     const pane = w.pane();
     const probe = el("div", "rw-line board");
@@ -553,14 +569,15 @@ body { background: var(--paper); }
     const cols = Math.max(Math.floor(pane.clientWidth / (box.width / 80)) - 1, 24);
     m.rowsAvailable = Math.max(Math.floor(pane.clientHeight / box.height), 8);
 
-    /* One region, repainted — the rule the terminal follows. */
-    if (!m.rows || !m.rows.length || !m.rows[0].isConnected) m.rows = [];
     const held = m.rows;
     const FRAME = 90;
     /* The last frame sleeps only the remainder, so a beat lasts exactly what it
        was budgeted — the film's running time is a sum, not an estimate. */
     const hold = Math.max(st.ms || 1200, FRAME);
     for (let t = 0; t < hold; t += FRAME) {
+      /* The tally's elapsed clock, ticking while the board is live — a settled
+         beat freezes it by handing in `elapsed` instead. */
+      m.clockMs = (m.clockMs || 0) + FRAME;
       const rows = drawBoard(m, cols, Math.floor(t / FRAME));
       rows.forEach((runs, i) => {
         const spans = runs.map((r) => (INK[r.cls] || FG)(r.text));
@@ -703,11 +720,14 @@ body { background: var(--paper); }
           { do: "cmd", text: "@flow explain how the export command works", speed: 10 },
           { do: "spin", label: "building a graph for this…", ms: 1100 },
           { do: "out", spans: [DIM("◈ built a 3-node graph: read the code, write it up, check every claim")], ms: 320 },
+          /* The bottom row is the muse's aside — blank while the wait is young,
+             then a line from the pool the model wrote. One constant row. */
           { do: "board", model: BUILT, states: { read: "running" }, calls: { read: 6 },
-            note: { read: "⚙ fs.read src/export.rs" }, ms: 2300 },
+            note: { read: "⚙ fs.read src/export.rs" }, aside: "", ms: 2300 },
           { do: "board", model: BUILT, states: { read: "done", draft: "running" },
             settle: { read: { ms: 8100, tokens: 9400 } }, calls: { read: 11, draft: 2 },
-            note: { draft: "⚙ fs.write docs/export.md" }, ms: 1400 },
+            note: { draft: "⚙ fs.write docs/export.md" },
+            aside: "@flow check proves a graph before it spends a token", ms: 1400 },
           { do: "board", model: BUILT, states: { read: "done", draft: "done", check: "done" },
             settle: { draft: { ms: 12300, tokens: 6200 }, check: { ms: 6700, tokens: 3100 } },
             calls: { check: 4 }, elapsed: "27.1s", ms: 1200 },
@@ -725,6 +745,7 @@ body { background: var(--paper); }
           { do: "board", model: REVIEW, states: { map: "done", correctness: "running", security: "running", design: "running" },
             settle: { map: { ms: 6400, tokens: 7100 } }, calls: { map: 9, correctness: 4, security: 3, design: 2 },
             note: { correctness: "⚙ fs.read src/export.rs", security: "⚙ fs.search \"unwrap(\"", design: "⚙ fs.read src/cache.rs" },
+            aside: "press ⌘P for the quick switcher — it reaches tab 10 and past it",
             ms: 1900 },
           { do: "board", model: REVIEW, states: { map: "done", correctness: "done", security: "done", design: "done", report: "running" },
             settle: { correctness: { ms: 11200, tokens: 8300 }, security: { ms: 9100, tokens: 6600 }, design: { ms: 7800, tokens: 5200 } },
@@ -740,7 +761,7 @@ body { background: var(--paper); }
         reset(w);
         await run(w, [
           { do: "board", model: BROKEN, states: { read: "running" }, calls: { read: 12 },
-            note: { read: "⚙ fs.read src/export.rs" }, ms: 1500 },
+            note: { read: "⚙ fs.read src/export.rs" }, aside: "", ms: 1500 },
           { do: "board", model: BROKEN, states: { read: "failed", draft: "blocked", check: "blocked" },
             settle: { read: { ms: 11500, tokens: 30000 } }, calls: { read: 16 },
             note: { read: "the step budget of 12 ran out", draft: "something it needed failed", check: "something it needed failed" },

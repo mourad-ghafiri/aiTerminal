@@ -6,7 +6,7 @@
 
      crates/framework/src/flow/board/card.rs   the geometry (ranks → columns)
      crates/framework/src/flow/board/graph.rs  what goes in a card, and the edges
-     crates/framework/src/flow/board/view.rs   the pane and the tally
+     crates/framework/src/flow/board/view.rs   the pane, the tally and the aside
      crates/corelib/src/graph.rs               the ranking
      crates/corelib/src/cells.rs               the junction glyphs
 
@@ -310,7 +310,7 @@ function drawBoard(model, cols, frame = 0) {
   /* Cards cost height AND width. When they will not fit the window they are
      painting into, the denser view is not a downgrade — it is the only one that
      can be read, which is exactly what the terminal does here. */
-  if (!fits(nodes, cols, model.rowsAvailable || 0)) return drawList(rows, cols, model, frame);
+  if (!fits(nodes, cols, model)) return drawList(rows, cols, model, frame);
   const out = [];
 
   /* the shape line — the run's whole capability surface, in one glance */
@@ -341,6 +341,7 @@ function drawBoard(model, cols, frame = 0) {
 
   paneRows(rows, cols).forEach((r) => out.push(r));
   out.push(tally(rows, cols, model));
+  asideRow(model, cols).forEach((r) => out.push(r));
   return out;
 }
 
@@ -352,7 +353,8 @@ function drawList(rows, cols, model, frame) {
   const out = [];
   rows.forEach((row) => {
     const st = STATES[row.state] || STATES.waiting;
-    const time = row.ms >= 100 ? (row.ms / 1000).toFixed(1).padStart(5) + "s" : "       ";
+    /* `{:>6.1}s` in the terminal — seven cells, blank until there is a time. */
+    const time = row.ms >= 100 ? (row.ms / 1000).toFixed(1).padStart(6) + "s" : "       ";
     const tokens = row.tokens > 0 ? humanTokens(row.tokens).padStart(6) : "      ";
     const attempts = row.attempts > 1 ? " ×" + row.attempts : "";
     const head = `  ${st.glyph(frame)} ${cell(row.id, width)}  ${cell(row.what, 14)}${time}${tokens}${attempts}`;
@@ -361,13 +363,15 @@ function drawList(rows, cols, model, frame) {
     const line = [
       { text: "  " + st.glyph(frame), cls: st.ink },
       { text: " " + cell(row.id, width) + "  ", cls: null },
-      { text: cell(row.what, 14) + time + tokens, cls: "d" },
+      { text: cell(row.what, 14), cls: "d" },
+      { text: time + tokens, cls: null },
     ];
     if (attempts) line.push({ text: attempts, cls: "d" });
     if (note && room >= 8) line.push({ text: "  " + clip(note, Math.min(room, 44)), cls: "d" });
     out.push(line);
   });
   out.push(tally(rows, cols, model));
+  asideRow(model, cols).forEach((r) => out.push(r));
   return out;
 }
 
@@ -396,7 +400,11 @@ function drawCard(canvas, paint, span, c, row, frame) {
     span(at, at + Math.max([...t].length - 1, 0), c.y + dy, cls);
   };
   const title = st.glyph(frame) + " " + row.id;
-  line(1, title, st.ink);
+  /* A running node breathes: emphasis for about half a second, then not, off the
+     same frame counter the spinner turns on — an EMPHASIS, never a different
+     glyph, because a glyph that changed width would change the card's width. */
+  const lit = row.state === "running" && Math.floor(frame / 4) % 2 === 0;
+  line(1, title, lit ? "ab" : st.ink);
   /* The counters ride at the right end of the title rather than competing with
      the cost for the last line: they are the two numbers that keep climbing. */
   const counts = counters(row);
@@ -476,6 +484,7 @@ function shapeLine(rows, grid, model) {
   if (agents.length) parts.push(plural(agents.length, "agent"));
   if (model.tools) parts.push(plural(model.tools, "tool"));
   if (model.skills) parts.push(plural(model.skills, "skill"));
+  if (model.mcp) parts.push(model.mcp + " mcp");
   parts.push(`${model.concurrency || 4} at a time`);
   if (model.slowest) parts.push("slowest path " + model.slowest.join("→"));
   return parts.join(" · ");
@@ -516,25 +525,45 @@ function paneRows(rows, cols) {
   return out.slice(0, PANE_H);
 }
 
+/* The tally is ONE muted line in the terminal — `summary` in view.rs joins every
+   part with `·` inside a single dim escape, elapsed always last: a run always
+   says how long it has been running, ticking while live and frozen by the beat
+   that settles it (`model.elapsed`). */
 function tally(rows, cols, model) {
   const count = (want) => rows.filter((r) => r.state === want).length;
-  const parts = [{ text: `${count("done")}/${rows.length} done`, cls: "d" }];
-  [["running", "d"], ["failed", "e"], ["blocked", "w"], ["skipped", "d"], ["parked", "w"]].forEach(([s, cls]) => {
+  const parts = [`${count("done")}/${rows.length} done`];
+  ["running", "failed", "blocked", "skipped", "parked"].forEach((s) => {
     const n = count(s);
-    if (n) parts.push({ text: " · ", cls: "d" }, { text: `${n} ${STATES[s].word}`, cls });
+    if (n) parts.push(`${n} ${STATES[s].word}`);
   });
   const tokens = Object.values(model.tokens || {}).reduce((a, b) => a + b, 0);
-  if (tokens > 0) parts.push({ text: " · " + humanTokens(tokens) + " tokens", cls: "d" });
-  if (model.elapsed) parts.push({ text: " · " + model.elapsed, cls: "d" });
-  return [{ text: "  ", cls: null }, ...parts];
+  if (tokens > 0) parts.push(humanTokens(tokens) + " tokens");
+  parts.push(model.elapsed || ((model.clockMs || 0) / 1000).toFixed(1) + "s");
+  return [{ text: "  " + clip(parts.join(" · "), Math.max(cols - 2, 0)), cls: "d" }];
+}
+
+/* The muse's row under the tally, from view.rs::aside_row. `model.aside` maps the
+   Option: undefined is the feature off (no row at all), "" is on with nothing to
+   say (a blank row — the height must not change when a line arrives), and text is
+   the line, dim, clipped like everything else. */
+function asideRow(model, cols) {
+  if (model.aside === undefined || model.aside === null) return [];
+  const text = String(model.aside).trim();
+  if (!text) return [[{ text: "", cls: null }]];
+  return [[{ text: "  " + clip(text, Math.max(cols - 2, 0)), cls: "d" }]];
 }
 
 /* Whether the cards fit the window they are painting into. Both dimensions:
    depth costs width, so a nine-deep flow asks for more columns than a terminal
    has — and a picture drawn past the right-hand edge is worse than no picture,
    which is why the product falls back to its dense list view exactly here. */
-function fits(nodes, cols, rowsAvailable) {
+function fits(nodes, cols, model) {
   const grid = plan(nodes, cols);
-  const budget = rowsAvailable > 0 ? Math.max(rowsAvailable - (3 + PANE_H), 0) : 40;
+  const rowsAvailable = model.rowsAvailable || 0;
+  /* Three for the header, the tally and the prompt; the pane; and the aside's
+     row when the feature is on — the same budget graph.rs charges, because a
+     board one row taller than the window scrolls its own top away. */
+  const aside = model.aside !== undefined && model.aside !== null ? 1 : 0;
+  const budget = rowsAvailable > 0 ? Math.max(rowsAvailable - (3 + PANE_H + aside), 0) : 40;
   return grid.cards.length > 1 && grid.h <= budget && grid.w <= cols;
 }

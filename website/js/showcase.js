@@ -129,7 +129,9 @@ document.addEventListener("DOMContentLoaded", () => {
      at that width: cards reflow, edges rejoin, and when the window is too narrow
      for cards the dense list takes over, exactly as it does in the product. */
 
-  const INK = { g: OK, e: ERR, w: WARN, a: ACC, d: MUT, null: FG };
+  /* `ab` is the breathing emphasis a running card's title pulses with — the
+     accent-bold class the syntax highlighter already uses for `@words`. */
+  const INK = { g: OK, e: ERR, w: WARN, a: ACC, d: MUT, ab: (t) => S("t-accent-b", t), null: FG };
 
   /* The pane in the replica's own cells — columns AND rows, measured rather than
      assumed, because the board reflows on both and the showcase is read at
@@ -158,6 +160,15 @@ document.addEventListener("DOMContentLoaded", () => {
      read as a run rather than as a screenshot. */
   async function board(w, st, alive) {
     const m = st.model;
+    /* A region that is gone (the pane was cleared, or the demo restarted) means
+       a fresh RUN — what the last one accumulated must not leak into it. */
+    if (!m.rows || !m.rows.length || !m.rows[0].isConnected) {
+      m.rows = [];
+      ["state", "note", "calls", "attempts", "ms", "tokens", "trace"].forEach((k) => { m[k] = {}; });
+      delete m.elapsed;
+      delete m.aside;
+      m.clockMs = 0;
+    }
     /* A scene declares a GRAPH; what has happened to it accumulates here, so a
        beat only has to name what changed. */
     ["state", "note", "calls", "attempts", "ms", "tokens", "trace"].forEach((k) => { m[k] = m[k] || {}; });
@@ -174,14 +185,16 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     Object.assign(m.note, st.note || {});
     if (st.elapsed) m.elapsed = st.elapsed;
+    /* The muse's aside, as the beat declares it: "" reserves the (blank) row the
+       feature always costs, text is a line from the pool, absence keeps whatever
+       the previous beat said — the terminal's own height-constancy rule. */
+    if ("aside" in st) m.aside = st.aside;
 
     const { cols, rows: rowsAvailable } = paneSize(w);
     m.rowsAvailable = rowsAvailable;
     /* ONE region per run, repainted — the same rule the terminal follows. The
        rows are kept on the model, so the next beat redraws these lines rather
-       than printing a second board under the first; a pane that was cleared (or
-       scrolled its top away) drops them and starts a fresh region. */
-    if (!m.rows || !m.rows.length || !m.rows[0].isConnected) m.rows = [];
+       than printing a second board under the first. */
     const held = m.rows;
     const FRAME = 90; // the terminal's own spinner period
     /* The last frame sleeps only the remainder, so a beat lasts exactly what it
@@ -189,6 +202,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const hold = Math.max(st.ms || 1200, FRAME);
     for (let t = 0; t < hold; t += FRAME) {
       if (!alive()) return;
+      /* The elapsed clock the tally shows, ticking while the board is live —
+         a settled beat freezes it by handing in `elapsed` instead. */
+      m.clockMs = (m.clockMs || 0) + FRAME;
       const rows = drawBoard(m, cols, Math.floor(t / FRAME));
       rows.forEach((runs, i) => {
         const spans = runs.map((r) => (INK[r.cls] || FG)(r.text));
@@ -532,7 +548,10 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "out", spans: [MUT("◈ built a 3-node graph: read the code, write it up, check every claim · @flow show 1785639076-20816")] },
           /* Every run opens with this line: the flow's name and what it was given. */
           { do: "out", spans: [ACC("▸ document-how-the-export · how the export command works")] },
-          { do: "board", model: built, states: { read: "running" },
+          /* The bottom row is the muse's aside — blank while the wait is young,
+             then a line from the pool the model wrote, rotating while the run
+             thinks. One constant row, so the board never changes height. */
+          { do: "board", model: built, states: { read: "running" }, aside: "",
             note: { read: "⚙ fs.search \"export\"" }, calls: { read: 3 }, ms: 900 },
           { do: "board", model: built, states: { read: "running" },
             note: { read: "⚙ fs.read src/export.rs" }, calls: { read: 7 }, ms: 900 },
@@ -541,7 +560,8 @@ document.addEventListener("DOMContentLoaded", () => {
             note: { draft: "⚙ fs.write docs/export.md" }, ms: 1100 },
           { do: "board", model: built, states: { read: "done", draft: "done", check: "running" },
             settle: { draft: { ms: 12300, tokens: 6200 } }, calls: { check: 4 },
-            note: { check: "⚙ fs.read docs/export.md" }, ms: 1100 },
+            note: { check: "⚙ fs.read docs/export.md" },
+            aside: "@flow check proves a graph before it spends a token", ms: 1100 },
           { do: "board", model: built, states: { read: "done", draft: "done", check: "done" },
             settle: { check: { ms: 6700, tokens: 3100 } }, elapsed: "27.1s", ms: 1600 },
           { do: "stream", spans: [FG("Wrote docs/export.md — every claim points at a line in src/export.rs. Two options were undocumented; both are now, with their real defaults.")], speed: 10 },
@@ -555,7 +575,8 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "board", model: reviewFlow, states: { map: "done", correctness: "running", security: "running", design: "running" },
             settle: { map: { ms: 6400, tokens: 7100 } },
             calls: { map: 9, correctness: 4, security: 3, design: 2 },
-            note: { correctness: "⚙ fs.read src/export.rs", security: "⚙ fs.search \"unwrap(\"", design: "⚙ fs.read src/cache.rs" }, ms: 2400 },
+            note: { correctness: "⚙ fs.read src/export.rs", security: "⚙ fs.search \"unwrap(\"", design: "⚙ fs.read src/cache.rs" },
+            aside: "press ⌘P for the quick switcher — it reaches tab 10 and past it", ms: 2400 },
           { do: "board", model: reviewFlow,
             states: { map: "done", correctness: "failed", security: "done", design: "done", report: "blocked" },
             settle: { correctness: { ms: 11200, tokens: 8300 }, security: { ms: 9100, tokens: 6600 }, design: { ms: 7800, tokens: 5200 } },
