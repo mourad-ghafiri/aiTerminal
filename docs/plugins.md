@@ -17,7 +17,7 @@ disables. Manage with `@plugin list|install|enable|disable|remove|info`, or
 `[plugins] disabled = [...]` in config.
 
 `@plugin list` shows **both** — the bundled plugins and your installed ones — because
-both are running (`plugins (31 bundled · 0 installed):`). A bundled plugin cannot be
+both are running (`plugins (30 bundled · 0 installed):`). A bundled plugin cannot be
 removed, only disabled; `@plugin info <name>` says which kind it is.
 
 ## What a manifest can declare
@@ -33,13 +33,18 @@ removed, only disabled; `@plugin info <name>` says which kind it is.
 
 ## The builtin set
 
-- **`ai-terminal`** — the `@`-command family (`@ai`, `@<agent>`, `@flow`, `@job`,
-  `@profile`, `@config`, `@theme`, `@plugin`).
+Thirty, and every one is a `plugin.toml` you can read.
+
+- **`ai-terminal`** — the `@`-command family (`@ai`, `@<agent>`, `@flow`, `@loop`,
+  `@job`, `@md`, `@gate`, `@profile`, `@config`, `@theme`, `@plugin`).
 - **Shell UX**: `prompt`, `autosuggest`, `syntax-highlight`, `completion`,
   `alias-hints`, `history`, `lineedit` (macOS-style navigation + ⇧-selection on
   the command line), `sudo`, `common`, `dir`, `jump`, `term-cwd`.
-- **Security**: `ai-guard` (the whole default policy — what may run, what may be
-  touched, and what may leave).
+- **Security**: `ai-guard` — the whole default policy in one plugin: the command
+  rules, the path rules and the secret rules. (It replaces the two that used to ship,
+  `command-guard` and `redactor`; there is one guard now, so there is one plugin.
+  Disabling it drops every default rule *except* the small native floor over your
+  credential directories — see [security.md](security.md#the-floor).)
 - **Tooling**: `git`, `github`, `docker`, `kubernetes`, `node`, `python`, `rust`,
   `colored-man`, `extract`, `encode`, `clipboard`.
 - **Info**: `sysinfo`, `weather`, `world-clock`, `web-search`, `notes`.
@@ -47,8 +52,8 @@ removed, only disabled; `@plugin info <name>` says which kind it is.
 ## Writing one
 
 See [examples/plugin/](../examples/plugin/) for a complete, tested template
-(segment, aliases, abbreviation, completion, guard + redaction rules, shell
-snippet). Drop the folder in `~/.aiTerminal/plugins/`, restart (or
+(segment, aliases, abbreviation, completion, a `[[guard.command]]` and a
+`[[guard.secret]]` rule, shell snippet). Drop the folder in `~/.aiTerminal/plugins/`, restart (or
 `@plugin enable hello`). Segments re-evaluate on `cd`/tab-switch and refresh the
 status bar instantly.
 

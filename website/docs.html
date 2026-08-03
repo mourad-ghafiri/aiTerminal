@@ -975,7 +975,8 @@ config: ~/.aiTerminal/config.toml
       <tr><td><code>@plugin remove &lt;name&gt;</code></td><td>delete an installed plugin (bundled ones cannot be removed, only disabled)</td></tr>
     </table></div>
     <pre><code><span class="p">❯</span> @plugin
-plugins (31 bundled · 0 installed):
+plugins (30 bundled · 0 installed):
+  <span class="g">●</span> ai-guard           1.0.0    Default rules for the AI guard: what may run, be touched, leave
   <span class="g">●</span> ai-terminal        1.0.0    @ai · @&lt;agent&gt; · @flow · @loop · @job · @md · @gate …
   <span class="g">●</span> alias-hints        1.0.0    Suggests the shortest alias for any command you type
   <span class="g">●</span> autosuggest        1.0.0    Inline suggestions from history as you type — → accepts
@@ -1119,10 +1120,11 @@ gs = <span class="s">"git status -sb"</span>
 <span class="k">[[segment]]</span>
 align = <span class="s">"right"</span>; template = <span class="s">"🔧 {my.var}"</span>
 
-<span class="c"># plus: [[abbr]] [[completion]] [[keybinding]] [[allow_command]]</span>
+<span class="c"># plus: [[abbr]] [[completion]] [[keybinding]]</span>
 <span class="c"># [[guard.command]] [[guard.path]] [[guard.secret]] shell.zsh shell.bash</span></code></pre>
-    <p>31 builtins ship (git, docker, kubernetes, rust, python, node, github, extract, jump,
-      autosuggest, syntax-highlight, history, lineedit, sudo, clipboard, encode, weather, web-search, …).
+    <p>30 builtins ship (git, docker, kubernetes, rust, python, node, github, extract, jump,
+      autosuggest, syntax-highlight, history, lineedit, sudo, clipboard, encode, weather, web-search,
+      <code>ai-guard</code>, …).
       Trusted plugin shell snippets are sourced into your shell; third-party installs go under
       <code>~/.aiTerminal/plugins/</code>.</p>
 
@@ -1525,7 +1527,7 @@ literal = <span class="n">true</span>                     <span class="c"># skip
       its child; the regex engine is step-budgeted; a panic degrades to one dropped frame.</p>
 
     <h2 id="testing">Testing</h2>
-    <p><b>1386 unit tests</b> and <b>280 scenarios</b>, running in a few seconds with no network and
+    <p><b>1441 unit tests</b> and <b>315 scenarios</b>, running in a few seconds with no network and
       no API key. A unit test proves a function; a <b>scenario</b> proves a product — a real user
       journey written as TOML and played against the real code.</p>
     <pre><code><span class="p">❯</span> cargo test --workspace                          <span class="c"># everything</span>

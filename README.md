@@ -53,7 +53,7 @@ profiles. The AI is woven into the shell itself through one idea:
 - 🧘 **Calm, stable rendering** — steady block cursor (`bar`/`underline` one config
   line away), ghost-free damage-tracked frames, burst-settled presents, an idle
   event loop that uses near-zero CPU.
-- 🔋 **31 builtin plugins, all data** — prompt, autosuggest, syntax highlighting,
+- 🔋 **30 builtin plugins, all data** — prompt, autosuggest, syntax highlighting,
   completion, history, git (100+ aliases), docker, kubernetes, extract, jump,
   sudo, clipboard (OSC 52), … Each is a `plugin.toml` + optional shell snippet;
   disable any with `@plugin disable <name>`.
@@ -203,7 +203,7 @@ is run by a scenario**, so nothing is advertised that nobody has typed.
 
 ## 🧪 Tested
 
-**1386 unit tests** and **280 scenarios**, in a few seconds, with no network and no API key.
+**1441 unit tests** and **315 scenarios**, in a few seconds, with no network and no API key.
 
 A unit test proves a function; a **scenario** proves a *product*. Scenarios are real user
 journeys written as TOML and played against the real code — *a destructive suggestion is

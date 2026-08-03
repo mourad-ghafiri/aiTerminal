@@ -1,7 +1,7 @@
 /* ============================================================================
    plugins.js — the plugin showcase: the same presentation as the features.
    Pick a plugin from the grouped menu → the window demos it ONCE and rests.
-   All 31 builtins, each with its own mini session. Click-driven, no loops.
+   All 30 builtins, each with its own mini session. Click-driven, no loops.
    ========================================================================== */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -315,11 +315,13 @@ document.addEventListener("DOMContentLoaded", () => {
       ],
     },
     "ai-guard": {
-      text: "The whole default policy — what may run, what may be touched, and what may leave.",
+      text: "One policy in one plugin: what may RUN, what may be TOUCHED, what may LEAVE — all regex you edit.",
       demo: (w) => [
         { do: "cmd", text: "@ai wipe the whole disk" },
         { do: "spin", label: "thinking…", ms: 700 },
         { do: "out", spans: [ERR("# blocked by guard: matches a denied command  /mkfs/")] },
+        { do: "cmd", text: "@agent coder \"read my ssh config\"" },
+        { do: "out", spans: [ERR("  ⛔ refused"), DIM(" — the folder is off limits  /(^|/)\\.ssh//")] },
         { do: "cmd", text: "cat .env" },
         { do: "out", spans: [S("", "DB_PASSWORD=hunter2-not-a-real-one")] },
         { do: "cmd", text: "@agent coder \"connect and count the users\"" },
