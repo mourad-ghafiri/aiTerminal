@@ -94,15 +94,69 @@ pub(crate) fn erase_seq(painted: usize) -> String {
     s
 }
 
-/// `s` in at most `max` columns, elided with `…` when it will not fit.
+/// `s` in at most `max` DISPLAY columns, elided with `…` when it will not fit.
 ///
 /// For anything drawn on a line that is erased with a bare `\r`: a line wider than the
-/// window wraps into two visual rows, and only the last of them is ever cleared.
+/// window wraps into two visual rows, and only the last of them is ever cleared. Columns,
+/// not chars — a CJK or emoji glyph occupies two, and counting it as one is exactly how a
+/// line that measured fine overflows the window anyway.
 pub(crate) fn clip_to(s: &str, max: usize) -> String {
-    if s.chars().count() <= max || max == 0 {
+    if max == 0 || corelib::unicode::str_width(s) <= max {
         return s.to_string();
     }
-    format!("{}\u{2026}", s.chars().take(max.saturating_sub(1)).collect::<String>())
+    let mut out = String::new();
+    let mut used = 0usize;
+    for c in s.chars() {
+        let w = corelib::unicode::char_width(c) as usize;
+        if used + w > max.saturating_sub(1) {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    out.push('\u{2026}');
+    out
+}
+
+/// A STYLED line cut to at most `max` display columns — escapes pass through uncounted
+/// and uncut, and anything a cut leaves open is closed.
+///
+/// This is the paint loop's belt and braces: the views promise no row is wider than the
+/// window, and the one place that promise is enforced rather than trusted is the write
+/// point that erases by row count. No ellipsis — a clamp that fires is a view bug being
+/// contained, not a layout being designed.
+pub(crate) fn clip_styled(line: &str, max: usize) -> String {
+    if max == 0 {
+        return line.to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0usize;
+    let mut styled = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // `ESC [ … <final>` — copied whole, occupying no columns.
+            out.push(c);
+            styled = true;
+            for e in chars.by_ref() {
+                out.push(e);
+                if e.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+        let w = corelib::unicode::char_width(c) as usize;
+        if used + w > max {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    if styled && out.len() < line.len() {
+        out.push_str("\x1b[0m");
+    }
+    out
 }
 
 /// Clamp a rendered tail to at most `max_rows` screen lines (keeping the newest), returning the

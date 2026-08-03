@@ -40,6 +40,13 @@ impl Ink {
     }
 }
 
+/// The continuation cell behind a wide glyph (see `graph::put_text`).
+///
+/// A private-use scalar, because the canvas's own empty sentinel is `'\0'` and
+/// [`Canvas::put`] refuses to store it — this one lands, means nothing to any renderer,
+/// and could never arrive in real text.
+pub(crate) const WIDE_TAIL: char = '\u{e000}';
+
 /// An [`Ink`] per cell, the same shape as the canvas it dresses.
 pub(crate) struct Paint {
     w: usize,
@@ -91,6 +98,12 @@ pub(crate) fn compose(canvas: &Canvas, paint: &Paint, palette: &Palette) -> Vec<
         .map(|y| {
             let mut runs: Vec<(String, Ink)> = Vec::new();
             for x in 0..canvas.width() {
+                // The continuation of a wide glyph (see `graph::put_text`): the glyph
+                // before it already occupies this column on screen, so the cell emits
+                // nothing — emitting anything would push the rest of the row right.
+                if canvas.at(x, y) == WIDE_TAIL {
+                    continue;
+                }
                 let ink = paint.at(x, y);
                 match runs.last_mut() {
                     Some((text, at)) if *at == ink => text.push(canvas.at(x, y)),

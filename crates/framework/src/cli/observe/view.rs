@@ -53,17 +53,49 @@ pub(crate) struct RunView {
     shown: String,
     /// Whether anything has been drawn (inter-turn spacing asks).
     printed: bool,
+    /// Echo off for as long as this view owns its region — the board's rule, generalised.
+    ///
+    /// The live tail repaints in place with the same climb-and-erase arithmetic the flow
+    /// board uses, and it is broken by the same thing: a keystroke the terminal echoes
+    /// moves the cursor the next repaint climbs from, so every Enter pressed during a
+    /// streaming `@agent` run shifted the answer and left a stale copy behind. The board
+    /// quietened the keyboard for itself; a single run never did.
+    ///
+    /// `None` off a terminal — there is no echo to turn off, and nothing repaints anyway.
+    quiet: Option<platform::os::RawGuard>,
 }
 
 impl RunView {
     pub(crate) fn new(screen: Box<dyn Write + Send>, log: Option<std::fs::File>, md: Option<(corelib::md::Style, usize)>) -> RunView {
         RunView {
+            quiet: None,
             screen,
             log,
             live: md.map(|(style, width)| LiveMarkdown::new(style, width, term_rows().saturating_sub(2))),
             shown: String::new(),
             printed: false,
         }
+    }
+
+    /// Quieten the keyboard for this view's lifetime.
+    ///
+    /// A separate step, not part of `new`, and deliberately so: it touches the REAL
+    /// terminal's state, and a view a test builds around a byte recorder must never flip
+    /// the termios of whatever terminal the test suite happens to be running in — the
+    /// restore flushes typed input, which is the suite costing a person keystrokes.
+    /// The production construction sites call it; nothing else does.
+    pub(crate) fn quiet(mut self) -> Self {
+        if self.live.is_some() {
+            self.quiet = platform::os::echo_off();
+        }
+        self
+    }
+
+    /// Hand the keyboard back. Dropping the view does this too; `finish` exists so the
+    /// footer that follows the run is typed-over-able the moment the run is done, rather
+    /// than when the last reference happens to drop.
+    pub(crate) fn finish(&mut self) {
+        drop(self.quiet.take());
     }
 
     /// Answer text — already past the tool-marker filter, so everything arriving here is

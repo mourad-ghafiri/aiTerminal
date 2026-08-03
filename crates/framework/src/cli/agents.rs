@@ -325,7 +325,7 @@ pub(crate) fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::
     let _sigint = wire_sigint(cancel);
     eprintln!("{}\u{2726} @{name} \u{b7} {}{}", accent(), client.model().id, reset());
     let started = std::time::Instant::now();
-    let view = SharedView::new(RunView::new(Box::new(std::io::stdout()), log, markdown_opts(out_is_tty())));
+    let view = SharedView::new(RunView::new(Box::new(std::io::stdout()), log, markdown_opts(out_is_tty())).quiet());
     let mut obs = CliObserver::new(view.clone()).with_reasoning(cfg.ai_show_reasoning).with_motivation(cfg);
     // The tool trace goes through the SAME region the answer is painting in. It used to
     // `eprintln!` past the painter, whose next repaint then climbed over the trace and

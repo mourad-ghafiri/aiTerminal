@@ -265,12 +265,27 @@ pub(crate) fn human_tokens(n: u64) -> String {
     }
 }
 
+/// One line, in at most `max` DISPLAY columns.
+///
+/// Columns, not chars. A node id, a model name, a tool trace or a goal can carry CJK or
+/// emoji, each two columns wide — counted as one, a row that measured fine physically
+/// overflows the window, wraps, and the repaint's erase drifts for the rest of the run.
 pub(crate) fn clip(s: &str, max: usize) -> String {
     let one: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    if one.chars().count() <= max {
+    if corelib::unicode::str_width(&one) <= max {
         return one;
     }
-    format!("{}\u{2026}", one.chars().take(max.saturating_sub(1)).collect::<String>())
+    let mut out = String::new();
+    let mut used = 0usize;
+    for c in one.chars() {
+        let w = corelib::unicode::char_width(c) as usize;
+        if used + w > max.saturating_sub(1) {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    format!("{out}\u{2026}")
 }
 
 /// Drop a row's trailing padding, looking past the colour escapes that follow it.
@@ -323,7 +338,7 @@ fn trailing_escape(s: &str) -> Option<usize> {
 /// be `n` wide is `n` wide whatever lands in it.
 pub(crate) fn cell(s: &str, n: usize) -> String {
     let text = clip(s, n);
-    let pad = n.saturating_sub(text.chars().count());
+    let pad = n.saturating_sub(corelib::unicode::str_width(&text));
     format!("{text}{}", " ".repeat(pad))
 }
 
@@ -349,8 +364,8 @@ pub(crate) fn strip_ansi(s: &str) -> String {
 }
 
 /// How wide a line really is — the only measurement the "no row is wider than the
-/// window" rule is about.
+/// window" rule is about. Display columns of the printable text, escapes uncounted.
 #[cfg(test)]
 pub(crate) fn visible_width(s: &str) -> usize {
-    strip_ansi(s).chars().count()
+    corelib::unicode::str_width(&strip_ansi(s))
 }

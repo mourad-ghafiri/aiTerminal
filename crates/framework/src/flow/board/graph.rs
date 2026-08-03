@@ -105,9 +105,8 @@ fn draw_card(canvas: &mut Canvas, paint: &mut Paint, c: &Card, row: &Row, frame:
     let inner = c.w.saturating_sub(4);
     let at = c.x + 2;
     let line = |canvas: &mut Canvas, paint: &mut Paint, dy: usize, text: &str, ink: Ink| {
-        let text = clip(text, inner);
-        canvas.text(at as isize, (c.y + dy) as isize, &text);
-        paint.span(at, at + text.chars().count().saturating_sub(1), c.y + dy, ink);
+        let cells = put_text(canvas, at, c.y + dy, &clip(text, inner));
+        paint.span(at, at + cells.saturating_sub(1), c.y + dy, ink);
     };
     let title = format!("{} {}", state.glyph(frame), row.id);
     line(canvas, paint, 1, &title, if lit { Ink::Lit(state) } else { Ink::Of(state) });
@@ -115,13 +114,36 @@ fn draw_card(canvas: &mut Canvas, paint: &mut Paint, c: &Card, row: &Row, frame:
     // for the last line: they are the two numbers that keep climbing while a node works,
     // and a number you watch should not move about while you watch it.
     let counts = counters(row);
-    if !counts.is_empty() && title.chars().count() + counts.chars().count() + 1 <= inner {
-        let x = c.right() - 1 - counts.chars().count();
-        canvas.text(x as isize, (c.y + 1) as isize, &counts);
-        paint.span(x, x + counts.chars().count() - 1, c.y + 1, Ink::Muted);
+    let (tw, cw) = (corelib::unicode::str_width(&title), corelib::unicode::str_width(&counts));
+    if !counts.is_empty() && tw + cw + 1 <= inner {
+        let x = c.right() - 1 - cw;
+        put_text(canvas, x, c.y + 1, &counts);
+        paint.span(x, x + cw - 1, c.y + 1, Ink::Muted);
     }
     line(canvas, paint, 2, &subtitle(row, inner), Ink::Muted);
     line(canvas, paint, 3, &detail(row), Ink::Muted);
+}
+
+/// Place text on the canvas by DISPLAY column, and say how many columns it took.
+///
+/// The canvas is one glyph per cell — a geometry primitive shared with the diagram
+/// renderer, which never sees prose. Card text does: node ids, model names and tool
+/// traces can carry CJK or emoji, and each of those occupies TWO terminal columns. Put
+/// naively, every glyph after a wide one lands a column left of where the terminal will
+/// draw it — the card's right border included. So a wide glyph takes its cell plus a
+/// [`WIDE_TAIL`] continuation cell, which [`compose`](super::paint::compose) emits as
+/// nothing: the columns after it stay honest, and the row measures what it shows.
+fn put_text(canvas: &mut Canvas, x: usize, y: usize, text: &str) -> usize {
+    let mut col = 0usize;
+    for ch in text.chars() {
+        let w = corelib::unicode::char_width(ch) as usize;
+        canvas.put((x + col) as isize, y as isize, ch);
+        if w == 2 {
+            canvas.put((x + col + 1) as isize, y as isize, super::paint::WIDE_TAIL);
+        }
+        col += w.max(1);
+    }
+    col
 }
 
 /// `⚙12 ×2` — tool calls made, and attempts if this is not the first.
@@ -139,7 +161,7 @@ fn counters(row: &Row) -> String {
 /// The second line: what the node is, and — when the card is wide enough to hold both —
 /// the model actually serving it.
 fn subtitle(row: &Row, inner: usize) -> String {
-    if row.model.is_empty() || row.what.chars().count() + row.model.chars().count() + 3 > inner {
+    if row.model.is_empty() || corelib::unicode::str_width(&row.what) + corelib::unicode::str_width(&row.model) + 3 > inner {
         return row.what.clone();
     }
     format!("{} \u{b7} {}", row.what, row.model)

@@ -56,6 +56,20 @@ fn painted(b: &Arc<Board>) -> String {
     painted_at(b, 200)
 }
 
+
+/// Unwrap one painted frame: every live paint is bracketed in synchronized-output marks
+/// (BSU/ESU, DECSET 2026) so a terminal that understands them draws it atomically. The
+/// wrapper is asserted here once and stripped, so every test below reads the frame the
+/// way the older contract wrote it.
+fn frame(bytes: &[u8]) -> String {
+    let text = String::from_utf8(bytes.to_vec()).expect("a painted frame is UTF-8");
+    let inner = text
+        .strip_prefix("\x1b[?2026h")
+        .and_then(|t| t.strip_suffix("\x1b[?2026l"))
+        .unwrap_or_else(|| panic!("a frame is BSU/ESU-wrapped: {text:?}"));
+    inner.to_string()
+}
+
 #[test]
 fn every_node_has_a_line_from_the_start() {
     // The whole point: you see the shape of the run before it has happened, not a
@@ -164,14 +178,14 @@ fn a_repaint_lands_back_on_the_first_row_and_leaves_nothing_behind() {
 
         let mut out: Vec<u8> = Vec::new();
         b.paint_to(&mut out);
-        let first = String::from_utf8(out.clone()).unwrap();
+        let first = frame(&out);
         // Nothing painted yet → no cursor movement, just the block.
         assert!(!first.starts_with("\x1b["), "the first paint erases nothing ({view}): {first:?}");
         let rows_painted = first.lines().count();
 
         out.clear();
         b.paint_to(&mut out);
-        let second = String::from_utf8(out).unwrap();
+        let second = frame(&out);
         // It must return to column 0, climb back over the block, and clear downward.
         // Climbing `rows_painted - 1` is right ONLY because the cursor is still on the
         // last painted line — which is what the no-trailing-newline rule guarantees.
@@ -189,7 +203,7 @@ fn a_repaint_lands_back_on_the_first_row_and_leaves_nothing_behind() {
         b.settled("plan", State::Done, 3300, 4200, "");
         let mut out: Vec<u8> = Vec::new();
         b.paint_to(&mut out);
-        let third = String::from_utf8(out).unwrap();
+        let third = frame(&out);
         assert!(third.starts_with(&format!("\r\x1b[{}A\x1b[0J", rows_painted - 1)), "{view}: {third:?}");
         assert_eq!(third.lines().count(), rows_painted, "still the same block ({view}): {third:?}");
         // Exactly one CARD line is the plan row (substring-counting would also match the
@@ -390,7 +404,7 @@ fn a_held_board_paints_nothing_so_an_answer_can_be_typed() {
     b.paint_into(&mut after, 80, 24);
     assert!(!after.is_empty(), "and the board comes back once the question is answered");
     // It repaints from scratch rather than climbing over the prompt it just wrote.
-    let text = String::from_utf8(after).unwrap();
+    let text = frame(&after);
     assert!(!text.starts_with("\x1b["), "the first paint after a hold erases nothing: {text:?}");
 }
 
@@ -468,4 +482,122 @@ fn an_unknown_view_name_gives_the_better_picture_not_the_worse_one() {
     // A misspelt setting must not silently demote what you see.
     let text = painted(&fixture("grahp"));
     assert!(text.contains('\u{256d}'), "it fell back to the cards:\n{text}");
+}
+
+#[test]
+fn a_narrower_window_resets_rather_than_climbs() {
+    // The rows already on screen rewrap taller the moment the window narrows; their
+    // physical shape is unknowable, so a climb of any count lands somewhere that is no
+    // longer the board. The paint must give the old block up: no climb, erase from here,
+    // start counting again.
+    let b = fixture("graph");
+    let mut out: Vec<u8> = Vec::new();
+    b.paint_into(&mut out, 120, 40);
+    let first = frame(&out);
+    assert!(first.lines().count() > 1, "a block to make stale");
+
+    out.clear();
+    b.paint_into(&mut out, 80, 40);
+    let narrowed = frame(&out);
+    assert!(narrowed.starts_with("\r\x1b[0J"), "no climb after a narrowing: {narrowed:?}");
+    assert!(!narrowed.contains("\x1b[1A") && !narrowed.contains("A\x1b[0J") || narrowed.starts_with("\r\x1b[0J"),
+        "the reset is the whole erase: {narrowed:?}");
+
+    // And the very next frame is stable again: same width, a normal climb of the count
+    // the reset frame painted.
+    let painted = narrowed.lines().count();
+    out.clear();
+    b.paint_into(&mut out, 80, 40);
+    let steady = frame(&out);
+    assert!(steady.starts_with(&crate::cli::erase_seq(painted)), "back to climbing: {steady:?}");
+}
+
+#[test]
+fn a_wider_window_keeps_the_climb() {
+    // Widening is provably safe: no painted row was ever wider than the old window, so
+    // nothing ever wrapped, so the block's physical shape is exactly its line count.
+    // Resetting here would leave a stale block on every enlarge for no reason.
+    let b = fixture("graph");
+    let mut out: Vec<u8> = Vec::new();
+    b.paint_into(&mut out, 80, 40);
+    let painted = frame(&out).lines().count();
+
+    out.clear();
+    b.paint_into(&mut out, 120, 40);
+    let widened = frame(&out);
+    assert!(widened.starts_with(&crate::cli::erase_seq(painted)), "a widening climbs as usual: {widened:?}");
+}
+
+#[test]
+fn a_window_shorter_than_the_block_resets_too() {
+    // The top of the block scrolled away; climbing to it lands in somebody else's output.
+    let b = fixture("graph");
+    let mut out: Vec<u8> = Vec::new();
+    b.paint_into(&mut out, 120, 40);
+    let tall = frame(&out).lines().count();
+
+    out.clear();
+    b.paint_into(&mut out, 120, tall); // block no longer fits above the prompt row
+    let shortened = frame(&out);
+    assert!(shortened.starts_with("\r\x1b[0J"), "no climb into scrolled-away rows: {shortened:?}");
+}
+
+#[test]
+fn no_view_bug_can_wrap_a_row_past_the_window() {
+    // The belt and braces: the views promise no row is wider than the window, and the
+    // write point enforces it rather than trusting them. A hostile row — wide glyphs the
+    // char count under-measures — comes out clipped to the window's columns.
+    let b = fixture("graph");
+    b.note("left", &"漢".repeat(200)); // 200 chars, 400 columns
+    let mut out: Vec<u8> = Vec::new();
+    b.paint_into(&mut out, 60, 0);
+    let text = frame(&out);
+    for line in text.lines() {
+        let w = crate::flow::board::view::visible_width(line);
+        assert!(w <= 60, "a row escaped the clamp at {w} columns: {line:?}");
+    }
+}
+
+#[test]
+fn wide_glyphs_measure_as_the_columns_they_occupy() {
+    // A CJK id is two columns per char. Counted as one, the card's right border lands
+    // left of where the terminal draws the text, and the row overflows the window the
+    // measurement said it fit — which is the drift that broke the erase.
+    let b = Board::new(
+        "translate · docs".into(),
+        vec![
+            BoardNode { id: "翻訳".into(), what: "@writer".into(), ..BoardNode::default() },
+            BoardNode { id: "check".into(), what: "@reviewer".into(), needs: vec!["翻訳".into()], ..BoardNode::default() },
+        ],
+        true,
+        "graph",
+        2,
+        crate::motivation::Muse::silent(),
+    );
+    let text = b.draw_in(100, 0);
+    for line in text.lines().filter(|l| l.contains('\u{2502}')) {
+        // Every card row must END at the same column its top border established: the
+        // border characters are the ruler, and wide text must not push them apart.
+        let w = crate::flow::board::view::visible_width(line);
+        let border = b.draw_in(100, 0);
+        let top = border.lines().find(|l| l.contains('\u{256d}')).map(crate::flow::board::view::visible_width).unwrap_or(w);
+        assert_eq!(w, top, "a row with wide glyphs drifted: {line:?}");
+    }
+}
+
+#[test]
+fn an_event_no_longer_paints_only_the_ticker_does() {
+    // Every worker used to paint on every event, on top of the 8 Hz ticker — dozens of
+    // full erase-and-redraw frames a second under heavy tool traffic, which was most of
+    // what "unstable" looked like. An event now changes state; the frame clock draws it.
+    let b = fixture("graph");
+    let before = b.draw_in(100, 0);
+    // Events on a live board: no bytes may reach the screen here — there is no writer
+    // to hand them, which is the point; the assertion is that these APIs return without
+    // painting (they used to write to stderr directly).
+    b.running("left", "@reviewer");
+    b.tool("left", "\u{2699} fs.read src/cli.rs");
+    b.settled("left", State::Done, 1200, 800, "");
+    let after = b.draw_in(100, 0);
+    assert_ne!(before, after, "the state moved so the next frame will differ");
 }

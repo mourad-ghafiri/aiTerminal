@@ -156,8 +156,9 @@ pub(crate) struct Board {
     title: String,
     /// Repaint in place, or print one line per change.
     live: bool,
-    /// How many lines the last paint used, so the next one can erase exactly them.
-    painted: Mutex<usize>,
+    /// What the last paint left on screen, so the next one can erase exactly it.
+    painted: Mutex<PaintedBlock>,
+
     frame: Mutex<usize>,
     started: std::time::Instant,
     stop: Arc<AtomicBool>,
@@ -211,7 +212,7 @@ impl Board {
             rows: Mutex::new(rows),
             title,
             live,
-            painted: Mutex::new(0),
+            painted: Mutex::new(PaintedBlock::default()),
             frame: Mutex::new(0),
             started: std::time::Instant::now(),
             stop: Arc::new(AtomicBool::new(false)),
@@ -261,7 +262,7 @@ impl Board {
         if self.live {
             // Leave the cursor under the board rather than on its last row, so the prompt
             // is written below the picture instead of over it.
-            *self.painted.lock().unwrap_or_else(|e| e.into_inner()) = 0;
+            *self.painted.lock().unwrap_or_else(|e| e.into_inner()) = PaintedBlock::default();
             eprintln!();
         }
         Hold { board: Arc::clone(self), restore }
@@ -276,7 +277,7 @@ impl Board {
         if self.live {
             self.paint();
             // The next thing printed starts on its own line rather than inside ours.
-            *self.painted.lock().unwrap_or_else(|e| e.into_inner()) = 0;
+            *self.painted.lock().unwrap_or_else(|e| e.into_inner()) = PaintedBlock::default();
             eprintln!();
         }
         // Last, so the terminal is only handed back once nothing else will be drawn: the
@@ -362,6 +363,12 @@ impl Board {
         self.event(id, &format!("{} {detail}", state.word()));
     }
 
+    /// Change a row, and nothing else. The ticker is the ONLY painter while the board is
+    /// live: every worker used to paint from here on every event, on top of the ticker —
+    /// dozens of full erase-and-redraw frames a second under heavy tool traffic, which
+    /// was most of what "unstable" looked like. An event now changes state; the frame
+    /// clock draws it, at most 120 ms later, which is the same beat the spinner already
+    /// ticks at.
     fn update(&self, id: &str, f: impl FnOnce(&mut Row)) {
         if let Ok(mut rows) = self.rows.lock() {
             let stamp = rows.iter().map(|r| r.touched).max().unwrap_or(0) + 1;
@@ -369,9 +376,6 @@ impl Board {
                 f(row);
                 row.touched = stamp;
             }
-        }
-        if self.live {
-            self.paint();
         }
     }
 
@@ -394,21 +398,28 @@ impl Board {
     /// the part that broke, and it is invisible in the rendered text alone.
     ///
     /// `erase_seq` climbs `painted - 1` rows because it assumes the cursor is still ON
-    /// the last painted line. That holds only if the block is newline-**separated** and
-    /// no row is wider than the window; both are a [`View`]'s contract, and both are
-    /// asserted for each view.
+    /// the last painted line, and that the block still occupies exactly that many
+    /// physical rows. Three things can break the second half, and all three are handled
+    /// HERE, at the one write point, rather than promised by every view:
     ///
-    /// The third way to defeat it is a block TALLER than the window: the terminal scrolls
-    /// to fit it, the top rows leave the screen, and climbing back up now lands somewhere
-    /// that is no longer the board. A view choosing to be too tall is a bug, but the
-    /// consequence is corruption of everything above it, so the clamp is here rather than
-    /// left to each view to promise.
+    /// * **The window narrowed.** The rows already on screen rewrap taller, the climb
+    ///   lands mid-block, and every frame after stacks garbage. The old block's physical
+    ///   shape is unknowable after a rewrap, so the paint does not climb at all: it
+    ///   resets and draws fresh, leaving at most one stale partial block above per
+    ///   resize — an artifact, never corruption. Widening is provably safe (no painted
+    ///   row was ever wider than the old window, so nothing ever wrapped) and keeps the
+    ///   normal climb.
+    /// * **The window got shorter than the block.** The top rows scrolled away; climbing
+    ///   to them lands in somebody else's output. Same reset.
+    /// * **A row wider than the window.** The terminal wraps it into two physical rows
+    ///   while the count says one. Every outgoing line is hard-clipped to `cols` by
+    ///   DISPLAY width here, so no view bug can ever wrap a row again.
     fn paint_to(&self, w: &mut dyn std::io::Write) {
         self.paint_into(w, crate::cli::term_cols(), crate::cli::term_rows());
     }
 
     /// The paint into a window of a stated size — the seam that lets a test drive the
-    /// clamp, which the real terminal size cannot be made to exercise.
+    /// resize and clamp rules, which the real terminal size cannot be made to exercise.
     fn paint_into(&self, w: &mut dyn std::io::Write, cols: usize, rows: usize) {
         if self.held.load(Ordering::Relaxed) {
             return; // somebody else owns the cursor
@@ -418,11 +429,26 @@ impl Board {
             0 => drawn,
             _ => crate::cli::live::clamp_tail(&drawn, rows.saturating_sub(1)).0,
         };
+        // The belt-and-braces width clamp (see above).
+        let text: String = text
+            .split('\n')
+            .map(|l| crate::cli::live::clip_styled(l, cols))
+            .collect::<Vec<_>>()
+            .join("\n");
         let lines = text.lines().count();
         let mut painted = self.painted.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = write!(w, "{}{text}", crate::cli::erase_seq(*painted));
+        let fits = painted.cols <= cols && (rows == 0 || painted.lines < rows);
+        let erase = match fits {
+            true => crate::cli::erase_seq(painted.lines),
+            // The old block's shape is unknowable — start fresh where the cursor is.
+            false => "\r\x1b[0J".to_string(),
+        };
+        // One frame, atomically where the terminal supports it (BSU/ESU, DECSET 2026) —
+        // an unknown private mode everywhere else, including our own VT engine, and
+        // ignored there, which is exactly what a hint should cost.
+        let _ = write!(w, "\x1b[?2026h{erase}{text}\x1b[?2026l");
         let _ = w.flush();
-        *painted = lines;
+        *painted = PaintedBlock { lines, cols };
     }
 
     /// The board in a window of a stated size — the same function the paint writes and
@@ -458,6 +484,15 @@ impl Drop for Board {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
     }
+}
+
+/// What the last paint left on screen. The `cols` it was painted at travels with the
+/// line count because the two are only meaningful together: a count measured at one
+/// width says nothing about a window that has since narrowed.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PaintedBlock {
+    lines: usize,
+    cols: usize,
 }
 
 /// The screen and the keyboard, lent out. Dropping it takes them back.
