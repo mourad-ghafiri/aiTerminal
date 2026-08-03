@@ -71,8 +71,9 @@ the shell setting a variable, not the command — and `echo hi | <denied>` is re
 
 ## Paths
 
-Rules are regexes over the resolved **absolute** path, so `\.env$` and `/clients/` both
-read the way you would write them. Every judgement tests the path as given *and* its
+Rules are regexes over the resolved **absolute** path, which is what lets one line cover a
+**folder** and everything under it (`(^|/)\.ssh/`) and another cover a kind of **file**
+wherever it lives (`\.(pem|key|p12)$`). Every judgement tests the path as given *and* its
 canonical form, because a symlink is a second name for a file and a rule is about the file.
 
 They reach further than the file tools. `cat ~/.ssh/id_rsa` never goes near `fs.read`, so

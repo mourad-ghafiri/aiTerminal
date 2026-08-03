@@ -103,8 +103,8 @@ See [shell.md](shell.md).
 ## Security
 
 One guard, three subjects: what may **run** (allow/confirm/deny over AI-suggested
-commands and agent `sys.run`), what may be **touched** (path rules that reach the file
-tools *and* the paths a command names), and what may **leave**.
+commands and agent `sys.run`), what may be **touched** (regex rules over files and
+folders, reaching the file tools *and* the paths a command names), and what may **leave**.
 
 **Secrets leave as placeholders and come back as themselves.** AWS/OpenAI/Anthropic/
 GitHub/Slack/Google keys, bearer tokens, JWTs, PEM blocks and any sensitive-looking

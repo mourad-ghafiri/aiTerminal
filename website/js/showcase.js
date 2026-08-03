@@ -1037,10 +1037,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
     guard: {
       caption: () => caption("The AI proposes. <em>The guard disposes.</em>",
-        "What may <b>run</b>: allow · ⚠ confirm · ✗ deny, and deny always wins. Every line, every pipeline stage and each stage's program is judged, so a harmless first word cannot shield what follows it."),
+        "What may <b>run</b>: allow · ⚠ confirm · ✗ deny, and deny always wins. Every rule is a <b>regex</b>, so one line covers a family of commands — and every line, every pipeline stage and each stage's program is judged, so a harmless first word cannot shield what follows it."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
+
+          /* The rules first: they are the feature, and they are data you write. */
+          { do: "cmd", text: "cat ~/.aiTerminal/config.toml" },
+          { do: "out", spans: [ACC2("[[guard.command]]")], ms: 55 },
+          { do: "out", spans: [MUT("pattern = "), FG("\"git\\s+push\\s+.*--force\""), DIM("   # a regex, not a word list")], ms: 55 },
+          { do: "out", spans: [MUT("rule    = "), FG("\"confirm\"")], ms: 55 },
+          { do: "out", spans: [ACC2("[[guard.command]]")], ms: 55 },
+          { do: "out", spans: [MUT("pattern = "), FG("\"\\bmkfs\\b|dd\\s+.*of=/dev/\""), DIM("   # one line, a whole family")], ms: 55 },
+          { do: "out", spans: [MUT("rule    = "), FG("\"deny\"")], ms: 55 },
+          { do: "pause", ms: 900 },
+
           { do: "cmd", text: "@ai clean the build artifacts" },
           { do: "spin", label: "thinking…", ms: 800 },
           { do: "out", spans: [ACC("❯ "), DIM("press Enter to run (or edit)")] },
@@ -1059,14 +1070,30 @@ document.addEventListener("DOMContentLoaded", () => {
     },
 
     paths: {
-      caption: () => caption("Some folders are simply <em>not yours to read</em>",
-        "What may be <b>touched</b>: the same three tiers over paths, as regex you write once. They reach the file tools <em>and</em> the paths a command names — because <code>cat ~/.ssh/id_rsa</code> never goes near <code>fs.read</code>. A refused step is information, not a crash: the agent works around it."),
+      caption: () => caption("Some <em>files and folders</em> are simply not yours to read",
+        "What may be <b>touched</b>: the same three tiers, as <b>regex</b> over the full path. One line covers a folder and everything under it; another covers a kind of <em>file</em>, wherever it lives. They reach the file tools <em>and</em> the paths a command names — because <code>cat ~/.ssh/id_rsa</code> never goes near <code>fs.read</code>. A refused step is information, not a crash: the agent works around it."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
+
+          /* A folder rule, a file rule and a read-only rule — all regex. */
+          { do: "cmd", text: "cat ~/.aiTerminal/config.toml" },
+          { do: "out", spans: [ACC2("[[guard.path]]")], ms: 55 },
+          { do: "out", spans: [MUT("pattern = "), FG("\"(^|/)\\.ssh/\""), DIM("   # a FOLDER, and everything under it")], ms: 55 },
+          { do: "out", spans: [MUT("rule    = "), FG("\"deny\"")], ms: 55 },
+          { do: "out", spans: [ACC2("[[guard.path]]")], ms: 55 },
+          { do: "out", spans: [MUT("pattern = "), FG("\"\\.(pem|key|p12)$\""), DIM("   # a kind of FILE, wherever it lives")], ms: 55 },
+          { do: "out", spans: [MUT("rule    = "), FG("\"deny\"")], ms: 55 },
+          { do: "out", spans: [ACC2("[[guard.path]]")], ms: 55 },
+          { do: "out", spans: [MUT("pattern = "), FG("\"^/etc/\""), DIM("   # read it, never change it")], ms: 55 },
+          { do: "out", spans: [MUT("rule    = "), FG("\"read-only\"")], ms: 55 },
+          { do: "pause", ms: 900 },
+
           { do: "cmd", text: "@agent coder \"why is the deploy failing?\"" },
           { do: "out", spans: [MUT("  ⚙ fs.read   "), FG("~/.ssh/config")], ms: 90 },
-          { do: "out", spans: [ERR("  ⛔ refused"), DIM(" — matches an off-limits path  /\\.ssh/")], ms: 90 },
+          { do: "out", spans: [ERR("  ⛔ refused"), DIM(" — the folder is off limits  /(^|/)\\.ssh//")], ms: 90 },
+          { do: "out", spans: [MUT("  ⚙ fs.read   "), FG("deploy/certs/server.pem")], ms: 90 },
+          { do: "out", spans: [ERR("  ⛔ refused"), DIM(" — the file is off limits  /\\.(pem|key|p12)$/")], ms: 90 },
           { do: "out", spans: [MUT("  ⚙ fs.read   "), FG("deploy/config.yml"), MUT("  ·  1.2KB")], ms: 90 },
           { do: "out", spans: [MUT("  ⚙ diag.check"), FG("  deploy/"), MUT("  ·  2 errors")], ms: 90 },
           { do: "pause", ms: 700 },
@@ -1092,10 +1119,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
     redact: {
       caption: () => caption("Your secrets leave as <em>placeholders</em> — and come back",
-        "What may <b>leave</b>: a matching value goes out as <code>«credential-1»</code> and becomes itself again the moment the text returns to your machine — so an agent can <em>use</em> a password it was never shown. Nine rules ship for the usual keys, tokens and sensitive <code>KEY=value</code> pairs; add <code>scope = \"terminal\"</code> to mask them on your screen too."),
+        "What may <b>leave</b>: a value matching one of your <b>regex</b> rules goes out as <code>«credential-1»</code> and becomes itself again the moment the text returns to your machine — so an agent can <em>use</em> a password it was never shown. Nine rules ship for the usual keys, tokens and sensitive <code>KEY=value</code> pairs; add <code>scope = \"terminal\"</code> to mask them on your screen too."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
+
+          /* Same vocabulary, third subject — and the name is what the placeholder
+             is called, never anything about the value. */
+          { do: "cmd", text: "cat ~/.aiTerminal/config.toml" },
+          { do: "out", spans: [ACC2("[[guard.secret]]")], ms: 55 },
+          { do: "out", spans: [MUT("pattern = "), FG("\"sk-[A-Za-z0-9_-]{16,}\""), DIM("   # a shape, not a list of keys")], ms: 55 },
+          { do: "out", spans: [MUT("name    = "), FG("\"api-key\""), DIM("   # names the placeholder")], ms: 55 },
+          { do: "out", spans: [ACC2("[[guard.secret]]")], ms: 55 },
+          { do: "out", spans: [MUT("pattern = "), FG("\"(?i)(password|token|secret)\\s*[:=]\\s*\\S+\"")], ms: 55 },
+          { do: "out", spans: [MUT("name    = "), FG("\"credential\"")], ms: 55 },
+          { do: "pause", ms: 900 },
+
           { do: "cmd", text: "cat .env" },
           { do: "out", spans: [ACC2("DATABASE_URL"), MUT("="), FG("postgres://db.internal/prod")], ms: 70 },
           { do: "out", spans: [ACC2("AWS_ACCESS_KEY_ID"), MUT("="), WARN("AKIA…")], ms: 70 },
