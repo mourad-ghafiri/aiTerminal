@@ -1,8 +1,17 @@
-//! Writing the pool — one model call, in the background, at most every few weeks.
+//! Writing the pool — one model call, in a detached process, at most every few weeks.
 //!
-//! It runs on a **detached thread** and nothing waits for it. The run that triggered it
-//! uses whatever was already on disk; the next one gets the benefit. A decoration that
-//! could delay an answer would have stopped being a decoration.
+//! A detached **process**, and that word is the fix. This used to be a detached thread,
+//! and a thread dies with the process that spawned it: the CLI exits the moment a run
+//! finishes, which is almost always before a model call completes — so the pool was
+//! never written, the muse stayed mute forever, and every run re-spawned a thread whose
+//! fate was already decided. Confirmed the hard way: a machine with weeks of AI use and
+//! no `cache/` directory at all.
+//!
+//! So the refill is now this binary re-invoked and detached into its own session — the
+//! exact shape a `--bg` job takes — and it survives the run that asked for it. Nothing
+//! waits for it. The run that triggered it uses whatever was already on disk; the next
+//! one gets the benefit. A decoration that could delay an answer would have stopped
+//! being a decoration.
 //!
 //! Tips are the interesting half. A model does not know this tool, so asking it for
 //! "tips about aiTerminal" invents commands that do not exist — a line that teaches you
@@ -16,19 +25,61 @@ use super::{Kind, Line, Pool, MAX_LEN};
 /// few enough to be one small reply.
 const WANTED: usize = 24;
 
-/// Ask for the pool, in the background. Returns immediately.
+/// How long one attempt is given before another run may try again. Long enough for any
+/// model call; short enough that a child that died (a laptop lid, a crash) is not a
+/// feature stuck off for a day.
+const ATTEMPT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Ask for the pool, in a detached child. Returns immediately.
 pub(crate) fn in_background(cfg: &crate::config::Config) {
-    let settings = cfg.ai_settings();
-    if settings.resolve_key().is_none() {
+    if cfg.ai_settings().resolve_key().is_none() {
         return; // no model, no lines, nothing said about it
     }
-    let kinds: Vec<Kind> = cfg.motivation().kinds;
-    std::thread::spawn(move || {
-        let client = crate::ai::Client::new(settings, crate::ai::CurlTransport::default());
-        if let Some(pool) = write_with(&client, &kinds, crate::flowruns::now()) {
-            pool.save();
-        }
-    });
+    // One attempt at a time: every run whose pool is thin lands here, and without the
+    // stamp each would launch its own child until the first one finished.
+    let stamp = super::path().with_file_name("refill.stamp");
+    if attempted_recently(&stamp) {
+        return;
+    }
+    if let Some(parent) = stamp.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&stamp, b"");
+    let (Ok(exe), Ok(out), Ok(err)) = (
+        std::env::current_exe(),
+        std::fs::OpenOptions::new().write(true).open("/dev/null"),
+        std::fs::OpenOptions::new().write(true).open("/dev/null"),
+    ) else {
+        return; // a decoration never reports its own failure
+    };
+    let _ = platform::os::spawn_detached(&exe, &["ai".into(), "refill-motivation".into()], out, err);
+}
+
+/// Whether an attempt is already in flight (or recently died) — the stamp's mtime is
+/// inside [`ATTEMPT`]. Its own function so the suppression window is a fact a test can
+/// state with a file in a temp dir, rather than behaviour that needs a spawned child to
+/// observe.
+pub(crate) fn attempted_recently(stamp: &std::path::Path) -> bool {
+    std::fs::metadata(stamp)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < ATTEMPT)
+}
+
+/// The child's whole life: one model call, one file, exit. Runs in a process of its own
+/// so no foreground run ever waits for it — and so it survives the one that asked.
+pub(crate) fn run_now() -> i32 {
+    let cfg = crate::config::Config::load();
+    let settings = cfg.ai_settings();
+    if settings.resolve_key().is_none() {
+        return 0;
+    }
+    let client = crate::ai::Client::new(settings, crate::ai::CurlTransport::default());
+    if let Some(pool) = write_with(&client, &cfg.motivation().kinds, crate::flowruns::now()) {
+        pool.save();
+    }
+    0
 }
 
 /// One call, decoded. `None` when the call fails or nothing usable comes back — in which

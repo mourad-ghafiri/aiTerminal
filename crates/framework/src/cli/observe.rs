@@ -155,6 +155,15 @@ impl Drop for Spinner {
 pub(crate) struct Motivated {
     base: String,
     muse: crate::motivation::Muse,
+    /// Waiting time from spinners that have already finished. A run starts one spinner
+    /// per model turn, and each restarts its clock — so a run of eight turns, each a few
+    /// seconds, never reached `after` and the aside never fired anywhere but the one-shot
+    /// calls. What `[motivation] after` means is "this run has kept you waiting long
+    /// enough", and that is a fact about the run, not about whichever turn it is on.
+    banked: std::time::Duration,
+    /// The last `waited` seen, so a restart (the next turn's spinner) is detectable: the
+    /// clock going backwards is the old spinner's total, banked.
+    last: std::time::Duration,
 }
 
 impl Motivated {
@@ -164,14 +173,46 @@ impl Motivated {
         let muse = crate::motivation::for_run(cfg);
         match muse.mute() {
             true => Box::new(base.to_string()),
-            false => Box::new(Motivated { base: base.to_string(), muse }),
+            false => Box::new(Motivated {
+                base: base.to_string(),
+                muse,
+                banked: std::time::Duration::ZERO,
+                last: std::time::Duration::ZERO,
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Motivated {
+    /// A label over these exact lines — so a test states the pacing with durations
+    /// instead of a config file, a cache dir and a `$HOME` lock.
+    pub(crate) fn over(base: &str, lines: &[&str], after: std::time::Duration, every: std::time::Duration) -> Motivated {
+        let pool = crate::motivation::Pool {
+            lines: lines.iter().filter_map(|t| crate::motivation::Line::new(crate::motivation::Kind::Tip, t)).collect(),
+            written: 1,
+        };
+        let settings = crate::motivation::Settings { enabled: true, kinds: vec![crate::motivation::Kind::Tip], after, every };
+        Motivated {
+            base: base.to_string(),
+            muse: crate::motivation::Muse::new(&pool, &settings, 0),
+            banked: std::time::Duration::ZERO,
+            last: std::time::Duration::ZERO,
         }
     }
 }
 
 impl Waiting for Motivated {
     fn label(&mut self, waited: std::time::Duration) -> String {
-        match self.muse.line(waited) {
+        // The clock running backwards means a new spinner has started under this label —
+        // bank what the old one accumulated, and keep counting. The muse then sees one
+        // monotonic wait for the whole run, which is what lets its `after` fire on turn
+        // five of a run whose every individual wait was short.
+        if waited < self.last {
+            self.banked += self.last;
+        }
+        self.last = waited;
+        match self.muse.line(self.banked + waited) {
             Some(line) => format!("{} \u{b7} {line}", self.base),
             None => self.base.clone(),
         }
@@ -412,6 +453,9 @@ pub(crate) fn finish_streamed(obs: &mut CliObserver, answer: &str) {
     obs.settle();
     let a = answer.trim();
     obs.view.with(|v| {
+        // The run is over: the keyboard comes back before the footer prints, so the
+        // shell prompt that follows is usable the moment it appears.
+        v.finish();
         if a.is_empty() || v.shown().contains(a) {
             return;
         }

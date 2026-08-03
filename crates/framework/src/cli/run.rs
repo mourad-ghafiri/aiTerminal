@@ -27,6 +27,10 @@ pub fn ai(args: &[String]) -> i32 {
         Some("job") => return ai_job_cmd(args),
         Some("flow") => return ai_flow_cmd(args),
         Some("loop") => return ai_loop_cmd(args),
+        // Machinery, not surface: the detached child that writes the `[motivation]` line
+        // pool (see `motivation::refill`). Deliberately absent from the usage text — it
+        // is how the feature works, not something a person runs.
+        Some("refill-motivation") => return crate::motivation::refill::run_now(),
         _ => {}
     }
 

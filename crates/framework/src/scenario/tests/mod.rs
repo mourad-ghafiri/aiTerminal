@@ -17,7 +17,7 @@ fn memory_scenarios() {
 
 #[test]
 fn flow_scenarios() {
-    check("flow", 21);
+    check("flow", 22);
 }
 
 #[test]

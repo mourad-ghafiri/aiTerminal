@@ -481,3 +481,49 @@ fn outcomes_map_to_honest_exit_codes() {
     assert_eq!(outcome_exit(&RunOutcome::ToolStall), 1);
     assert_eq!(outcome_exit(&RunOutcome::Cancelled), 130, "the interrupt convention");
 }
+
+#[test]
+fn the_wait_for_an_aside_spans_the_run_not_one_turn() {
+    // A run starts one spinner per model turn, and each restarts its clock — so a run of
+    // eight short turns never reached `[motivation] after`, and the aside never fired
+    // anywhere but the one-shot calls. The label banks the wait: what `after` means is
+    // "this run has kept you waiting long enough", a fact about the run.
+    use crate::cli::observe::{Motivated, Waiting};
+    use std::time::Duration;
+    let mut label = Motivated::over("thinking…", &["press ⌘P for the switcher"], Duration::from_secs(6), Duration::from_secs(15));
+
+    // Turn one: four seconds of waiting, no aside yet.
+    assert_eq!(label.label(Duration::from_secs(2)), "thinking…");
+    assert_eq!(label.label(Duration::from_secs(4)), "thinking…");
+    // Turn two: the clock restarts under the label — three more seconds crosses six total.
+    assert_eq!(label.label(Duration::from_secs(1)), "thinking…");
+    assert_eq!(
+        label.label(Duration::from_secs(3)),
+        "thinking… · press ⌘P for the switcher",
+        "the seventh cumulative second is past `after`, whichever turn it lands in"
+    );
+}
+
+#[test]
+fn a_fresh_run_starts_its_wait_from_zero() {
+    // Banking is per label, and a label is per run — the next run builds its own and
+    // owes nothing to the last one's waiting.
+    use crate::cli::observe::{Motivated, Waiting};
+    use std::time::Duration;
+    let mut label = Motivated::over("thinking…", &["a tip"], Duration::from_secs(6), Duration::from_secs(15));
+    assert_eq!(label.label(Duration::from_secs(5)), "thinking…", "five seconds is not six");
+}
+
+#[test]
+fn a_refill_attempt_is_not_repeated_while_one_is_in_flight() {
+    // Every run whose pool is thin asks for a refill; without the stamp each would spawn
+    // its own child until the first one landed.
+    let dir = std::env::temp_dir().join(format!("tt-refill-stamp-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let stamp = dir.join("refill.stamp");
+    let _ = std::fs::remove_file(&stamp);
+    assert!(!crate::motivation::refill::attempted_recently(&stamp), "no stamp, no suppression");
+    std::fs::write(&stamp, b"").unwrap();
+    assert!(crate::motivation::refill::attempted_recently(&stamp), "a fresh stamp suppresses the next attempt");
+    let _ = std::fs::remove_dir_all(&dir);
+}

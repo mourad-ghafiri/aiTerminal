@@ -54,6 +54,8 @@ pub struct FlowWorld {
     built: Option<Result<crate::flow::build::Built, String>>,
     /// How tall the window is, for the card view's fit check. `0` = as tall as it likes.
     window_rows: usize,
+    /// Lines for the board's aside row, when a journey is about that row existing.
+    muse_lines: Vec<String>,
 }
 
 /// Everything an assertion can look at after a run.
@@ -113,6 +115,7 @@ pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
         catalogue: Vec::new(),
         built: None,
         window_rows: 0,
+        muse_lines: Vec::new(),
     }))
 }
 
@@ -343,6 +346,10 @@ impl World for FlowWorld {
         }
         // How tall the window is. The card view is the only thing that asks, and what it
         // does when the answer is "not very" is worth stating rather than assuming.
+        if let Some(lines) = world::list(step, "muse_lines") {
+            self.muse_lines = lines;
+            return Ok(());
+        }
         if let Some(n) = world::int(step, "window_rows") {
             self.window_rows = n.max(0) as usize;
             return Ok(());
@@ -593,7 +600,31 @@ impl FlowWorld {
                 mcps: 0,
             })
             .collect();
-        let board = Board::new("scenario".into(), nodes, false, view, self.concurrency, crate::motivation::Muse::silent());
+        // Silent unless the scenario says otherwise: `muse_lines = [...]` in the setup
+        // gives the board something to say, with `after` at zero so a drawn frame shows
+        // it — the pacing itself is pinned by unit tests, and a scenario about the aside
+        // is about the ROW: that it appears, and that it costs exactly one line.
+        let muse = match self.muse_lines.is_empty() {
+            true => crate::motivation::Muse::silent(),
+            false => {
+                let pool = crate::motivation::Pool {
+                    lines: self
+                        .muse_lines
+                        .iter()
+                        .filter_map(|t| crate::motivation::Line::new(crate::motivation::Kind::Tip, t))
+                        .collect(),
+                    written: 1,
+                };
+                let settings = crate::motivation::Settings {
+                    enabled: true,
+                    kinds: vec![crate::motivation::Kind::Tip],
+                    after: std::time::Duration::ZERO,
+                    every: std::time::Duration::from_secs(60),
+                };
+                crate::motivation::Muse::new(&pool, &settings, 0)
+            }
+        };
+        let board = Board::new("scenario".into(), nodes, false, view, self.concurrency, muse);
         // A run is optional: the shape of a flow is worth asserting before it has run,
         // which is exactly what a board drawn from the file alone shows.
         if let Some(outcome) = self.outcome.as_ref() {

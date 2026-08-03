@@ -1,0 +1,44 @@
+name = "the board's aside is one constant row, drawn only when it has something to say"
+tags = ["flow", "board", "motivation"]
+
+# The line that keeps you company while a graph works. Two facts a person notices if
+# they break: it costs exactly one row (a board whose height changed as a line arrived
+# is a board the repaint cannot erase), and with the feature silent there is no row at
+# all — not a blank one.
+
+[[step]]
+flow = """
+[[node]]
+id     = "plan"
+agent  = "explorer"
+prompt = "Plan: {{input}}"
+
+[[node]]
+id     = "do"
+agent  = "coder"
+needs  = ["plan"]
+prompt = "Do it: {{plan.output}}"
+"""
+
+[[step]]
+run = true
+
+# Silent muse: the drawn board carries no aside line at all — not a blank one.
+[[step]]
+expect_graph_view_contains = ["2/2 done"]
+
+[[step]]
+expect_graph_view_excludes = ["press cmd-P"]
+
+[[step]]
+expect_board_ends_on_its_last_row = true
+
+# A speaking muse: the same board carries exactly one more row, and it is the line.
+[[step]]
+muse_lines = ["press cmd-P for the quick switcher"]
+
+[[step]]
+expect_graph_view_contains = ["press cmd-P for the quick switcher"]
+
+[[step]]
+expect_board_ends_on_its_last_row = true
