@@ -4,12 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>aiTerminal — the film</title>
-<meta name="description" content="A 90-second film: aiTerminal, the fast, light, AI-first terminal written from scratch in Rust. @ai at your prompt, agents that finish the job, your terminal on your phone, and a guard that has the last word.">
+<meta name="description" content="A two-minute film: aiTerminal, the fast, light, AI-first terminal written from scratch in Rust. @ai at your prompt, agents that finish the job, your terminal on your phone, and a guard that has the last word.">
 <link rel="icon" type="image/png" href="assets/icon.png">
 <link rel="stylesheet" href="css/main.css">
 <style>
 /* ============================================================================
-   video.html — a 90-second self-playing product film, built from the site's own
+   video.html — a two-minute self-playing product film, built from the site's own
    replica engine and the same scene builders the showcase uses (js/scenes.js).
    Press play, screen-record the browser, done.
 
@@ -251,15 +251,45 @@ body { background: var(--paper); }
 .vctas { display: flex; gap: 12px 30px; flex-wrap: wrap; justify-content: center; margin-top: 26px; color: var(--ink-soft); font-size: 15px; }
 
 /* ---------------- progress bar ---------------- */
-.vbar { position: fixed; left: 0; right: 0; bottom: 0; height: 3px; background: var(--hair); z-index: 40; transition: opacity .6s ease; }
-.vbar i {
+/* ---------------- the chapter rail ----------------
+   The progress bar and the chapter list are ONE thing. Two indicators of where you
+   are would be clutter, so the bar is segmented instead: one tick per beat, its width
+   proportional to that beat's own budget, so the rail IS the timeline. Behind the
+   playhead a tick is full; under it, it fills over exactly its own duration; ahead, it
+   waits. Click any of them and the film starts there — which is what turns a
+   two-minute film into an index somebody can come back to. */
+.vrail {
+  position: fixed; left: 0; right: 0; bottom: 0; height: 4px; z-index: 40;
+  display: flex; gap: 1px; background: var(--hair);
+  transition: opacity .6s ease, height .2s ease;
+}
+.vrail:hover { height: 9px; }
+.vtick {
+  position: relative; flex: 1 1 auto; height: 100%; min-width: 2px;
+  padding: 0; border: 0; background: color-mix(in srgb, var(--fg) 12%, transparent);
+  cursor: pointer; overflow: visible;
+}
+.vtick i {
   display: block; height: 100%; width: 0;
   background: linear-gradient(90deg, var(--mark-green), var(--mark-blue) 58%, var(--accent));
-  /* the duration is set from JS (RUNTIME), so only the property and the curve
-     live here — a bar that eases would lie about where the film is */
+  /* the duration is set per tick from that beat's own ms — a bar that eased would
+     lie about where the film is */
   transition-property: width; transition-timing-function: linear;
 }
-.vbar.run i { width: 100%; }
+/* The width is set inline by the player, per tick, over that beat's own duration —
+   these only say which of the three states a tick is in. */
+.vtick.done { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.vtick.on   { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+/* The name of the beat, above the rail, on hover — so the rail reads as a contents
+   page rather than as a row of anonymous blocks. */
+.vtick span {
+  position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%) translateY(4px);
+  padding: 5px 10px; border-radius: 7px; white-space: nowrap; pointer-events: none;
+  background: var(--paper); border: 1px solid var(--hair); color: var(--fg);
+  font: 600 11.5px var(--sans); opacity: 0; transition: opacity .16s ease, transform .16s ease;
+}
+.vtick:hover span, .vtick:focus-visible span { opacity: 1; transform: translateX(-50%) translateY(0); }
+.vtick:hover { background: color-mix(in srgb, var(--accent) 40%, transparent); }
 .vwm {
   position: fixed; right: 22px; bottom: 16px; z-index: 40;
   display: flex; align-items: center; gap: 8px;
@@ -425,14 +455,14 @@ body { background: var(--paper); }
 
 </div>
 
-<div class="vbar"><i id="vfill"></i></div>
+<nav class="vrail" id="vrail" aria-label="chapters"></nav>
 <div class="vwm" id="vwm"><img src="assets/icon.png" alt="">aiTerminal</div>
 
 <!-- play gate: start your screen recording, then press play -->
 <div id="voverlay">
   <img src="assets/icon.png" alt="aiTerminal">
   <h1>aiTerminal — the film</h1>
-  <p>Start your screen recording first, then press play. <b>90 seconds</b> · best at 1920 × 1080.</p>
+  <p>Start your screen recording first, then press play. <b id="vlen">2 minutes</b> · best at 1920 × 1080.</p>
   <div class="row">
     <button class="btn dark" id="vplay">▶&nbsp; Play</button>
     <button class="btn" id="vplayfs">⛶&nbsp; Play fullscreen</button>
@@ -445,25 +475,34 @@ body { background: var(--paper); }
 <script src="js/scenes.js"></script>
 <script>
 /* ============================================================================
-   The timeline. One replica window, thirteen beats, a phone that joins for
-   @gate, and three full-screen cards to close on — the plugin wall, the
-   receipts, the call to action. Driven by the exact primitives the site's
-   showcase uses, so the film and the site can never drift apart.
+   The timeline — as DATA, because the rail lets you land on any beat cold.
+
+   `BEATS` is the film: eighteen beats between five cards, each one a scene to show,
+   a caption to write, a budget in milliseconds, and a `play` that fills it. The
+   player walks the array; a click on the rail bumps the epoch, abandons whatever is
+   in flight, and starts again at the beat you asked for.
+
+   That is why every beat is SELF-CONTAINED — it clears the pane, sets its own tabs,
+   builds or hides the phone. A beat that assumed the one before it had tidied up
+   would break the moment somebody clicked into it, which is the whole point of a
+   rail. It also costs nothing: it is what the site's showcase already does per
+   feature, and the film now shares its epoch guard as well as its primitives.
 
    Order is deliberate, and it is a sales order, not a feature order:
-     ask → delegate → IT WRITES THE WORKFLOW → parallel → it tells you what
-     broke → verify → detach → LEAVE YOUR DESK → guard → redact → read →
-     make it yours → it's a real terminal → batteries included.
+     ask → read the answer → delegate → IT WRITES THE WORKFLOW → parallel → it tells
+     you what broke → verify → detach → LEAVE YOUR DESK → drive anything → what may
+     run → what may be touched → what may leave → it knows your project → any model
+     → read → make it yours → it's a real terminal → batteries included.
 
-   The three "wait, it does that?" moments are placed where attention dips: a
-   graph written for you (beat 3), your terminal answering from your phone
-   (beat 8, and it gets the longest hold in the film), and the guard refusing
-   the AI (beat 9). The beat after the first wow is the trust beat — a run
-   saying exactly what broke — because the question a good demo raises is
-   "and when it goes wrong?".
+   The three "wait, it does that?" moments sit where attention dips: a graph written
+   for you, your terminal answering from your phone (the longest hold in the film),
+   and a secret that leaves as a placeholder and comes back as itself. The beat after
+   the first wow is the trust beat — a run saying exactly what broke — because the
+   question a good demo raises is "and when it goes wrong?".
 
-   The budget is spent, not guessed: `RUNTIME` below is the sum of every wait
-   in the timeline, and it is 90.0s. Change a `pause` and it must be re-summed.
+   The budget is summed, not guessed: `RUNTIME` is computed from `BEATS`, so a beat
+   whose `ms` changes re-times the rail and the running time together and cannot
+   drift from either.
    ========================================================================== */
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -472,29 +511,18 @@ body { background: var(--paper); }
     plugins: $("scene-plugins"), proof: $("scene-proof"), outro: $("scene-outro"),
   };
 
-  /* keep in sync with the overlay copy — the progress bar is the only thing
-     that has to know the running time up front */
-  const RUNTIME = 90;
-
   function show(name) {
     Object.entries(scenes).forEach(([k, s]) => s.classList.toggle("on", k === name));
   }
 
-  function chapter(num, title, sub) {
-    const cap = $("vcap");
-    cap.classList.remove("swap");
-    void cap.offsetWidth; /* restart the entrance animation */
-    $("vchap").textContent = num;
-    $("vtitle").innerHTML = title;
-    $("vsub").innerHTML = sub;
-    cap.classList.add("swap");
-  }
-
-  /* the phone stands beside the window for @gate only, then leaves the shot */
+  /* the phone stands beside the window for the two @gate beats, then leaves the shot */
   const phoneHost = $("vphone");
   const hidePhone = () => { phoneHost.hidden = true; phoneHost.innerHTML = ""; };
 
-  /* The step runner — the showcase's, minus the epoch machinery (one straight run).
+  /* The step runner — the showcase's, epoch machinery and all. The film used to run
+     straight through and had no use for it; a rail that can interrupt a beat mid-type
+     does, so it is back, from the same source rather than reinvented.
+
      Six kinds, and that is the point: a marketing cut has no `tool` step because a
      tool trace with byte counts and JSON arguments is exactly the detail this film
      does not show. If a beat ever needs one back, take it from js/showcase.js.
@@ -546,8 +574,12 @@ body { background: var(--paper); }
     }
   }
 
-  async function run(w, steps) {
+  /* A beat that has been seeked away from stops at its next step rather than racing
+     the beat that replaced it. */
+  let epoch = 0;
+  async function run(w, steps, ep) {
     for (const st of steps) {
+      if (ep !== undefined && ep !== epoch) return;
       switch (st.do) {
         case "cmd": await typeCmd(w, st.text, st); break;
         case "out": w.line(st.spans, st.paneIdx); await sleep(st.ms || 120); break;
@@ -587,260 +619,448 @@ body { background: var(--paper); }
     tools: 24, skills: 8, concurrency: 4, slowest: ["read", "draft", "check"],
   };
 
-  async function film() {
-    /* ---- 0:00 · the hook (5.0s) ---- */
-    show("intro");
-    $("vwm").classList.add("on");
-    await sleep(5600);
+  /* Every terminal beat starts from the same known stage. The rail can drop somebody
+     into any of them cold, so a beat that relied on the one before it having tidied up
+     would be broken by the first click. */
+  function reset(t, o) {
+    o = o || {};
+    t.closeSwitcher();
+    if (t.panes.length > 1) t.unsplit();
+    t.clear();
+    t.setTheme(o.theme || "midnight");
+    t.setTitle(o.title || "aiTerminal");
+    t.setTabs(o.tabs || [{ title: "Terminal [project][zsh]", active: true }]);
+    t.setTabpos(o.tabpos || "top");
+    t.defaultStatus(o.status);
+    if (!o.phone) hidePhone();
+  }
 
-    /* ---- 0:05 · the thesis (4.5s) ---- */
-    show("thesis");
-    await sleep(5000);
+  /* THE FILM. `ms` is the beat's budget: the width of its tick in the rail, its share
+     of the running time, and the floor its steps play inside — the player pays whatever
+     the steps leave over, so re-timing a beat is editing one number rather than hunting
+     a trailing `pause` and re-summing the file. */
+  const BEATS = [
+    { scene: "intro", label: "aiTerminal", ms: 4200,
+      play: async () => { $("vwm").classList.add("on"); } },
 
-    /* ---- 0:10.6 · the window rises, and holds the next 66 seconds ---- */
-    const w = makeWindow($("vwindow"), {
-      tabs: [{ title: "Terminal [project][zsh]", active: true }],
-    });
-    w.visible = true; /* the film is always on screen */
-    show("term");
-    await sleep(400);
+    { scene: "thesis", label: "the idea", ms: 4200, play: async () => {} },
 
-    /* ---- 01 · say it, run it (5.0s) ---- */
-    chapter("@ai", "Say it. <em>Run it.</em>",
-      "English at your prompt. The command lands ready to review — you press Enter.");
-    await run(w, [
-      { do: "cmd", text: "@ai which ports are listening", speed: 11 },
-      { do: "spin", label: "thinking…", ms: 700 },
-      { do: "out", spans: [ACC("❯ "), ACC2("lsof -iTCP -sTCP:LISTEN -n -P"), S("t-cursor", "")] },
-      { do: "pause", ms: 1500 },
-    ]);
+    /* ---- 01 · say it, run it ---- */
+    { scene: "term", label: "@ai · say it, run it", ms: 5000,
+      tag: "@ai", title: "Say it. <em>Run it.</em>",
+      sub: "English at your prompt. The command lands ready to review — you press Enter.",
+      play: async (w, ep) => {
+        reset(w);
+        await run(w, [
+          { do: "cmd", text: "@ai which ports are listening", speed: 11 },
+          { do: "spin", label: "thinking…", ms: 700 },
+          { do: "out", spans: [ACC("❯ "), ACC2("lsof -iTCP -sTCP:LISTEN -n -P"), S("t-cursor", "")] },
+        ], ep);
+      } },
 
-    /* ---- 02 · eight specialists (5.0s) ---- */
-    chapter("@agent", "Eight <em>specialists.</em>",
-      "A planner, a coder, a tester, a reviewer, a researcher, a writer — each one a file you can edit.");
-    await run(w, [
-      { do: "call", fn: async (t) => t.clear() },
-      { do: "cmd", text: "@agent", speed: 13 },
-      /* Eight rows for eight agents, each line the shipped description cut to
-         film length — a roster that named seven would be a roster of another
-         tool. The pause pays for the extra row, so the beat is the same length. */
-      { do: "out", spans: [FG("agents (8):")], ms: 90 },
-      { do: "out", spans: [ACC("  @ai         "), DIM("concise answers, and commands you review")], ms: 90 },
-      { do: "out", spans: [ACC("  @planner    "), DIM("a goal becomes a plan with a done-when")], ms: 90 },
-      { do: "out", spans: [ACC("  @explorer   "), DIM("read-only scout — maps the code, reports tightly")], ms: 90 },
-      { do: "out", spans: [ACC("  @researcher "), DIM("finds sources, reads them, cites them")], ms: 90 },
-      { do: "out", spans: [ACC("  @coder      "), DIM("the smallest correct edit, verified")], ms: 90 },
-      { do: "out", spans: [ACC("  @tester     "), DIM("writes and runs your project's own tests")], ms: 90 },
-      { do: "out", spans: [ACC("  @reviewer   "), DIM("correctness, security, tests, design")], ms: 90 },
-      { do: "out", spans: [ACC("  @writer     "), DIM("docs and reports — and it saves the file")], ms: 90 },
-      { do: "pause", ms: 1810 },
-    ]);
+    /* ---- 02 · ★ and when it is a question, you get a document ---- */
+    { scene: "term", label: "@ai · an answer, drawn", ms: 6000,
+      tag: "@ai", title: "Ask a question. Get a <em>document.</em>",
+      sub: "Every answer is Markdown and every diagram is drawn — headings, tables, mermaid, in the terminal. Same engine for <code>@md</code>, a flow's log and an agent's report.",
+      play: async (w, ep) => {
+        reset(w);
+        await run(w, [
+          { do: "cmd", text: "@ai how does our export pipeline work?", speed: 11 },
+          { do: "spin", label: "thinking…", ms: 900 },
+          { do: "call", fn: async (t) => buildAnswerView(t) },
+        ], ep);
+      } },
 
-    /* ---- 03 · ★ no workflow? it writes one (6.5s) ---- */
-    chapter("@flow", "No workflow? <em>It writes one.</em>",
-      "Describe what you want. It designs the graph, checks it before spending a token, and runs it.");
-    await run(w, [
-      { do: "call", fn: async (t) => t.clear() },
-      { do: "cmd", text: "@flow explain how the export command works", speed: 10 },
-      { do: "spin", label: "building a graph for this…", ms: 1100 },
-      { do: "out", spans: [DIM("◈ built a 3-node graph: read the code, write it up, check every claim")], ms: 320 },
-      /* 2400 + 1500 + 1350 = the 5250ms this beat has always held. */
-      { do: "board", model: BUILT, states: { read: "running" }, calls: { read: 6 },
-        note: { read: "⚙ fs.read src/export.rs" }, ms: 2400 },
-      { do: "board", model: BUILT, states: { read: "done", draft: "running" },
-        settle: { read: { ms: 8100, tokens: 9400 } }, calls: { read: 11, draft: 2 },
-        note: { draft: "⚙ fs.write docs/export.md" }, ms: 1500 },
-      { do: "board", model: BUILT, states: { read: "done", draft: "done", check: "done" },
-        settle: { draft: { ms: 12300, tokens: 6200 }, check: { ms: 6700, tokens: 3100 } },
-        calls: { check: 4 }, elapsed: "27.1s", ms: 1350 },
-    ]);
+    /* ---- 03 · eight specialists ---- */
+    { scene: "term", label: "@agent · eight specialists", ms: 4400,
+      tag: "@agent", title: "Eight <em>specialists.</em>",
+      sub: "A planner, a coder, a tester, a reviewer, a researcher, a writer — each one a file you can edit.",
+      play: async (w, ep) => {
+        reset(w);
+        await run(w, [
+          { do: "cmd", text: "@agent", speed: 13 },
+          /* Eight rows for eight agents, each line the shipped description cut to film
+             length — a roster that named seven would be a roster of another tool. */
+          { do: "out", spans: [FG("agents (8):")], ms: 80 },
+          { do: "out", spans: [ACC("  @ai         "), DIM("concise answers, and commands you review")], ms: 80 },
+          { do: "out", spans: [ACC("  @planner    "), DIM("a goal becomes a plan with a done-when")], ms: 80 },
+          { do: "out", spans: [ACC("  @explorer   "), DIM("read-only scout — maps the code, reports tightly")], ms: 80 },
+          { do: "out", spans: [ACC("  @researcher "), DIM("finds sources, reads them, cites them")], ms: 80 },
+          { do: "out", spans: [ACC("  @coder      "), DIM("the smallest correct edit, verified")], ms: 80 },
+          { do: "out", spans: [ACC("  @tester     "), DIM("writes and runs your project's own tests")], ms: 80 },
+          { do: "out", spans: [ACC("  @reviewer   "), DIM("correctness, security, tests, design")], ms: 80 },
+          { do: "out", spans: [ACC("  @writer     "), DIM("docs and reports — and it saves the file")], ms: 80 },
+        ], ep);
+      } },
 
-    /* ---- 04 · work that runs in parallel (5.0s) ---- */
-    chapter("@flow", "Three reviews. <em>One wait.</em>",
-      "Anything that does not depend on anything else runs at the same time.");
-    await run(w, [
-      { do: "call", fn: async (t) => t.clear() },
-      { do: "cmd", text: "@flow review this branch", speed: 11 },
-      /* 2000 + 1680 = the 3680ms this beat has always held. */
-      { do: "board", model: REVIEW, states: { map: "done", correctness: "running", security: "running", design: "running" },
-        settle: { map: { ms: 6400, tokens: 7100 } }, calls: { map: 9, correctness: 4, security: 3, design: 2 },
-        note: { correctness: "⚙ fs.read src/export.rs", security: "⚙ fs.search \"unwrap(\"", design: "⚙ fs.read src/cache.rs" },
-        ms: 2000 },
-      { do: "board", model: REVIEW, states: { map: "done", correctness: "done", security: "done", design: "done", report: "running" },
-        settle: { correctness: { ms: 11200, tokens: 8300 }, security: { ms: 9100, tokens: 6600 }, design: { ms: 7800, tokens: 5200 } },
-        calls: { report: 2 }, ms: 1680 },
-    ]);
+    /* ---- 04 · ★ no workflow? it writes one ---- */
+    { scene: "term", label: "@flow · it writes the graph", ms: 6400,
+      tag: "@flow", title: "No workflow? <em>It writes one.</em>",
+      sub: "Describe what you want. It designs the graph, checks it before spending a token, and runs it.",
+      play: async (w, ep) => {
+        reset(w);
+        await run(w, [
+          { do: "cmd", text: "@flow explain how the export command works", speed: 10 },
+          { do: "spin", label: "building a graph for this…", ms: 1100 },
+          { do: "out", spans: [DIM("◈ built a 3-node graph: read the code, write it up, check every claim")], ms: 320 },
+          { do: "board", model: BUILT, states: { read: "running" }, calls: { read: 6 },
+            note: { read: "⚙ fs.read src/export.rs" }, ms: 2300 },
+          { do: "board", model: BUILT, states: { read: "done", draft: "running" },
+            settle: { read: { ms: 8100, tokens: 9400 } }, calls: { read: 11, draft: 2 },
+            note: { draft: "⚙ fs.write docs/export.md" }, ms: 1400 },
+          { do: "board", model: BUILT, states: { read: "done", draft: "done", check: "done" },
+            settle: { draft: { ms: 12300, tokens: 6200 }, check: { ms: 6700, tokens: 3100 } },
+            calls: { check: 4 }, elapsed: "27.1s", ms: 1200 },
+        ], ep);
+      } },
 
-    /* ---- 05 · ★ and it tells you what broke (5.0s) ---- */
-    chapter("when it breaks", "And it tells you <em>what broke.</em>",
-      "Not a spinner that stopped. The node, the reason, and everything it took with it.");
-    await run(w, [
-      { do: "call", fn: async (t) => t.clear() },
-      /* 1600 + 1500 + 200 + 2000 = the 5300ms this beat has always held. */
-      { do: "board", model: BROKEN, states: { read: "running" }, calls: { read: 12 },
-        note: { read: "⚙ fs.read src/export.rs" }, ms: 1600 },
-      { do: "board", model: BROKEN, states: { read: "failed", draft: "blocked", check: "blocked" },
-        settle: { read: { ms: 11500, tokens: 30000 } }, calls: { read: 16 },
-        note: { read: "the step budget of 12 ran out", draft: "something it needed failed", check: "something it needed failed" },
-        elapsed: "11.6s", ms: 1500 },
-      { do: "out", spans: [ERR("✗ read failed"), DIM(" — it ran out of steps, and said what it had found")], ms: 200 },
-      { do: "pause", ms: 2000 },
-    ]);
+    /* ---- 05 · work that runs in parallel ---- */
+    { scene: "term", label: "@flow · three, one wait", ms: 4800,
+      tag: "@flow", title: "Three reviews. <em>One wait.</em>",
+      sub: "Anything that does not depend on anything else runs at the same time.",
+      play: async (w, ep) => {
+        reset(w);
+        await run(w, [
+          { do: "cmd", text: "@flow review this branch", speed: 11 },
+          { do: "board", model: REVIEW, states: { map: "done", correctness: "running", security: "running", design: "running" },
+            settle: { map: { ms: 6400, tokens: 7100 } }, calls: { map: 9, correctness: 4, security: 3, design: 2 },
+            note: { correctness: "⚙ fs.read src/export.rs", security: "⚙ fs.search \"unwrap(\"", design: "⚙ fs.read src/cache.rs" },
+            ms: 1900 },
+          { do: "board", model: REVIEW, states: { map: "done", correctness: "done", security: "done", design: "done", report: "running" },
+            settle: { correctness: { ms: 11200, tokens: 8300 }, security: { ms: 9100, tokens: 6600 }, design: { ms: 7800, tokens: 5200 } },
+            calls: { report: 2 }, ms: 1600 },
+        ], ep);
+      } },
 
-    /* ---- 06 · until your check passes (5.0s) ---- */
-    chapter("@loop", "It stops when <em>your check passes.</em>",
-      "You name what counts as done. It never marks its own homework.");
-    await run(w, [
-      { do: "call", fn: async (t) => t.clear() },
-      { do: "cmd", text: "@loop make the tests pass", speed: 11 },
-      { do: "out", spans: [ACC("▶ iteration 1/5")], ms: 260 },
-      { do: "out", spans: [DIM("  the tests still fail — one assertion")], ms: 420 },
-      { do: "out", spans: [ACC("▶ iteration 2/5")], ms: 260 },
-      { do: "out", spans: [DIM("  fixed it, running them again")], ms: 420 },
-      { do: "out", spans: [OK("✓ goal reached after 2 iterations")], ms: 200 },
-      { do: "pause", ms: 2100 },
-    ]);
+    /* ---- 06 · ★ and it tells you what broke ---- */
+    { scene: "term", label: "when it breaks", ms: 5000,
+      tag: "when it breaks", title: "And it tells you <em>what broke.</em>",
+      sub: "Not a spinner that stopped. The node, the reason, and everything it took with it.",
+      play: async (w, ep) => {
+        reset(w);
+        await run(w, [
+          { do: "board", model: BROKEN, states: { read: "running" }, calls: { read: 12 },
+            note: { read: "⚙ fs.read src/export.rs" }, ms: 1500 },
+          { do: "board", model: BROKEN, states: { read: "failed", draft: "blocked", check: "blocked" },
+            settle: { read: { ms: 11500, tokens: 30000 } }, calls: { read: 16 },
+            note: { read: "the step budget of 12 ran out", draft: "something it needed failed", check: "something it needed failed" },
+            elapsed: "11.6s", ms: 1500 },
+          { do: "out", spans: [ERR("✗ read failed"), DIM(" — it ran out of steps, and said what it had found")], ms: 200 },
+        ], ep);
+      } },
 
-    /* ---- 07 · walk away from it (4.5s) ---- */
-    chapter("@job", "Walk away <em>from it.</em>",
-      "Detach anything. Close the tab, shut the laptop — it keeps its own log, and picks its own time.");
-    await run(w, [
-      { do: "call", fn: async (t) => t.clear() },
-      { do: "cmd", text: "@job audit the dependencies every monday at 9", speed: 10 },
-      { do: "spin", label: "reading when to run this…", ms: 800 },
-      { do: "out", spans: [ACC("⧖ every monday at 09:00"), DIM(" — audit the dependencies")], ms: 300 },
-      { do: "out", spans: [DIM("  fires in 3d · it survives this terminal")], ms: 200 },
-      { do: "pause", ms: 2000 },
-    ]);
+    /* ---- 07 · until your check passes ---- */
+    { scene: "term", label: "@loop · until it verifies", ms: 4600,
+      tag: "@loop", title: "It stops when <em>your check passes.</em>",
+      sub: "You name what counts as done. It never marks its own homework.",
+      play: async (w, ep) => {
+        reset(w);
+        await run(w, [
+          { do: "cmd", text: "@loop make the tests pass --check \"cargo test\"", speed: 11 },
+          { do: "out", spans: [ACC("▶ iteration 1/5")], ms: 240 },
+          { do: "out", spans: [DIM("  the tests still fail — one assertion")], ms: 400 },
+          { do: "out", spans: [ACC("▶ iteration 2/5")], ms: 240 },
+          { do: "out", spans: [DIM("  fixed it, running them again")], ms: 400 },
+          { do: "out", spans: [OK("✓ goal reached after 2 iterations")], ms: 200 },
+        ], ep);
+      } },
 
-    /* ---- 08 · your terminal, from your phone (8.5s — the wow) ---- */
-    chapter("@gate", "Your terminal, <em>from your phone.</em>",
-      "Pair once. After that a message is a command — in that same shell, wherever you are.");
-    await run(w, [
-      { do: "call", fn: async (t) => {
-          t.clear();
-          t.setTabs([{ title: "Terminal [project][@gate]", active: true }]);
-        } },
-      { do: "cmd", text: "@gate telegram start", speed: 12 },
-      { do: "out", spans: [ACC("  ⬤ telegram gate live"), DIM(" · nothing runs until you pair")], ms: 400 },
-    ]);
-    const g = makePhone(phoneHost);
-    await run(w, [
-      { do: "call", fn: async () => { await g.type("/pair 418-207"); g.send("/pair 418-207"); await sleep(300); } },
-      { do: "call", fn: async () => { g.reply("<b>paired</b> — you are driving <code>mourad-mbp</code>"); await sleep(500); } },
-      { do: "call", fn: async () => { await g.type("run the tests"); g.send("run the tests"); await sleep(260); } },
-      { do: "out", spans: [ACC("  ▸ Mourad: "), FG("run the tests")], ms: 180 },
-      { do: "cmd", text: "cargo test", speed: 13 },
-      { do: "out", spans: [OK("test result: ok"), FG(". 1386 passed; 0 failed")], ms: 240 },
-      { do: "call", fn: async () => { g.reply("✓ <b>1386 passed</b> · 41s"); await sleep(600); } },
-      { do: "call", fn: async (t) => { await g.type("/shot"); g.send("/shot"); await sleep(260); g.photo("the live pane", t); } },
-      { do: "pause", ms: 3400 },
-    ]);
+    /* ---- 08 · walk away from it ---- */
+    { scene: "term", label: "@job · walk away", ms: 4200,
+      tag: "@job", title: "Walk away <em>from it.</em>",
+      sub: "Detach anything. Close the tab, shut the laptop — it keeps its own log, and picks its own time.",
+      play: async (w, ep) => {
+        reset(w);
+        await run(w, [
+          { do: "cmd", text: "@job audit the dependencies every monday at 9", speed: 10 },
+          { do: "spin", label: "reading when to run this…", ms: 800 },
+          { do: "out", spans: [ACC("⧖ every monday at 09:00"), DIM(" — audit the dependencies")], ms: 300 },
+          { do: "out", spans: [DIM("  fires in 3d · it survives this terminal")], ms: 200 },
+        ], ep);
+      } },
 
-    /* ---- 09 · the guard has the last word (5.0s) ---- */
-    chapter("safety", "The AI proposes. <em>The guard disposes.</em>",
-      "One policy, three subjects: what may run, what may be touched, what may leave. Rules you write, and deny always wins.");
-    await run(w, [
-      { do: "call", fn: async (t) => {
-          t.clear(); hidePhone();
-          t.setTabs([{ title: "Terminal [project][zsh]", active: true }]);
-        } },
-      { do: "cmd", text: "@ai force push my branch", speed: 12 },
-      { do: "out", spans: [WARN("⚠ "), DIM("review before running")], ms: 200 },
-      { do: "out", spans: [ACC("❯ "), ACC2("git push --force-with-lease origin fix/parser")], ms: 800 },
-      { do: "cmd", text: "@ai wipe the whole disk", speed: 12 },
-      { do: "out", spans: [ERR("# blocked by the guard")], ms: 200 },
-      { do: "cmd", text: "@ai show me my cloud credentials", speed: 12 },
-      { do: "out", spans: [ERR("# blocked — it names a path that is off limits")], ms: 200 },
-      { do: "pause", ms: 1500 },
-    ]);
+    /* ---- 09 · ★ your terminal, from your phone (the longest hold) ---- */
+    { scene: "term", label: "@gate · from your phone", ms: 7400,
+      tag: "@gate", title: "Your terminal, <em>from your phone.</em>",
+      sub: "Pair once. After that a message is a command — in that same shell, wherever you are.",
+      play: async (w, ep) => {
+        reset(w, { phone: true, tabs: [{ title: "Terminal [project][@gate]", active: true }] });
+        const g = makePhone(phoneHost);
+        await run(w, [
+          { do: "cmd", text: "@gate telegram start", speed: 12 },
+          { do: "out", spans: [ACC("  ⬤ telegram gate live"), DIM(" · nothing runs until you pair")], ms: 300 },
+          { do: "call", fn: async () => { await g.type("/pair 418-207"); g.send("/pair 418-207"); await sleep(240); } },
+          { do: "call", fn: async () => { g.reply("<b>paired</b> — you are driving <code>mourad-mbp</code>"); await sleep(420); } },
+          { do: "call", fn: async () => { await g.type("run the tests"); g.send("run the tests"); await sleep(220); } },
+          { do: "out", spans: [ACC("  ▸ Mourad: "), FG("run the tests")], ms: 160 },
+          { do: "cmd", text: "cargo test", speed: 13 },
+          { do: "out", spans: [OK("test result: ok"), FG(". 1386 passed; 0 failed")], ms: 220 },
+          { do: "call", fn: async () => { g.reply("✓ <b>1386 passed</b> · 41s"); await sleep(520); } },
+          { do: "call", fn: async (t) => { await g.type("/shot"); g.send("/shot"); await sleep(240); g.photo("the live pane", t); } },
+        ], ep);
+      } },
 
-    /* ---- 10 · your secrets never leave (5.0s) ---- */
-    chapter("safety", "Your secrets <em>never leave.</em>",
-      "A value leaves as a placeholder and becomes itself again when the text comes back — so an agent can use a password it was never shown.");
-    await run(w, [
-      { do: "call", fn: async (t) => t.clear() },
-      { do: "cmd", text: "@ai why is the staging deploy failing?", speed: 11 },
-      { do: "call", fn: async (t) => buildRedactView(t) },
-      { do: "pause", ms: 3800 },
-    ]);
+    /* ---- 10 · ★ and it drives any program, not just the shell ---- */
+    { scene: "term", label: "@gate · drive any program", ms: 6400,
+      tag: "@gate", title: "Drive <em>any</em> program.",
+      sub: "Start Claude Code, a REPL or vim in that shell and the chat becomes its live screen — one message, edited in place. A numbered question turns into buttons. Read from the terminal protocol, so it works for every program and has code for none.",
+      play: async (w, ep) => {
+        reset(w, { phone: true, tabs: [{ title: "Terminal [project][@gate]", active: true }] });
+        const g = makePhone(phoneHost);
+        let live = null;
+        await run(w, [
+          { do: "out", spans: [ACC("  ⬤ telegram gate live"), DIM(" · paired with Mourad")], ms: 260 },
+          { do: "call", fn: async () => { await g.type("claude"); g.send("claude"); await sleep(200); } },
+          { do: "cmd", text: "claude", speed: 14 },
+          { do: "out", spans: [MUT("  ⬤ attached — the chat is driving claude")], ms: 300 },
+          { do: "call", fn: async () => {
+              live = g.live("claude", [
+                ["", "> add a --json flag to export"], ["", ""],
+                ["dim", "✦ Thinking… (esc to interrupt)"],
+              ], [["↑", "↓", "⏎", "esc", "^C", "📷"]]);
+              await sleep(800);
+            } },
+          { do: "call", fn: async () => {
+              live.update([
+                ["", "Edit src/export.rs"],
+                ["ok", "  + #[arg(long)] json: bool"], ["", ""],
+                ["", "Do you want to make this edit?"],
+                ["sel", "❯ 1. Yes"],
+                ["", "  2. Yes, and don't ask again"],
+                ["", "  3. No, tell Claude what to do"],
+              ], [["1 · Yes", "2 · Yes, and…", "3 · No, tell…"], ["↑", "↓", "⏎", "esc", "^C", "📷"]]);
+              await sleep(1300);
+            } },
+          { do: "out", spans: [MUT("  ▸ Mourad tapped "), ACC2("1 · Yes")], ms: 200 },
+          { do: "call", fn: async () => {
+              live.update([["ok", "✓ Edited src/export.rs"], ["", ""], ["dim", "✦ Running tests…"]],
+                [["↑", "↓", "⏎", "esc", "^C", "📷"]]);
+              await sleep(700);
+            } },
+          { do: "out", spans: [MUT("  ⬤ detached — claude exited, back to the shell")], ms: 200 },
+        ], ep);
+      } },
 
-    /* ---- 11 · markdown, live (4.5s) ---- */
-    chapter("@md", "Markdown, <em>live.</em>",
-      "Write on the left, watch it render on the right — diagrams and all. No model, no network.");
-    await run(w, [
-      { do: "call", fn: async (t) => {
-          t.clear();
-          t.setTitle("release.md — @md edit");
-          t.setTabs([{ title: "release.md [@md edit]", active: true }]);
-        } },
-      { do: "cmd", text: "@md edit release.md", speed: 12 },
-      { do: "call", fn: async (t) => buildMdEditor(t) },
-      { do: "pause", ms: 3300 },
-    ]);
+    /* ---- 11 · ★ the guard: what may run ---- */
+    { scene: "term", label: "guard · what may run", ms: 4600,
+      tag: "the guard", title: "The AI proposes. <em>The guard disposes.</em>",
+      sub: "One policy, three subjects — what may run, what may be touched, what may leave. Every rule a regex you write, and deny always wins.",
+      play: async (w, ep) => {
+        reset(w);
+        await run(w, [
+          { do: "cmd", text: "@ai force push my branch", speed: 12 },
+          { do: "out", spans: [WARN("⚠ "), DIM("review before running  /git\\s+push\\s+.*--force/")], ms: 180 },
+          { do: "out", spans: [ACC("❯ "), ACC2("git push --force-with-lease origin fix/parser")], ms: 700 },
+          { do: "cmd", text: "@ai wipe the whole disk", speed: 12 },
+          { do: "out", spans: [ERR("# blocked by the guard  /\\bmkfs\\b|dd\\s+.*of=\\/dev\\//")], ms: 200 },
+        ], ep);
+      } },
 
-    /* ---- 12 · make it yours (5.5s) ---- */
-    chapter("make it yours", "19 themes. <em>Switch live.</em>",
-      "Profiles swap your models, your plugins and your saved tabs in one word.");
-    await run(w, [
-      { do: "call", fn: async (t) => {
-          t.clear(); t.setTitle("aiTerminal");
-          t.setTabs([{ title: "Terminal [api][zsh]", active: true }, { title: "Terminal [infra][zsh]" }]);
-        } },
-      { do: "cmd", text: "@profile work", speed: 12 },
-      { do: "call", fn: async (t) => { t.setTheme("graphite"); t.defaultStatus({ profile: "💼 Work", cwd: "~/work/api" }); } },
-      { do: "out", spans: [FG("switched — theme, models, plugins and your tabs")], ms: 500 },
-      ...["nebula", "sunset", "gold", "starlight", "midnight"].flatMap((k) => [
-        { do: "call", fn: async (t) => { t.setTheme(k); t.note("@theme " + k); } },
-        { do: "pause", ms: 620 },
-      ]),
-    ]);
+    /* ---- 12 · ★ the guard: files and folders ---- */
+    { scene: "term", label: "guard · files & folders", ms: 5200,
+      tag: "the guard", title: "Some <em>files and folders</em> are not its business.",
+      sub: "One regex covers a folder and everything under it; another covers a kind of file wherever it lives. And a refusal is information, not a crash — it works around it.",
+      play: async (w, ep) => {
+        reset(w);
+        await run(w, [
+          { do: "cmd", text: "cat ~/.aiTerminal/config.toml", speed: 13 },
+          { do: "out", spans: [ACC2("[[guard.path]]")], ms: 60 },
+          { do: "out", spans: [MUT("pattern = "), FG("\"(^|/)\\.ssh/\""), DIM("   # a folder, and all of it")], ms: 60 },
+          { do: "out", spans: [MUT("pattern = "), FG("\"\\.(pem|key|p12)$\""), DIM("   # a kind of file, anywhere")], ms: 60 },
+          { do: "cmd", text: "@agent coder \"why is the deploy failing?\"", speed: 11 },
+          { do: "out", spans: [MUT("  ⚙ fs.read   "), FG("~/.ssh/config")], ms: 80 },
+          { do: "out", spans: [ERR("  ⛔ refused"), DIM(" — the folder is off limits")], ms: 80 },
+          { do: "out", spans: [MUT("  ⚙ fs.read   "), FG("deploy/config.yml"), MUT("  ·  1.2KB")], ms: 80 },
+          { do: "out", spans: [FG("The old bastion is still in "), ACC2("deploy/config.yml"), FG(".")], ms: 80 },
+          { do: "out", spans: [DIM("I could not read your ssh config — tell me the host and I'll finish it.")], ms: 200 },
+        ], ep);
+      } },
 
-    /* ---- 13 · and underneath, a real terminal (5.5s) ---- */
-    chapter("the terminal", "And underneath: <em>a real terminal.</em>",
-      "Splits, tabs, a quick switcher, a GPU renderer — and near-zero CPU when it is just sitting there.");
-    await run(w, [
-      { do: "call", fn: async (t) => {
-          t.clear(); t.defaultStatus();
-          t.setTabs([{ title: "Terminal [web][zsh]", active: true }, { title: "Terminal [api][zsh]" }]);
-        } },
-      { do: "out", spans: [ACC("~/web"), OK(" ⎇ main"), ACC2(" ❯ "), FG("npm run dev")], ms: 120 },
-      { do: "out", spans: [OK("  ➜  ready "), FG("on http://localhost:3000")], ms: 200 },
-      { do: "call", fn: async (t) => { t.note("⌘D — split right"); await sleep(300); t.split(false); } },
-      { do: "cmd", text: "cargo watch -x test", speed: 11, paneIdx: 1 },
-      { do: "out", spans: [OK("    Finished"), FG(" test — 1386 passed")], paneIdx: 1, ms: 150 },
-      { do: "call", fn: async (t) => {
-          t.note("⌘P — quick switcher"); await sleep(320);
-          t.openSwitcher("ap", [
-            { title: "Terminal [web][zsh]", detail: "~/web" },
-            { title: "Terminal [api][zsh]", detail: "~/work/api" },
-            { title: "vim · parser.rs", detail: "~/web" },
-          ], 1);
-        } },
-      { do: "pause", ms: 900 },
-      { do: "call", fn: async (t) => { t.closeSwitcher(); t.unsplit(); t.setTabpos("left"); t.note("dock the tabs anywhere"); } },
-      { do: "pause", ms: 800 },
-      { do: "call", fn: async (t) => t.setTabpos("top") },
-      { do: "pause", ms: 1100 },
-    ]);
+    /* ---- 13 · ★ the guard: what may leave ---- */
+    { scene: "term", label: "guard · secrets", ms: 5400,
+      tag: "the guard", title: "Your secrets <em>never leave.</em>",
+      sub: "A value goes out as a placeholder and becomes itself again the moment the text comes back — so an agent can use a password it was never shown.",
+      play: async (w, ep) => {
+        reset(w);
+        await run(w, [
+          { do: "cmd", text: "@ai why is the staging deploy failing?", speed: 11 },
+          { do: "call", fn: async (t) => buildRedactView(t) },
+          { do: "pause", ms: 2000 },
+          { do: "out", spans: [MUT("  ⚙ sys.run  "), FG("psql postgres://app:"), WARN("«credential-1»"), FG("@db.internal …")], ms: 120 },
+          { do: "out", spans: [MUT("  ↺ the real value went back in here, and nowhere else")], ms: 200 },
+        ], ep);
+      } },
 
-    /* ---- 14 · batteries included (5.0s) ----
-       Thirty-one cards arriving at once. Nobody reads them in five seconds and
-       nobody is meant to — the wall IS the claim. Paid for out of the two holds
-       below, which carried the most dead air in the film: their own animations
-       are finished inside two seconds. */
-    show("plugins");
-    await sleep(5000);
+    /* ---- 14 · ★ it knows the project you are in ---- */
+    { scene: "term", label: "it knows your project", ms: 5400,
+      tag: "memory", title: "It remembers <em>this</em> project.",
+      sub: "Every folder keeps its own session and its own memory — recalled automatically, stored as Markdown files you can read. Drop in a PDF or a screenshot and it reads that too.",
+      play: async (w, ep) => {
+        reset(w, { status: { cwd: "~/work/api" } });
+        await run(w, [
+          { do: "cmd", text: "@agent coder \"carry on where we left off\"", speed: 11 },
+          { do: "out", spans: [MUT("  ⟲ this folder: "), FG("4 runs · last: split the parser")], ms: 120 },
+          { do: "out", spans: [MUT("  ⟲ recalled: "), FG("\"we settled on one error type per layer\"")], ms: 120 },
+          { do: "out", spans: [MUT("  ⟲ recalled: "), FG("\"exports are CSV first, JSON behind a flag\"")], ms: 200 },
+          { do: "out", spans: [FG("Picking up the parser split — the error type stays per layer.")], ms: 500 },
+          { do: "cmd", text: "@ai summarise this @spec.pdf @screenshot.png", speed: 11 },
+          { do: "out", spans: [MUT("  📎 spec.pdf "), DIM("· 24 pages"), MUT("   📎 screenshot.png "), DIM("· read as an image")], ms: 200 },
+        ], ep);
+      } },
 
-    /* ---- 1:15 · the receipts (4.6s) ---- */
-    show("proof");
-    await sleep(4600);
+    /* ---- 15 · ★ any model, and none by default ---- */
+    { scene: "term", label: "any model, any provider", ms: 5200,
+      tag: "models", title: "Any model. <em>Any provider.</em>",
+      sub: "Twelve providers ship as data — Anthropic, OpenAI, Groq, DeepSeek, Qwen, Ollama, LM Studio and more. Pool them by weight, fail over automatically, and watch what it costs. MCP servers plug in beside them.",
+      play: async (w, ep) => {
+        reset(w);
+        await run(w, [
+          { do: "cmd", text: "@config models", speed: 12 },
+          { do: "out", spans: [FG("pool (3):")], ms: 80 },
+          { do: "out", spans: [ACC("  claude-opus-4-8      "), DIM("anthropic   "), OK("60%")], ms: 80 },
+          { do: "out", spans: [ACC("  gpt-5                "), DIM("openai      "), OK("30%")], ms: 80 },
+          { do: "out", spans: [ACC("  qwen3-coder:30b      "), DIM("ollama      "), OK("10%"), DIM("  · local, no key")], ms: 80 },
+          { do: "out", spans: [MUT("  ⇢ openai timed out — failed over to anthropic, mid-run")], ms: 200 },
+          { do: "out", spans: [MUT("  ⚙ mcp.linear "), DIM("· 6 tools from a server you declared")], ms: 200 },
+          { do: "out", spans: [DIM("✓ 8.4s · 2 tools · 12.3k in / 1.8k out · ~$0.014 · 14% of $0.10")], ms: 300 },
+        ], ep);
+      } },
 
-    /* ---- 1:23 · the call to action, then fade to black (7.4s) ---- */
-    show("outro");
-    await sleep(7400);
+    /* ---- 16 · markdown, live ---- */
+    { scene: "term", label: "@md · Markdown live", ms: 4400,
+      tag: "@md", title: "Markdown, <em>live.</em>",
+      sub: "Write on the left, watch it render on the right — diagrams and all. No model, no network.",
+      play: async (w, ep) => {
+        reset(w, { title: "release.md — @md edit", tabs: [{ title: "release.md [@md edit]", active: true }] });
+        await run(w, [
+          { do: "cmd", text: "@md edit release.md", speed: 12 },
+          { do: "call", fn: async (t) => buildMdEditor(t) },
+        ], ep);
+      } },
+
+    /* ---- 17 · make it yours ---- */
+    { scene: "term", label: "make it yours", ms: 5400,
+      tag: "make it yours", title: "19 themes. <em>Switch live.</em>",
+      sub: "Profiles swap your models, your plugins and your saved tabs in one word — and the whole interface speaks your language.",
+      play: async (w, ep) => {
+        reset(w, { tabs: [{ title: "Terminal [api][zsh]", active: true }, { title: "Terminal [infra][zsh]" }] });
+        await run(w, [
+          { do: "cmd", text: "@profile work", speed: 12 },
+          { do: "call", fn: async (t) => { t.setTheme("graphite"); t.defaultStatus({ profile: "💼 Work", cwd: "~/work/api" }); } },
+          { do: "out", spans: [FG("switched — theme, models, plugins and your tabs")], ms: 300 },
+          ...["nebula", "sunset", "gold", "starlight", "midnight"].flatMap((k) => [
+            { do: "call", fn: async (t) => { t.setTheme(k); t.note("@theme " + k); } },
+            { do: "pause", ms: 520 },
+          ]),
+          { do: "out", spans: [MUT("  🌐 "), FG("locale = \"fr\""), DIM("  — every string, from one file")], ms: 300 },
+        ], ep);
+      } },
+
+    /* ---- 18 · and underneath, a real terminal ---- */
+    { scene: "term", label: "a real terminal", ms: 6200,
+      tag: "the terminal", title: "And underneath: <em>a real terminal.</em>",
+      sub: "Splits, tabs, a quick switcher, a GPU renderer — word-jump and select on the command line, ⌘-click any path to open it, and near-zero CPU when it is just sitting there.",
+      play: async (w, ep) => {
+        reset(w, { tabs: [{ title: "Terminal [web][zsh]", active: true }, { title: "Terminal [api][zsh]" }] });
+        await run(w, [
+          { do: "out", spans: [ACC("~/web"), OK(" ⎇ main"), ACC2(" ❯ "), FG("npm run dev")], ms: 110 },
+          { do: "out", spans: [OK("  ➜  ready "), FG("on http://localhost:3000"), DIM("   ⌘-click to open")], ms: 180 },
+          { do: "call", fn: async (t) => { t.note("⌘D — split right"); await sleep(260); t.split(false); } },
+          { do: "cmd", text: "cargo watch -x test", speed: 11, paneIdx: 1 },
+          { do: "out", spans: [OK("    Finished"), FG(" test — 1386 passed")], paneIdx: 1, ms: 140 },
+          { do: "call", fn: async (t) => { t.note("⌥← ⌥→ jump by word · ⇧← ⇧→ select"); await sleep(600); } },
+          { do: "call", fn: async (t) => {
+              t.note("⌘P — quick switcher"); await sleep(280);
+              t.openSwitcher("ap", [
+                { title: "Terminal [web][zsh]", detail: "~/web" },
+                { title: "Terminal [api][zsh]", detail: "~/work/api" },
+                { title: "vim · parser.rs", detail: "~/web" },
+              ], 1);
+            } },
+          { do: "pause", ms: 800 },
+          { do: "call", fn: async (t) => { t.closeSwitcher(); t.unsplit(); t.setTabpos("left"); t.note("dock the tabs anywhere"); } },
+          { do: "pause", ms: 700 },
+          { do: "call", fn: async (t) => t.setTabpos("top") },
+        ], ep);
+      } },
+
+    /* ---- the wall. Thirty cards arriving at once; nobody reads them in five seconds
+       and nobody is meant to — the wall IS the claim. ---- */
+    { scene: "plugins", label: "30 plugins", ms: 5000, play: async () => {} },
+    { scene: "proof",   label: "the receipts", ms: 4600, play: async () => {} },
+    { scene: "outro",   label: "get it", ms: 6000, play: async () => {} },
+  ];
+
+  /* ---------------- the player, and the rail ---------------- */
+
+  /* The running time is a SUM, never a number somebody typed — so re-timing a beat
+     re-times the rail, the film and the sentence on the play overlay together. */
+  const RUNTIME = BEATS.reduce((n, b) => n + b.ms, 0);
+  $("vlen").textContent = RUNTIME % 60000 === 0
+    ? RUNTIME / 60000 + (RUNTIME === 60000 ? " minute" : " minutes")
+    : Math.floor(RUNTIME / 60000) + "m " + Math.round((RUNTIME % 60000) / 1000) + "s";
+  const rail = $("vrail");
+  const ticks = BEATS.map((b, i) => {
+    const t = el("button", "vtick");
+    t.style.flexGrow = String(b.ms);
+    t.appendChild(el("i"));
+    t.appendChild(el("span", null, b.label));
+    t.setAttribute("aria-label", b.label);
+    t.addEventListener("click", () => start(i));
+    rail.appendChild(t);
+    return t;
+  });
+
+  function chapter(num, title, sub) {
+    const cap = $("vcap");
+    cap.classList.remove("swap");
+    void cap.offsetWidth; /* restart the entrance animation */
+    $("vchap").textContent = num;
+    $("vtitle").innerHTML = title;
+    $("vsub").innerHTML = sub;
+    cap.classList.add("swap");
+  }
+
+  let W = null;
+
+  /* Play from `i` to the end. Every entry bumps the epoch, so whatever was in flight
+     stops at its next step instead of racing this one. */
+  async function start(i) {
+    const ep = ++epoch;
+    for (; i < BEATS.length; i++) {
+      const b = BEATS[i];
+      /* The fill is driven inline, start to finish. Setting a width here and leaving
+         the class rules to set it too would be two sources of truth for one number,
+         and the inline one always wins — so the classes carry colour and nothing else. */
+      ticks.forEach((t, k) => {
+        t.classList.toggle("done", k < i);
+        t.classList.toggle("on", k === i);
+        const f = t.firstChild;
+        f.style.transitionDuration = "0s";
+        f.style.width = k < i ? "100%" : "0";
+      });
+      const fill = ticks[i].firstChild;
+      void fill.offsetWidth; /* commit the reset before the run, or there is no transition */
+      fill.style.transitionDuration = b.ms + "ms";
+      fill.style.width = "100%";
+
+      show(b.scene);
+      if (b.title) chapter(b.tag, b.title, b.sub);
+      if (b.scene === "term" && !W) {
+        W = makeWindow($("vwindow"), { tabs: [{ title: "Terminal [project][zsh]", active: true }] });
+        W.visible = true; /* the film is always on screen */
+      }
+      const began = Date.now();
+      await b.play(W, ep);
+      if (ep !== epoch) return;
+      const left = b.ms - (Date.now() - began);
+      if (left < 0) console.warn("beat over budget:", b.label, -left + "ms");
+      await sleep(Math.max(left, 0));
+      if (ep !== epoch) return;
+    }
+    ticks.forEach((t) => t.classList.remove("on"));
     show(""); /* every scene off — fade to black */
-    document.querySelector(".vbar").style.opacity = "0";
+    rail.style.opacity = "0";
     $("vwm").classList.remove("on");
   }
 
@@ -849,10 +1069,8 @@ body { background: var(--paper); }
       document.documentElement.requestFullscreen().catch(() => {});
     }
     $("voverlay").classList.add("off");
-    const bar = document.querySelector(".vbar");
-    bar.querySelector("i").style.transitionDuration = RUNTIME + "s";
-    bar.classList.add("run");
-    setTimeout(film, 300);
+    rail.style.opacity = "";
+    setTimeout(() => start(0), 300);
   }
 
   $("vplay").addEventListener("click", () => play(false));

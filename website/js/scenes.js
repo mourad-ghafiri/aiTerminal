@@ -1,7 +1,8 @@
 /* ============================================================================
    scenes.js — the scene builders shared by the site's showcase and the film:
    the Telegram phone that stands beside the terminal (@gate), the @md split
-   editor, and the guard's before/after view of what leaves.
+   editor, an answer drawn as the document it is, and the guard's before/after view
+   of what leaves.
 
    These live here rather than in showcase.js because video.html tells the same
    story with the same pieces. One implementation, two stages — a claim the
@@ -98,6 +99,55 @@ function buildMdEditor(w) {
   help.appendChild(el("span", "rw-md-hint", "\u00b7 scroll: \u2191\u2193 \u2190\u2192 \u00b7 wheel \u00b7 shift+wheel = horizontal"));
 
   root.append(bar, bodyRow, help);
+  pane.appendChild(root);
+}
+
+
+/* ── an answer, drawn ──────────────────────────────────────────────────────
+   Every AI answer in this product is Markdown, and every diagram in one is drawn
+   rather than shown as a fence — the same engine behind `@md render`, the `@md edit`
+   preview, a flow's log and an agent's report. So this is not a picture OF an answer:
+   it is built from the same `rw-md-*` pieces `buildMdEditor`'s preview uses, which is
+   what keeps the film, the site and the terminal telling one story.
+
+   Deliberately one column. The editor's split view is about writing; this is about
+   reading, which is what an answer is for. */
+function buildAnswerView(w) {
+  const pane = w.pane();
+  const root = el("div", "rw-md-ans");
+
+  root.appendChild(el("div", "rw-md-title", "Export, end to end"));
+  root.appendChild(el("div", "rw-md-rule", "\u2500".repeat(34)));
+  root.appendChild(el("div", "rw-md-gap", ""));
+
+  const para = el("div", "rw-md-para");
+  para.append(el("span", null, "Three stages, and only the middle one knows about "),
+    el("span", "rw-md-inline", "--format"), el("span", null, "."));
+  root.appendChild(para);
+  root.appendChild(el("div", "rw-md-gap", ""));
+
+  /* A GFM table, drawn — cells wrap, the header rules, and it is the shape people
+     recognise a rendered document by. */
+  const tbl = el("div", "rw-md-tbl");
+  [["stage", "reads", "writes"],
+   ["parse", "the source file", "rows in memory"],
+   ["shape", "the column map", "rows in memory"],
+   ["emit", "rows", "CSV or JSON"]].forEach(([a, b, c], i) => {
+    const row = el("div", "rw-md-trow" + (i ? "" : " head"));
+    [a, b, c].forEach((cell) => row.appendChild(el("span", "rw-md-td", cell)));
+    tbl.appendChild(row);
+  });
+  root.appendChild(tbl);
+  root.appendChild(el("div", "rw-md-gap", ""));
+
+  /* The mermaid fence the answer contained, drawn where it stood. */
+  const dg = el("div", "rw-md-diagram");
+  ["parse", "shape", "emit"].forEach((n, i) => {
+    if (i) dg.appendChild(el("span", "rw-md-arrow", "\u2500\u2500\u25b6"));
+    dg.appendChild(el("span", "rw-md-node", n));
+  });
+  root.appendChild(dg);
+
   pane.appendChild(root);
 }
 

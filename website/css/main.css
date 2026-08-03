@@ -458,6 +458,17 @@ kbd {
 }
 .rw-md-node { padding: 2px 9px; border: 1px solid var(--t-accent); border-radius: 6px; color: var(--t-accent); font-weight: 600; }
 .rw-md-arrow { color: var(--t-muted); }
+/* An answer is read, not edited, so it gets the pane to itself — same pieces as the
+   editor's preview, one column instead of two. */
+.rw-md-ans { padding: 10px 6px 4px 2px; }
+/* A GFM table, drawn: a header that rules and cells that share the width. The
+   terminal wraps a cell rather than cutting it, and so does this. */
+.rw-md-tbl { display: inline-block; margin-top: 10px; border: 1px solid var(--t-border); border-radius: 8px; overflow: hidden; }
+.rw-md-trow { display: flex; }
+.rw-md-trow.head { background: color-mix(in srgb, var(--t-accent) 12%, transparent); }
+.rw-md-trow.head .rw-md-td { color: var(--t-accent); font-weight: 700; }
+.rw-md-trow + .rw-md-trow { border-top: 1px solid var(--t-border); }
+.rw-md-td { flex: 1; min-width: 8.5em; padding: 3px 12px; color: var(--t-fg); }
 .rw-md-help b { color: var(--t-accent); font-weight: 700; }
 .rw-md-hint { margin-left: auto; opacity: .8; }
 
