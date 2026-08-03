@@ -343,6 +343,138 @@ fn pump_sse(mut reader: impl std::io::BufRead, tx: &std::sync::mpsc::Sender<Chun
     Pumped { saw_any, sniff, end: PumpEnd::Eof }
 }
 
+/// One captured response from a blocking [`HttpExchange::post`].
+///
+/// Status, headers and body together — the streaming [`Transport`] deliberately hides
+/// all three behind SSE chunks, which is right for a model stream and wrong for a
+/// protocol like MCP's Streamable HTTP, where the *headers* carry negotiation state
+/// (`Content-Type` decides JSON-vs-SSE, `Mcp-Session-Id` carries a legacy session).
+#[derive(Clone, Debug, PartialEq)]
+pub struct HttpReply {
+    pub status: u16,
+    /// Response headers, names lower-cased, in arrival order.
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+}
+
+impl HttpReply {
+    /// The first header with this (case-insensitive) name.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        let want = name.to_ascii_lowercase();
+        self.headers.iter().find(|(k, _)| *k == want).map(|(_, v)| v.as_str())
+    }
+
+    /// Whether the body is an SSE stream (by its `Content-Type`).
+    pub fn is_sse(&self) -> bool {
+        self.header("content-type").is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream"))
+    }
+
+    /// The response as message payloads: the de-framed `data:` events of an SSE body,
+    /// or the body itself as one payload. Empty payloads are dropped either way.
+    pub fn payloads(&self) -> Vec<String> {
+        if !self.is_sse() {
+            let one = self.body.trim();
+            return if one.is_empty() { Vec::new() } else { vec![one.to_string()] };
+        }
+        let mut dec = SseDecoder::new();
+        let mut out = Vec::new();
+        for line in self.body.split('\n') {
+            if let Ok(Some(payload)) = dec.push_line(line.trim_end_matches('\r')) {
+                out.push(payload);
+            }
+        }
+        if let Some(payload) = dec.finish() {
+            out.push(payload);
+        }
+        out
+    }
+}
+
+/// One blocking HTTP POST, response headers included. Real = [`CurlExchange`];
+/// tests implement this with canned replies — no network ever runs in CI.
+pub trait HttpExchange: Send + Sync {
+    fn post(&self, url: &str, headers: &[(String, String)], body: &str) -> Result<HttpReply, String>;
+}
+
+/// POSTs via the system `curl -i` (headers captured, body on stdin, no redirects —
+/// a cross-origin redirect on a protocol endpoint is a fact to surface, not follow).
+pub struct CurlExchange {
+    pub timeout_s: u32,
+}
+
+impl Default for CurlExchange {
+    fn default() -> Self {
+        CurlExchange { timeout_s: 30 }
+    }
+}
+
+impl HttpExchange for CurlExchange {
+    fn post(&self, url: &str, headers: &[(String, String)], body: &str) -> Result<HttpReply, String> {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let mut cmd = Command::new("curl");
+        cmd.args([
+            "-sS",
+            "-i", // response headers travel with the body — the whole point of this seam
+            "--max-time",
+            &self.timeout_s.to_string(),
+            "--max-filesize",
+            "33554432",
+            "-X",
+            "POST",
+            url,
+            "--data-binary",
+            "@-",
+        ]);
+        for (k, v) in headers {
+            cmd.arg("-H").arg(format!("{k}: {v}"));
+        }
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = cmd.spawn().map_err(|e| format!("system curl unavailable: {e}"))?;
+        if let Some(mut sin) = child.stdin.take() {
+            let _ = sin.write_all(body.as_bytes());
+        }
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            let msg = String::from_utf8_lossy(&out.stderr);
+            let msg = msg.trim();
+            return Err(if msg.is_empty() { "request failed".into() } else { msg.to_string() });
+        }
+        parse_reply(&String::from_utf8_lossy(&out.stdout))
+    }
+}
+
+/// Split a raw `curl -i` capture into status, headers and body.
+///
+/// Interim `1xx` header blocks (`100 Continue`, `103 Early Hints`) precede the real
+/// one, so blocks are consumed while the body that follows still opens with `HTTP/`.
+pub fn parse_reply(raw: &str) -> Result<HttpReply, String> {
+    let mut rest = raw;
+    loop {
+        let head_end = rest.find("\r\n\r\n").map(|i| (i, 4)).or_else(|| rest.find("\n\n").map(|i| (i, 2)));
+        let Some((at, sep)) = head_end else {
+            return Err("http: malformed response (no header terminator)".into());
+        };
+        let (head, body) = (&rest[..at], &rest[at + sep..]);
+        let mut lines = head.lines();
+        let status_line = lines.next().unwrap_or_default();
+        let status: u16 = status_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| format!("http: malformed status line {status_line:?}"))?;
+        if (100..200).contains(&status) && body.trim_start().starts_with("HTTP/") {
+            rest = body;
+            continue;
+        }
+        let headers = lines
+            .filter_map(|l| l.split_once(':'))
+            .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
+            .collect();
+        return Ok(HttpReply { status, headers, body: body.to_string() });
+    }
+}
+
 /// Blocking GET: fetch `url` and return the raw response body. Shells out to the
 /// system `curl` (`-fsSL`). Replaces ad-hoc inline `curl` calls in higher layers.
 pub fn fetch(url: &str) -> std::io::Result<Vec<u8>> {

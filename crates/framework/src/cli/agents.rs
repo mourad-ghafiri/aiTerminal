@@ -10,7 +10,7 @@ use crate::cli::agentloop::show::clip_tail;
 use crate::cli::format::{outcome_exit, outcome_glyph, run_footer_with};
 use crate::cli::observe::{CliObserver, RunView, SharedView, finish_streamed};
 use crate::cli::run::instructions;
-use crate::cli::runner::{build_runner, context_settings, run_scratch};
+use crate::cli::runner::{build_runner, launch_hub, context_settings, run_scratch};
 use crate::cli::style::{accent, markdown_opts, muted, out_is_tty, reset, term_cols};
 
 pub(crate) fn ai_agent_cmd(args: &[String]) -> i32 {
@@ -312,9 +312,9 @@ pub(crate) fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::
         return 2;
     };
     let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default()).with_images(media);
-    let mut runner = build_runner(cfg, &settings, workspace_root, guard.clone(), true);
+    let mut runner = build_runner(cfg, &settings, workspace_root, guard.clone(), launch_hub());
     if let Some(hub) = &runner.mcp {
-        for (name, describe) in hub.tools() {
+        for (name, describe) in hub.lock().unwrap_or_else(|e| e.into_inner()).tools() {
             agent.tools.push(crate::ai::ToolSpec { name, describe });
         }
     }

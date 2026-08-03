@@ -1,6 +1,6 @@
 # Testing
 
-aiTerminal has **1450 unit tests** and **316 scenarios**, and the whole suite runs in a
+aiTerminal has **1478 unit tests** and **318 scenarios**, and the whole suite runs in a
 few seconds with no network, no API key, no window, and no changes to your machine.
 
 ```sh
@@ -39,7 +39,7 @@ So the suite has both, and they are aimed at different targets.
 
 ## Unit tests
 
-1450 of them (982 in `framework`, 337 in `corelib`, 131 in `platform`), beside the code
+1478 of them (1006 in `framework`, 337 in `corelib`, 135 in `platform`), beside the code
 they test. Named as sentences, so a failure reads as a statement about the product rather
 than a symbol that broke:
 
@@ -131,7 +131,7 @@ scenario must never pass silently.
 
 ### Coverage
 
-316 journeys across every feature. Each folder's test asserts a minimum count, so
+318 journeys across every feature. Each folder's test asserts a minimum count, so
 coverage cannot silently shrink.
 
 | Folder | # | What a journey drives |
@@ -139,10 +139,10 @@ coverage cannot silently shrink.
 | `gate/` | 36 | pairing, remote commands, the guard, attaching to interactive CLIs |
 | `markdown/` | 31 | rendering, streaming, diagrams, the pager, and the shape of every log a run leaves |
 | `flow/` | 30 | the graph: verification before it spends, parallel branches, conditions, bounded loops, fan-out, approvals, retries, building a graph for a bare goal, node control, the two ways of watching a run, and the board's own geometry — depth as columns, edges the graph implies left undrawn, a block that never changes height |
-| `ai/` | 33 | model reply → command or answer, the guard, the agent tool loop |
+| `ai/` | 34 | model reply → command or answer, the guard, the agent tool loop |
 | `terminal/` | 22 | the VT engine — grid, colour, wide glyphs, scrollback, DEC modes |
 | `jobs/` | 20 | scheduling, occurrence logs, and what a job reports when it stops |
-| `cli/` | 24 | the `@`-command surface: profiles, themes, config, plugins, documents, jobs, gates, and every verb that reads a flow/loop/job record — with a run to read, without one, and with one whose graph exists only in its own record |
+| `cli/` | 25 | the `@`-command surface: profiles, themes, config, plugins, documents, jobs, gates, and every verb that reads a flow/loop/job record — with a run to read, without one, and with one whose graph exists only in its own record |
 | `config/` | 16 | config parsing and the profile overlay |
 | `guard/` | 41 | one policy over commands, paths and secrets — the placeholder round trip, and a value that is a second command once it is put back |
 | `plugins/` | 14 | what a `plugin.toml` composes into, and what trust gates |

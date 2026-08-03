@@ -10,6 +10,7 @@
 #                         bare @loop lists recent runs, @loop resume <id> carries on
 #   @job "<request>"      → say what to do and when; the AI reads the schedule once
 #   @job -- <command>     → the same, as a command job (no model needed to run it)
+#   @mcp                  → the declared MCP tool-servers, connected: era, tools, failures
 #   @md render <file>     → pretty-print a Markdown file (diagrams drawn natively)
 #   @md edit <file>       → a live split editor: Markdown left, rendered preview right
 #   @gate telegram start  → hand this pane to a chat app and drive it from your phone
@@ -44,6 +45,7 @@ command_not_found_handler() {
     @agent)   "${TT_BIN:-aiTerminal}" ai agent "$@"; return ;;
     @loop)    "${TT_BIN:-aiTerminal}" ai loop "$@"; return ;;
     @job)     "${TT_BIN:-aiTerminal}" ai job "$@"; return ;;
+    @mcp)     "${TT_BIN:-aiTerminal}" ai mcp "$@"; return ;;
     @md)      "${TT_BIN:-aiTerminal}" md "$@"; return ;;
     @gate)    "${TT_BIN:-aiTerminal}" gate "$@"; return ;;
     @profile) "${TT_BIN:-aiTerminal}" profile "$@"; return ;;

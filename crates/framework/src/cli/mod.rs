@@ -19,6 +19,7 @@ pub(crate) mod format;
 pub(crate) mod jobs;
 pub(crate) mod live;
 pub(crate) mod logs;
+pub(crate) mod mcp;
 pub(crate) mod md;
 pub(crate) mod media;
 pub(crate) mod observe;

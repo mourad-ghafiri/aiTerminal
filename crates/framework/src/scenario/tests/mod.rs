@@ -2,12 +2,12 @@ use super::*;
 
 #[test]
 fn ai_scenarios() {
-    check("ai", 33);
+    check("ai", 34);
 }
 
 #[test]
 fn cli_scenarios() {
-    check("cli", 24);
+    check("cli", 25);
 }
 
 #[test]

@@ -7,7 +7,7 @@ use crate::cli::jobs::shell::guard_refusal;
 use crate::cli::jobs::spawn::cwd_string;
 use crate::cli::observe::CliObserver;
 use crate::cli::run::{memory_preamble, record_session_run, session_preamble};
-use crate::cli::runner::{build_runner, context_settings};
+use crate::cli::runner::{build_runner, launch_hub, context_settings};
 use crate::cli::style::{accent, muted, reset};
 
 /// `ai loop "<goal>" …` — iterate the maker agent until the verifier passes or a bound fires.
@@ -150,9 +150,9 @@ pub(crate) fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(bounds.timeout);
     let _watchdog = wire_deadline(cancel.clone(), bounds.timeout);
     let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default()).with_images(media).with_cancel(cancel);
-    let mut runner = build_runner(&cfg, &settings, workspace, guard.clone(), true);
+    let mut runner = build_runner(&cfg, &settings, workspace, guard.clone(), launch_hub());
     if let Some(hub) = &runner.mcp {
-        for (name, describe) in hub.tools() {
+        for (name, describe) in hub.lock().unwrap_or_else(|e| e.into_inner()).tools() {
             maker.tools.push(crate::ai::ToolSpec { name, describe });
         }
     }

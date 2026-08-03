@@ -117,3 +117,37 @@ fn decoder_caps_an_event_that_never_dispatches() {
     assert_eq!(d.push_line("data: ok"), Ok(None));
     assert_eq!(d.push_line(""), Ok(Some("ok".to_string())));
 }
+
+#[test]
+fn a_curl_capture_splits_into_status_headers_and_body() {
+    let raw = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nMcp-Session-Id: abc123\r\n\r\n{\"ok\":true}";
+    let r = parse_reply(raw).unwrap();
+    assert_eq!(r.status, 200);
+    assert_eq!(r.header("content-type"), Some("application/json"));
+    assert_eq!(r.header("Mcp-Session-Id"), Some("abc123"));
+    assert_eq!(r.body, "{\"ok\":true}");
+    assert!(!r.is_sse());
+    assert_eq!(r.payloads(), vec!["{\"ok\":true}".to_string()]);
+}
+
+#[test]
+fn an_interim_100_continue_block_is_skipped() {
+    let raw = "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nnope";
+    let r = parse_reply(raw).unwrap();
+    assert_eq!(r.status, 400);
+    assert_eq!(r.body, "nope");
+}
+
+#[test]
+fn an_sse_reply_deframes_into_payloads() {
+    let raw = "HTTP/2 200\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"a\":1}\n\ndata: {\"b\":2}\n\n";
+    let r = parse_reply(raw).unwrap();
+    assert!(r.is_sse());
+    assert_eq!(r.payloads(), vec!["{\"a\":1}".to_string(), "{\"b\":2}".to_string()]);
+}
+
+#[test]
+fn a_headerless_blob_is_a_malformed_reply() {
+    assert!(parse_reply("not http at all").is_err());
+    assert!(parse_reply("HTTP/1.1 garbage\r\n\r\nx").is_err());
+}

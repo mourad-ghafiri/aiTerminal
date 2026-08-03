@@ -39,6 +39,7 @@ command_not_found_handle() {
     @agent)   "${TT_BIN:-aiTerminal}" ai agent "$@"; return ;;
     @loop)    "${TT_BIN:-aiTerminal}" ai loop "$@"; return ;;
     @job)     "${TT_BIN:-aiTerminal}" ai job "$@"; return ;;
+    @mcp)     "${TT_BIN:-aiTerminal}" ai mcp "$@"; return ;;
     @md)      "${TT_BIN:-aiTerminal}" md "$@"; return ;;
     @gate)    "${TT_BIN:-aiTerminal}" gate "$@"; return ;;
     @profile) "${TT_BIN:-aiTerminal}" profile "$@"; return ;;

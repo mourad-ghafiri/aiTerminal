@@ -37,7 +37,9 @@ pub use client::Client;
 pub use compact::{CompactionReport, CompactionStage, Ladder, Summarizer};
 pub use transcript::{Transcript, Turn};
 pub use context::{capture_context, TermContext};
-pub use mcp::{load_servers, McpHub, McpServer};
+pub use mcp::{load_servers, McpHub, McpServer, Reach};
+#[cfg(test)]
+pub(crate) use mcp::scripted::hub as scripted_mcp_hub;
 pub use model::{key_env_name, AiSettings};
 pub use memory::{MemoryEntry, MemoryService};
 pub use session::Session;

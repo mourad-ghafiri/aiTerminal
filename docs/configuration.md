@@ -24,7 +24,8 @@ ai/                    everything AI:
   aiTerminal.md          the global AI instructions (the system-prompt base)
   agents/*.md            agents (@<name>)     skills/*.md    skills
   prompts/*.md           prompt blocks        flows/*.toml   workflow graphs (@flow)
-  mcp/                   MCP declarations     memory/*.md    global durable memory
+  mcp/*.toml             MCP servers (command = local | url = remote; see ai.md)
+  memory/*.md            global durable memory
   models/*.toml          the provider/model catalog
   jobs/<id>/             background job records (@job)
   flow-runs/<id>/        @flow run records: run.toml + nodes/<id>.md

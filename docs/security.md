@@ -191,6 +191,14 @@ a `@job`'s carries the sentence somebody typed. None of those pass through the t
 which only ever sees results coming *back* — so a flow that read a config file with one node
 and reasoned about it with the next used to send the whole file to a model.
 
+An MCP call crosses the boundary in **both** directions, so it is guarded in both:
+the arguments the model wrote have their secret placeholders restored before they
+reach the server (a placeholder from another run is refused, never forwarded as
+literal text), and the server's reply is hidden again before the model reads it.
+Declaring a server remains a trust decision — a local one runs as you, a remote one
+sees every argument — and a server's tool descriptions, being foreign text bound for
+a system prompt, are sanitized and bounded on the way in.
+
 The four small model calls that sit outside a run's own loop — `@ai`'s question, the job
 planner reading a sentence, the check proposer reading a goal, the graph builder reading a
 goal — ask at their own call sites, for the same reason.

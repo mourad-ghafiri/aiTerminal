@@ -132,6 +132,9 @@ pub(crate) struct FlowDriver<'a> {
     pub(crate) rows: std::sync::Mutex<Vec<crate::flowruns::NodeRun>>,
     /// The live display — one line per node, in graph order.
     pub(crate) board: std::sync::Arc<crate::flow::board::Board>,
+    /// ONE hub of MCP servers for the whole run. Built before the first node; every
+    /// node's runner shares it — N nodes used to launch N copies of every server.
+    pub(crate) mcp: Option<crate::cli::runner::SharedHub>,
 }
 
 impl FlowDriver<'_> {
@@ -232,13 +235,13 @@ impl FlowDriver<'_> {
         let cancel = crate::ai::CancelToken::new();
         let _watch = self.node_watchdog(cancel.clone(), node);
         let client = crate::ai::Client::new(self.settings.clone(), crate::ai::CurlTransport::default()).with_cancel(cancel);
-        let mut runner = build_runner(self.cfg, &self.settings, self.workspace.clone(), self.guard.clone(), true);
+        let mut runner = build_runner(self.cfg, &self.settings, self.workspace.clone(), self.guard.clone(), self.mcp.clone());
         runner.trace = Some(std::sync::Arc::new(crate::flow::board::NodeTrace {
             board: self.board.clone(),
             node: node.id.clone(),
         }));
         if let Some(hub) = &runner.mcp {
-            for (n, describe) in hub.tools() {
+            for (n, describe) in hub.lock().unwrap_or_else(|e| e.into_inner()).tools() {
                 spec.tools.push(crate::ai::ToolSpec { name: n, describe });
             }
         }

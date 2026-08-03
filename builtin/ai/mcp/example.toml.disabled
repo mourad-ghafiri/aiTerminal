@@ -1,0 +1,25 @@
+# An MCP tool-server declaration. Rename to <name>.toml to enable — the file stem
+# becomes the server's name, and its tools reach agents as mcp.<name>.<tool>.
+# `ai mcp` (or @mcp in the shell) connects to every declared server and reports
+# what it found: negotiated protocol era, identity, tools, or why it failed.
+#
+# A LOCAL server: a command this terminal spawns and speaks to over stdio.
+#
+#   command = "npx"
+#   args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/it/may/touch"]
+#   [env]
+#   API_TOKEN = "$MY_TOKEN"          # $VAR / ${VAR} resolve at launch time
+#
+# A REMOTE server: a Streamable HTTP endpoint this terminal POSTs to.
+#
+#   url = "https://mcp.example.com/mcp"
+#   [headers]
+#   Authorization = "Bearer $MCP_EXAMPLE_KEY"
+#
+# Either way:
+#
+#   timeout_s = 30                   # per tool call (1–600)
+#
+# Declaring a server is a trust decision: a local one runs as you, a remote one
+# sees every argument the model writes. The protocol era (2026-07-28, or the
+# initialize-handshake revisions) is negotiated automatically per server.

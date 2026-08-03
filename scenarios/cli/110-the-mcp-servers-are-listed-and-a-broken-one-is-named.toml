@@ -1,0 +1,47 @@
+name = "the MCP servers are listed, and a broken declaration is named rather than fatal"
+tags = ["cli", "mcp"]
+
+# `@mcp` is the visibility the protocol asks a client to give: which servers are
+# declared, what era each negotiated, which tools the model will see. Two facts are
+# proved here without a real server: the empty state explains where a declaration
+# goes, and a server that cannot start is REPORTED — the command (like a run) never
+# fails because one declaration is broken.
+
+[setup]
+home = "mcp-list"
+
+[[step]]
+run = "@mcp"
+
+[[step]]
+expect_exit = 0
+
+# A declaration whose command does not exist on any machine. Launching it fails at
+# spawn — instantly, no network, nothing runs — and `@mcp` must still exit clean,
+# with the failure carried in its report rather than in its exit code.
+[[step]]
+write_file = ".aiTerminal/ai/mcp/ghost.toml"
+body = """
+command = "aiterminal-scenario-no-such-binary"
+"""
+
+[[step]]
+run = "@mcp"
+
+[[step]]
+expect_exit = 0
+
+# A file that declares BOTH a command and a url is ambiguous, so it is not a
+# server at all — `@mcp` treats it as undeclared and still exits clean.
+[[step]]
+write_file = ".aiTerminal/ai/mcp/both.toml"
+body = """
+command = "a"
+url = "https://b.example"
+"""
+
+[[step]]
+run = "@mcp"
+
+[[step]]
+expect_exit = 0

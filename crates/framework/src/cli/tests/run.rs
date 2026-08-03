@@ -166,7 +166,7 @@ fn the_tool_families_an_agent_declares_actually_work() {
     crate::config::Config::ensure_default();
     let cfg = crate::config::Config::load();
     let guard = std::sync::Arc::new(crate::guard::Guard::default());
-    let runner = build_runner(&cfg, &cfg.ai_settings(), None, guard, false);
+    let runner = build_runner(&cfg, &cfg.ai_settings(), None, guard, None);
     let ctx = &runner.ctx;
     assert!(ctx.app_data.is_some(), "a terminal run has somewhere to keep its own state");
 
@@ -290,7 +290,7 @@ fn folder_session_flows_into_context_and_runner() {
     // 3) build_runner scopes the agent's memory.* tools to THIS folder's session store.
     let settings = cfg.ai_settings();
     let guard = std::sync::Arc::new(crate::guard::Guard::default());
-    let runner = build_runner(&cfg, &settings, Some(ws.clone()), guard, false);
+    let runner = build_runner(&cfg, &settings, Some(ws.clone()), guard, None);
     assert_eq!(runner.ctx.memory_dir.as_deref(), Some(session.memory_dir().as_path()), "runner memory is folder-scoped");
 }
 
@@ -400,4 +400,28 @@ fn nothing_reaches_a_model_except_through_the_guard() {
     // BOTH halves — the prompt and the grounding around it.
     assert_eq!(body.matches("\u{ab}db-password-1\u{bb}").count(), 2, "prompt and context alike: {body}");
     assert!(body.contains("what should I check"), "the rest of the question is untouched");
+}
+
+#[test]
+fn an_mcp_call_passes_the_guard_before_anything_leaves() {
+    // The `mcp.` branch is a trust boundary: arguments go to an external server.
+    // They must go through `guard.restore` first — so a placeholder this run minted
+    // becomes its real value (the round trip that makes redaction usable), and a
+    // placeholder from ANOTHER run is refused before a single byte is sent. The
+    // foreign case is asserted here; it fails even with no server declared, which is
+    // the proof that restore runs before routing rather than inside it.
+    let (_h, _home) = crate::test_home::lock_home("cli-mcp-guard");
+    crate::config::Config::ensure_default();
+    let cfg = crate::config::Config::load();
+    let guard = std::sync::Arc::new(crate::guard::Guard::from_toml(
+        "[[guard.secret]]\npattern = \"pw-[a-z0-9]+\"\nname = \"db-password\"\n",
+    ));
+    let mut runner = build_runner(&cfg, &cfg.ai_settings(), None, guard, None);
+    let out = crate::ai::ToolRunner::run(&mut runner, "mcp.srv.search", "{\"q\":\"\u{ab}db-password-3\u{bb}\"}");
+    let text = match &out {
+        crate::ai::ToolOutcome::Failed(e) | crate::ai::ToolOutcome::Refused(e) => e.clone(),
+        crate::ai::ToolOutcome::Done(_) => panic!("a foreign placeholder must never reach a server"),
+    };
+    assert!(text.contains("another run"), "the refusal explains itself: {text}");
+    assert!(!text.contains("no servers"), "restore must come BEFORE routing: {text}");
 }

@@ -35,6 +35,11 @@ pub struct AiWorld {
     scratch: std::path::PathBuf,
     /// Scripted tool outcomes: `Ok` is what the tool returned, `Err` is how it failed.
     tool_results: HashMap<String, Result<String, String>>,
+    /// Declared MCP tools: `(name, description, input schema JSON)` — served by a
+    /// scripted in-process server the REAL client connects to.
+    mcp_tools: Vec<(String, String, String)>,
+    /// Scripted MCP call results, by bare tool name.
+    mcp_results: Vec<(String, String)>,
     /// The guard `@ai --command` runs a suggested command past.
     guard: Guard,
     /// How the shell is configured to treat an allowed command — `auto` or `manual`.
@@ -118,6 +123,8 @@ pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
         context_window: world::int(setup, "context_window").unwrap_or(200_000).max(0) as usize,
         scratch: std::env::temp_dir().join(format!("aiterm-scenario-{}-{:p}", std::process::id(), &guard)),
         tool_results: HashMap::new(),
+        mcp_tools: Vec::new(),
+        mcp_results: Vec::new(),
         guard,
         command_mode: world::text(setup, "command_mode").unwrap_or_else(|| "manual".into()),
         last: Outcome::default(),
@@ -148,6 +155,17 @@ impl World for AiWorld {
         }
 
         // ── scripting the tools ──────────────────────────────────────────────
+        if let Some(name) = world::text(step, "mcp_tool") {
+            // One declared MCP tool: the scripted server advertises it (schema and
+            // all), and `returns` is what a call to it answers.
+            let describe = world::text(step, "describe").unwrap_or_else(|| format!("the {name} tool"));
+            let schema = world::text(step, "schema").unwrap_or_else(|| "{\"type\":\"object\"}".into());
+            if let Some(result) = world::text(step, "returns") {
+                self.mcp_results.push((name.clone(), result));
+            }
+            self.mcp_tools.push((name, describe, schema));
+            return Ok(());
+        }
         if let Some(name) = world::text(step, "tool") {
             let describe = world::text(step, "describe").unwrap_or_else(|| format!("the {name} tool"));
             self.tools.push(ToolSpec { name, describe });
@@ -407,7 +425,23 @@ impl AiWorld {
             guard_brief: self.guard.briefing(),
             scratch: self.scratch.clone(),
         };
-        let mut runner = ScriptedRunner { results: self.tool_results.clone(), calls: Vec::new(), guard: self.guard.clone() };
+        let mcp = match self.mcp_tools.is_empty() {
+            true => None,
+            false => {
+                // The REAL hub over a scripted server: negotiation, listing and the
+                // schema-bearing describe all run, so what reaches the request body
+                // is what a live run would send.
+                let hub = crate::ai::scripted_mcp_hub("srv", &self.mcp_tools, &self.mcp_results).map_err(|e| format!("scripted mcp: {e}"))?;
+                Some(std::sync::Arc::new(std::sync::Mutex::new(hub)))
+            }
+        };
+        let mut spec = spec;
+        if let Some(hub) = &mcp {
+            for (name, describe) in hub.lock().unwrap_or_else(|e| e.into_inner()).tools() {
+                spec.tools.push(ToolSpec { name, describe });
+            }
+        }
+        let mut runner = ScriptedRunner { results: self.tool_results.clone(), calls: Vec::new(), guard: self.guard.clone(), mcp };
         let client = self.client();
         // Watches what the harness did about its own context, so a scenario can assert
         // on compaction the same way it asserts on a tool call.
@@ -494,11 +528,17 @@ struct ScriptedRunner {
     /// past the guard before the model can read it. Modelled here rather than skipped,
     /// because a journey about a secret in a tool result is a journey about this seam.
     guard: Guard,
+    /// A scripted MCP hub, when the scenario declared `mcp_tool`s. Calls route
+    /// through the REAL boundary (`cli::runner::call_mcp`): restore, route, hide.
+    mcp: Option<crate::cli::runner::SharedHub>,
 }
 
 impl ToolRunner for ScriptedRunner {
     fn run(&mut self, name: &str, args: &str) -> crate::ai::ToolOutcome {
         self.calls.push(format!("{name} {}", args.trim()).trim_end().to_string());
+        if name.starts_with("mcp.") {
+            return crate::cli::runner::call_mcp(&self.guard, &self.mcp, name, args);
+        }
         match self.results.get(name) {
             Some(Ok(out)) => crate::ai::ToolOutcome::Done(self.guard.hide(out)),
             // Sorted by the guard's own recogniser, exactly as the CLI runner sorts it —

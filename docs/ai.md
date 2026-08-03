@@ -1036,9 +1036,72 @@ written by hand, or notes that predate the check.
 
 ## MCP
 
-Declare MCP servers under `~/.aiTerminal/ai/mcp/`. Agent runs launch them and
-expose their tools as
-`mcp.<server>.<tool>` alongside the native catalog.
+A real Model Context Protocol client — protocol revision **2026-07-28**, with the
+spec's own *dual-era* fallback for servers that still speak the older
+`initialize`-handshake revisions (`2024-11-05` … `2025-11-25`). Nothing to
+configure: the era is negotiated per server, automatically. A modern server is
+probed with `server/discover` and spoken to statelessly (every request carries its
+protocol version and capabilities); anything else gets the classic handshake, at
+whatever revision the server answers with.
+
+### Declaring a server
+
+One file per server under `~/.aiTerminal/ai/mcp/<name>.toml` — the file stem is the
+server's name (letters, digits, `-`, `_`; no dots, they belong to tool routing).
+A seeded `example.toml.disabled` documents the format in place.
+
+```toml
+# a LOCAL server: spawned, spoken to over stdio
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/it/may/touch"]
+[env]
+API_TOKEN = "$MY_TOKEN"        # $VAR / ${VAR} resolve at launch time
+
+# — or — a REMOTE server: a Streamable HTTP endpoint
+url = "https://mcp.example.com/mcp"
+[headers]
+Authorization = "Bearer $MCP_KEY"
+
+# either way
+timeout_s = 30                 # per tool call (1–600)
+```
+
+`command` and `url` are exclusive — a file declaring both is ambiguous and treated
+as no server at all. Remote auth is static headers on purpose; there is no
+interactive OAuth flow, and stdio servers take credentials from `[env]`, which is
+what the spec prescribes for that transport.
+
+### What an agent sees
+
+Every agent, loop, flow node and background agent job gets the union of the declared
+servers' tools as `mcp.<server>.<tool>`, **with each tool's input schema** spliced
+into its description — the model calls a tool with the arguments it actually takes,
+rather than guessing names. Behaviour annotations ride along as `[read-only]` /
+`[destructive]` hints. A server that declares the `resources` capability also grows
+`mcp.<server>.resources.list` and `mcp.<server>.resources.read`, so its data surface
+is browsable the same way. The catalogue is sorted, so the prompt prefix (and the
+provider cache it feeds) never depends on which server answered first — and a flow
+launches **one** hub for the whole run, shared by every node, not one per node.
+
+Results come back whole: text, resource links, embedded resources, structured
+output (`structuredContent`), described media — bounded at 256 KiB, exactly like a
+chatty command.
+
+### `ai mcp` (shell: `@mcp`)
+
+Connects to every declared server exactly as a run would and reports each one:
+transport, negotiated era and revision, the server's self-reported identity, tool
+and resource counts — or, for one that failed, the reason and the tail of its
+stderr, which is where a dying server writes why.
+
+### Trust
+
+A declaration is a trust decision. A local server runs as you; a remote one sees
+every argument the model writes. The guard holds the same line here as everywhere:
+outgoing arguments have their secret placeholders restored (a placeholder from
+another run is refused, never forwarded as literal text), every result is redacted
+before it re-enters the model, and tool descriptions — foreign text headed for a
+system prompt — are sanitized and bounded on the way in.
 
 ## Models & pools
 

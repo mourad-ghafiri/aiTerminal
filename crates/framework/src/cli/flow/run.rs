@@ -171,6 +171,7 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
         interactive: stdin_is_tty(),
         rows: std::sync::Mutex::new(rows),
         board: board.clone(),
+        mcp: crate::cli::runner::launch_hub(),
     };
     let nodes = graph_nodes(&flow);
     let started = std::time::Instant::now();

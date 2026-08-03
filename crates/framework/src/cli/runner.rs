@@ -80,9 +80,14 @@ pub(crate) fn fit_context(budget: &crate::ai::ContextBudget, prompt: &str, block
 /// A pure agent tool runner: routes a model tool call to `caps::run` (no live host),
 /// intercepts `task.run` (sub-agent delegation), and hides every secret in a result
 /// before it re-enters the loop.
+/// One MCP hub, shared: a flow's nodes run in parallel and must not each relaunch
+/// every declared server — the hub is one set of live connections for the whole run,
+/// and the mutex serialises the calls each connection multiplexes.
+pub(crate) type SharedHub = std::sync::Arc<std::sync::Mutex<crate::ai::McpHub>>;
+
 pub(crate) struct CliToolRunner {
     pub(crate) ctx: crate::caps::CapCtx,
-    pub(crate) mcp: Option<crate::ai::McpHub>,
+    pub(crate) mcp: Option<SharedHub>,
     pub(crate) sub: SubAgentCtx,
     depth: u8,
     /// Where a tool trace goes. `None` is stderr, which is right for a single agent
@@ -103,17 +108,7 @@ impl crate::ai::ToolRunner for CliToolRunner {
             };
         }
         if name.starts_with("mcp.") {
-            let parsed = match corelib::wire::Json::parse(args) {
-                Ok(o @ corelib::wire::Json::Obj(_)) => o,
-                _ => corelib::wire::Json::Obj(Vec::new()),
-            };
-            let Some(mcp) = self.mcp.as_mut() else {
-                return crate::ai::ToolOutcome::Failed("mcp: no servers are running".into());
-            };
-            return match mcp.call(name, parsed) {
-                Ok(out) => crate::ai::ToolOutcome::Done(hide(self, out)),
-                Err(e) => classify(hide(self, e)),
-            };
+            return call_mcp(&self.ctx.guard, &self.mcp, name, args);
         }
         let pairs = tool_args_to_pairs(args);
         // A concise, TIMED tool trace, so a streaming run shows its work. What it is
@@ -334,9 +329,53 @@ fn default_safe_tools() -> Vec<String> {
     crate::ai::DEFAULT_SAFE_TOOLS.iter().map(|s| s.to_string()).collect()
 }
 
+/// One MCP tool call, through the guard on BOTH sides — the whole trust boundary
+/// in one place, shared by the real runner and the scenario worlds so a journey
+/// about this seam drives this seam.
+///
+/// The arguments go to an external server. The model writes placeholders where it
+/// saw secrets, and a server handed the literal text `«db-password-1»` can only
+/// fail confusingly; the round trip is what makes redaction usable, so the values
+/// go back in exactly as they do for a shell command. A placeholder from ANOTHER
+/// run is a refusal, not a guess — and the result, whatever the server, is hidden
+/// again before the model reads it.
+pub(crate) fn call_mcp(guard: &crate::guard::Guard, mcp: &Option<SharedHub>, name: &str, args: &str) -> crate::ai::ToolOutcome {
+    let ready = match guard.restore(args) {
+        Ok(r) => r,
+        Err(e) => return classify(guard.hide(&e)),
+    };
+    let parsed = match corelib::wire::Json::parse(&ready) {
+        Ok(o @ corelib::wire::Json::Obj(_)) => o,
+        _ => corelib::wire::Json::Obj(Vec::new()),
+    };
+    let Some(mcp) = mcp.as_ref() else {
+        return crate::ai::ToolOutcome::Failed("mcp: no servers are running".into());
+    };
+    let result = mcp.lock().unwrap_or_else(|e| e.into_inner()).call(name, parsed);
+    match result {
+        Ok(out) => crate::ai::ToolOutcome::Done(guard.hide(&out)),
+        Err(e) => classify(guard.hide(&e)),
+    }
+}
+
+/// Launch the declared MCP servers as one shared hub, or `None` when nothing is
+/// declared (or nothing came up). Callers own the hub's lifetime: an agent run
+/// builds one for itself; a flow builds ONE and hands it to every node.
+pub(crate) fn launch_hub() -> Option<SharedHub> {
+    let servers = crate::ai::load_servers(&[crate::config::Config::mcp_dir()]);
+    if servers.is_empty() {
+        return None;
+    }
+    let hub = crate::ai::McpHub::launch(&servers);
+    match hub.is_empty() {
+        true => None,
+        false => Some(std::sync::Arc::new(std::sync::Mutex::new(hub))),
+    }
+}
+
 /// Assemble the tool-loop plumbing shared by `--agent` and `--flow`: the MCP hub,
 /// the capability context, and the delegation context.
-pub(crate) fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::AiSettings, workspace_root: Option<std::path::PathBuf>, guard: std::sync::Arc<crate::guard::Guard>, with_mcp: bool) -> CliToolRunner {
+pub(crate) fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::AiSettings, workspace_root: Option<std::path::PathBuf>, guard: std::sync::Arc<crate::guard::Guard>, mcp: Option<SharedHub>) -> CliToolRunner {
     // The agent's file WRITES are confined to the invocation directory; MCP servers
     // come from the global `ai/mcp/` declarations.
     let workspace = workspace_root.or_else(|| std::env::current_dir().ok());
@@ -351,18 +390,6 @@ pub(crate) fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::Ai
     // answered "only available to installed apps" everywhere, including the four `todo.*`
     // tools `coder` declares and its prompt tells it to use.
     let app_data = session.as_ref().map(|s| s.data_dir());
-    let mcp = if with_mcp {
-        let mcp_dirs = vec![crate::config::Config::mcp_dir()];
-        let servers = crate::ai::load_servers(&mcp_dirs);
-        if servers.is_empty() {
-            None
-        } else {
-            let hub = crate::ai::McpHub::launch(&servers);
-            if hub.is_empty() { None } else { Some(hub) }
-        }
-    } else {
-        None
-    };
     // The guard reads relative paths against the SAME directory the tools resolve them
     // against. Judging `cat build/keys.txt` against whatever directory this process happens
     // to have been started in would be judging a path nobody named. One clone per run, and

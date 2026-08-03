@@ -1,0 +1,44 @@
+name = "an mcp tool is offered with its schema, and what it returns is hidden"
+tags = ["ai", "mcp"]
+
+# Two promises in one journey, both on the REAL client (era negotiation, listing and
+# routing run against a scripted server). OFFERED: an MCP tool reaches the model with
+# its input schema, so the argument names are facts rather than guesses — the missing
+# schema is why calls used to fail. HIDDEN: what the server returns crosses the same
+# egress as every native tool, so a credential in a tool result reaches the model as
+# a placeholder, never as itself.
+
+[setup]
+secrets = ["pw-[a-z0-9]+"]
+
+[[step]]
+mcp_tool = "read_config"
+describe = "Read the service configuration"
+schema = '{"type":"object","properties":{"service":{"type":"string"}},"required":["service"]}'
+returns = "DB_PASSWORD=pw-scenario7"
+
+[[step]]
+model_says_in_turn = ["@tool mcp.srv.read_config {\"service\":\"db\"}", "The password is set — it reads «secret-1»."]
+
+[[step]]
+agent = "is the db password configured?"
+
+[[step]]
+expect_tool_calls = ["mcp.srv.read_config {\"service\":\"db\"}"]
+
+# The FIRST request already offers the tool: name, description, and the schema
+# (escaped, because the tool list rides inside the JSON body).
+[[step]]
+expect_request_contains = ['mcp.srv.read_config', 'Read the service configuration', '\"required\":[\"service\"]']
+
+# The SECOND request carries the server's answer — as the placeholder, never the value.
+[[step]]
+turn = 2
+expect_request_contains = ["«secret-1»"]
+
+[[step]]
+turn = 2
+expect_request_excludes = ["pw-scenario7"]
+
+[[step]]
+expect_answer_contains = ["«secret-1»"]

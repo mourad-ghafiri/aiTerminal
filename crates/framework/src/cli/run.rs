@@ -27,6 +27,7 @@ pub fn ai(args: &[String]) -> i32 {
         Some("job") => return ai_job_cmd(args),
         Some("flow") => return ai_flow_cmd(args),
         Some("loop") => return ai_loop_cmd(args),
+        Some("mcp") => return crate::cli::mcp::ai_mcp_cmd(),
         // Machinery, not surface: the detached child that writes the `[motivation]` line
         // pool (see `motivation::refill`). Deliberately absent from the usage text — it
         // is how the feature works, not something a person runs.
@@ -57,6 +58,7 @@ pub fn ai(args: &[String]) -> i32 {
         eprintln!("       aiTerminal ai loop \"<goal>\" [--check \"<cmd>\"] [--max N] [--timeout 30m]");
         eprintln!("       aiTerminal ai agent [<name>]                 # the installed agents");
         eprintln!("       aiTerminal ai job [clear]");
+        eprintln!("       aiTerminal ai mcp                          # the declared MCP servers, connected");
         return 2;
     }
 
