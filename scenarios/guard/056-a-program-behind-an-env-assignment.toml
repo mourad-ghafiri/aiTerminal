@@ -1,0 +1,25 @@
+name = "a program behind an env assignment is still the program"
+tags = ["guard", "commands"]
+
+# `FOO=1 sudo apt` runs sudo. Reading the assignment as the program let a rule anchored on
+# `^sudo` be walked past by typing one variable first.
+
+[[setup.guard.command]]
+pattern = "^sudo\\b"
+rule = "confirm"
+
+[[step]]
+run = "FOO=1 sudo apt install ripgrep"
+[[step]]
+expect_verdict = "confirm"
+
+[[step]]
+run = "PATH=/tmp LC_ALL=C sudo apt install ripgrep"
+[[step]]
+expect_verdict = "confirm"
+
+# A word with an `=` in it that is not an assignment is still ordinary.
+[[step]]
+run = "echo a=b"
+[[step]]
+expect_verdict = "allow"

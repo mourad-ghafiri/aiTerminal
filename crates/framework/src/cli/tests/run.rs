@@ -371,3 +371,33 @@ fn no_bundled_prompt_promises_a_feature_this_product_does_not_have() {
     }
     assert!(found.is_empty(), "a shipped prompt promises what this product cannot do:\n  {}", found.join("\n  "));
 }
+
+#[test]
+fn nothing_reaches_a_model_except_through_the_guard() {
+    // `CliToolRunner` hides every tool RESULT on the way back, and for a while that was
+    // described as the one egress point. It is not: a prompt does not go through it, and a
+    // prompt is not always the user's words — a flow node's is filled from an upstream
+    // command's output and a loop's carries the verifier's. So there is one door into
+    // `run_agent`, and this is the assertion that it is shut.
+    //
+    // The value keeps the shape the rule matches and none of the entropy.
+    let guard = crate::guard::Guard::from_toml("[[guard.secret]]\npattern = \"pw-[a-z0-9]+\"\nname = \"db-password\"\n");
+    let client = crate::cli::tests::scripted(&["noted."]);
+    let spec = crate::ai::AgentSpec { max_steps: 2, ..Default::default() };
+    let run = crate::cli::agents::start_agent(
+        &client,
+        &spec,
+        &guard,
+        "the staging password is pw-example0 — what should I check?",
+        "## This folder\nlast deploy used pw-example0\n",
+        &mut crate::cli::tests::NoTools,
+        &mut crate::ai::NoopObserver,
+    );
+    assert_eq!(run.answer, "noted.");
+    let body = client.transport().sent().join("\n");
+    assert!(!body.contains("pw-example0"), "a secret reached the wire: {body}");
+    assert!(body.contains("\u{ab}db-password-1\u{bb}"), "and what went instead names the rule: {body}");
+    // BOTH halves — the prompt and the grounding around it.
+    assert_eq!(body.matches("\u{ab}db-password-1\u{bb}").count(), 2, "prompt and context alike: {body}");
+    assert!(body.contains("what should I check"), "the rest of the question is untouched");
+}

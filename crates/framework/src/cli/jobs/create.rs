@@ -31,8 +31,14 @@ pub(crate) fn create_job(spec: RunSpec) -> i32 {
     // Wrapped unconditionally: the branches that never consult a model return before the
     // spinner's grace is up and draw nothing, which is why no test of "will this be slow"
     // is needed here.
+    // The sentence goes to a model, so it goes past the guard first — a request like
+    // "rotate sk-… every monday" is a key on its way to a provider, and this call happens
+    // long before any agent door.
+    let cfg = crate::config::Config::load();
+    let guard = crate::guard::build(&cfg, &crate::plugin::load_registry(&cfg));
+    let read = |text: &str, at: u64| crate::ai::plan::read_request(&guard.hide(text), at);
     let plan = crate::cli::observe::waiting_on(crate::cli::observe::READING_REQUEST, || {
-        resolve_spec(&spec, now, &crate::ai::plan::read_request)
+        resolve_spec(&spec, now, &read)
     });
     let Resolved { schedule, task, says, reading } = plan;
     report_reading(&reading, &spec.request, &says);

@@ -57,6 +57,11 @@ fn scenario_guard(setup: &Toml) -> Result<Guard, String> {
     for (pattern, rule) in deny.iter().map(|d| (d, "deny")).chain(confirm.iter().map(|c| (c, "confirm"))) {
         doc.push_str(&format!("[[guard.command]]\npattern = \"{pattern}\"\nrule = \"{rule}\"\n"));
     }
+    // `secrets = [...]` — what must not leave. Every one leaves as «secret-N», so a journey
+    // names the placeholder without having to invent a rule name.
+    for pattern in world::list(setup, "secrets").unwrap_or_default() {
+        doc.push_str(&format!("[[guard.secret]]\npattern = \"{pattern}\"\n"));
+    }
     let parsed = corelib::wire::Toml::parse(&doc).map_err(|e| format!("guard rules: {e}"))?;
     let empty = corelib::wire::Toml::Table(Vec::new());
     let (guard, skipped) = Guard::compile(&[&crate::guard::RuleSet::parse(parsed.get("guard").unwrap_or(&empty))], crate::guard::Base::here());

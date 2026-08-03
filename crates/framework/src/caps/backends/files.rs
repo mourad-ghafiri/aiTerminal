@@ -294,7 +294,7 @@ fn fs_search(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
 /// written, because a config file containing the literal text `«db-password-1»` is a bug
 /// that surfaces days later somewhere else entirely.
 fn written(content: &str, ctx: &CapCtx) -> Result<String, String> {
-    ctx.guard.vault().restore(content).map_err(|e| format!("fs: {e}"))
+    ctx.guard.restore(content).map_err(|e| format!("fs: {e}"))
 }
 
 fn fs_write(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {

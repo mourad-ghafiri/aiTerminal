@@ -1,0 +1,26 @@
+name = "what crosses out of a run keeps neither the secret nor the placeholder"
+tags = ["guard", "secrets", "vault"]
+
+# A folder's digest and an agent's memory outlive the run that wrote them and are read back
+# into a LATER one — which has a different vault. A secret there would leak on a different
+# day, and a placeholder there is a trap: nothing could resolve it, and the command built
+# from it would be refused.
+
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "db-password"
+
+[[step]]
+hide = "DB_PASSWORD=pw-example0"
+[[step]]
+expect_text = "DB_PASSWORD=«db-password-1»"
+
+[[step]]
+scrub = "DB_PASSWORD=«db-password-1»"
+[[step]]
+expect_text = "DB_PASSWORD=«redacted»"
+
+[[step]]
+scrub = "DB_PASSWORD=pw-example0"
+[[step]]
+expect_text = "DB_PASSWORD=«redacted»"

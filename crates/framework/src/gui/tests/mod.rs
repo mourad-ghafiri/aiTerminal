@@ -147,5 +147,5 @@ fn the_shipped_guard_is_the_single_source_of_secret_rules() {
     assert_eq!(p.hide("cargo build --release"), "cargo build --release");
     // …and every one of them comes back, which is what makes the run still work.
     let hidden = p.hide("AWS_ACCESS_KEY_ID=AKIAEXAMPLEONLY00000");
-    assert_eq!(p.vault().restore(&hidden).unwrap(), "AWS_ACCESS_KEY_ID=AKIAEXAMPLEONLY00000");
+    assert_eq!(p.restore(&hidden).unwrap(), "AWS_ACCESS_KEY_ID=AKIAEXAMPLEONLY00000");
 }

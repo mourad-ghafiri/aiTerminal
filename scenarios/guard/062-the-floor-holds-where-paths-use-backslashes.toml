@@ -1,0 +1,24 @@
+name = "the credentials floor holds where paths are written with backslashes"
+tags = ["guard", "paths", "floor"]
+
+# A third of this suite runs on a platform whose home directory is `C:\Users\you`. A floor
+# spelled with `/` alone is a floor that is simply not there, which is the worst way for a
+# security rule to fail: silently, and only somewhere else.
+
+[setup]
+home = "C:\Users\person"
+
+[[step]]
+read = "C:\Users\person\.ssh\id_rsa"
+[[step]]
+expect_verdict = "deny"
+
+[[step]]
+read = "C:\Users\person\.aiTerminal\config.toml"
+[[step]]
+expect_verdict = "deny"
+
+[[step]]
+read = "C:\Users\person\Documents\notes.md"
+[[step]]
+expect_verdict = "allow"

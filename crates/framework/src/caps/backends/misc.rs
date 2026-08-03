@@ -28,10 +28,19 @@ pub(crate) fn guard(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Re
     match method {
         "guard.check" => {
             let target = arg(args, 1, "target").or_else(|| arg(args, 0, "cmd")).ok_or("guard.check: missing target")?;
-            let path = std::path::Path::new(target);
-            let act = match arg(args, 0, "act").unwrap_or("run").trim().to_ascii_lowercase().as_str() {
-                "read" => crate::guard::Act::Read(path),
-                "write" => crate::guard::Act::Write(path),
+            let word = arg(args, 0, "act").unwrap_or("run").trim().to_ascii_lowercase();
+            // A path is resolved the way the tool it is asked ABOUT resolves it — `~` against
+            // home, relative against the workspace. Judging `~/.ssh/id_rsa` as a literal
+            // directory called `~` would answer "allow" and then `fs.read` would refuse it,
+            // which is worse than not having the question: an agent that asks first would be
+            // misled into doing the thing.
+            let path = match word.as_str() {
+                "read" | "write" => Some(crate::caps::backends::fs_path_rel(ctx, target)?),
+                _ => None,
+            };
+            let act = match (word.as_str(), &path) {
+                ("read", Some(p)) => crate::guard::Act::Read(p),
+                ("write", Some(p)) => crate::guard::Act::Write(p),
                 _ => crate::guard::Act::Run(target),
             };
             let (verdict, reason) = match ctx.guard.judge(act) {

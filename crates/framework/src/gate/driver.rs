@@ -610,7 +610,7 @@ impl Gate {
     /// A line on its way from the chat to this terminal — the moment the placeholders in
     /// it stop being placeholders.
     fn arriving(&self, line: &str) -> Result<String, String> {
-        self.guard.vault().restore(line)
+        self.guard.ready_command(line)
     }
 
     fn full_action(&self) -> Action {

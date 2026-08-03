@@ -245,6 +245,29 @@ pub(crate) fn build_agent_spec(name: &str, context: (u32, f32), guard: &crate::g
     })
 }
 
+/// Start an agent run, with everything it is handed put past the guard first.
+///
+/// **The one door into [`run_agent`](crate::ai::run_agent) from this crate**, and the
+/// reason it exists is that a prompt is not always the user's words. A `@flow` node's is
+/// filled from an upstream `run` node's raw output; a `@loop`'s carries the verifier
+/// command's; a `@job`'s carries the sentence somebody typed. None of those pass through
+/// the tool runner's egress point, which only ever sees results coming *back*.
+///
+/// So the door is here, and it is the only one: `crate::ai` never learns what a secret is —
+/// that is the guard's job, one layer up — and no path can start a run without passing
+/// through the place that asks.
+pub(crate) fn start_agent<T: crate::ai::Transport>(
+    client: &crate::ai::Client<T>,
+    agent: &crate::ai::AgentSpec,
+    guard: &crate::guard::Guard,
+    prompt: &str,
+    context: &str,
+    runner: &mut dyn crate::ai::ToolRunner,
+    observer: &mut dyn crate::ai::AgentObserver,
+) -> crate::ai::AgentRun {
+    crate::ai::run_agent(client, agent, &guard.hide(prompt), &guard.hide(context), runner, observer)
+}
+
 /// Wire Ctrl+C to a [`CancelToken`](crate::ai::CancelToken): installs the
 /// process SIGINT flag and watches it on a thread — when it fires, the token
 /// cancels (the engine stops between turns; a mid-stream curl is killed). The
@@ -289,7 +312,7 @@ pub(crate) fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::
         return 2;
     };
     let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default()).with_images(media);
-    let mut runner = build_runner(cfg, &settings, workspace_root, guard, true);
+    let mut runner = build_runner(cfg, &settings, workspace_root, guard.clone(), true);
     if let Some(hub) = &runner.mcp {
         for (name, describe) in hub.tools() {
             agent.tools.push(crate::ai::ToolSpec { name, describe });
@@ -308,7 +331,7 @@ pub(crate) fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::
     // `eprintln!` past the painter, whose next repaint then climbed over the trace and
     // erased it — the seam was always here, the single-agent path just never filled it.
     runner.trace = Some(std::sync::Arc::new(view));
-    let run = crate::ai::run_agent(&client, &agent, prompt, ctx, &mut runner, &mut obs);
+    let run = start_agent(&client, &agent, &guard, prompt, ctx, &mut runner, &mut obs);
     finish_streamed(&mut obs, &run.answer);
     let glyph = outcome_glyph(&run.outcome);
     let cost = Some(client.model().cost(run.usage.input as u64, run.usage.output as u64));

@@ -599,3 +599,81 @@ fn sys_run_guard_blocks_a_denied_program_anywhere_in_a_pipeline() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+
+#[test]
+fn asking_the_guard_about_a_path_gets_the_same_answer_the_tool_would_give() {
+    // An agent that asks first must not be misled into doing the thing. `guard.check` used
+    // to judge `~/x` as a literal directory called `~`, answer "allow", and then `fs.read`
+    // would refuse it — worse than not having the question at all.
+    let dir = tmpdir("guardcheck");
+    let c = CapCtx { guard: plain_guard(), app_data: None, remote_enabled: false, origin: String::new(), sandbox: Some(dir.clone()), memory_dir: None };
+    let pem = dir.join("server.pem");
+    std::fs::write(&pem, "not a key").unwrap();
+    let verdict = |target: &str| {
+        run("guard.check", &[("act".into(), "read".into()), ("target".into(), target.into())], &c)
+            .unwrap()
+            .get("verdict")
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    // A relative path resolves against the workspace, exactly as `fs.read` resolves it.
+    assert_eq!(verdict("server.pem"), "deny");
+    assert!(run("fs.read", &[("path".into(), "server.pem".into())], &c).is_err(), "and the tool agrees");
+    let ok = dir.join("notes.txt");
+    std::fs::write(&ok, "hello").unwrap();
+    assert_eq!(verdict("notes.txt"), "allow");
+    assert!(run("fs.read", &[("path".into(), "notes.txt".into())], &c).is_ok());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_command_that_only_becomes_dangerous_once_a_secret_is_put_back_never_runs() {
+    // The guard judges the line the model wrote; the shell runs the line with the values in
+    // it. A `.env` value carrying a `;` is a second command that nothing had ever judged.
+    let ws = tmpdir("injection");
+    let guard = crate::guard::Guard::from_toml(
+        "[[guard.command]]\npattern = \"^wipe-the-lot\"\nrule = \"deny\"\n\
+         [[guard.secret]]\npattern = \"PASS=\\\\S+\"\nname = \"credential\"\n",
+    );
+    // What an `fs.read` of a hostile `.env` would have handed back, hidden as it left.
+    let token = guard.hide("PASS=x;wipe-the-lot everything");
+    let c = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: false, origin: String::new(), sandbox: Some(ws.clone()), memory_dir: None };
+    let err = run("sys.run", &[("cmd".into(), format!("echo {}", token.trim()))], &c).unwrap_err();
+    assert!(err.contains("the guard refused"), "{err}");
+    assert!(!err.contains("wipe-the-lot"), "and the refusal does not print what it was protecting: {err}");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn a_secret_written_into_a_file_lands_as_the_real_value() {
+    // The other direction, and the reason the round trip exists: an agent that has never
+    // seen the password can still write a config file that holds it.
+    let ws = tmpdir("writeback");
+    let guard = crate::guard::Guard::from_toml("[[guard.secret]]\npattern = \"pw-[a-z0-9]+\"\nname = \"db-password\"\n");
+    let token = guard.hide("pw-example0");
+    let c = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: false, origin: String::new(), sandbox: Some(ws.clone()), memory_dir: None };
+    run("fs.write", &[("path".into(), "config.yml".into()), ("content".into(), format!("password: {token}"))], &c).unwrap();
+    assert_eq!(std::fs::read_to_string(ws.join("config.yml")).unwrap(), "password: pw-example0");
+    // …and reading it back hands the model the placeholder again, never the value.
+    let read = run("fs.read", &[("path".into(), "config.yml".into())], &c).unwrap();
+    let text = read.get("text").and_then(Json::as_str).unwrap();
+    assert!(text.contains("pw-example0"), "the tool returns what is on disk");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn a_memory_keeps_neither_the_secret_nor_a_placeholder() {
+    // A memory outlives the run that wrote it and is recalled into a later one — where a
+    // placeholder means nothing and a secret would leak again on a different day.
+    let store = tmpdir("memscrub");
+    let guard = crate::guard::Guard::from_toml("[[guard.secret]]\npattern = \"pw-[a-z0-9]+\"\nname = \"db-password\"\n");
+    let token = guard.hide("pw-example0");
+    let c = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: Some(store.clone()) };
+    run("memory.add", &[("text".into(), format!("the staging password is {token}"))], &c).unwrap();
+    let found = crate::cli::run::json_text(&run("memory.list", &[], &c).unwrap());
+    assert!(!found.contains("pw-example0"), "the value was written down: {found}");
+    assert!(!found.contains("db-password-1"), "so was a placeholder nothing could resolve: {found}");
+    assert!(found.contains("redacted"), "and what is there says so: {found}");
+    let _ = std::fs::remove_dir_all(&store);
+}

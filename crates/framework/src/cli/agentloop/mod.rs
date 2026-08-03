@@ -135,7 +135,7 @@ pub(crate) const MAX_ATTACHMENTS: usize = 16;
 /// to stall the loop), and fold exit code + output tail into a [`Verdict`].
 pub(crate) fn run_check(cmd: &str, guard: &crate::guard::Guard, deadline: std::time::Duration) -> Result<Verdict, String> {
     guard.permit(crate::guard::Act::Run(cmd)).map_err(|e| format!("the check command was refused: {e}"))?;
-    let cmd = guard.vault().restore(cmd)?;
+    let cmd = guard.ready_command(cmd)?;
     let mut child = std::process::Command::new("/bin/sh")
         .arg("-c")
         .arg(&cmd)
@@ -256,6 +256,7 @@ pub(crate) fn drive_loop<T: crate::ai::Transport>(
     maker: &crate::ai::AgentSpec,
     runner: &mut dyn crate::ai::ToolRunner,
     observer: &mut dyn crate::ai::AgentObserver,
+    guard: &crate::guard::Guard,
     goal: &str,
     state: &mut LoopState,
     check_label: Option<&str>,
@@ -282,7 +283,7 @@ pub(crate) fn drive_loop<T: crate::ai::Transport>(
         // next frame climbs over and erases.
         observer.on_phase(&crate::i18n::translate("loop.iteration", &[k.to_string(), last.to_string()]));
         let prompt = loop_prompt(goal, k, last, check_label, &state.feedback, &state.tried, state.shifting);
-        let run = crate::ai::run_agent(client, maker, &prompt, "", runner, observer);
+        let run = crate::cli::agents::start_agent(client, maker, guard, &prompt, "", runner, observer);
         st.tin += run.usage.input as u64;
         st.tout += run.usage.output as u64;
         st.tools += run.steps.len();
@@ -383,7 +384,7 @@ pub(crate) fn drive_loop_for_test<T: crate::ai::Transport>(
             crate::ai::ToolOutcome::Failed("no tools in this scenario".into())
         }
     }
-    let run = drive_loop(client, maker, &mut NoTools, &mut crate::ai::NoopObserver, goal, state, check_label, verify);
+    let run = drive_loop(client, maker, &mut NoTools, &mut crate::ai::NoopObserver, &crate::guard::Guard::default(), goal, state, check_label, verify);
     TestRun { stopped: run.outcome.status().into(), iters: run.iters, tin: run.tin, tout: run.tout, tools: run.tools }
 }
 

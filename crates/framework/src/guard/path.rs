@@ -105,24 +105,36 @@ fn show(p: &Path) -> String {
 /// can read and change is the whole idea. These are the exception, and the reason is
 /// narrow: a guard you can switch off by disabling a plugin is not a guard.
 pub(crate) fn floor(home: Option<&Path>) -> Vec<(String, PathRule)> {
+    // Either separator, everywhere one appears. A home directory is `C:\Users\you` on the
+    // platform CI runs a third of the suite on, and a floor spelled with `/` alone is a
+    // floor that is simply not there — which is the worst way for a security rule to fail.
+    const SEP: &str = r"[/\\]";
     let mut out: Vec<(String, PathRule)> = Vec::new();
     if let Some(home) = home {
         let h = escape(&home.to_string_lossy());
-        for dir in [r"\.ssh", r"\.aws", r"\.gnupg", r"\.config/gh", r"\.aiTerminal/gates"] {
-            out.push((format!("^{h}/{dir}(/|$)"), PathRule::Deny));
+        for dir in [r"\.ssh", r"\.aws", r"\.gnupg", r"\.config[/\\]gh", r"\.aiTerminal[/\\]gates"] {
+            out.push((format!("^{h}{SEP}{dir}({SEP}|$)"), PathRule::Deny));
         }
-        out.push((format!(r"^{h}/\.aiTerminal/config\.toml$"), PathRule::Deny));
+        out.push((format!(r"^{h}{SEP}\.aiTerminal{SEP}config\.toml$"), PathRule::Deny));
     }
-    out.push((r"(^|/)(id_rsa|id_dsa|id_ecdsa|id_ed25519|\.netrc)$".to_string(), PathRule::Deny));
+    out.push((format!(r"(^|{SEP})(id_rsa|id_dsa|id_ecdsa|id_ed25519|\.netrc)$"), PathRule::Deny));
     out.push((r"(?i)\.(pem|key|p12|pfx)$".to_string(), PathRule::Deny));
     out
 }
 
 /// A literal string as a regex that matches only itself — for splicing a real home
-/// directory (which can contain `.`, `+`, spaces) into a floor pattern.
+/// directory (which can contain `.`, `+`, spaces, and on Windows a `\` between every
+/// component) into a floor pattern.
 fn escape(literal: &str) -> String {
     let mut out = String::with_capacity(literal.len());
     for c in literal.chars() {
+        // A backslash is a separator here, not an escape: `C:\Users\you` has to match a
+        // path written either way, so it is spliced in as the same character class the
+        // rest of the pattern uses.
+        if c == '\\' {
+            out.push_str(r"[/\\]");
+            continue;
+        }
         if "\\.+*?()|[]{}^$".contains(c) {
             out.push('\\');
         }

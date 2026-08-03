@@ -250,7 +250,7 @@ impl FlowDriver<'_> {
             board: self.board.clone(),
             node: node.id.clone(),
         };
-        let run = crate::ai::run_agent(&client, &spec, prompt, "", &mut runner, &mut obs);
+        let run = crate::cli::agents::start_agent(&client, &spec, &self.guard, prompt, "", &mut runner, &mut obs);
         self.spent.fetch_add((run.usage.input + run.usage.output) as u64, std::sync::atomic::Ordering::Relaxed);
         NodeOut {
             ok: run.outcome == crate::ai::RunOutcome::Completed,

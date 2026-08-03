@@ -1,0 +1,28 @@
+name = "running a script is reading it"
+tags = ["guard", "paths", "commands"]
+
+# The first word of a command is a path when it is written as one, and running a file is
+# reading it — so a script under an off-limits root is refused like any other read, and a
+# bare program name (which carries no separator) is untouched.
+
+[setup]
+cwd = "/work"
+
+[[setup.guard.path]]
+pattern = "/vault/"
+rule = "deny"
+
+[[step]]
+run = "/work/vault/deploy.sh --now"
+[[step]]
+expect_verdict = "deny"
+
+[[step]]
+run = "./vault/deploy.sh"
+[[step]]
+expect_verdict = "deny"
+
+[[step]]
+run = "cargo test --all"
+[[step]]
+expect_verdict = "allow"

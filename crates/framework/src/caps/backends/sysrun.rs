@@ -26,7 +26,9 @@ pub(crate) fn sys(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resu
             // The secrets go back in LAST, immediately before the shell sees the line, so a
             // real value exists only for the length of this call: never in the transcript
             // the model reads back, never in a log, never in the guard's own refusal text.
-            let cmd = ctx.guard.vault().restore(cmd).map_err(|e| format!("sys.run: {e}"))?;
+            // And the line they make is judged again — a value that carries a `;` is a
+            // second command the judgement above never saw.
+            let cmd = ctx.guard.ready_command(cmd).map_err(|e| format!("sys.run: {e}"))?;
             // Run through /bin/sh so pipes, redirection (`>`), globs, and $VARs behave as a
             // user expects — in the workspace dir, with a PATH that includes the standard
             // locations (the GUI can launch us with a minimal PATH, which is why bare

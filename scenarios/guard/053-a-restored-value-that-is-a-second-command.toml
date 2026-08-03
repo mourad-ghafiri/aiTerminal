@@ -1,0 +1,28 @@
+name = "a value that becomes a second command once it is put back never runs"
+tags = ["guard", "secrets", "commands"]
+
+# A value is not inert. The guard judged `echo «credential-1»`; the shell would have run
+# whatever that line becomes, and nothing had ever looked at THAT one. So the restored
+# form is judged again — and the refusal quotes the form the model wrote, because quoting
+# the other one would print the secret into a log to explain that it was protecting it.
+
+[[setup.guard.command]]
+pattern = "^wipe-the-lot"
+rule = "deny"
+[[setup.guard.secret]]
+pattern = "PASS=\\S+"
+name = "credential"
+
+[[step]]
+hide = "PASS=x;wipe-the-lot"
+[[step]]
+expect_text = "«credential-1»"
+
+[[step]]
+ready = "echo «credential-1»"
+
+[[step]]
+expect_error = ["the guard refused", "different command"]
+
+[[step]]
+expect_error_missing = ["wipe-the-lot"]

@@ -88,6 +88,11 @@ fn scenario_guard(setup: &Toml) -> Result<Guard, String> {
     for (pattern, rule) in deny.iter().map(|d| (d, "deny")).chain(confirm.iter().map(|c| (c, "confirm"))) {
         doc.push_str(&format!("[[guard.command]]\npattern = \"{pattern}\"\nrule = \"{rule}\"\n"));
     }
+    // `secrets = [...]` — what must not leave. Every one leaves as «secret-N», so a journey
+    // names the placeholder without having to invent a rule name.
+    for pattern in world::list(setup, "secrets").unwrap_or_default() {
+        doc.push_str(&format!("[[guard.secret]]\npattern = \"{pattern}\"\n"));
+    }
     let parsed = corelib::wire::Toml::parse(&doc).map_err(|e| format!("guard rules: {e}"))?;
     let empty = corelib::wire::Toml::Table(Vec::new());
     let (guard, skipped) = Guard::compile(&[&crate::guard::RuleSet::parse(parsed.get("guard").unwrap_or(&empty))], crate::guard::Base::here());
@@ -342,6 +347,9 @@ impl AiWorld {
     fn ask(&mut self, prompt: &str) -> Result<(), String> {
         let mut out = Outcome::default();
         let client = self.client();
+        // Past the guard first, exactly as `cli::run` does it — a question somebody typed
+        // is text off this machine like any other.
+        let prompt = &self.guard.hide(prompt);
         for ev in client.ask(prompt, "") {
             match ev {
                 ai::StreamEvent::Delta(s) => out.answer.push_str(&s),
@@ -350,6 +358,7 @@ impl AiWorld {
                 ai::StreamEvent::Error(e) => out.failure = Some(e),
             }
         }
+        out.sent = client.transport().sent();
         self.last = out;
         Ok(())
     }
@@ -359,7 +368,7 @@ impl AiWorld {
     fn command(&mut self, request: &str) -> Result<(), String> {
         let mut sink = Recorder::default();
         let client = self.client();
-        let classified = ai::classify_command_reply(client.to_command(request, "").into_iter(), &mut sink);
+        let classified = ai::classify_command_reply(client.to_command(&self.guard.hide(request), "").into_iter(), &mut sink);
 
         let mut out = Outcome {
             answer: sink.answer,
@@ -380,6 +389,7 @@ impl AiWorld {
             CommandReply::Answer => crate::cli::ANSWER_MARK.to_string(),
             CommandReply::Empty => crate::cli::command_marker(None, None, &self.command_mode, ""),
         };
+        out.sent = client.transport().sent();
         self.last = out;
         Ok(())
     }
@@ -397,7 +407,7 @@ impl AiWorld {
             guard_brief: self.guard.briefing(),
             scratch: self.scratch.clone(),
         };
-        let mut runner = ScriptedRunner { results: self.tool_results.clone(), calls: Vec::new() };
+        let mut runner = ScriptedRunner { results: self.tool_results.clone(), calls: Vec::new(), guard: self.guard.clone() };
         let client = self.client();
         // Watches what the harness did about its own context, so a scenario can assert
         // on compaction the same way it asserts on a tool call.
@@ -411,7 +421,9 @@ impl AiWorld {
             }
         }
         let mut obs = Watcher::default();
-        let run = ai::run_agent(&client, &spec, task, "", &mut runner, &mut obs);
+        // Through the product's OWN door, so a journey about a secret in a prompt drives
+        // the seam that is supposed to stop it rather than a copy of it.
+        let run = crate::cli::agents::start_agent(&client, &spec, &self.guard, task, "", &mut runner, &mut obs);
         let sent = client.transport().sent();
 
         // Whatever was lifted out of context is on disk in the run's scratch dir.
@@ -478,13 +490,17 @@ struct ScriptedRunner {
     results: HashMap<String, Result<String, String>>,
     /// Every call, in order, as `name args` — the record an assertion reads.
     calls: Vec<String>,
+    /// The same egress point the real runner has: every result a tool hands back is put
+    /// past the guard before the model can read it. Modelled here rather than skipped,
+    /// because a journey about a secret in a tool result is a journey about this seam.
+    guard: Guard,
 }
 
 impl ToolRunner for ScriptedRunner {
     fn run(&mut self, name: &str, args: &str) -> crate::ai::ToolOutcome {
         self.calls.push(format!("{name} {}", args.trim()).trim_end().to_string());
         match self.results.get(name) {
-            Some(Ok(out)) => crate::ai::ToolOutcome::Done(out.clone()),
+            Some(Ok(out)) => crate::ai::ToolOutcome::Done(self.guard.hide(out)),
             // Sorted by the guard's own recogniser, exactly as the CLI runner sorts it —
             // so a scenario about an agent working around a refusal drives the real rule
             // rather than a scenario-only notion of what a refusal is.

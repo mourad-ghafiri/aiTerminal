@@ -816,3 +816,86 @@ fn a_compacting_turn_has_its_spinner_up_before_it_folds_anything() {
     }
     let _ = std::fs::remove_dir_all(&scratch);
 }
+
+/// A runner that refuses everything, the way the guard's own refusals arrive.
+struct AlwaysRefuses;
+impl ToolRunner for AlwaysRefuses {
+    fn run(&mut self, _name: &str, _args: &str) -> ToolOutcome {
+        ToolOutcome::Refused("\u{26d4} the guard refused running \"wipe-the-lot\" — it matches a denied command".into())
+    }
+}
+
+#[test]
+fn a_whole_turn_of_refusals_is_one_turn_and_not_three() {
+    // A model may batch. Three refused calls in ONE turn is one decision, and stopping
+    // there would never have given it the chance to read the refusals and try something
+    // else — which is the entire behaviour a refusal is supposed to buy.
+    let transport = ScriptedTransport::new(vec![
+        text_sse("@tool sys.run {\"cmd\":\"a\"}\n@tool sys.run {\"cmd\":\"b\"}\n@tool sys.run {\"cmd\":\"c\"}", 1, 1),
+        text_sse("I could not clear those, so here is what to remove by hand.", 1, 1),
+    ]);
+    let client = Client::new(keyed_settings(), transport);
+    let agent = AgentSpec {
+        tools: vec![ToolSpec { name: "sys.run".into(), describe: "x".into() }],
+        max_steps: 6,
+        ..Default::default()
+    };
+    let run = run_agent(&client, &agent, "clean up", "", &mut AlwaysRefuses, &mut NoopObserver);
+    assert_eq!(run.outcome, RunOutcome::Completed, "one refused turn is not a stopped run");
+    assert!(run.answer.contains("by hand"), "and it answered: {}", run.answer);
+}
+
+#[test]
+fn two_refused_turns_in_a_row_stop_the_run_and_say_what_it_needed() {
+    // It read the refusals, tried again, and was refused again. That is a run that cannot
+    // do what it was asked, and saying so now beats "step budget exhausted" six turns later.
+    let transport = ScriptedTransport::new(vec![
+        text_sse("@tool sys.run {\"cmd\":\"a\"}", 1, 1),
+        text_sse("@tool sys.run {\"cmd\":\"b\"}", 1, 1),
+        text_sse("every way of doing this is refused.", 1, 1),
+    ]);
+    let client = Client::new(keyed_settings(), transport);
+    let agent = AgentSpec {
+        tools: vec![ToolSpec { name: "sys.run".into(), describe: "x".into() }],
+        max_steps: 8,
+        ..Default::default()
+    };
+    let run = run_agent(&client, &agent, "clean up", "", &mut AlwaysRefuses, &mut NoopObserver);
+    match &run.outcome {
+        RunOutcome::Refused(why) => assert!(why.contains("the guard refuses"), "it names what it needed: {why}"),
+        other => panic!("expected a refused run, got {other:?}"),
+    }
+    // Its own outcome: nothing broke, and nothing ran out.
+    assert_ne!(run.outcome, RunOutcome::StepLimit);
+    assert!(run.steps.len() == 2, "it stopped rather than spending the rest of the budget");
+}
+
+#[test]
+fn a_refusal_followed_by_work_is_not_a_stopped_run() {
+    // The everyday case the whole design is for: refused once, worked around it, finished.
+    struct RefusesThenWorks(u32);
+    impl ToolRunner for RefusesThenWorks {
+        fn run(&mut self, _name: &str, _args: &str) -> ToolOutcome {
+            self.0 += 1;
+            match self.0 {
+                1 | 3 => ToolOutcome::Refused("\u{26d4} the guard refused running \"wipe-the-lot\" — denied".into()),
+                _ => ToolOutcome::Done("build/ dist/ target/".into()),
+            }
+        }
+    }
+    let transport = ScriptedTransport::new(vec![
+        text_sse("@tool sys.run {\"cmd\":\"a\"}", 1, 1),
+        text_sse("@tool fs.list {\"path\":\".\"}", 1, 1),
+        text_sse("@tool sys.run {\"cmd\":\"b\"}", 1, 1),
+        text_sse("@tool fs.list {\"path\":\".\"}", 1, 1),
+        text_sse("here is what I found.", 1, 1),
+    ]);
+    let client = Client::new(keyed_settings(), transport);
+    let agent = AgentSpec {
+        tools: vec![ToolSpec { name: "sys.run".into(), describe: "x".into() }, ToolSpec { name: "fs.list".into(), describe: "x".into() }],
+        max_steps: 8,
+        ..Default::default()
+    };
+    let run = run_agent(&client, &agent, "clean up", "", &mut RefusesThenWorks(0), &mut NoopObserver);
+    assert_eq!(run.outcome, RunOutcome::Completed, "progress between refusals clears the streak");
+}

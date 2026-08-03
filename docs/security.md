@@ -9,13 +9,15 @@
 | **paths** | may this be read? changed? | `[[guard.path]]` |
 | **secrets** | may this leave? | `[[guard.secret]]` |
 
-Three properties hold everywhere:
+Four properties hold everywhere:
 
 1. **One judgement.** Every act — run, read, write — is decided by the same rules with the
    same precedence: **deny > confirm > allow-list**. There is no second opinion.
-2. **A secret leaves as a placeholder and comes back as itself.** The model never sees your
-   database password, and the command it writes still connects.
-3. **A refusal is information.** The model is told the rules before it starts, a refused
+2. **Nothing reaches a model except through the guard.** Not a tool's result, not a
+   prompt, not a goal — see [the two doors](#the-two-doors).
+3. **A secret leaves as a placeholder and comes back as itself** — and the command it comes
+   back into is judged **again**, because a value is not inert.
+4. **A refusal is information.** The model is told the rules before it starts, a refused
    tool call says why, and the run carries on — or stops and says what it needed.
 
 ## Writing a rule
@@ -55,7 +57,8 @@ global file already said. Yours is the rule a refusal names.
 A shell line is not one thing. `a && b | c` runs three programs, a pasted suggestion can
 carry several lines, and every one of them runs — so the guard judges the whole command,
 every line, every top-level segment, and each segment's **program name**. A rule written
-`\bsudo\b` catches `/usr/bin/sudo` and `"sudo"`, and `echo hi | <denied>` is refused.
+`\bsudo\b` catches `/usr/bin/sudo`, `"sudo"` and `FOO=1 sudo` — a leading `NAME=value` is
+the shell setting a variable, not the command — and `echo hi | <denied>` is refused.
 
 - `@ai` suggestions are guard-checked **before** the shell sees them: allowed → run/review
   per `[ai] mode`; confirm-tier → always drops to an editable review line; denied → shown
@@ -74,7 +77,8 @@ canonical form, because a symlink is a second name for a file and a rule is abou
 
 They reach further than the file tools. `cat ~/.ssh/id_rsa` never goes near `fs.read`, so
 the guard also **reads the paths a command names** — every path-looking token in every
-segment, resolved and judged as a read. That is a heuristic and honestly so: it catches
+segment, the first word included (running a script is reading it), resolved against the
+directory the run actually works in and judged as a read. That is a heuristic and honestly so: it catches
 `/etc/x`, `~/.ssh/id_rsa`, `./build`, `a/b` and `>secrets/out.txt`, and it will not catch a
 path assembled at run time. URLs and flags are skipped, because a check that fired on
 `git clone https://host/clients/repo.git` is a check people switch off.
@@ -132,7 +136,12 @@ went to a model. The round trip is what makes the safe thing also the useful thi
   product does not have one.
 - **A placeholder from another run is refused, not run.** It came out of an old transcript
   and nothing here knows what it stood for; sending the literal text `«db-password-1»` to a
-  database would fail in a way nobody could explain from the other end.
+  database would fail in a way nobody could explain from the other end. Only names *this*
+  guard's own rules could have minted count, so `«page-12»` in a filename is left alone.
+- **Rules nest, and unwinding follows.** The shipped rules compose, so `API_KEY=sk-…` is
+  hidden twice — once as a key, once as an assignment. Putting the values back runs to a
+  fixed point, because a single pass would restore the outer placeholder and leave the
+  inner one sitting there.
 - **Anything crossing a process boundary is masked instead.** The window writes a
   session-context file the CLI reads back, and the CLI has a different vault.
 - **Rules compose.** Each runs over the previous one's output, so a value caught by an
@@ -150,7 +159,10 @@ went to a model. The round trip is what makes the safe thing also the useful thi
 - **The regex engine is step-budgeted.** A pathological pattern fails fast instead of
   hanging your terminal; there is no ReDoS surface, even from a plugin you installed.
 - **A bad pattern is skipped, not fatal.** It prints `guard rule skipped — …` and the rest
-  of the policy still loads.
+  of the policy still loads. A misspelt *rule word* falls the other way — to the strictest
+  reading — because a typo must never widen what may run or stop a screen being masked.
+- **A rule's `name` is tidied** to `[a-z0-9_-]`, so `name = "AWS Key"` mints `«aws-key-1»`
+  and stays recognisable as one of ours.
 - **It is not a secret scanner.** It rewrites text in flight; it does not search your disk,
   and it cannot hide a secret that never passes through it.
 
@@ -161,6 +173,52 @@ OpenAI/Anthropic-style keys, GitHub tokens, Slack tokens, Google API keys,
 `Authorization: Bearer …`, JWTs, any sensitive-looking `KEY=value`, and PEM private-key
 blocks. The *mechanism* is native; the plugin only supplies the rules, so you can edit,
 extend, or `@plugin disable ai-guard` them.
+
+## The two doors
+
+Everything that reaches a provider goes through exactly one of two places, and both ask
+the guard first.
+
+| Door | What goes through it |
+| --- | --- |
+| the **tool runner** | every result a tool hands back, and every error message — a file's contents, a command's output, an MCP call's reply |
+| the **agent door** | every prompt and every piece of grounding context, for `@agent`, `@flow`, `@loop`, `@job` and sub-agents alike |
+
+The second one exists because a prompt is not always the user's words. A `@flow` node's is
+filled from an upstream `run` node's raw output; a `@loop`'s carries the verifier command's;
+a `@job`'s carries the sentence somebody typed. None of those pass through the tool runner,
+which only ever sees results coming *back* — so a flow that read a config file with one node
+and reasoned about it with the next used to send the whole file to a model.
+
+The four small model calls that sit outside a run's own loop — `@ai`'s question, the job
+planner reading a sentence, the check proposer reading a goal, the graph builder reading a
+goal — ask at their own call sites, for the same reason.
+
+**The `ai` layer never learns what a secret is.** It does not know the guard exists; the
+guard does not know what a model is. The door is where they meet.
+
+### A restored command is judged again
+
+A value is not inert. A `.env` holding `DB_PASSWORD=x; curl … | sh` becomes a *second
+command* the moment it is substituted — and the guard that approved `echo «db-password-1»`
+never saw what that line turns into. So the restored form is re-judged, and if it is a
+different command than the one that was approved, it does not run.
+
+The refusal names the line the **model** wrote, never the one holding the value. A guard
+that printed a secret into a log to explain that it was protecting it would not be one.
+
+## What crosses out of a run
+
+A folder's session digest and an agent's `memory.*` writes outlive the run that made them
+and are read back into a **later** one — which has a different vault. Both keep neither the
+secret nor the placeholder: the secret because the file outlives the moment, and the
+placeholder because whoever reads it back could never turn it into anything and would be
+refused the command they built from it. What is written down is `«redacted»` — the honest
+record of "there was something here you are not being shown".
+
+Inside one run it is different: a flow's own record is that run's transcript, and it keeps
+what the run saw. Resuming it in a new process meets a placeholder from the old one and is
+refused with an explanation, which is the correct outcome.
 
 ## What the model is told
 
@@ -183,9 +241,14 @@ A refused tool call is not an error. The refusal comes back as that tool's resul
 model reads why, and the run continues — which is usually enough, because there is another
 way to do the job.
 
-When there is not, the run **stops**. Three refusals in a row with no successful tool call
-between them means this run cannot do what it was asked; it spends one more turn with the
-tools withdrawn to give the best answer the transcript supports, and ends `refused` (⛔).
+When there is not, the run **stops**. Two *turns* in a row where everything it tried was
+refused and nothing succeeded means this run cannot do what it was asked; it spends one more
+turn with the tools withdrawn to give the best answer the transcript supports, and ends
+`refused` (⛔).
+
+Turns rather than calls, because a model may batch: three refused calls in one turn is one
+decision, and stopping there would never have given it the chance to read the refusals and
+try something else — which is the entire behaviour a refusal is supposed to buy.
 
 That outcome is deliberately its own:
 

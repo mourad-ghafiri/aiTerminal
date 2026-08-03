@@ -1,0 +1,20 @@
+name = "a misspelt scope guards more, not less"
+tags = ["guard", "secrets", "scopes"]
+
+# Every other misspelt rule word falls to the strictest reading. A scope quietly falling
+# back to egress-only would leave somebody who wrote `scope = "termnal"` screen-sharing a
+# secret they had asked to hide.
+
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+scope = "termnal"
+
+[[step]]
+mask = "DB_PASSWORD=pw-example0"
+[[step]]
+expect_text = "DB_PASSWORD=«redacted»"
+
+[[step]]
+hide = "DB_PASSWORD=pw-example0"
+[[step]]
+expect_not_text = ["pw-example0"]

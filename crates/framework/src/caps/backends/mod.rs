@@ -26,6 +26,7 @@ pub(super) use crate::caps::backends::{
 /// Path handling and guards, shared with `caps::files` and `caps::git`.
 pub(super) use crate::caps::backends::nav::{expand_tilde, first_heading};
 pub(super) use crate::caps::backends::paths::fs_path;
+pub(crate) use crate::caps::backends::paths::fs_path_rel;
 
 /// The SSRF rules `caps::git` and `caps::http` apply to their own fetches.
 pub(super) use crate::caps::backends::ssrf::{ssrf_pin, ssrf_resolve, url_host_port};

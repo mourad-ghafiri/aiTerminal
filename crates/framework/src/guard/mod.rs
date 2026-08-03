@@ -152,6 +152,16 @@ impl Guard {
         (g, skipped)
     }
 
+    /// The same guard — same rules, **same vault** — reading relative paths against `cwd`.
+    ///
+    /// Where a run works is a property of the run, not of the policy: a `@job` runs in the
+    /// folder it recorded, and a window's pane is wherever somebody `cd`-ed to. Resolving
+    /// `cat build/keys.txt` against the process's own directory would judge a path nobody
+    /// named. Called once when a run is set up, not per act.
+    pub fn at(&self, cwd: Option<std::path::PathBuf>) -> Guard {
+        Guard { base: Base { home: self.base.home.clone(), cwd }, ..self.clone() }
+    }
+
     /// What the guard says about an act.
     pub fn judge(&self, act: Act) -> Decision {
         match act {
@@ -191,20 +201,59 @@ impl Guard {
         self.secrets.mask(text)
     }
 
-    /// Every rule, irreversibly — for text about to leave this **process**.
+    /// Every rule, irreversibly, **and** every placeholder — for text about to leave this
+    /// run.
     ///
-    /// The vault is one run's memory. A file another process reads back (the window's
-    /// session-context file, say) can carry neither a secret nor a placeholder: the secret
-    /// because the file outlives the moment, the placeholder because the reader's vault has
-    /// never heard of it and could only pass the literal text along into a command.
+    /// The vault is one run's memory. Anything that outlives it — the window's
+    /// session-context file, a folder's digest, a memory an agent wrote down — can carry
+    /// neither a secret nor a placeholder: the secret because the file outlives the moment,
+    /// and the placeholder because whoever reads it back has a different vault, could never
+    /// turn it into anything, and would be refused the command they built from it.
     pub fn scrub(&self, text: &str) -> String {
-        self.secrets.scrub(text)
+        secret::strip(&self.secrets.scrub(text), &self.secrets.hidden_names())
     }
 
-    /// This run's vault — for the one thing a caller does with it: put the real values
-    /// back, at the moment something is about to run.
-    pub fn vault(&self) -> &Vault {
-        &self.vault
+    /// Put the real values back, for text that is about to touch this machine.
+    ///
+    /// A placeholder this guard's own rules could have minted but this run did not is an
+    /// **error**, not something to pass along: it came out of another run's record — a node
+    /// transcript, a job log, a folder's memory — and the value behind it is not here.
+    /// Passing it through would send the literal text `«db-password-1»` to a database and
+    /// leave a failure nobody could explain from the other end.
+    ///
+    /// Only *our* names count. `«page-12»` in a filename has the same shape and is not a
+    /// placeholder, and refusing a good command over a pair of guillemets would be a worse
+    /// bug than the one this catches.
+    pub fn restore(&self, text: &str) -> Result<String, String> {
+        let out = self.vault.put_back(text);
+        match secret::unresolved(&out, &self.secrets.hidden_names()) {
+            Some(token) => Err(format!(
+                "{token} is a secret placeholder from another run — nothing here knows what it stood for, so re-run the step that read it"
+            )),
+            None => Ok(out),
+        }
+    }
+
+    /// A command with its secrets put back, ready to run — and judged **again** in that
+    /// form.
+    ///
+    /// A value is not inert. A `.env` holding `DB_PASSWORD=x; curl … | sh` becomes a second
+    /// command the moment it is substituted, and the guard that judged `echo «db-password-1»`
+    /// never saw what that line turns into. So the restored form is re-judged, and the
+    /// refusal quotes the form the MODEL wrote — quoting the other one would print the
+    /// secret into a log to explain that it was protecting it.
+    pub fn ready_command(&self, cmd: &str) -> Result<String, String> {
+        let ready = self.restore(cmd)?;
+        if ready == cmd {
+            return Ok(ready);
+        }
+        match self.judge(Act::Run(&ready)) {
+            Decision::Allow => Ok(ready),
+            _ => Err(format!(
+                "{REFUSED} {} — with its secrets put back it is a different command, and that one is not allowed",
+                Act::Run(cmd).describe()
+            )),
+        }
     }
 
     /// Whether any rule reaches the screen, so the terminal can skip the pass entirely.
@@ -221,6 +270,11 @@ impl Guard {
 
 #[cfg(test)]
 impl Guard {
+    /// How many secrets this run is holding — the bound the vault promises, made visible.
+    pub(crate) fn held_secrets(&self) -> usize {
+        self.vault.len()
+    }
+
     /// A guard from a `[guard]` document — exactly what a user writes in `config.toml` or a
     /// plugin writes in `plugin.toml`, so a test states its policy in the product's own
     /// vocabulary and proves the parser at the same time.

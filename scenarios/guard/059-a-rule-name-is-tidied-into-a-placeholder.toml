@@ -1,0 +1,20 @@
+name = "a rule name is tidied into something a placeholder can carry"
+tags = ["guard", "secrets"]
+
+# The name is decoration on a rule that is otherwise fine, so it is sanitised rather than
+# refused — but a token nobody can recognise defeats the check that catches a placeholder
+# from another run, which is why it is sanitised rather than passed through.
+
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "AWS Key!"
+
+[[step]]
+hide = "DB=pw-example0"
+[[step]]
+expect_text = "DB=«aws-key-1»"
+
+[[step]]
+restore = "psql «aws-key-4»"
+[[step]]
+expect_error = ["another run"]

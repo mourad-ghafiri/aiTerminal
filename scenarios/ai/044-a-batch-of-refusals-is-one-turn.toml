@@ -1,0 +1,27 @@
+name = "a whole turn of refusals is one turn, not three"
+tags = ["ai", "guard", "degradation"]
+
+# A model may batch. Three refused calls in ONE turn is one decision, and stopping there
+# would never have given it the chance to read the refusals and try something else — which
+# is the entire behaviour a refusal is supposed to buy.
+
+[setup]
+deny = ["wipe-the-lot"]
+max_steps = 6
+
+[[step]]
+tool = "sys.run"
+[[step]]
+tool_refused = ["sys.run=wipe-the-lot --everything"]
+
+[[step]]
+model_says_in_turn = ["@tool sys.run {\"cmd\":\"a\"}<LF>@tool sys.run {\"cmd\":\"b\"}<LF>@tool sys.run {\"cmd\":\"c\"}", "I could not clear those, so here is what to remove by hand."]
+
+[[step]]
+agent = "clean up the build output"
+
+[[step]]
+expect_outcome = "completed"
+
+[[step]]
+expect_answer_contains = ["by hand"]

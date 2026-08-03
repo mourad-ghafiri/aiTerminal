@@ -1,0 +1,47 @@
+name = "a placeholder typed into a running program arrives as the real value"
+tags = ["gate", "guard", "vault"]
+
+# Typing into an attached program is the terminal too. A password answered from a phone
+# reaches a REPL exactly the way a command reaches the shell — so the placeholders become
+# values there as well, and your phone can answer a prompt with a key it has never seen.
+
+[setup]
+paired = true
+redact = ["pw-[a-z0-9]+"]
+
+# First the value leaves, as a placeholder, the way anything leaves for a chat.
+[[step]]
+chat = "cat .env"
+[[step]]
+expect_pty = "cat .env<CR>"
+[[step]]
+shell_start = true
+[[step]]
+pty = "DB_PASSWORD=pw-example0<CR><LF>"
+[[step]]
+shell_end = 0
+
+[[step]]
+expect_not_says = ["pw-example0"]
+[[step]]
+expect_says = ["secret-1"]
+
+# Then a program takes the terminal and asks for it.
+[[step]]
+chat = "psql"
+[[step]]
+expect_pty = "psql<CR>"
+[[step]]
+shell_start = true
+[[step]]
+pty = "psql (16.2)<CR><LF>Password: "
+[[step]]
+wait_ms = 2500
+[[step]]
+expect_attached = true
+
+# Sending the placeholder back types the value, not the placeholder.
+[[step]]
+chat = "«secret-1»"
+[[step]]
+expect_pty = "pw-example0<CR>"

@@ -219,7 +219,7 @@ pub(crate) fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
     ));
     let mut obs = CliObserver::new(view.clone()).with_reasoning(cfg.ai_show_reasoning).with_motivation(&cfg);
     runner.trace = Some(std::sync::Arc::new(view));
-    let run = drive_loop(&client, &maker, &mut runner, &mut obs, goal, &mut state, verifier.command(), verify);
+    let run = drive_loop(&client, &maker, &mut runner, &mut obs, &guard, goal, &mut state, verifier.command(), verify);
     let _ = { use std::io::Write; std::io::stdout().write_all(b"\n") };
 
     let (dim, r) = (muted(), reset());
@@ -276,7 +276,7 @@ pub(crate) fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
     if code != 0 {
         eprintln!("{dim}  {}{r}", crate::i18n::translate("loop.resume_hint", &[id.clone()]));
     }
-    record_session_run(session.as_ref(), "@loop", goal, &digest);
+    record_session_run(session.as_ref(), &guard, "@loop", goal, &digest);
     code
 }
 
@@ -297,7 +297,10 @@ fn choose_verifier(
     }
     // A model call somebody is waiting on, and it happens BEFORE the loop has printed a
     // word about itself — so without this the terminal is dead from Enter until it lands.
-    match crate::cli::observe::waiting_on(crate::cli::observe::CHOOSING_CHECK, || crate::ai::verify::propose(goal)) {
+    // Hidden like every other string bound for a model. This one is easy to miss: it is a
+    // model call outside the run's own loop, so it never passes the agent door.
+    let asked = guard.hide(goal);
+    match crate::cli::observe::waiting_on(crate::cli::observe::CHOOSING_CHECK, || crate::ai::verify::propose(&asked)) {
         // A verifier is supposed to OBSERVE. Anything the guard stops — a deploy, a push —
         // is a command that would change the world to measure it, so it is refused and the
         // reviewer takes over.

@@ -304,8 +304,13 @@ fn build_for_goal(
     let (dim, r) = (muted(), reset());
     eprintln!("{dim}\u{25c8} {}{r}", crate::i18n::translate("flow.building", &[]));
     let world = crate::cli::flow::world();
+    // A goal is a sentence somebody typed, and it goes to a model — so it goes past the
+    // guard first, like every other string that does. Its own guard: this runs before the
+    // record exists, so there is no run to share a vault with, and nothing here restores.
+    let registry = crate::plugin::load_registry(&cfg);
+    let asked = crate::guard::build(&cfg, &registry).hide(goal);
     let built = crate::cli::observe::waiting_on(crate::cli::observe::BUILDING_GRAPH, || {
-        crate::flow::build::build_with(&client, goal, &agents, &|f| crate::flow::verify::verify(f, &world))
+        crate::flow::build::build_with(&client, &asked, &agents, &|f| crate::flow::verify::verify(f, &world))
     })?;
     crate::flowruns::write_graph(run_id, &built.toml);
     let name = built.flow.name.clone();

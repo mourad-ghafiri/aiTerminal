@@ -60,7 +60,13 @@ impl NativeObject for MemoryObj {
                 if body.trim().is_empty() {
                     return Err("memory.add needs `text=`".into());
                 }
-                let e = svc.add(opt("kind").unwrap_or("fact"), tags("tags"), body).map_err(|e| e.to_string())?;
+                // Scrubbed on the way in. A memory outlives the run that wrote it and is
+                // recalled into a later one's context — where a placeholder means nothing
+                // and a secret would leak again on a different day, through a different
+                // run, with nothing to connect it to this one.
+                let e = svc
+                    .add(opt("kind").unwrap_or("fact"), tags("tags"), &ctx.guard.scrub(body))
+                    .map_err(|e| e.to_string())?;
                 Ok(e.to_json())
             }
             "memory.search" => {

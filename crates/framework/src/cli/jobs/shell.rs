@@ -14,7 +14,10 @@ pub(crate) fn run_shell_job(cmd: &crate::jobs::Cmd, cwd: &str, log: Option<std::
     let line = cmd.display();
     let cfg = crate::config::Config::load();
     let registry = crate::plugin::load_registry(&cfg);
-    let guard = crate::guard::build(&cfg, &registry);
+    // Rooted where the job will actually run, not where the supervisor happens to be:
+    // a relative path in the command means the job's own folder.
+    let dir = Some(cwd).filter(|c| !c.is_empty()).map(std::path::PathBuf::from);
+    let guard = crate::guard::build(&cfg, &registry).at(dir);
     let refusal = guard_refusal(&guard, &line);
     let mut sink = Sink { log, echo: foreground, written: 0, cap: cfg.jobs_max_log_bytes };
     if let Some(reason) = refusal {
@@ -33,7 +36,7 @@ pub(crate) fn run_shell_job(cmd: &crate::jobs::Cmd, cwd: &str, log: Option<std::
     // the run and is read back by `@job log`; the command is a thing that happens once.
     let mut command = match cmd {
         crate::jobs::Cmd::Line(l) => {
-            let line = match guard.vault().restore(l) {
+            let line = match guard.ready_command(l) {
                 Ok(line) => line,
                 Err(why) => {
                     sink.write_line(&format!("aiTerminal: {why}"));

@@ -107,7 +107,7 @@ fn loop_passes_when_the_verifier_passes_and_feeds_feedback_forward() {
     let client = scripted(&["attempt one", "attempt two"]);
     let mut iterations = 0;
     let mut st = state(5, None);
-    let outcome = drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "fix it", &mut st, Some("cargo test"), |answer| {
+    let outcome = drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, &crate::guard::Guard::default(), "fix it", &mut st, Some("cargo test"), |answer| {
         iterations += 1;
         // The maker's scripted answers arrive in order — the loop really ran.
         match iterations {
@@ -212,7 +212,7 @@ fn a_resumed_loop_continues_where_it_stopped() {
     };
     let mut seen = Vec::new();
     let client = scripted(&["third", "fourth", "fifth"]);
-    let run = drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", &mut st, None, |a| {
+    let run = drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, &crate::guard::Guard::default(), "goal", &mut st, None, |a| {
         seen.push(a.to_string());
         Ok(verdict(false, &format!("failure {}", seen.len())))
     });
@@ -277,7 +277,7 @@ fn loop_never_verifies_an_errored_iteration() {
     // non-answer as if it were work — it panics if called.
     let client = crate::ai::Client::new(keyed_settings(), crate::ai::ScriptedTransport::new(vec![]));
     let mut st = state(5, None);
-    let outcome = drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", &mut st, None, |_| {
+    let outcome = drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, &crate::guard::Guard::default(), "goal", &mut st, None, |_| {
         panic!("the verifier must not run on an errored iteration")
     }).outcome;
     assert!(matches!(outcome, LoopOutcome::Error(_)), "{outcome:?}");
@@ -291,7 +291,7 @@ fn loop_stops_cleanly_on_cancellation() {
     cancel.cancel();
     let client = crate::ai::Client::new(keyed_settings(), crate::ai::ScriptedTransport::new(vec![])).with_cancel(cancel);
     let mut st = state(5, None);
-    let outcome = drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", &mut st, None, |_| {
+    let outcome = drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, &crate::guard::Guard::default(), "goal", &mut st, None, |_| {
         panic!("the verifier must not run on a cancelled iteration")
     }).outcome;
     assert_eq!(outcome, LoopOutcome::Cancelled);

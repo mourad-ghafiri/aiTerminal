@@ -1,0 +1,27 @@
+name = "a value two rules caught still comes back whole"
+tags = ["guard", "secrets", "vault"]
+
+# The rules compose on purpose, so the most ordinary line in a `.env` is hidden TWICE:
+# once as a key, and again as an assignment — which nests one placeholder inside another.
+# Putting the values back in a single pass restored the outer one and left the inner one
+# sitting there, so the everyday input this feature exists for could never be restored at
+# all. The value below keeps the shape the rules match and none of the entropy.
+
+[[setup.guard.secret]]
+pattern = "sk-[A-Za-z0-9_-]{16,}"
+name = "api-key"
+[[setup.guard.secret]]
+pattern = "(?i)(api[_-]?key|token|secret|password)[:=]\\S+"
+name = "credential"
+
+[[step]]
+hide = "ANTHROPIC_API_KEY=sk-ant-example-only-not-a-key"
+
+[[step]]
+expect_not_text = ["sk-ant-example-only-not-a-key"]
+
+[[step]]
+restore = true
+
+[[step]]
+expect_text = "ANTHROPIC_API_KEY=sk-ant-example-only-not-a-key"

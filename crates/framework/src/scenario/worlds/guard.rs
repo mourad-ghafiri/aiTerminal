@@ -25,9 +25,10 @@
 //! ```
 //!
 //! Steps: `run` · `read` · `write` (judge an act) · `hide` · `restore` (the vault's two
-//! directions) · `mask` · `scrub`.
+//! directions) · `ready` (restore a command and judge it again) · `mask` · `scrub`.
 //! Assertions: `expect_verdict` · `expect_reason` · `expect_auto` · `expect_text` ·
-//! `expect_kept` · `expect_not_text` · `expect_error` · `expect_briefing`.
+//! `expect_kept` · `expect_not_text` · `expect_error` · `expect_error_missing` ·
+//! `expect_briefing`.
 
 use std::path::PathBuf;
 
@@ -75,7 +76,7 @@ impl GuardWorld {
     /// Put the values back, keeping BOTH answers: the text on success, the reason on
     /// refusal — so a journey can assert either without a second verb.
     fn put_back(&mut self, text: &str) -> Result<(), String> {
-        match self.guard.vault().restore(text) {
+        match self.guard.restore(text) {
             Ok(out) => {
                 self.text = out;
                 self.error.clear();
@@ -127,6 +128,21 @@ impl World for GuardWorld {
         if let Some(text) = world::text(step, "restore") {
             return self.put_back(&text);
         }
+        // A command on its way to a shell: the values go back in AND the line they make is
+        // judged again, which is the whole difference between `restore` and being ready.
+        if let Some(cmd) = world::text(step, "ready") {
+            match self.guard.ready_command(&cmd) {
+                Ok(out) => {
+                    self.text = out;
+                    self.error.clear();
+                }
+                Err(why) => {
+                    self.error = why;
+                    self.text.clear();
+                }
+            }
+            return Ok(());
+        }
 
         // ── what must be true ───────────────────────────────────────────────
         if let Some(want) = world::text(step, "expect_verdict") {
@@ -160,6 +176,9 @@ impl World for GuardWorld {
         }
         if let Some(want) = world::list(step, "expect_error") {
             return world::expect_contains(&self.error, &want, "the refusal");
+        }
+        if let Some(bad) = world::list(step, "expect_error_missing") {
+            return world::expect_missing(&self.error, &bad, "the refusal");
         }
         if let Some(want) = world::list(step, "expect_briefing") {
             return world::expect_contains(&self.guard.briefing(), &want, "what the model is told");

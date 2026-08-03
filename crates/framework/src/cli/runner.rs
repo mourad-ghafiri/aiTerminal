@@ -325,7 +325,8 @@ pub(crate) fn run_sub_agent(sub: &SubAgentCtx, ctx: crate::caps::CapCtx, depth: 
     };
     let client = crate::ai::Client::new(sub.settings.clone(), crate::ai::CurlTransport::default());
     let mut runner = CliToolRunner { ctx, mcp: None, sub: sub.clone(), depth, trace: None };
-    let run = crate::ai::run_agent(&client, &spec, prompt, "", &mut runner, &mut crate::ai::NoopObserver);
+    let guard = runner.ctx.guard.clone();
+    let run = crate::cli::agents::start_agent(&client, &spec, &guard, prompt, "", &mut runner, &mut crate::ai::NoopObserver);
     run.answer
 }
 
@@ -362,6 +363,11 @@ pub(crate) fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::Ai
     } else {
         None
     };
+    // The guard reads relative paths against the SAME directory the tools resolve them
+    // against. Judging `cat build/keys.txt` against whatever directory this process happens
+    // to have been started in would be judging a path nobody named. One clone per run, and
+    // it shares the vault — a secret one node saw reads back the same in the next.
+    let guard = std::sync::Arc::new(guard.at(workspace.clone()));
     CliToolRunner {
         ctx: crate::caps::CapCtx { guard, app_data, remote_enabled: cfg.ai_network, origin: "terminal://ai/".into(), sandbox: workspace, memory_dir },
         mcp,

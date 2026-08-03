@@ -1,0 +1,21 @@
+name = "ordinary text shaped like a placeholder is left alone"
+tags = ["guard", "secrets", "vault"]
+
+# Guillemets are ordinary punctuation in half of Europe, and `«page-12»` has exactly a
+# placeholder's shape. Refusing a perfectly good command over a pair of them would be a
+# worse bug than the one the check exists to catch — so only names this guard's own rules
+# could have minted count.
+
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "db-password"
+
+[[step]]
+restore = "cat «page-12».txt"
+[[step]]
+expect_text = "cat «page-12».txt"
+
+[[step]]
+restore = "psql «db-password-9»"
+[[step]]
+expect_error = ["«db-password-9»", "another run"]

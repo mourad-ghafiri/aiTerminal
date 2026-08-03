@@ -116,8 +116,8 @@ pub(crate) fn run_prompt_as_agent(agent: &str, prompt: &str, mut log: Option<std
         memory_preamble(&cfg, &prompt, folder_mem.as_deref()),
     );
     let ctx = guard.hide(&ctx);
-    let code = run_agent_streaming(&cfg, settings, agent, &prompt, &ctx, std::env::current_dir().ok(), guard, media, log);
-    record_session_run(session.as_ref(), "@job", &prompt, &outcome_label(code));
+    let code = run_agent_streaming(&cfg, settings, agent, &prompt, &ctx, std::env::current_dir().ok(), guard.clone(), media, log);
+    record_session_run(session.as_ref(), &guard, "@job", &prompt, &outcome_label(code));
     code
 }
 

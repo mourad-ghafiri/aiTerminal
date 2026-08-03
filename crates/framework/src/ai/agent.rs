@@ -405,12 +405,16 @@ pub fn run_agent<T: Transport>(
     // `looks_like_tool_attempt`. Corrections still consume the `max_steps` budget.
     let mut corrections = 0u32;
     const MAX_CORRECTIONS: u32 = 2;
-    // Consecutive guard refusals, cleared by any call that actually did something. A run
-    // that is refused, adapts, and gets on with it never trips this; a run that is refused
-    // three times having achieved nothing in between is not going to finish the task, and
-    // saying so now is better than saying "step budget exhausted" six turns later.
-    let mut refusals: Vec<String> = Vec::new();
-    const MAX_REFUSALS: usize = 3;
+    // Consecutive TURNS in which everything the model tried was refused.
+    //
+    // Turns rather than calls, because a model may batch: three refused calls in one turn
+    // is one decision, and ending the run there would never have given it the chance to
+    // read the refusals and try something else. Two turns means it did read them, tried
+    // again, and was refused again — which is a run that cannot do what it was asked.
+    // Any call that actually did something clears the streak.
+    let mut refused_turns = 0usize;
+    let mut refused_why: Vec<String> = Vec::new();
+    const MAX_REFUSED_TURNS: usize = 2;
     let max = agent.max_steps.max(1);
     // Everything this agent may call, by name. The parser needs it to recognise a call
     // that arrives with no marker at all (`sys.run {"cmd":"ls"}`), which is what a model
@@ -501,6 +505,8 @@ pub fn run_agent<T: Transport>(
                 // calls it carried — the transcript's shape is "what was said, then what
                 // came back", and a batch does not change that.
                 transcript.push(Turn::Assistant(answer));
+                // This turn's tally, read after every call in it has run.
+                let (mut turn_refusals, mut turn_did_something) = (Vec::new(), false);
                 // In the order the model wrote them: a batch is only safe to write when
                 // the calls do not depend on each other, and if the model got that wrong,
                 // running them in its stated order is the behaviour it can reason about.
@@ -524,10 +530,10 @@ pub fn run_agent<T: Transport>(
                         ToolOutcome::Failed(format!("tool '{name}' is not available to this agent"))
                     };
                     match &outcome {
-                        ToolOutcome::Refused(why) => refusals.push(why.clone()),
+                        ToolOutcome::Refused(why) => turn_refusals.push(why.clone()),
                         // Anything that ran — or even failed on its own terms — is progress
                         // away from whatever the guard was refusing.
-                        _ => refusals.clear(),
+                        _ => turn_did_something = true,
                     }
                     let result = outcome.text();
                     // Bound it BEFORE storing or forwarding: what the model sees is what the
@@ -557,14 +563,24 @@ pub fn run_agent<T: Transport>(
                             return finish(answer, steps, usage, RunOutcome::ToolStall, model_used);
                         }
                     }
-                    // Refused, refused, refused, and nothing achieved in between. Stop —
-                    // and say what was needed, because that is the only useful thing left:
-                    // whoever reads this has to change a rule or change the task.
-                    if refusals.len() >= MAX_REFUSALS {
-                        let why = format!("this run needs things the guard refuses: {}", refusals.join("; "));
-                        let answer = wind_down(client, &candidates, &mut transcript, &turn_model, &why, &mut usage, observer);
-                        return finish(answer, steps, usage, RunOutcome::Refused(why), model_used);
+                }
+                // Everything this turn tried was refused. Two such turns in a row and the
+                // run stops — and says what it needed, because that is the only useful
+                // thing left: whoever reads this has to change a rule or change the task.
+                match !turn_refusals.is_empty() && !turn_did_something {
+                    true => {
+                        refused_turns += 1;
+                        refused_why.extend(turn_refusals);
                     }
+                    false => {
+                        refused_turns = 0;
+                        refused_why.clear();
+                    }
+                }
+                if refused_turns >= MAX_REFUSED_TURNS {
+                    let why = format!("this run needs things the guard refuses: {}", refused_why.join("; "));
+                    let answer = wind_down(client, &candidates, &mut transcript, &turn_model, &why, &mut usage, observer);
+                    return finish(answer, steps, usage, RunOutcome::Refused(why), model_used);
                 }
             }
             true => {

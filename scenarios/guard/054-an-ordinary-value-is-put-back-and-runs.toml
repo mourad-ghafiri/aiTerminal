@@ -1,0 +1,21 @@
+name = "an ordinary value is put back and the command runs"
+tags = ["guard", "secrets", "commands"]
+
+# The other side of the same rule: judging the restored line again must not get in the way
+# of the everyday case, which is the whole point of a reversible placeholder.
+
+[[setup.guard.command]]
+pattern = "^wipe-the-lot"
+rule = "deny"
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "db-password"
+
+[[step]]
+hide = "pw-example0"
+
+[[step]]
+ready = "psql postgres://app:«db-password-1»@db.internal/prod"
+
+[[step]]
+expect_kept = ["app:pw-example0@db.internal"]

@@ -65,11 +65,18 @@ pub enum Scope {
 }
 
 impl Scope {
+    /// Absent → `Ai`, the documented default: `cat .env` still shows you your own values,
+    /// and only what leaves is rewritten.
+    ///
+    /// Present but unrecognised → `All`, the **strictest** reading, matching what a
+    /// misspelt command or path rule already does. Falling back to egress-only would leave
+    /// somebody who wrote `scope = "termnal"` screen-sharing a secret they asked to hide,
+    /// and a typo must never quietly widen anything.
     fn parse(s: &str) -> Scope {
         match s.trim().to_ascii_lowercase().as_str() {
+            "" | "ai" => Scope::Ai,
             "terminal" | "term" => Scope::Terminal,
-            "all" => Scope::All,
-            _ => Scope::Ai,
+            _ => Scope::All,
         }
     }
     /// Whether a rule in this scope applies when hiding text bound off this machine.

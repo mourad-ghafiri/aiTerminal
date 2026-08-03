@@ -59,11 +59,7 @@ impl Secrets {
             true => Matcher::Literal(pattern.to_string()),
             false => Matcher::Re(Regex::new(pattern).map_err(|e| format!("invalid pattern `{pattern}`: {e}"))?),
         };
-        let name = match name.trim() {
-            "" => "secret".to_string(),
-            n => n.to_string(),
-        };
-        self.rules.push(Rule { matcher, name, scope });
+        self.rules.push(Rule { matcher, name: tidy_name(name), scope });
         Ok(())
     }
 
@@ -129,14 +125,33 @@ impl Secrets {
     }
 }
 
+/// One secret this run is holding.
+struct Held {
+    value: String,
+    /// The rule that named it — kept so minting the next one of the same kind is a count
+    /// rather than a scan that rebuilds every token's prefix to compare against.
+    name: String,
+    token: String,
+}
+
 /// One run's secrets and the placeholder each is known by.
 ///
 /// Shared by every clone of a [`Guard`](super::Guard) — a flow runs four nodes through one
 /// guard, and a secret seen by one of them has to read back the same in the next.
 #[derive(Clone, Default)]
 pub struct Vault {
-    entries: Arc<Mutex<Vec<(String, String)>>>, // (value, token) in first-seen order
+    entries: Arc<Mutex<Vec<Held>>>, // first-seen order
 }
+
+/// How many times [`Vault::restore`] will walk its entries before giving up.
+///
+/// One pass is not enough, because placeholders **nest**: the shipped rules compose, so
+/// `API_KEY=sk-…` is hidden by the key rule and then hidden AGAIN by the `KEY=value` rule,
+/// which takes the key's name with it. Restoring the outer one puts the inner one back into
+/// the text, and a single pass would leave it there — which is to say the most ordinary
+/// `.env` line there is could never be restored at all. Real nesting is two or three deep;
+/// the bound is what stops a pathological policy from looping.
+const RESTORE_PASSES: usize = 8;
 
 impl Vault {
     /// The placeholder for `value` — the same one every time, so the model sees a stable
@@ -151,51 +166,82 @@ impl Vault {
             // answer: unreadable beats leaked.
             Err(_) => return MASK.to_string(),
         };
-        if let Some((_, token)) = entries.iter().find(|(v, _)| v == value) {
-            return token.clone();
+        if let Some(held) = entries.iter().find(|h| h.value == value) {
+            return held.token.clone();
         }
         if entries.len() >= MAX_SECRETS {
+            // Said once, at the boundary. Past here every further secret is masked rather
+            // than vaulted, so a run starts failing to restore things — and a run that
+            // fails for a reason nobody was told is the worst kind.
+            if entries.len() == MAX_SECRETS {
+                platform::warn!("the guard is holding {MAX_SECRETS} secrets for this run — further ones are masked, not restorable");
+            }
             return MASK.to_string();
         }
-        let n = entries.iter().filter(|(_, t)| t.starts_with(&format!("\u{ab}{name}-"))).count() + 1;
+        let n = entries.iter().filter(|h| h.name == name).count() + 1;
         let token = format!("\u{ab}{name}-{n}\u{bb}");
-        entries.push((value.to_string(), token.clone()));
+        entries.push(Held { value: value.to_string(), name: name.to_string(), token: token.clone() });
         token
     }
 
-    /// Put the real values back, for text that is about to touch this machine.
+    /// Put the real values back, and say which placeholders were left over.
     ///
-    /// A placeholder this vault did not mint is an **error**, not something to pass along:
-    /// it came from another run's record — a node transcript, a job log — and the value
-    /// behind it is not here. Running the command anyway would send the literal text
-    /// `«db-password-1»` to a database, and the failure would be a puzzle.
-    pub fn restore(&self, text: &str) -> Result<String, String> {
+    /// Runs to a fixed point (see [`RESTORE_PASSES`]) because placeholders nest. Only
+    /// entries whose token is actually present cost anything: `fs.write` restores whole
+    /// file contents, and five hundred blind `replace` passes over a megabyte is half a
+    /// gigabyte of copying to change nothing.
+    pub(super) fn put_back(&self, text: &str) -> String {
         if !text.contains('\u{ab}') {
-            return Ok(text.to_string());
+            return text.to_string();
         }
-        let out = match self.entries.lock() {
-            Ok(entries) => entries.iter().fold(text.to_string(), |acc, (value, token)| acc.replace(token.as_str(), value)),
-            Err(_) => text.to_string(),
-        };
-        match unresolved(&out) {
-            Some(token) => Err(format!(
-                "{token} is a secret placeholder from another run — nothing here knows what it stood for, so re-run the step that read it"
-            )),
-            None => Ok(out),
+        let Ok(entries) = self.entries.lock() else { return text.to_string() };
+        let mut out = text.to_string();
+        for _ in 0..RESTORE_PASSES {
+            let mut changed = false;
+            for held in entries.iter() {
+                if out.contains(held.token.as_str()) {
+                    out = out.replace(held.token.as_str(), &held.value);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
         }
+        out
     }
 
-    /// How many secrets this run is holding — what a run reports having restored.
-    pub fn len(&self) -> usize {
+    /// How many secrets this run is holding.
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
         self.entries.lock().map(|e| e.len()).unwrap_or(0)
     }
 }
 
-/// The first `«name-N»`-shaped placeholder left in `text`, if any.
+/// Every placeholder one of `names` could have minted, replaced by [`MASK`].
 ///
-/// Deliberately narrow: `«redacted»` carries no `-N`, and neither does ordinary prose that
-/// happens to use guillemets, so quoting a French sentence is not mistaken for a secret.
-fn unresolved(text: &str) -> Option<String> {
+/// The other half of scrubbing. Masking rewrites a *value*; this rewrites the stand-in for
+/// one — which is what text crossing out of a run is usually carrying by then. Both have to
+/// go, because the reader on the other side has neither the value nor a vault that knows
+/// the token, and a record holding a placeholder nothing can resolve is a trap laid for a
+/// later run.
+pub(super) fn strip(text: &str, names: &[&str]) -> String {
+    let mut out = text.to_string();
+    while let Some(token) = unresolved(&out, names) {
+        out = out.replace(&token, MASK);
+    }
+    out
+}
+
+/// The first placeholder left in `text` that one of `names` could have minted, if any.
+///
+/// Scoped to the guard's OWN rule names on purpose. `«page-12»` in a filename has exactly
+/// the shape of a placeholder and is not one, and refusing a perfectly good command over a
+/// pair of guillemets is a worse bug than the one this check exists to catch.
+pub(super) fn unresolved(text: &str, names: &[&str]) -> Option<String> {
+    if names.is_empty() {
+        return None;
+    }
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
     while i < chars.len() {
@@ -210,7 +256,7 @@ fn unresolved(text: &str) -> Option<String> {
         }
         if j < chars.len() && chars[j] == '\u{bb}' {
             let inner: String = chars[start + 1..j].iter().collect();
-            if looks_minted(&inner) {
+            if minted_by(&inner, names) {
                 return Some(chars[start..=j].iter().collect());
             }
             i = j + 1;
@@ -221,11 +267,28 @@ fn unresolved(text: &str) -> Option<String> {
     None
 }
 
-/// `name-12` — lowercase name, a dash, digits, and nothing else.
-fn looks_minted(inner: &str) -> bool {
+/// `<one of ours>-12` — a rule's name, a dash, digits, and nothing else.
+fn minted_by(inner: &str, names: &[&str]) -> bool {
     let Some((name, n)) = inner.rsplit_once('-') else { return false };
-    !name.is_empty()
-        && !n.is_empty()
-        && n.chars().all(|c| c.is_ascii_digit())
-        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+    !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && names.contains(&name)
+}
+
+/// A rule's name reduced to what a placeholder may carry: `[a-z0-9_-]`, or `secret` when
+/// nothing survives.
+///
+/// Sanitised rather than rejected, because the name is decoration on a rule that is
+/// otherwise fine — but a token nobody can recognise defeats [`unresolved`], so `AWS Key`
+/// becomes `aws-key` here rather than reaching the vault as it was written.
+fn tidy_name(raw: &str) -> String {
+    let name: String = raw
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '-' })
+        .collect();
+    let name = name.trim_matches('-').to_string();
+    match name.is_empty() {
+        true => "secret".to_string(),
+        false => name,
+    }
 }

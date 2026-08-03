@@ -132,6 +132,9 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
     let registry = crate::plugin::load_registry(&cfg);
     let guard = crate::guard::build(&cfg, &registry);
     let ctx = guard.hide(&ctx);
+    // The PROMPT too, not just the grounding around it. What somebody typed is text off
+    // this machine like any other — a pasted key in a question is a key a model receives.
+    let prompt = &guard.hide(prompt);
     let guard = std::sync::Arc::new(guard);
     let workspace_root = cwd_path.clone();
 
@@ -139,8 +142,8 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
     // pure `caps::run` runner), streaming live — no GUI/host needed.
     if let Some(name) = agent {
         let mode = format!("@{name}");
-        let code = run_agent_cli(&cfg, settings, &name, prompt, &ctx, workspace_root, guard, media);
-        record_session_run(session.as_ref(), &mode, prompt, &outcome_label(code));
+        let code = run_agent_cli(&cfg, settings, &name, prompt, &ctx, workspace_root, guard.clone(), media);
+        record_session_run(session.as_ref(), &guard, &mode, prompt, &outcome_label(code));
         return code;
     }
 
@@ -174,7 +177,7 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
                 // shown, logged and remembered without a secret in it. The values go back
                 // only into the line the shell will actually run.
                 let verdict = guard.judge(crate::guard::Act::Run(&cmd));
-                let ready = match guard.vault().restore(&cmd) {
+                let ready = match guard.ready_command(&cmd) {
                     Ok(line) => line,
                     Err(why) => {
                         eprintln!("{dim}{}{r}", footer(tin, tout));
@@ -188,14 +191,14 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
                 // The RECORD keeps the placeholder form. A folder's session digest is read
                 // back into a later prompt, and a secret written there would leak on a
                 // different day, through a different run, with nothing to connect it to this one.
-                record_session_run(session.as_ref(), "@ai", prompt, &cmd);
+                record_session_run(session.as_ref(), &guard, "@ai", prompt, &cmd);
             }
             crate::ai::CommandReply::Answer => {
                 sink.finish();
                 eprintln!();
                 eprintln!("{dim}{}{r}", footer(tin, tout));
                 println!("{ANSWER_MARK}");
-                record_session_run(session.as_ref(), "@ai", prompt, "answered");
+                record_session_run(session.as_ref(), &guard, "@ai", prompt, "answered");
             }
             // Nothing came back. Say so on the marker line — an empty answer would
             // print nothing and preload nothing, which reads as the terminal ignoring you.
@@ -259,7 +262,7 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
     }
     println!();
     eprintln!("{dim}{}{r}", run_footer_with("\u{2713}", started.elapsed(), 0, crate::ai::Usage { input: tin as u32, output: tout as u32, ..Default::default() }, Some(client.model().cost(tin, tout)), cfg.ai_budget));
-    record_session_run(session.as_ref(), "@ai (q&a)", prompt, "answered");
+    record_session_run(session.as_ref(), &guard, "@ai (q&a)", prompt, "answered");
     0
 }
 
@@ -274,9 +277,17 @@ pub(crate) fn outcome_label(code: i32) -> String {
 }
 
 /// Append one run to this folder's session digest — best-effort, never blocks/fails a run.
-pub(crate) fn record_session_run(session: Option<&crate::ai::Session>, mode: &str, prompt: &str, outcome: &str) {
+/// Append one run to this folder's digest — a store that outlives the run and is read
+/// back into a LATER one's context.
+///
+/// Scrubbed, not hidden. A placeholder belongs to the vault of the run that minted it; a
+/// later run reading one back could never turn it into anything, and would refuse the
+/// command built from it. And the secret itself must not be written down at all. So what
+/// crosses a run boundary keeps neither — `«redacted»` is the honest record of "there was
+/// something here you are not being shown".
+pub(crate) fn record_session_run(session: Option<&crate::ai::Session>, guard: &crate::guard::Guard, mode: &str, prompt: &str, outcome: &str) {
     if let Some(s) = session {
-        s.record_run(mode, prompt, outcome);
+        s.record_run(mode, &guard.scrub(prompt), &guard.scrub(outcome));
     }
 }
 

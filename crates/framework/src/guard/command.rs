@@ -214,10 +214,24 @@ pub fn split(cmd: &str) -> Result<Vec<String>, String> {
 }
 
 /// The program a segment runs, by basename — `git`, not `/usr/local/bin/git`.
+///
+/// Leading `NAME=value` words are the shell's way of setting a variable for one command,
+/// not the command: `FOO=1 sudo apt` runs `sudo`. Reading the assignment as the program
+/// would let a rule anchored `^sudo` be walked past by typing one env var first.
 pub(crate) fn program_of(segment: &str) -> Option<String> {
     let argv = split(segment).ok()?;
-    let prog = argv.first()?;
+    let prog = argv.iter().find(|w| !is_assignment(w))?;
     Some(std::path::Path::new(prog).file_name().and_then(|n| n.to_str()).unwrap_or(prog).to_string())
+}
+
+/// `NAME=value` — a shell variable assignment rather than a word of the command.
+fn is_assignment(word: &str) -> bool {
+    match word.split_once('=') {
+        Some((name, _)) => {
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !name.starts_with(|c: char| c.is_ascii_digit())
+        }
+        None => false,
+    }
 }
 
 /// The paths a command names, as written.
@@ -230,12 +244,17 @@ pub(crate) fn named_paths(segments: &[String]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for seg in segments {
         let Ok(argv) = split(seg) else { continue };
-        for token in argv.into_iter().skip(1) {
-            let t = token.trim_start_matches(['<', '>', '&', '(', '{']).trim_end_matches([';', ',', ')', '}']);
-            // A URL is not a path, and a flag is not a path even when it carries a slash
+        // Including the FIRST word, when it looks like a path. Running a script is reading
+        // it, so `./deploy.sh` and `/etc/cron.d/x` are reads of exactly the paths a rule is
+        // about — and a bare `ls` carries no separator, so nothing ordinary is affected.
+        for token in argv {
+            let t = token
+                .trim_start_matches(['<', '>', '&', '(', '{', '`', '$'])
+                .trim_end_matches([';', ',', ')', '}', '`']);
+            // A URL is not a path, a flag is not a path even when it carries a slash
             // (`--exclude=a/b` is one, but reading it as a path would refuse more than it
-            // protects). Both are left to the command rules.
-            if t.contains("://") || t.starts_with('-') || t.is_empty() {
+            // protects), and neither is `FOO=bar`. All three are left to the command rules.
+            if t.contains("://") || t.starts_with('-') || t.is_empty() || is_assignment(t) {
                 continue;
             }
             let looks_like = t.starts_with('/') || t.starts_with('~') || t.starts_with("./") || t.starts_with("../") || t.contains('/');

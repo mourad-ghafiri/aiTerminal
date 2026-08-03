@@ -18,7 +18,7 @@ use crate::cli::agentloop::{LoopOutcome, LoopState, drive_loop, fnv1a};
 // run_agent → verify → feedback → stop-rule pipeline.
 
 /// A runner that refuses every tool (the scripted maker never calls one).
-struct NoTools;
+pub(crate) struct NoTools;
 impl crate::ai::ToolRunner for NoTools {
     fn run(&mut self, name: &str, _args: &str) -> crate::ai::ToolOutcome {
         crate::ai::ToolOutcome::Failed(format!("no tool '{name}'"))
@@ -65,5 +65,5 @@ fn drive(
     verify: impl FnMut(&str) -> Result<crate::cli::agentloop::Verdict, String>,
 ) -> LoopOutcome {
     let client = scripted(answers);
-    drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, "goal", st, None, verify).outcome
+    drive_loop(&client, &maker(), &mut NoTools, &mut crate::ai::NoopObserver, &crate::guard::Guard::default(), "goal", st, None, verify).outcome
 }

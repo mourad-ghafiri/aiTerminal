@@ -257,7 +257,7 @@ fn a_secret_leaves_as_a_placeholder_and_comes_back_as_itself() {
     assert!(!hidden.contains("pw-example0"));
     assert!(hidden.contains("\u{ab}aws-key-1\u{bb}"), "named by its rule: {hidden}");
     assert!(hidden.contains("\u{ab}db-password-1\u{bb}"));
-    assert_eq!(g.vault().restore(&hidden).unwrap(), real, "and it round-trips exactly");
+    assert_eq!(g.restore(&hidden).unwrap(), real, "and it round-trips exactly");
 }
 
 #[test]
@@ -266,7 +266,7 @@ fn the_same_secret_is_always_the_same_placeholder() {
     let hidden = g.hide("AKIAEXAMPLE here and AKIAEXAMPLE again, plus AKIAOTHER");
     assert_eq!(hidden.matches("\u{ab}aws-key-1\u{bb}").count(), 2, "one value, one name: {hidden}");
     assert!(hidden.contains("\u{ab}aws-key-2\u{bb}"), "a different value gets a different name: {hidden}");
-    assert_eq!(g.vault().len(), 2);
+    assert_eq!(g.held_secrets(), 2);
 }
 
 #[test]
@@ -275,14 +275,14 @@ fn a_placeholder_survives_being_written_into_a_command() {
     let hidden = g.hide("DB_PASSWORD=pw-example0");
     // What the model writes back, with the placeholder used as a value.
     let token = hidden.trim_start_matches("DB_PASSWORD=");
-    let ready = g.vault().restore(&format!("psql \"postgres://app:{token}@db.internal/prod\"")).unwrap();
+    let ready = g.restore(&format!("psql \"postgres://app:{token}@db.internal/prod\"")).unwrap();
     assert!(ready.contains("app:pw-example0@db.internal"), "the command can actually connect: {ready}");
 }
 
 #[test]
 fn a_placeholder_from_another_run_is_refused_rather_than_run() {
     let g = guard(SECRET_RULES);
-    let err = g.vault().restore("psql \u{ab}db-password-7\u{bb}").unwrap_err();
+    let err = g.restore("psql \u{ab}db-password-7\u{bb}").unwrap_err();
     assert!(err.contains("\u{ab}db-password-7\u{bb}"), "it says which: {err}");
     assert!(err.contains("another run"), "and why: {err}");
 }
@@ -293,7 +293,7 @@ fn text_with_nothing_of_ours_in_it_comes_back_untouched() {
     // Guillemets are ordinary punctuation in plenty of languages, and «redacted» is ours
     // but carries no value — neither is mistaken for an unresolved placeholder.
     for text in ["il a dit \u{ab}bonjour\u{bb}", "KEY=\u{ab}redacted\u{bb}", "cargo test --all"] {
-        assert_eq!(g.vault().restore(text).unwrap(), text);
+        assert_eq!(g.restore(text).unwrap(), text);
     }
 }
 
@@ -332,7 +332,7 @@ fn what_leaves_this_process_keeps_neither_the_secret_nor_the_placeholder() {
     // vault: a placeholder there could never be turned back into anything.
     let g = guard(SECRET_RULES);
     assert_eq!(g.scrub("AWS_ACCESS_KEY_ID=AKIAEXAMPLE"), format!("AWS_ACCESS_KEY_ID={MASK}"));
-    assert_eq!(g.vault().len(), 0, "nothing was remembered, because nothing can come back");
+    assert_eq!(g.held_secrets(), 0, "nothing was remembered, because nothing can come back");
 }
 
 #[test]
@@ -348,7 +348,7 @@ fn clean_text_costs_nothing_and_comes_back_identical() {
     let text = "cargo build --release";
     assert_eq!(g.hide(text), text);
     assert_eq!(g.mask(text), text);
-    assert_eq!(g.vault().len(), 0);
+    assert_eq!(g.held_secrets(), 0);
 }
 
 #[test]
@@ -356,7 +356,7 @@ fn a_value_too_large_to_be_a_secret_is_masked_rather_than_vaulted() {
     let g = guard("[[guard.secret]]\npattern = \"BEGIN[\\\\s\\\\S]*END\"\nname = \"block\"\n");
     let huge = format!("BEGIN{}END", "x".repeat(9000));
     assert_eq!(g.hide(&huge), MASK, "a document that matched is not carried");
-    assert_eq!(g.vault().len(), 0);
+    assert_eq!(g.held_secrets(), 0);
 }
 
 // ── what the model is told ──────────────────────────────────────────────────
@@ -453,4 +453,181 @@ fn rule_sets_fold_in_order_so_a_users_own_rule_answers_first() {
     assert!(skipped.is_empty());
     let Decision::Deny { reason } = g.judge(Act::Run("wipe everything")) else { panic!("denied") };
     assert!(reason.contains("^wipe .*"), "the user's rule is the one named: {reason}");
+}
+
+// ── the second pass: what the first one left behind ─────────────────────────
+
+/// The rules the product actually ships, as `builtin/plugins/ai-guard/plugin.toml`
+/// declares them — the ones a real `.env` meets.
+fn shipped_secrets() -> Guard {
+    guard(
+        r#"
+[[guard.secret]]
+pattern = "sk-[A-Za-z0-9_-]{16,}"
+name = "api-key"
+[[guard.secret]]
+pattern = "(?i)(api[_-]?key|token|secret|password)[\"']?\\s*[:=]\\s*\\S+"
+name = "credential"
+"#,
+    )
+}
+
+#[test]
+fn a_value_two_rules_caught_still_comes_back_exactly() {
+    // The rules compose on purpose, so the everyday `.env` line is hidden TWICE: once as a
+    // key and again as an assignment, which nests one placeholder inside another. Restoring
+    // in a single pass put the outer one back and left the inner one sitting there — so the
+    // most ordinary input the feature has could never be restored at all.
+    let g = shipped_secrets();
+    let real = "ANTHROPIC_API_KEY=sk-ant-example-only-not-a-key";
+    let hidden = g.hide(real);
+    assert!(!hidden.contains("sk-ant-example-only-not-a-key"), "the value left: {hidden}");
+    assert_eq!(g.restore(&hidden).unwrap(), real, "and every layer of it came back");
+}
+
+#[test]
+fn a_placeholder_nested_three_deep_still_unwinds() {
+    let g = guard(
+        r#"
+[[guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "inner"
+[[guard.secret]]
+pattern = "PASS=\\S+"
+name = "middle"
+[[guard.secret]]
+pattern = "line: \\S+"
+name = "outer"
+"#,
+    );
+    let real = "line: PASS=pw-example0";
+    assert_eq!(g.restore(&g.hide(real)).unwrap(), real);
+}
+
+#[test]
+fn a_restored_value_that_is_a_second_command_is_refused() {
+    // A value is not inert. The guard judged `echo «credential-1»`; the shell would have
+    // run whatever that becomes, and nothing had ever looked at THAT line.
+    let g = guard(
+        r#"
+[[guard.command]]
+pattern = "^wipe-the-lot"
+rule = "deny"
+[[guard.secret]]
+pattern = "PASS=\\S+"
+name = "credential"
+"#,
+    );
+    let hidden = g.hide("PASS=x;wipe-the-lot");
+    let err = g.ready_command(&format!("echo {}", hidden.trim())).unwrap_err();
+    assert!(is_refusal(&err), "{err}");
+    assert!(err.contains("different command"), "it says what happened: {err}");
+    assert!(!err.contains("wipe-the-lot"), "and never quotes the line holding the secret: {err}");
+    // An ordinary value still runs, and arrives whole.
+    let ok = g.hide("PASS=pw-example0");
+    assert_eq!(g.ready_command(&format!("echo {}", ok.trim())).unwrap(), "echo PASS=pw-example0");
+}
+
+#[test]
+fn text_shaped_like_a_placeholder_but_none_of_ours_passes_through() {
+    // Guillemets are ordinary punctuation, and `«page-12»` has exactly a placeholder's
+    // shape. Refusing a perfectly good command over one would be a worse bug than the one
+    // the check exists to catch, so only names this guard's own rules could have minted count.
+    let g = guard(SECRET_RULES);
+    assert_eq!(g.restore("cat \u{ab}page-12\u{bb}.txt").unwrap(), "cat \u{ab}page-12\u{bb}.txt");
+    assert!(g.restore("psql \u{ab}db-password-9\u{bb}").is_err(), "one of ours, and unknown");
+    // …and a guard with no secret rules at all has nothing to be suspicious of.
+    assert!(Guard::default().restore("psql \u{ab}db-password-9\u{bb}").is_ok());
+}
+
+#[test]
+fn a_rule_name_is_reduced_to_what_a_placeholder_can_carry() {
+    // Sanitised rather than rejected: the name is decoration on a rule that is otherwise
+    // fine, but a token nobody can recognise defeats the unresolved check.
+    let g = guard("[[guard.secret]]\npattern = \"pw-[a-z0-9]+\"\nname = \"AWS Key!\"\n");
+    let hidden = g.hide("DB=pw-example0");
+    assert!(hidden.contains("\u{ab}aws-key-1\u{bb}"), "{hidden}");
+    assert!(g.restore("psql \u{ab}aws-key-4\u{bb}").is_err(), "and it is recognised as ours");
+}
+
+#[test]
+fn restoring_a_large_text_against_a_full_vault_stays_bounded() {
+    // `fs.write` restores whole file contents. Replacing blindly, once per entry, is half a
+    // gigabyte of copying to change nothing — so an entry whose token is absent costs a scan
+    // and no allocation.
+    let g = guard("[[guard.secret]]\npattern = \"pw-[a-z0-9]+\"\nname = \"db-password\"\n");
+    for i in 0..600 {
+        g.hide(&format!("pw-value{i}"));
+    }
+    assert_eq!(g.held_secrets(), 512, "the vault is capped");
+    let big = "x".repeat(1_000_000);
+    let started = std::time::Instant::now();
+    assert_eq!(g.restore(&big).unwrap(), big);
+    assert!(started.elapsed() < std::time::Duration::from_secs(2), "a megabyte of clean text is cheap");
+}
+
+#[test]
+fn an_unrecognised_scope_masks_the_screen_rather_than_leaving_it_alone() {
+    // Every other misspelt rule word falls to the strictest reading. A scope quietly
+    // falling back to egress-only would leave somebody screen-sharing a secret they
+    // had asked to hide.
+    let typo = guard("[[guard.secret]]\npattern = \"pw-[a-z0-9]+\"\nscope = \"termnal\"\n");
+    assert!(typo.masks_display(), "a typo must not widen anything");
+    assert_eq!(typo.mask("DB=pw-example0"), format!("DB={MASK}"));
+    // …while an ABSENT scope keeps the documented default, which is what makes `cat .env`
+    // still show you your own values.
+    assert!(!guard("[[guard.secret]]\npattern = \"pw-[a-z0-9]+\"\n").masks_display());
+}
+
+#[test]
+fn a_program_behind_an_env_assignment_is_still_the_program() {
+    // `FOO=1 sudo apt` runs sudo. Reading the assignment as the program let a rule
+    // anchored on `^sudo` be walked past by typing one variable first.
+    let g = guard("[[guard.command]]\npattern = \"^sudo\\\\b\"\nrule = \"confirm\"\n");
+    assert!(matches!(g.judge(Act::Run("FOO=1 sudo apt install x")), Decision::Confirm { .. }));
+    assert!(matches!(g.judge(Act::Run("PATH=/tmp LC_ALL=C sudo apt install x")), Decision::Confirm { .. }));
+    // A word with an `=` in it that is NOT an assignment is still the program.
+    assert!(allowed(&g, Act::Run("echo a=b")));
+}
+
+#[test]
+fn running_a_script_is_reading_it() {
+    // The first word of a command is a path when it is written as one, and running a file
+    // is reading it — so a script under an off-limits root is refused like any other read.
+    let g = Guard::rooted(
+        "[[guard.path]]\npattern = \"/vault/\"\nrule = \"deny\"\n",
+        Base { home: None, cwd: Some("/work".into()) },
+    );
+    assert!(refused(&g, Act::Run("/work/vault/deploy.sh --now")));
+    assert!(refused(&g, Act::Run("./vault/deploy.sh")));
+    // A bare program name carries no separator and is untouched.
+    assert!(allowed(&g, Act::Run("ls -la")));
+    assert!(allowed(&g, Act::Run("cargo test")));
+}
+
+#[test]
+fn the_floor_holds_on_a_machine_whose_paths_use_backslashes() {
+    // A third of the suite runs on a platform where home is `C:\Users\you`. A floor spelled
+    // with `/` alone is a floor that is simply not there.
+    let home = std::path::PathBuf::from(r"C:\Users\person");
+    let g = Guard::rooted("", Base { home: Some(home), cwd: None });
+    for p in [r"C:\Users\person\.ssh\id_rsa", r"C:\Users\person\.aws\credentials", r"C:\Users\person\.aiTerminal\config.toml"] {
+        assert!(refused(&g, Act::Read(std::path::Path::new(p))), "readable: {p}");
+    }
+    assert!(allowed(&g, Act::Read(std::path::Path::new(r"C:\Users\person\Documents\notes.md"))));
+}
+
+#[test]
+fn a_guard_pointed_at_another_directory_keeps_the_same_vault() {
+    // Where a run works is a property of the run, not of the policy — and moving the base
+    // must not hand it a second, empty memory of what it has already hidden.
+    let g = Guard::rooted(
+        "[[guard.path]]\npattern = \"^/work/vault/\"\nrule = \"deny\"\n[[guard.secret]]\npattern = \"pw-[a-z0-9]+\"\nname = \"db-password\"\n",
+        Base { home: None, cwd: Some("/elsewhere".into()) },
+    );
+    let hidden = g.hide("DB=pw-example0");
+    let moved = g.at(Some("/work".into()));
+    assert!(allowed(&g, Act::Run("cat vault/keys.txt")), "the rule is about /work, and this run is not there");
+    assert!(refused(&moved, Act::Run("cat vault/keys.txt")), "but under the new directory it is");
+    assert_eq!(moved.restore(&hidden).unwrap(), "DB=pw-example0", "and it remembers what the other one hid");
 }

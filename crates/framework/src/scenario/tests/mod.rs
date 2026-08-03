@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn ai_scenarios() {
-    check("ai", 30);
+    check("ai", 33);
 }
 
 #[test]
@@ -22,7 +22,7 @@ fn flow_scenarios() {
 
 #[test]
 fn gate_scenarios() {
-    check("gate", 35);
+    check("gate", 36);
 }
 
 #[test]
@@ -32,7 +32,7 @@ fn terminal_scenarios() {
 
 #[test]
 fn guard_scenarios() {
-    check("guard", 31);
+    check("guard", 41);
 }
 
 #[test]
