@@ -1037,7 +1037,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     guard: {
       caption: () => caption("The AI proposes. <em>The guard disposes.</em>",
-        "allow · ⚠ confirm · ✗ deny — deny always wins, and secrets are redacted before anything leaves your machine."),
+        "What may <b>run</b>: allow · ⚠ confirm · ✗ deny, and deny always wins. Every line, every pipeline stage and each stage's program is judged, so a harmless first word cannot shield what follows it."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
@@ -1058,9 +1058,41 @@ document.addEventListener("DOMContentLoaded", () => {
       },
     },
 
+    paths: {
+      caption: () => caption("Some folders are simply <em>not yours to read</em>",
+        "What may be <b>touched</b>: the same three tiers over paths, as regex you write once. They reach the file tools <em>and</em> the paths a command names — because <code>cat ~/.ssh/id_rsa</code> never goes near <code>fs.read</code>. A refused step is information, not a crash: the agent works around it."),
+      demo(w, myEpoch) {
+        run(w, myEpoch, [
+          { do: "pause", ms: 300 },
+          { do: "cmd", text: "@agent coder \"why is the deploy failing?\"" },
+          { do: "out", spans: [MUT("  ⚙ fs.read   "), FG("~/.ssh/config")], ms: 90 },
+          { do: "out", spans: [ERR("  ⛔ refused"), DIM(" — matches an off-limits path  /\\.ssh/")], ms: 90 },
+          { do: "out", spans: [MUT("  ⚙ fs.read   "), FG("deploy/config.yml"), MUT("  ·  1.2KB")], ms: 90 },
+          { do: "out", spans: [MUT("  ⚙ diag.check"), FG("  deploy/"), MUT("  ·  2 errors")], ms: 90 },
+          { do: "pause", ms: 700 },
+          { do: "out", spans: [FG("The host key check is off, and "), ACC2("deploy/config.yml"), FG(" points at the old bastion.")] },
+          { do: "out", spans: [DIM("I could not read your ssh config — tell me the host and I'll finish it.")] },
+          { do: "pause", ms: 1200 },
+
+          // a shell one-liner never goes near fs.read, so the guard reads the paths it names
+          { do: "cmd", text: "@ai show me my cloud credentials" },
+          { do: "spin", label: "thinking…", ms: 700 },
+          { do: "out", spans: [ERR("# blocked by guard: it names \"~/.aws/credentials\", which matches an off-limits path")] },
+          { do: "pause", ms: 1100 },
+
+          // read-only: look all you like, change nothing
+          { do: "cmd", text: "@agent coder \"add our proxy to /etc/hosts\"" },
+          { do: "out", spans: [MUT("  ⚙ fs.read   "), FG("/etc/hosts"), MUT("  ·  41 lines")], ms: 90 },
+          { do: "out", spans: [ERR("  ⛔ refused"), DIM(" — /etc/hosts is read-only here  /^\\/etc\\//")], ms: 90 },
+          { do: "out", spans: [FG("Here is the line to add, and the one command that adds it:")] },
+          { do: "out", spans: [ACC2("  10.0.42.17  proxy.internal")] },
+        ]);
+      },
+    },
+
     redact: {
       caption: () => caption("Your secrets leave as <em>placeholders</em> — and come back",
-        "Nine regex rules — AWS · OpenAI · Anthropic · GitHub · Slack · Google keys, bearer tokens, JWTs, PEM blocks and any <code>KEY=value</code> that looks sensitive — swap a value for <code>«aws-key-1»</code> on its way out, and swap the real value back in the moment the text returns to your machine. So an agent can <em>use</em> a database password it was never shown. The model gets the shape of your config and never the secret. Add <code>scope = \"terminal\"</code> and the masking applies to your screen too."),
+        "What may <b>leave</b>: a matching value goes out as <code>«credential-1»</code> and becomes itself again the moment the text returns to your machine — so an agent can <em>use</em> a password it was never shown. Nine rules ship for the usual keys, tokens and sensitive <code>KEY=value</code> pairs; add <code>scope = \"terminal\"</code> to mask them on your screen too."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },

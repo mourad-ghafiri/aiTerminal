@@ -739,7 +739,7 @@ body { background: var(--paper); }
 
     /* ---- 09 · the guard has the last word (5.0s) ---- */
     chapter("safety", "The AI proposes. <em>The guard disposes.</em>",
-      "Rules you write, and deny always wins. A model that gets creative still cannot reach your shell.");
+      "One policy, three subjects: what may run, what may be touched, what may leave. Rules you write, and deny always wins.");
     await run(w, [
       { do: "call", fn: async (t) => {
           t.clear(); hidePhone();
@@ -750,12 +750,14 @@ body { background: var(--paper); }
       { do: "out", spans: [ACC("❯ "), ACC2("git push --force-with-lease origin fix/parser")], ms: 800 },
       { do: "cmd", text: "@ai wipe the whole disk", speed: 12 },
       { do: "out", spans: [ERR("# blocked by the guard")], ms: 200 },
-      { do: "pause", ms: 2100 },
+      { do: "cmd", text: "@ai show me my cloud credentials", speed: 12 },
+      { do: "out", spans: [ERR("# blocked — it names a path that is off limits")], ms: 200 },
+      { do: "pause", ms: 1500 },
     ]);
 
     /* ---- 10 · your secrets never leave (5.0s) ---- */
     chapter("safety", "Your secrets <em>never leave.</em>",
-      "Keys, tokens and certificates are rewritten on the way out — and the AI still understands the rest.");
+      "A value leaves as a placeholder and becomes itself again when the text comes back — so an agent can use a password it was never shown.");
     await run(w, [
       { do: "call", fn: async (t) => t.clear() },
       { do: "cmd", text: "@ai why is the staging deploy failing?", speed: 11 },
