@@ -3,8 +3,17 @@ use super::*;
 /// The context a file-manager call runs under: no workspace (there is none here) and the
 /// guard the product always has — its built-in floor, which is what these tests are about.
 fn ctx() -> CapCtx {
+    ctx_at(platform::os::home_dir())
+}
+
+/// The same, rooted at a home read ONCE.
+///
+/// `$HOME` is process-global and other suites swap it under the shared `test_home` lock, so
+/// a test that reads it to build the rule and again to build the path can be handed two
+/// different homes — and then the floor pattern and the path it is judging disagree.
+fn ctx_at(home: Option<PathBuf>) -> CapCtx {
     CapCtx {
-        guard: std::sync::Arc::new(crate::guard::Guard::rooted("", crate::guard::Base::here())),
+        guard: std::sync::Arc::new(crate::guard::Guard::rooted("", crate::guard::Base { home, cwd: None })),
         app_data: None,
         remote_enabled: false,
         origin: "test://files/".into(),
@@ -43,9 +52,12 @@ fn guard_blocks_secrets_and_system_allows_safe_roots() {
     // A temp path (an allowed root) → permitted.
     let ok = std::env::temp_dir().join("ttfiles-guard-ok");
     assert!(user_write_guard(&ok, &ctx()).is_ok());
-    // A secret under home → denied even though home is an allowed root.
+    // A secret under home → denied even though home is an allowed root. One read of
+    // `$HOME`, shared by the rule and by the path, so the two cannot drift apart.
     if let Some(home) = platform::os::home_dir() {
-        assert!(user_write_guard(&home.join(".ssh/id_rsa"), &ctx()).is_err());
+        let ctx = ctx_at(Some(home.clone()));
+        assert!(user_write_guard(&home.join(".ssh/id_rsa"), &ctx).is_err());
+        assert!(user_write_guard(&home.join("Documents/notes.md"), &ctx).is_ok(), "and home itself is writable");
     }
 }
 
