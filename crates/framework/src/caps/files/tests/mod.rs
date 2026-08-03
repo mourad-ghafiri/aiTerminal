@@ -1,5 +1,18 @@
 use super::*;
 
+/// The context a file-manager call runs under: no workspace (there is none here) and the
+/// guard the product always has — its built-in floor, which is what these tests are about.
+fn ctx() -> CapCtx {
+    CapCtx {
+        guard: std::sync::Arc::new(crate::guard::Guard::rooted("", crate::guard::Base::here())),
+        app_data: None,
+        remote_enabled: false,
+        origin: "test://files/".into(),
+        sandbox: None,
+        memory_dir: None,
+    }
+}
+
 /// A unique, self-cleaning scratch directory under the system temp dir.
 struct Scratch(PathBuf);
 impl Scratch {
@@ -23,16 +36,16 @@ impl Drop for Scratch {
 #[test]
 fn guard_blocks_secrets_and_system_allows_safe_roots() {
     // System path → denied.
-    assert!(user_write_guard(Path::new("/usr/bin/whatever")).is_err());
-    assert!(user_write_guard(Path::new("/System/x")).is_err());
+    assert!(user_write_guard(Path::new("/usr/bin/whatever"), &ctx()).is_err());
+    assert!(user_write_guard(Path::new("/System/x"), &ctx()).is_err());
     // `..` traversal → denied.
-    assert!(user_write_guard(Path::new("/tmp/../etc/passwd")).is_err());
+    assert!(user_write_guard(Path::new("/tmp/../etc/passwd"), &ctx()).is_err());
     // A temp path (an allowed root) → permitted.
     let ok = std::env::temp_dir().join("ttfiles-guard-ok");
-    assert!(user_write_guard(&ok).is_ok());
+    assert!(user_write_guard(&ok, &ctx()).is_ok());
     // A secret under home → denied even though home is an allowed root.
     if let Some(home) = platform::os::home_dir() {
-        assert!(user_write_guard(&home.join(".ssh/id_rsa")).is_err());
+        assert!(user_write_guard(&home.join(".ssh/id_rsa"), &ctx()).is_err());
     }
 }
 
@@ -48,7 +61,7 @@ fn mkdir_create_rename_duplicate_roundtrip() {
     std::fs::write(&f, b"hello").unwrap();
 
     // rename
-    let renamed = do_rename(&f, "todo.txt").unwrap();
+    let renamed = do_rename(&f, "todo.txt", &ctx()).unwrap();
     assert!(!f.exists() && renamed.exists());
     assert_eq!(std::fs::read(&renamed).unwrap(), b"hello");
 

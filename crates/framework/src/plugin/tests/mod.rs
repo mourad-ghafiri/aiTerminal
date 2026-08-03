@@ -43,7 +43,7 @@ fn registry_plugin(name: &str) -> Manifest {
 #[test]
 fn registry_plugins_parse_and_compose() {
     let mut r = PluginRegistry::new();
-    for n in ["git", "common", "dir", "prompt", "command-guard", "redactor"] {
+    for n in ["git", "common", "dir", "prompt", "ai-guard"] {
         r.add_trusted(registry_plugin(n));
     }
     // git contributes a healthy alias set
@@ -68,7 +68,7 @@ fn every_builtin_plugin_parses_and_loads() {
         r.add_trusted(m);
         count += 1;
     }
-    assert_eq!(count, 31, "the terminal ships exactly 31 builtin plugins, got {count}");
+    assert_eq!(count, 30, "the terminal ships exactly 30 builtin plugins, got {count}");
     // The whole set composes: aliases/abbreviations/snippets all resolve without panicking.
     let _ = r.aliases();
     let _ = r.abbreviations();
@@ -210,26 +210,30 @@ fn parses_keybinding_contributions() {
 }
 
 #[test]
-fn parses_security_contributions() {
+fn a_plugin_writes_guard_rules_in_the_same_vocabulary_a_config_does() {
+    use crate::guard::rules::{CommandRule, PathRule};
     let m = Manifest::parse(
         "name = \"sec\"\n\
-         [[allow_command]]\npattern = \"^ls\"\n\
-         [[deny_command]]\npattern = \"^rm\"\n\
-         [[safe_command]]\npattern = \"^git\\\\s+status\"\n\
-         [[redact]]\npattern = \"TOKEN\"\nreplacement = \"X\"\nscope = \"all\"\n",
+         [[guard.command]]\npattern = \"^ls\"\nrule = \"allow\"\n\
+         [[guard.command]]\npattern = \"^tidy\"\nrule = \"deny\"\n\
+         [[guard.command]]\npattern = \"^git\\\\s+status\"\nrule = \"auto\"\n\
+         [[guard.path]]\npattern = \"/clients/\"\nrule = \"read-only\"\n\
+         [[guard.secret]]\npattern = \"TOKEN\"\nname = \"token\"\n",
     )
     .unwrap();
-    assert_eq!(m.allow_commands.len(), 1);
-    assert_eq!(m.deny_commands[0].pattern, "^rm");
-    assert_eq!(m.safe_commands[0].pattern, "^git\\s+status");
-    assert_eq!(m.redact_rules[0].replacement, "X");
+    assert_eq!(m.guard.commands[0].rule, CommandRule::Allow);
+    assert_eq!(m.guard.commands[1].pattern, "^tidy");
+    assert_eq!(m.guard.commands[2].rule, CommandRule::Auto);
+    assert_eq!(m.guard.paths[0].rule, PathRule::ReadOnly);
+    assert_eq!(m.guard.secrets[0].name, "token");
+    // Aggregated only from ENABLED plugins — which is why the rules that must never be
+    // switched off are the guard's own floor rather than data a plugin supplies.
     let mut r = PluginRegistry::new();
     r.add(m, false);
-    assert_eq!(r.deny_commands().len(), 1);
-    assert_eq!(r.safe_commands().len(), 1);
-    assert_eq!(r.redact_rules().len(), 1);
+    assert_eq!(r.guard_rules().commands.len(), 3);
+    assert_eq!(r.guard_rules().secrets.len(), 1);
     r.set_enabled("sec", false);
-    assert!(r.deny_commands().is_empty());
+    assert!(r.guard_rules().is_empty());
 }
 
 #[test]
@@ -278,8 +282,8 @@ fn example_plugin_manifest_parses() {
     assert!(m.aliases.iter().any(|(k, _)| k == "hi"), "alias declared");
     assert!(!m.segments.is_empty(), "status segment declared");
     assert!(!m.completions.is_empty(), "completion declared");
-    assert!(!m.confirm_commands.is_empty(), "guard rule declared");
-    assert!(!m.redact_rules.is_empty(), "redaction rule declared");
+    assert!(!m.guard.commands.is_empty(), "a guard command rule declared");
+    assert!(!m.guard.secrets.is_empty(), "a guard secret rule declared");
     assert!(!m.keybindings.is_empty(), "keybinding declared");
 }
 

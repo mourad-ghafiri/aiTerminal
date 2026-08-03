@@ -23,7 +23,7 @@ mod queue;
 mod task;
 mod time;
 mod todo;
-use backends::{clock, fs, os, sec, store, sys, web};
+use backends::{clock, fs, guard, os, store, sys, web};
 pub mod host;
 mod net;
 mod object;
@@ -36,7 +36,7 @@ use std::sync::OnceLock;
 /// Execution context for a capability call.
 #[derive(Clone)]
 pub struct CapCtx {
-    pub policy: Arc<crate::security::Policy>,
+    pub guard: Arc<crate::guard::Guard>,
     /// The caller's sandboxed data dir, or `None` (then `store`/`data` are
     /// unavailable).
     pub app_data: Option<PathBuf>,
@@ -61,7 +61,7 @@ pub fn standard_registry() -> ObjectRegistry {
         Box::new(Fs),
         Box::new(files::FilesObj),
         Box::new(diag::DiagObj),
-        Box::new(Sec),
+        Box::new(GuardObj),
         Box::new(Clock),
         Box::new(Store),
         Box::new(Sys),
@@ -179,17 +179,17 @@ impl NativeObject for Fs {
     }
 }
 
-struct Sec;
-impl NativeObject for Sec {
-    fn family(&self) -> &'static str { "sec" }
+struct GuardObj;
+impl NativeObject for GuardObj {
+    fn family(&self) -> &'static str { "guard" }
     fn methods(&self) -> &'static [MethodSpec] {
         &[
-            MethodSpec { method: "sec.check_command", describe: "Check a command against the guard" },
-            MethodSpec { method: "sec.redact", describe: "Redact secrets from text" },
+            MethodSpec { method: "guard.check", describe: "Ask the guard about something before doing it (args: act — run|read|write, target)" },
+            MethodSpec { method: "guard.mask", describe: "Replace secrets in text with «redacted», permanently (arg: text)" },
         ]
     }
     fn invoke(&self, method: &str, args: &[(String, String)], ctx: &CapCtx, _host: &mut dyn Host) -> Result<Json, String> {
-        sec(method, args, ctx)
+        guard(method, args, ctx)
     }
 }
 

@@ -111,7 +111,7 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
     let folder_mem = session.as_ref().map(|s| s.memory_dir());
     // The global aiTerminal.md instructions lead, then this folder's recent-activity
     // digest, auto-recalled memories (folder-first then global, gated by `[ai] memory`),
-    // the terminal grounding, and any attached files. Everything is redacted before egress.
+    // the terminal grounding, and any attached files. Every secret in it is hidden before egress.
     // Trimmed to the model's window before it is sent. The preamble is assembled from
     // sources that grow on their own — a session digest, a terminal scrollback — and
     // on a small-window model the grounding could otherwise crowd out the question it
@@ -127,18 +127,19 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
             ("terminal", term.clone()),
         ],
     );
-    // Apply the user's AI-scope redaction rules (config + plugins) before egress.
+    // Secrets leave as placeholders — and come back as themselves at whatever seam
+    // touches this machine. This is the egress point for the grounding preamble.
     let registry = crate::plugin::load_registry(&cfg);
-    let policy = crate::security::build_policy(&cfg, &registry);
-    let ctx = policy.redact(&ctx, crate::security::RedactScope::Ai);
-    let policy = std::sync::Arc::new(policy);
+    let guard = crate::guard::build(&cfg, &registry);
+    let ctx = guard.hide(&ctx);
+    let guard = std::sync::Arc::new(guard);
     let workspace_root = cwd_path.clone();
 
     // `--agent <name>` runs the agent's full tool loop (tools = native objects via a
     // pure `caps::run` runner), streaming live — no GUI/host needed.
     if let Some(name) = agent {
         let mode = format!("@{name}");
-        let code = run_agent_cli(&cfg, settings, &name, prompt, &ctx, workspace_root, policy, media);
+        let code = run_agent_cli(&cfg, settings, &name, prompt, &ctx, workspace_root, guard, media);
         record_session_run(session.as_ref(), &mode, prompt, &outcome_label(code));
         return code;
     }
@@ -169,10 +170,24 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
                 println!("{}", error_comment(&format!("AI error: {e}")));
             }
             crate::ai::CommandReply::Command(cmd) => {
-                eprintln!("{dim}{cmd}{r}");
+                // Judged as the model wrote it — placeholders and all — so a refusal can be
+                // shown, logged and remembered without a secret in it. The values go back
+                // only into the line the shell will actually run.
+                let verdict = guard.judge(crate::guard::Act::Run(&cmd));
+                let ready = match guard.vault().restore(&cmd) {
+                    Ok(line) => line,
+                    Err(why) => {
+                        eprintln!("{dim}{}{r}", footer(tin, tout));
+                        println!("{}", error_comment(&why));
+                        return 0;
+                    }
+                };
+                eprintln!("{dim}{ready}{r}");
                 eprintln!("{dim}{}{r}", footer(tin, tout));
-                let verdict = policy.check_command(&cmd);
-                println!("{}", command_marker(Some(&cmd), Some(verdict), &cfg.ai_command_mode, &cmd));
+                println!("{}", command_marker(Some(&ready), Some(verdict), &cfg.ai_command_mode, &ready));
+                // The RECORD keeps the placeholder form. A folder's session digest is read
+                // back into a later prompt, and a secret written there would leak on a
+                // different day, through a different run, with nothing to connect it to this one.
                 record_session_run(session.as_ref(), "@ai", prompt, &cmd);
             }
             crate::ai::CommandReply::Answer => {
@@ -352,18 +367,18 @@ pub(crate) const ANSWER_MARK: &str = "#TT-ANSWER#";
 /// The single line `@ai --command` prints for a suggested command + guard verdict.
 /// Pure (no I/O) so the dispatch policy is unit-testable: auto vs manual, the
 /// always-review confirm tier, a guard block, and a model refusal / empty answer.
-pub(crate) fn command_marker(cmd: Option<&str>, verdict: Option<crate::security::Verdict>, mode: &str, refusal: &str) -> String {
-    use crate::security::Verdict;
+pub(crate) fn command_marker(cmd: Option<&str>, verdict: Option<crate::guard::Decision>, mode: &str, refusal: &str) -> String {
+    use crate::guard::Decision;
     match (cmd, verdict) {
-        (Some(c), Some(Verdict::Allow)) => {
+        (Some(c), Some(Decision::Allow)) => {
             if mode.eq_ignore_ascii_case("auto") {
                 format!("{RUN_MARK}{c}")
             } else {
                 format!("{EDIT_MARK}{c}")
             }
         }
-        (Some(c), Some(Verdict::Confirm { .. })) => format!("{CONFIRM_MARK}{c}"),
-        (Some(_), Some(Verdict::Deny { reason })) => format!("# blocked by guard: {reason}"),
+        (Some(c), Some(Decision::Confirm { .. })) => format!("{CONFIRM_MARK}{c}"),
+        (Some(_), Some(Decision::Deny { reason })) => format!("# blocked by guard: {reason}"),
         // No command: surface the model's refusal text as a comment (never run).
         _ => {
             let t = refusal.trim();

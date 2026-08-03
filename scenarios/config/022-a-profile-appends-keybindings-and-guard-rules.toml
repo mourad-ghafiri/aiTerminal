@@ -1,0 +1,20 @@
+name = "a profile adds keybindings and guard rules rather than replacing them"
+tags = ["profiles", "overlay"]
+
+# These are additive on purpose: a profile should be able to add a restriction without
+# knowing, or repeating, every rule the global file already set. Replacing them would
+# quietly drop the guard you wrote once for everything.
+
+[[step]]
+config = ["[[keybinding]]", "key = \"cmd+1\"", "action = \"go_to_tab_1\"", "[[guard.secret]]", "pattern = \"AKIA\\\\w+\""]
+
+[[step]]
+profile = ["[[keybinding]]", "key = \"cmd+2\"", "action = \"go_to_tab_2\"", "[[guard.secret]]", "pattern = \"ghp_\\\\w+\""]
+
+[[step]]
+expect = "cmd+1=go_to_tab_1,cmd+2=go_to_tab_2"
+field = "keybindings"
+
+[[step]]
+expect = "AKIA\\w+,ghp_\\w+"
+field = "guard_secrets"

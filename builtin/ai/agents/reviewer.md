@@ -1,5 +1,5 @@
 ---
-tools = ["fs.read", "fs.list", "fs.stat", "fs.glob", "fs.search", "sys.run", "sec.check_command"]
+tools = ["fs.read", "fs.list", "fs.stat", "fs.glob", "fs.search", "sys.run", "guard.check"]
 description = "Read-only code review — correctness, security, tests, design."
 skills = ["concise", "code-review", "security-review", "verification", "writing"]
 max_steps = 12

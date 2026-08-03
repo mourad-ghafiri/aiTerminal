@@ -311,10 +311,15 @@ impl GuiApp {
         if !session_ctx_due(generation, self.session_ctx_gen, self.session_ctx_at.elapsed()) {
             return;
         }
-        // Write the RAW recent lines (redacted), not a formatted block — the CLI owns
-        // the formatting (its own cwd + `capture_context`). One redaction per layer.
+        // Write the RAW recent lines, not a formatted block — the CLI owns the formatting
+        // (its own cwd + `capture_context`).
+        //
+        // MASKED, not hidden. This file is read by a different process, which has a
+        // different vault: a placeholder written here could never be turned back into
+        // anything, and a command built from one would fail with a puzzle in it. Restoring
+        // spans one run, so what crosses a process boundary loses the secret for good.
         let Some(lines) = self.focused_terminal_lines() else { return };
-        let text = self.policy.redact(&lines.join("\n"), crate::security::RedactScope::Ai);
+        let text = self.guard.scrub(&lines.join("\n"));
         self.session_ctx_gen = generation;
         self.session_ctx_at = Instant::now();
         if text == self.session_ctx {

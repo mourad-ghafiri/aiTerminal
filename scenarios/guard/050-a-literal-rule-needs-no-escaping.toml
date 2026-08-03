@@ -1,0 +1,20 @@
+name = "a literal rule needs no escaping"
+tags = ["guard", "secrets"]
+
+# An internal hostname or an exact token is a string, not a pattern. `literal = true`
+# skips the regex engine entirely, so nothing has to be escaped and nothing else matches.
+
+[[setup.guard.secret]]
+pattern = "10.0.42.17"
+literal = true
+name = "host"
+
+[[step]]
+hide = "ping 10.0.42.17"
+[[step]]
+expect_text = "ping «host-1»"
+
+[[step]]
+hide = "ping 10x0y42z17"
+[[step]]
+expect_text = "ping 10x0y42z17"

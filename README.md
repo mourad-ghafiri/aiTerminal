@@ -81,13 +81,13 @@ profiles. The AI is woven into the shell itself through one idea:
 | 📄 `@md <file>` | `@md render` pretty-prints a Markdown file the way GitHub would — **all of GFM plus the HTML subset** (alerts, footnotes, `<details>`, centered blocks, HTML tables, `<kbd>`), **syntax-highlighted code**, **images drawn as pixels**, and **every mermaid diagram type** drawn natively (box art in other terminals); `@md edit` is a live split editor — Markdown left, rendered preview right, scroll by keyboard + mouse. |
 | 📱 `@gate telegram start` | Hand a tab or split to a chat app and drive your terminal from your phone. The pane becomes a shell you **share** — you keep typing while a paired chat runs commands in the same session — plus `/shot` for a screenshot of the live terminal. **Start Claude Code, Codex, `vim` or a REPL and the gate attaches**: the chat becomes that program's live screen, with buttons for whatever it is asking — detected from the terminal protocol itself, so it works for any program with no per-app code. Off by default; nothing is accepted until a chat sends the pairing code printed in your pane. |
 | 👤 `@profile [<id>]` | List profiles, switch directly (`@profile work`), `create`/`rename`/`delete`, and `edit` (opens the overlay in `$EDITOR`). A running window follows switches and edits live. |
-| 🔒 The redactor | Secrets are rewritten on their way **out**: AWS/OpenAI/Anthropic/GitHub/Slack/Google keys, bearer tokens, JWTs, PEM blocks and any sensitive `KEY=value` become `«redacted»` before a model, a chat app or the session file sees them. Targeted, not blanket — your connection strings still get through, so the AI stays useful. Scoped `ai` by default, so your own screen keeps showing your own values. |
+| 🛡 The AI guard | **One** policy over what may **run**, what may be **touched** and what may **leave** — regex rules you write once, in the same three tables, in `config.toml` or any plugin. Secrets go out as placeholders (`«aws-key-1»`) and come back as the real value the moment the text returns to your machine, so an agent can *use* a database password it was never shown. Targeted, not blanket — your connection strings still get through. Scoped `ai` by default, so your own screen keeps showing your own values. And a refusal is information: the model is told the rules before it starts, works around what it cannot have, and stops with a reason when it cannot. |
 | ⚙️ `@config` / `@theme` / `@plugin` | Inspect config, list/**switch** themes live (`@theme nord`), manage plugins. |
 
 `@`-commands ride the shell's `command_not_found` hook, so they can never shadow a
 real command, and everything streams straight into your terminal scrollback.
 
-## 🔋 Batteries included — 31 plugins, pure data
+## 🔋 Batteries included — 30 plugins, pure data
 
 A plugin is a `plugin.toml` — nothing compiles, nothing slows your prompt.
 
@@ -96,7 +96,7 @@ A plugin is a `plugin.toml` — nothing compiles, nothing slows your prompt.
 | 💻 | **Shell UX** | 🎨 syntax-highlight · 👻 autosuggest · 🧠 history · ⌨️ completion · ✂️ lineedit · 💡 alias-hints · 🚀 prompt · 🔼 sudo · 📁 dir · 🧭 jump · 🌍 term-cwd |
 | 🛠️ | **Git & dev** | ⎇ git · 🐙 github · 🐳 docker · ☸️ kubernetes · 🦀 rust · 🐍 python · 📦 node |
 | 🧰 | **Utilities** | 🗜 extract · 📋 clipboard · 🔐 encode · 🔎 web-search · 🌦 weather · 🕰 world-clock · 📝 notes · 📟 sysinfo · 📖 colored-man · 🧰 common |
-| ✦ | **AI & safety** | ✦ ai-terminal · 🛡 command-guard · 🕶 redactor |
+| ✦ | **AI & safety** | ✦ ai-terminal · 🛡 ai-guard |
 
 ## ⌨️ Your muscle memory, respected
 

@@ -14,4 +14,4 @@ no_model = true
 job = ["--every", "1h", "--", "git push --force"]
 
 [[step]]
-expect_guard = "a job can't ask"
+expect_guard = "the guard refused"

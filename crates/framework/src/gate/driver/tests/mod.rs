@@ -1,19 +1,21 @@
 use super::*;
 
-fn policy_with(deny: &[&str], confirm: &[&str]) -> Arc<Policy> {
-    let mut p = Policy::new();
-    for d in deny {
-        p.add_deny(d).unwrap();
-    }
-    for c in confirm {
-        p.add_confirm(c).unwrap();
-    }
-    Arc::new(p)
+/// A guard written the way a config file writes one, from a list of `(pattern, rule)`.
+fn guard_of(rules: &[(&str, &str)]) -> Arc<Guard> {
+    let doc: String =
+        rules.iter().map(|(p, r)| format!("[[guard.command]]\npattern = \"{p}\"\nrule = \"{r}\"\n")).collect();
+    Arc::new(Guard::from_toml(&doc))
 }
 
-fn gate_with(policy: Arc<Policy>, plain_runs: bool) -> Gate {
+fn policy_with(deny: &[&str], confirm: &[&str]) -> Arc<Guard> {
+    let rules: Vec<(&str, &str)> =
+        deny.iter().map(|d| (*d, "deny")).chain(confirm.iter().map(|c| (*c, "confirm"))).collect();
+    guard_of(&rules)
+}
+
+fn gate_with(guard: Arc<Guard>, plain_runs: bool) -> Gate {
     let auth = Auth::new(true, Vec::new(), 0, "418207".into());
-    Gate::new(auth, policy, Settings { plain_runs, max_reply_messages: 3, screenshot: FileKind::Document, cols: 80, attach: true })
+    Gate::new(auth, guard, Settings { plain_runs, max_reply_messages: 3, screenshot: FileKind::Document, cols: 80, attach: true })
 }
 
 fn paired() -> Gate {
@@ -174,17 +176,21 @@ fn a_failing_command_reports_its_exit_code() {
 }
 
 #[test]
-fn secrets_are_redacted_before_output_leaves_the_machine() {
-    let mut p = Policy::new();
-    p.add_redaction("AKIA[A-Z0-9]+", "«redacted»", RedactScope::Ai, false).unwrap();
-    let mut g = gate_with(Arc::new(p), true);
+fn a_secret_leaves_as_a_placeholder_your_phone_can_send_back() {
+    let g = Guard::from_toml("[[guard.secret]]\npattern = \"AKIA[A-Z0-9]+\"\nname = \"aws-key\"\n");
+    let mut g = gate_with(Arc::new(g), true);
     g.on_chat(7, "M", "/pair 418207", 0);
     g.on_chat(7, "M", "env", 1);
     g.on_output(b"", &[Mark::Start], 2);
     g.on_output(b"AWS_KEY=AKIA1234567890\r\n", &[], 3);
     let text = said(&g.on_output(b"", &[Mark::End(0)], 4));
     assert!(!text.contains("AKIA1234567890"), "a secret reached the chat: {text}");
-    assert!(text.contains("redacted"), "{text}");
+    assert!(text.contains("\u{ab}aws-key-1\u{bb}"), "and a placeholder went in its place: {text}");
+    // …and that placeholder is usable FROM the phone: a command carrying it runs here
+    // with the real value in it, which is the whole point of a reversible one.
+    let acts = g.on_chat(7, "M", "aws configure set key \u{ab}aws-key-1\u{bb}", 5);
+    let typed = String::from_utf8_lossy(&pty_bytes(&acts)).into_owned();
+    assert!(typed.contains("AKIA1234567890"), "the terminal got the real value: {typed}");
 }
 
 
@@ -337,16 +343,15 @@ fn the_live_screen_carries_the_programs_own_choices_as_buttons() {
 }
 
 #[test]
-fn the_live_screen_is_redacted_like_every_other_path_off_the_machine() {
-    let mut p = Policy::new();
-    p.add_redaction("AKIA[A-Z0-9]+", "«redacted»", RedactScope::Ai, false).unwrap();
-    let mut g = gate_with(Arc::new(p), true);
+fn the_live_screen_hides_a_secret_like_every_other_path_off_the_machine() {
+    let g = Guard::from_toml("[[guard.secret]]\npattern = \"AKIA[A-Z0-9]+\"\nname = \"aws-key\"\n");
+    let mut g = gate_with(Arc::new(g), true);
     g.on_chat(7, "M", "/pair 418207", 0);
     attach_app(&mut g);
     match &g.frame(&["AWS_KEY=AKIA1234567890".to_string()])[0] {
         Action::Live { html, .. } => {
             assert!(!html.contains("AKIA1234567890"), "a secret reached the chat: {html}");
-            assert!(html.contains("redacted"));
+            assert!(html.contains("aws-key-1"), "{html}");
         }
         other => panic!("unexpected {other:?}"),
     }

@@ -74,30 +74,31 @@ fn loop_stop_signature_detects_no_progress() {
 fn run_check_verifies_and_respects_the_guard() {
     // Pass/fail flow: exit 0 passes; a failure carries the output tail + a
     // stable signature for no-progress detection.
-    let policy = crate::security::Policy::new();
+    let guard = crate::guard::Guard::default();
     let long = std::time::Duration::from_secs(30);
-    let ok = run_check("true", &policy, long).unwrap();
+    let ok = run_check("true", &guard, long).unwrap();
     assert!(ok.passed);
-    let bad = run_check("echo boom; exit 3", &policy, long).unwrap();
+    let bad = run_check("echo boom; exit 3", &guard, long).unwrap();
     assert!(!bad.passed);
     assert!(bad.feedback.contains("boom") && bad.feedback.contains("exit=Some(3)"));
-    let bad2 = run_check("echo boom; exit 3", &policy, long).unwrap();
+    let bad2 = run_check("echo boom; exit 3", &guard, long).unwrap();
     assert_eq!(bad.signature, bad2.signature, "same observation → same signature (stalled detection)");
     // The guard gates the check command itself: deny blocks, confirm refuses
     // (this path is non-interactive — no one to ask).
-    let mut p = crate::security::Policy::new();
-    p.add_deny("^rm\\b").unwrap();
-    p.add_confirm("\\bsudo\\b").unwrap();
-    assert!(run_check("rm -rf /tmp/x", &p, long).unwrap_err().contains("blocked"));
-    assert!(run_check("sudo make check", &p, long).unwrap_err().contains("confirmation"));
+    let p = crate::guard::Guard::from_toml(
+        "[[guard.command]]\npattern = \"^tidy\\\\b\"\nrule = \"deny\"\n\
+         [[guard.command]]\npattern = \"\\\\bsudo\\\\b\"\nrule = \"confirm\"\n",
+    );
+    assert!(run_check("tidy /tmp/x", &p, long).unwrap_err().contains("the guard refused"));
+    assert!(run_check("sudo make check", &p, long).unwrap_err().contains("the guard refused"));
 }
 
 #[test]
 fn run_check_kills_a_hung_command_at_the_deadline() {
     // A check that never finishes must not stall the loop forever: the
     // deadline kills it and surfaces a clear, actionable error.
-    let policy = crate::security::Policy::new();
-    let err = run_check("sleep 5", &policy, std::time::Duration::from_secs(1)).unwrap_err();
+    let guard = crate::guard::Guard::default();
+    let err = run_check("sleep 5", &guard, std::time::Duration::from_secs(1)).unwrap_err();
     assert!(err.contains("timed out"), "{err}");
 }
 

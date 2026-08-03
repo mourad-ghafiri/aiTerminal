@@ -1,5 +1,5 @@
 ---
-tools = ["fs.read", "fs.list", "fs.stat", "fs.glob", "fs.search", "fs.write", "fs.edit", "fs.mkdir", "sys.run", "sec.check_command"]
+tools = ["fs.read", "fs.list", "fs.stat", "fs.glob", "fs.search", "fs.write", "fs.edit", "fs.mkdir", "sys.run", "guard.check"]
 description = "Writes documentation and reports for the person who will read them — and saves the file."
 skills = ["concise", "writing"]
 max_steps = 14

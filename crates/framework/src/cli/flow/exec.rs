@@ -115,7 +115,7 @@ pub(crate) struct FlowDriver<'a> {
     pub(crate) flow: &'a crate::flow::Flow,
     pub(crate) cfg: &'a crate::config::Config,
     pub(crate) settings: crate::ai::AiSettings,
-    pub(crate) policy: std::sync::Arc<crate::security::Policy>,
+    pub(crate) guard: std::sync::Arc<crate::guard::Guard>,
     pub(crate) workspace: Option<std::path::PathBuf>,
     pub(crate) input: String,
     pub(crate) run_id: String,
@@ -223,7 +223,7 @@ impl FlowDriver<'_> {
     /// One agent run, on its own client and its own tool runner — the shape
     /// `task.run` already uses for parallel sub-agents.
     fn one_agent(&self, name: &str, prompt: &str, node: &crate::flow::Node) -> NodeOut {
-        let Some(mut spec) = build_agent_spec(name, context_settings(self.cfg)) else {
+        let Some(mut spec) = build_agent_spec(name, context_settings(self.cfg), &self.guard) else {
             return NodeOut { ok: false, output: format!("no agent '{name}'"), ..NodeOut::default() };
         };
         if let Some(max) = node.max_steps {
@@ -232,7 +232,7 @@ impl FlowDriver<'_> {
         let cancel = crate::ai::CancelToken::new();
         let _watch = self.node_watchdog(cancel.clone(), node);
         let client = crate::ai::Client::new(self.settings.clone(), crate::ai::CurlTransport::default()).with_cancel(cancel);
-        let mut runner = build_runner(self.cfg, &self.settings, self.workspace.clone(), self.policy.clone(), true);
+        let mut runner = build_runner(self.cfg, &self.settings, self.workspace.clone(), self.guard.clone(), true);
         runner.trace = Some(std::sync::Arc::new(crate::flow::board::NodeTrace {
             board: self.board.clone(),
             node: node.id.clone(),
@@ -294,7 +294,7 @@ impl FlowDriver<'_> {
     fn one_command(&self, command: &str, node: &crate::flow::Node) -> NodeOut {
         let secs = node.timeout.unwrap_or(self.cfg.flow_node_timeout);
         let started = std::time::Instant::now();
-        match run_check(command, &self.policy, std::time::Duration::from_secs(secs)) {
+        match run_check(command, &self.guard, std::time::Duration::from_secs(secs)) {
             Ok(v) => NodeOut {
                 ok: v.passed,
                 output: v.raw,

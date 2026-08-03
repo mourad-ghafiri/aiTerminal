@@ -6,7 +6,7 @@
 
 name        = "hello"
 version     = "1.0.0"
-description = "Example: segment, aliases, abbreviation, completion, guard + redaction rules"
+description = "Example: segment, aliases, abbreviation, completion, and guard rules"
 author      = "you"
 
 # ---- a status-bar segment -------------------------------------------------
@@ -42,10 +42,11 @@ key    = "cmd+alt+t"
 action = "cycle_tab_bar"
 
 # ---- security contributions (plugins can only ADD restrictions) -----------
-[[confirm_command]]
+[[guard.command]]
 pattern = "\\bhello-tool\\s+ship\\b"      # ask before shipping
+rule    = "confirm"
 
-[[redact]]
-pattern     = "HELLO_TOKEN=\\S+"
-replacement = "HELLO_TOKEN=«hidden»"
-scope       = "ai"                         # masked before anything reaches a model
+[[guard.secret]]
+pattern = "HELLO_TOKEN=\\S+"
+name    = "hello-token"                    # the placeholder it leaves as: «hello-token-1»
+scope   = "ai"                             # hidden before anything reaches a model

@@ -16,7 +16,7 @@ use platform::transport::ScriptedTransport;
 
 use super::super::world::{self, World};
 use crate::ai::{self, Client};
-use crate::security::Policy;
+use crate::guard::Guard;
 
 pub struct LoopsWorld {
     /// A temp `$HOME` for the record store; `HOME` is restored when this world drops.
@@ -24,7 +24,7 @@ pub struct LoopsWorld {
     /// What the model would reply to the verifier-proposal call, when a scenario scripts one.
     proposes: Option<String>,
     /// The guard a check command is adjudicated against.
-    policy: Policy,
+    guard: Guard,
     /// What the verifier observes, one entry per iteration. `PASS` means it passed.
     observations: Vec<String>,
     /// How many maker turns the scripted model can serve.
@@ -49,19 +49,31 @@ struct Outcome {
     state: crate::cli::LoopState,
 }
 
+/// The scenario's own command rules, written in the guard's vocabulary — one parser, so a
+/// journey and a config file cannot disagree about what a rule means.
+fn scenario_guard(setup: &Toml) -> Result<Guard, String> {
+    let deny = world::list(setup, "deny").unwrap_or_default();
+    let confirm = world::list(setup, "confirm").unwrap_or_default();
+    let mut doc = String::new();
+    for (pattern, rule) in deny.iter().map(|d| (d, "deny")).chain(confirm.iter().map(|c| (c, "confirm"))) {
+        doc.push_str(&format!("[[guard.command]]\npattern = \"{pattern}\"\nrule = \"{rule}\"\n"));
+    }
+    let parsed = corelib::wire::Toml::parse(&doc).map_err(|e| format!("guard rules: {e}"))?;
+    let empty = corelib::wire::Toml::Table(Vec::new());
+    let (guard, skipped) = Guard::compile(&[&crate::guard::RuleSet::parse(parsed.get("guard").unwrap_or(&empty))], crate::guard::Base::here());
+    match skipped.is_empty() {
+        true => Ok(guard),
+        false => Err(format!("these rules do not compile: {}", skipped.join(" \u{b7} "))),
+    }
+}
+
 pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
     let (home, _) = crate::test_home::lock_home("scenario-loops");
-    let mut policy = Policy::new();
-    for pat in world::list(setup, "deny").unwrap_or_default() {
-        policy.add_deny(&pat).map_err(|e| format!("deny pattern {pat:?}: {e}"))?;
-    }
-    for pat in world::list(setup, "confirm").unwrap_or_default() {
-        policy.add_confirm(&pat).map_err(|e| format!("confirm pattern {pat:?}: {e}"))?;
-    }
+    let guard = scenario_guard(setup)?;
     Ok(Box::new(LoopsWorld {
         _home: home,
         proposes: None,
-        policy,
+        guard,
         observations: Vec::new(),
         answers: Vec::new(),
         max: world::int(setup, "max").unwrap_or(5).clamp(1, 25) as u32,
@@ -164,7 +176,7 @@ impl LoopsWorld {
         let turns = vec![ai::provider::text_sse(reply, 10, 5)];
         let client = Client::new(settings(), ScriptedTransport::new(turns));
         match ai::verify::propose_with(&client, goal, "") {
-            Some(cmd) if crate::cli::guard_refusal(&self.policy, &cmd).is_none() => {
+            Some(cmd) if crate::cli::guard_refusal(&self.guard, &cmd).is_none() => {
                 crate::loops::Verifier::Check { command: cmd, source: crate::loops::Source::Proposed }
             }
             _ => crate::loops::Verifier::Reviewer,

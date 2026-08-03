@@ -1,0 +1,16 @@
+name = "a command that names an off-limits path is refused too"
+tags = ["guard", "paths", "commands"]
+
+# A path rule that only reached the file tools would be decoration: a shell one-liner
+# never goes near them. So the guard reads the paths a command names, and judges each
+# as a read.
+
+[setup]
+home = "/nowhere/person"
+
+[[step]]
+run = "cat ~/.ssh/id_rsa"
+[[step]]
+expect_verdict = "deny"
+[[step]]
+expect_reason = ["~/.ssh/id_rsa"]

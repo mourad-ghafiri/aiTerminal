@@ -1,5 +1,5 @@
 ---
-tools = ["fs.read", "fs.list", "fs.stat", "fs.glob", "fs.search", "sys.run", "sec.check_command"]
+tools = ["fs.read", "fs.list", "fs.stat", "fs.glob", "fs.search", "sys.run", "guard.check"]
 description = "Turns a goal into a short plan with acceptance criteria — reads, never writes."
 skills = ["concise", "planning", "research", "orchestration"]
 max_steps = 10

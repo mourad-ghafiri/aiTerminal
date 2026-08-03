@@ -1,0 +1,18 @@
+name = "a placeholder works where the value would have gone"
+tags = ["guard", "secrets", "vault"]
+
+# What the model writes back is a command with the placeholder used as a value. This is
+# the whole trick: the run can connect to the database without ever being shown the
+# password.
+
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "db-password"
+
+[[step]]
+hide = "DB_PASSWORD=pw-example0"
+
+[[step]]
+restore = "psql postgres://app:«db-password-1»@db.internal/prod"
+[[step]]
+expect_kept = ["app:pw-example0@db.internal"]

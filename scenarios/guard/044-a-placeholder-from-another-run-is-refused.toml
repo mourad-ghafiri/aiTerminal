@@ -1,0 +1,16 @@
+name = "a placeholder from another run is refused rather than run"
+tags = ["guard", "secrets", "vault"]
+
+# The vault is one run's memory. A placeholder copied out of an old transcript means
+# nothing here — and running the command anyway would send the literal text to a
+# database and leave a failure nobody could explain from the other end.
+
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "db-password"
+
+[[step]]
+restore = "psql «db-password-7»"
+
+[[step]]
+expect_error = ["«db-password-7»", "another run"]

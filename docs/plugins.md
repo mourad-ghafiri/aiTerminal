@@ -29,8 +29,7 @@ removed, only disabled; `@plugin info <name>` says which kind it is.
 | `[[var]]` + `[[segment]]` | Status-bar data: probed/derived variables rendered as left/right segments with theme colors. |
 | `[[keybinding]]` | Chord → action contributions to the keymap. |
 | `shell.zsh` + `shell.bash` | Feature snippets (trusted plugins only). Ship BOTH dialects — zsh-only is acceptable solely for zsh-specific features (ZLE widgets, global aliases); CI enforces the parity. |
-| `[[allow_command]]` / `[[deny_command]]` / `[[confirm_command]]` / `[[safe_command]]` | Command-guard rules (plugins can only ADD restrictions/safety data — deny wins). |
-| `[[redact]]` | Redaction rules (pattern → replacement, scoped terminal/ai/all). |
+| `[[guard.command]]` / `[[guard.path]]` / `[[guard.secret]]` | Guard rules, in exactly the vocabulary `config.toml` uses — one parser reads both. A plugin can only ever ADD a restriction; deny wins, and nothing here removes a rule you wrote. See [security.md](security.md). |
 
 ## The builtin set
 
@@ -39,8 +38,8 @@ removed, only disabled; `@plugin info <name>` says which kind it is.
 - **Shell UX**: `prompt`, `autosuggest`, `syntax-highlight`, `completion`,
   `alias-hints`, `history`, `lineedit` (macOS-style navigation + ⇧-selection on
   the command line), `sudo`, `common`, `dir`, `jump`, `term-cwd`.
-- **Security**: `command-guard` (the default deny/confirm/safe rules), `redactor`
-  (the default secret-masking rules).
+- **Security**: `ai-guard` (the whole default policy — what may run, what may be
+  touched, and what may leave).
 - **Tooling**: `git`, `github`, `docker`, `kubernetes`, `node`, `python`, `rust`,
   `colored-man`, `extract`, `encode`, `clipboard`.
 - **Info**: `sysinfo`, `weather`, `world-clock`, `web-search`, `notes`.

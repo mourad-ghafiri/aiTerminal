@@ -15,7 +15,7 @@ use super::keys;
 use super::marks::Mark;
 use super::reply;
 use super::telegram::api::{FileKind, Keyboard};
-use crate::security::{Policy, RedactScope, Verdict};
+use crate::guard::{Act, Decision, Guard};
 
 /// How long a guard confirmation waits for `/yes` before it is dropped. Long enough
 /// to walk back to your phone, short enough that a stale "yes" can't fire much later.
@@ -89,7 +89,7 @@ pub struct Settings {
 pub struct Gate {
     auth: Auth,
     capture: Capture,
-    policy: Arc<Policy>,
+    guard: Arc<Guard>,
     settings: Settings,
     /// A guard-confirm command waiting for `/yes`.
     pending: Option<(String, u64)>,
@@ -113,11 +113,11 @@ pub struct Gate {
 }
 
 impl Gate {
-    pub fn new(auth: Auth, policy: Arc<Policy>, settings: Settings) -> Gate {
+    pub fn new(auth: Auth, guard: Arc<Guard>, settings: Settings) -> Gate {
         Gate {
             auth,
             capture: Capture::new(),
-            policy,
+            guard,
             settings,
             pending: None,
             last: None,
@@ -227,9 +227,12 @@ impl Gate {
                 None => vec![Action::Say(format!("unknown key <code>{}</code> — see /help", reply::escape_html(&name)))],
             },
             Command::Keys(text) => self.type_into_app(&text, who, false, "typed — /key enter to submit"),
-            Command::Sh(c) => match self.policy.check_command(&c) {
-                Verdict::Deny { reason } => self.blocked(who, &c, &reason),
-                _ => vec![Action::Local(self.style.inbound(who, &format!("sh {c}"))), Action::Sh(c)],
+            Command::Sh(c) => match self.guard.judge(Act::Run(&c)) {
+                Decision::Deny { reason } => self.blocked(who, &c, &reason),
+                _ => match self.arriving(&c) {
+                    Err(why) => vec![Action::Say(reply::escape_html(&why))],
+                    Ok(c) => vec![Action::Local(self.style.inbound(who, &format!("sh {c}"))), Action::Sh(c)],
+                },
             },
             // `/ai` builds a shell line, so it carries exactly the same hazard as
             // `/run`: queued now, it fires unattended when the program exits.
@@ -282,9 +285,9 @@ impl Gate {
         if self.capture.awaiting_input() {
             return self.type_into_app(&line, who, true, "sent to the running command");
         }
-        match self.policy.check_command(&line) {
-            Verdict::Deny { reason } => self.blocked(who, &line, &reason),
-            Verdict::Confirm { reason } => {
+        match self.guard.judge(Act::Run(&line)) {
+            Decision::Deny { reason } => self.blocked(who, &line, &reason),
+            Decision::Confirm { reason } => {
                 self.pending = Some((line.clone(), now));
                 vec![Action::Say(format!(
                     "⚠ <b>{}</b>\n<pre>{}</pre>\n/yes to run · /no to drop",
@@ -292,7 +295,7 @@ impl Gate {
                     reply::escape_html(&line)
                 ))]
             }
-            Verdict::Allow => self.submit(line, who, now),
+            Decision::Allow => self.submit(line, who, now),
         }
     }
 
@@ -303,6 +306,13 @@ impl Gate {
     /// your shell; once a program is attached, that program's own prompts (which you
     /// answer from the chat) are the control.
     fn type_into_app(&mut self, text: &str, who: &str, submit: bool, note: &str) -> Vec<Action> {
+        // Typing into a program is the terminal too — a password answered from a phone
+        // reaches a REPL exactly the way a command reaches the shell, so the placeholders
+        // become values here as well.
+        let text = &match self.arriving(text) {
+            Ok(t) => t,
+            Err(why) => return vec![Action::Say(reply::escape_html(&why))],
+        };
         self.attach.invalidate();
         let bytes = if submit {
             keys::typed_line(text, self.mirror.signals.bracketed)
@@ -401,12 +411,11 @@ impl Gate {
     /// Build the live screen message from the mirror's visible grid.
     pub fn frame(&mut self, screen: &[String]) -> Vec<Action> {
         // Redacted like every other path out of this machine — a screenshot bypasses
-        // the policy, but text must not.
+        // the guard, but text must not.
         let lines: Vec<String> = screen
             .iter()
             .map(|l| {
-                let l = self.policy.redact(l, RedactScope::Terminal);
-                self.policy.redact(&l, RedactScope::Ai)
+                self.leaving(l)
             })
             .collect();
         // One message, so the newest rows win rather than splitting across messages.
@@ -482,6 +491,14 @@ impl Gate {
     }
 
     fn submit(&mut self, line: String, who: &str, now: u64) -> Vec<Action> {
+        // The placeholders become values HERE, at the edge of the terminal — after the
+        // guard has judged the line and before anything types it. A placeholder the vault
+        // does not know is refused rather than typed: `«db-password-1»` reaching a database
+        // as literal text is a failure nobody could explain from the other end.
+        let line = match self.arriving(&line) {
+            Ok(l) => l,
+            Err(why) => return vec![Action::Say(reply::escape_html(&why))],
+        };
         let echo = Action::Local(self.style.inbound(who, &line));
         match self.capture.submit(line, self.mirror.owns(), now) {
             Submit::Running => {
@@ -574,18 +591,26 @@ impl Gate {
         acts
     }
 
-    /// Render captured bytes to redacted plain text.
+    /// Render captured bytes to plain text, with nothing secret left in it.
     fn lines(&self, bytes: &[u8]) -> Vec<String> {
-        reply::to_lines(bytes, self.settings.cols, CAPTURE_LINES)
-            .into_iter()
-            .map(|l| {
-                // A chat app is egress off this machine, so BOTH scopes apply: someone
-                // who scoped a secret to `terminal` or to `ai` certainly meant "not to
-                // my phone" as well.
-                let l = self.policy.redact(&l, RedactScope::Terminal);
-                self.policy.redact(&l, RedactScope::Ai)
-            })
-            .collect()
+        reply::to_lines(bytes, self.settings.cols, CAPTURE_LINES).into_iter().map(|l| self.leaving(&l)).collect()
+    }
+
+    /// A line on its way to the chat.
+    ///
+    /// A chat app is off this machine, so BOTH kinds of rule apply: someone who scoped a
+    /// secret to `terminal` or to `ai` certainly meant "not to my phone" as well. What
+    /// leaves is either a hard mask or a placeholder — and a placeholder is the useful
+    /// one, because a command your phone sends back carrying it runs here with the real
+    /// value in it. Your phone can use a password it never sees.
+    fn leaving(&self, line: &str) -> String {
+        self.guard.mask(&self.guard.hide(line))
+    }
+
+    /// A line on its way from the chat to this terminal — the moment the placeholders in
+    /// it stop being placeholders.
+    fn arriving(&self, line: &str) -> Result<String, String> {
+        self.guard.vault().restore(line)
     }
 
     fn full_action(&self) -> Action {

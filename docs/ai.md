@@ -753,9 +753,14 @@ Every AI command tells the shell the truth, so `$?`, `&&`, and CI compose:
 | code | meaning |
 |------|---------|
 | `0`  | the run completed (for `@loop`: the goal verified) |
-| `1`  | the run failed — model/transport error, step limit, tool stall; loop stalled/exhausted/out of budget |
+| `1`  | the run failed — model/transport error, step limit, tool stall, **blocked by the guard**; loop stalled/exhausted/out of budget |
 | `2`  | setup error — unknown agent/flow, AI not configured, guard-blocked check |
 | `130`| interrupted — Ctrl+C cancelled the run cleanly |
+
+A run ends `refused` (⛔) when the guard refused three things in a row and nothing was
+achieved in between: nothing broke and nothing ran out — the machine said no, and trying
+again would only be refused again. A flow node that ends this way is not retried, and the
+answer says what the run needed. See [security.md](security.md#when-a-run-cannot-go-on).
 
 **Ctrl+C** cancels the in-flight request immediately (the stream is killed
 mid-token), stops the agent loop before its next turn, exits `130`, and — for a
@@ -1254,8 +1259,10 @@ the redacted terminal snapshot, and any attached files.
 - Folder sessions and memory live entirely on your machine under
   `~/.aiTerminal/ai/sessions/`; nothing is uploaded, and the session context is
   redacted on the same egress path as everything else.
-- Every egress path applies the **AI-scope redaction rules** (config + the
-  `redactor` plugin): keys, tokens, and secrets are masked before leaving.
+- Every egress path goes through the **AI guard** (config + the `ai-guard` plugin):
+  keys, tokens and secrets leave as placeholders like `«aws-key-1»` and become
+  themselves again the moment the text returns to this machine — so a run can use a
+  key it was never shown. See [security.md](security.md).
 - `[ai] network = false` cuts agents off from `web.read` / `net.get` / `http.*`
   entirely.
 - Keys are never read off your machine — only from config or the provider's env var.

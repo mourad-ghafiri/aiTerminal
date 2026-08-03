@@ -59,12 +59,18 @@ impl World for PluginWorld {
             return world::expect_lines(&got, &want, "the keybindings");
         }
         if let Some(want) = world::list(step, "expect_denied") {
-            let got: Vec<String> = self.registry.deny_commands().iter().map(|d| d.pattern.clone()).collect();
+            let rules = self.registry.guard_rules();
+            let got: Vec<String> = rules
+                .commands
+                .iter()
+                .filter(|c| c.rule == crate::guard::rules::CommandRule::Deny)
+                .map(|c| c.pattern.clone())
+                .collect();
             return world::expect_lines(&got, &want, "the deny rules");
         }
-        if let Some(want) = world::list(step, "expect_redactions") {
-            let got: Vec<String> = self.registry.redact_rules().iter().map(|r| r.pattern.clone()).collect();
-            return world::expect_lines(&got, &want, "the redaction rules");
+        if let Some(want) = world::list(step, "expect_secrets") {
+            let got: Vec<String> = self.registry.guard_rules().secrets.iter().map(|r| r.pattern.clone()).collect();
+            return world::expect_lines(&got, &want, "the secret rules");
         }
         if let Some(want) = world::list(step, "expect_snippets") {
             let bash = world::flag(step, "bash").unwrap_or(false);

@@ -1,0 +1,27 @@
+name = "an off-limits path is neither read nor written"
+tags = ["guard", "paths"]
+
+# A path rule is a regex over the resolved absolute path, so it reads the way you would
+# write it: a folder, a suffix, a name.
+
+[setup]
+home = "/nowhere/person"
+
+[[setup.guard.path]]
+pattern = "/clients/"
+rule = "deny"
+
+[[step]]
+read = "~/clients/acme/notes.md"
+[[step]]
+expect_verdict = "deny"
+
+[[step]]
+write = "~/clients/acme/notes.md"
+[[step]]
+expect_verdict = "deny"
+
+[[step]]
+read = "~/work/notes.md"
+[[step]]
+expect_verdict = "allow"

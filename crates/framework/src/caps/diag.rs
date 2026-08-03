@@ -127,13 +127,8 @@ fn check(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
             ("note", Json::Str("no recognized toolchain (Cargo.toml / tsconfig.json / go.mod / pyproject.toml / package.json)".into())),
         ]));
     };
-    // Re-check the checker command through the guard (deny-wins), exactly like `sys.run`.
-    let cmd_str = checker.argv.join(" ");
-    match ctx.policy.check_command(&cmd_str) {
-        crate::security::Verdict::Deny { reason } => return Err(format!("blocked by guard: {reason}")),
-        crate::security::Verdict::Confirm { reason } => return Err(format!("requires confirmation (guard): {reason}")),
-        crate::security::Verdict::Allow => {}
-    }
+    // Re-ask the guard about the checker command, exactly like `sys.run`.
+    ctx.guard.permit(crate::guard::Act::Run(&checker.argv.join(" ")))?;
     let (prog, rest) = checker.argv.split_first().expect("checker argv is non-empty");
     let out = Command::new(prog)
         .args(rest)

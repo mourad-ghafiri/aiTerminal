@@ -1,0 +1,21 @@
+name = "deny wins over allow, whatever the order"
+tags = ["guard", "commands"]
+
+# Precedence is a property of the tiers, not of the order rules were written in.
+
+[[setup.guard.command]]
+pattern = "^git"
+rule = "allow"
+[[setup.guard.command]]
+pattern = "git\\s+push"
+rule = "deny"
+
+[[step]]
+run = "git status"
+[[step]]
+expect_verdict = "allow"
+
+[[step]]
+run = "git push origin main"
+[[step]]
+expect_verdict = "deny"

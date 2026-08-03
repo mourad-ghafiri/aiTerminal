@@ -1,0 +1,28 @@
+name = "the credentials floor holds with no rules configured at all"
+tags = ["guard", "paths", "floor"]
+
+# Nothing is configured here. These come from the guard itself, which is why disabling
+# every plugin cannot open them: a policy you can switch off by accident is not a guard.
+
+[setup]
+home = "/nowhere/person"
+
+[[step]]
+read = "~/.ssh/id_rsa"
+[[step]]
+expect_verdict = "deny"
+
+[[step]]
+read = "~/.aws/credentials"
+[[step]]
+expect_verdict = "deny"
+
+[[step]]
+read = "~/.aiTerminal/config.toml"
+[[step]]
+expect_verdict = "deny"
+
+[[step]]
+read = "~/Documents/notes.md"
+[[step]]
+expect_verdict = "allow"

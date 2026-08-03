@@ -22,7 +22,7 @@ use crate::gate::auth::Auth;
 use crate::gate::driver::{Action, Gate, Settings};
 use crate::gate::marks::MarkScanner;
 use crate::gate::telegram::api::FileKind;
-use crate::security::{Policy, RedactScope};
+use crate::guard::Guard;
 
 /// The relay's tick, so timers in the product fire on the same cadence here.
 const TICK_MS: u64 = 30;
@@ -103,20 +103,20 @@ impl World for GateWorld {
 
 impl GateWorld {
     fn new(setup: &Setup) -> GateWorld {
-        let mut policy = Policy::new();
-        for d in &setup.deny {
-            policy.add_deny(d).expect("scenario deny pattern");
+        // The scenario's own rules, written in the guard's vocabulary — one parser, so a
+        // gate journey and a config file cannot disagree about what a rule means.
+        let mut doc = String::new();
+        for (pattern, rule) in setup.deny.iter().map(|d| (d, "deny")).chain(setup.confirm.iter().map(|c| (c, "confirm"))) {
+            doc.push_str(&format!("[[guard.command]]\npattern = \"{pattern}\"\nrule = \"{rule}\"\n"));
         }
-        for c in &setup.confirm {
-            policy.add_confirm(c).expect("scenario confirm pattern");
+        for pattern in &setup.redact {
+            doc.push_str(&format!("[[guard.secret]]\npattern = \"{pattern}\"\n"));
         }
-        for r in &setup.redact {
-            policy.add_redaction(r, "«redacted»", RedactScope::Ai, false).expect("scenario redact pattern");
-        }
+        let guard = Guard::from_toml(&doc);
         let auth = Auth::new(true, setup.allow.clone(), 0, CODE.to_string());
         let gate = Gate::new(
             auth,
-            Arc::new(policy),
+            Arc::new(guard),
             Settings {
                 plain_runs: setup.plain_runs,
                 max_reply_messages: 3,

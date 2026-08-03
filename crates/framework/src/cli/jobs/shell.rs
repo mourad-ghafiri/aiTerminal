@@ -3,14 +3,8 @@
 ///
 /// A job has nobody to answer a prompt, so "ask first" is a refusal here — which is also the
 /// check that matters most for a command the *model* proposed.
-pub(crate) fn guard_refusal(policy: &crate::security::Policy, line: &str) -> Option<String> {
-    match policy.check_command(line) {
-        crate::security::Verdict::Allow => None,
-        crate::security::Verdict::Deny { reason } => Some(format!("blocked by the command guard: {reason}")),
-        crate::security::Verdict::Confirm { reason } => {
-            Some(format!("needs confirmation ({reason}) \u{2014} a job can't ask, so it was not run"))
-        }
-    }
+pub(crate) fn guard_refusal(guard: &crate::guard::Guard, line: &str) -> Option<String> {
+    guard.permit(crate::guard::Act::Run(line)).err()
 }
 
 /// Run a job's command: guard-checked, in the job's folder, output streamed to its log
@@ -20,8 +14,8 @@ pub(crate) fn run_shell_job(cmd: &crate::jobs::Cmd, cwd: &str, log: Option<std::
     let line = cmd.display();
     let cfg = crate::config::Config::load();
     let registry = crate::plugin::load_registry(&cfg);
-    let policy = crate::security::build_policy(&cfg, &registry);
-    let refusal = guard_refusal(&policy, &line);
+    let guard = crate::guard::build(&cfg, &registry);
+    let refusal = guard_refusal(&guard, &line);
     let mut sink = Sink { log, echo: foreground, written: 0, cap: cfg.jobs_max_log_bytes };
     if let Some(reason) = refusal {
         sink.write_line(&format!("aiTerminal: {reason}"));
@@ -34,10 +28,20 @@ pub(crate) fn run_shell_job(cmd: &crate::jobs::Cmd, cwd: &str, log: Option<std::
     }
     sink.write_line(&format!("$ {line}"));
 
+    // The log above keeps the placeholder form, and the shell below gets the values —
+    // which is the whole rule in two adjacent lines. A job's log is a file that outlives
+    // the run and is read back by `@job log`; the command is a thing that happens once.
     let mut command = match cmd {
         crate::jobs::Cmd::Line(l) => {
+            let line = match guard.vault().restore(l) {
+                Ok(line) => line,
+                Err(why) => {
+                    sink.write_line(&format!("aiTerminal: {why}"));
+                    return 2;
+                }
+            };
             let mut c = std::process::Command::new("/bin/sh");
-            c.arg("-c").arg(l);
+            c.arg("-c").arg(line);
             c
         }
         crate::jobs::Cmd::Argv(argv) => {

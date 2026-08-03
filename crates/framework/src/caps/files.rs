@@ -2,7 +2,7 @@
 //! `explorer` app. This is deliberately DISTINCT from `fs.*`:
 //!
 //! - `fs.*` is the sandboxed filesystem for agents/apps — reads are taint-aware, writes are
-//!   confined to the active workspace root (`fs_write_guard`).
+//!   confined to the active workspace root.
 //! - `files.*` performs the mutations a *person* expects from a file manager —
 //!   make / rename / duplicate / move / copy / trash / reveal. There is no workspace, so
 //!   instead every method is consent-gated AND confined by [`user_write_guard`]: secret paths
@@ -17,7 +17,7 @@ use std::path::{Component, Path, PathBuf};
 
 use corelib::wire::Json;
 
-use super::backends::{fs_path, is_secret_path};
+use super::backends::fs_path;
 use super::host::Host;
 use super::object::{MethodSpec, NativeObject};
 use super::{arg, obj, CapCtx};
@@ -42,17 +42,17 @@ impl NativeObject for FilesObj {
     fn methods(&self) -> &'static [MethodSpec] {
         SPECS
     }
-    fn invoke(&self, method: &str, args: &[(String, String)], _ctx: &CapCtx, _host: &mut dyn Host) -> Result<Json, String> {
+    fn invoke(&self, method: &str, args: &[(String, String)], ctx: &CapCtx, _host: &mut dyn Host) -> Result<Json, String> {
         match method {
             "files.mkdir" => {
                 let p = fs_path(arg(args, 0, "path").ok_or("files.mkdir: missing path")?)?;
-                user_write_guard(&p)?;
+                user_write_guard(&p, ctx)?;
                 std::fs::create_dir(&p).map_err(|e| format!("files.mkdir: {e}"))?;
                 Ok(path_obj(&p))
             }
             "files.create" => {
                 let p = fs_path(arg(args, 0, "path").ok_or("files.create: missing path")?)?;
-                user_write_guard(&p)?;
+                user_write_guard(&p, ctx)?;
                 std::fs::OpenOptions::new()
                     .write(true)
                     .create_new(true)
@@ -63,14 +63,14 @@ impl NativeObject for FilesObj {
             "files.rename" => {
                 let p = fs_path(arg(args, 0, "path").ok_or("files.rename: missing path")?)?;
                 let name = arg(args, 1, "name").ok_or("files.rename: missing name")?;
-                let dst = do_rename(&p, name)?;
+                let dst = do_rename(&p, name, ctx)?;
                 Ok(path_obj(&dst))
             }
             "files.copy" => {
                 let src = fs_path(arg(args, 0, "src").ok_or("files.copy: missing src")?)?;
                 let dst = fs_path(arg(args, 1, "dst").ok_or("files.copy: missing dst")?)?;
-                user_read_guard(&src)?;
-                user_write_guard(&dst)?;
+                user_read_guard(&src, ctx)?;
+                user_write_guard(&dst, ctx)?;
                 if dst.exists() {
                     return Err("files.copy: the destination already exists".into());
                 }
@@ -80,8 +80,8 @@ impl NativeObject for FilesObj {
             "files.move" => {
                 let src = fs_path(arg(args, 0, "src").ok_or("files.move: missing src")?)?;
                 let dst = fs_path(arg(args, 1, "dst").ok_or("files.move: missing dst")?)?;
-                user_write_guard(&src)?;
-                user_write_guard(&dst)?;
+                user_write_guard(&src, ctx)?;
+                user_write_guard(&dst, ctx)?;
                 if dst.exists() {
                     return Err("files.move: the destination already exists".into());
                 }
@@ -90,15 +90,15 @@ impl NativeObject for FilesObj {
             }
             "files.duplicate" => {
                 let src = fs_path(arg(args, 0, "path").ok_or("files.duplicate: missing path")?)?;
-                user_read_guard(&src)?;
+                user_read_guard(&src, ctx)?;
                 let dst = duplicate_target(&src);
-                user_write_guard(&dst)?;
+                user_write_guard(&dst, ctx)?;
                 copy_recursive(&src, &dst).map_err(|e| format!("files.duplicate: {e}"))?;
                 Ok(path_obj(&dst))
             }
             "files.trash" => {
                 let p = fs_path(arg(args, 0, "path").ok_or("files.trash: missing path")?)?;
-                user_write_guard(&p)?;
+                user_write_guard(&p, ctx)?;
                 let dir = trash_dir().ok_or("files.trash: cannot locate the Trash folder")?;
                 let landed = trash_to(&p, &dir).map_err(|e| format!("files.trash: {e}"))?;
                 Ok(obj(&[
@@ -108,7 +108,7 @@ impl NativeObject for FilesObj {
             }
             "files.reveal" => {
                 let p = fs_path(arg(args, 0, "path").ok_or("files.reveal: missing path")?)?;
-                user_read_guard(&p)?;
+                user_read_guard(&p, ctx)?;
                 reveal(&p)?;
                 Ok(obj(&[("path", Json::Str(p.to_string_lossy().into_owned())), ("revealed", Json::Bool(true))]))
             }
@@ -148,20 +148,22 @@ fn rejects_traversal(p: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// A path we are about to READ FROM (copy/duplicate source, reveal): no `..`, not a secret.
-/// Reads themselves are unconfined, so there is no allow-list here.
-fn user_read_guard(p: &Path) -> Result<(), String> {
+/// A path we are about to READ FROM (copy/duplicate source, reveal): no `..`, and whatever
+/// the guard says. Reads themselves are unconfined, so there is no allow-list here.
+///
+/// A file manager is driven by a person, not a model — but it runs in the same process, and
+/// a path the guard calls off-limits is off-limits: `~/.ssh` does not become readable
+/// because the click came from a window.
+fn user_read_guard(p: &Path, ctx: &CapCtx) -> Result<(), String> {
     rejects_traversal(p)?;
-    if is_secret_path(p) {
-        return Err("files: that path holds keys or credentials and is protected".into());
-    }
-    Ok(())
+    ctx.guard.permit(crate::guard::Act::Read(p))
 }
 
-/// A path we are about to MUTATE (create/rename/move/trash target): no `..`, not a secret,
-/// and under an allowed write root.
-fn user_write_guard(p: &Path) -> Result<(), String> {
-    user_read_guard(p)?;
+/// A path we are about to MUTATE (create/rename/move/trash target): no `..`, allowed by the
+/// guard, and under an allowed write root.
+fn user_write_guard(p: &Path, ctx: &CapCtx) -> Result<(), String> {
+    rejects_traversal(p)?;
+    ctx.guard.permit(crate::guard::Act::Write(p))?;
     if allowed_write_roots().iter().any(|r| p == r.as_path() || p.starts_with(r)) {
         Ok(())
     } else {
@@ -172,15 +174,15 @@ fn user_write_guard(p: &Path) -> Result<(), String> {
 // ----- operations ----------------------------------------------------------
 
 /// Rename `p`'s basename to `name` (a bare filename) in the same directory.
-fn do_rename(p: &Path, name: &str) -> Result<PathBuf, String> {
+fn do_rename(p: &Path, name: &str, ctx: &CapCtx) -> Result<PathBuf, String> {
     let name = name.trim();
     if name.is_empty() || name.contains('/') {
         return Err("files.rename: name must be a single file name (no '/')".into());
     }
-    user_write_guard(p)?;
+    user_write_guard(p, ctx)?;
     let parent = p.parent().ok_or("files.rename: path has no parent")?;
     let dst = parent.join(name);
-    user_write_guard(&dst)?;
+    user_write_guard(&dst, ctx)?;
     if dst.exists() {
         return Err("files.rename: a file with that name already exists".into());
     }

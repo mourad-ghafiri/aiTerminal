@@ -462,7 +462,7 @@ kbd {
 .rw-md-hint { margin-left: auto; opacity: .8; }
 
 
-/* ── the redactor: before / after, aligned line for line ────────────────────
+/* ── secrets: before / after, aligned line for line ────────────────────────
    A grid, not columns of padded text, so the two sides stay paired whatever
    the pane width. */
 .rw-red {

@@ -133,17 +133,12 @@ pub(crate) const MAX_ATTACHMENTS: usize = 16;
 /// Run the deterministic verifier: guard-check the command, run it via the shell
 /// **bounded by `deadline`** (a hung check is killed and reported, never allowed
 /// to stall the loop), and fold exit code + output tail into a [`Verdict`].
-pub(crate) fn run_check(cmd: &str, policy: &crate::security::Policy, deadline: std::time::Duration) -> Result<Verdict, String> {
-    match policy.check_command(cmd) {
-        crate::security::Verdict::Deny { reason } => return Err(format!("check command blocked by guard: {reason}")),
-        crate::security::Verdict::Confirm { reason } => {
-            return Err(format!("check command needs confirmation ({reason}) — pick a safer --check"))
-        }
-        crate::security::Verdict::Allow => {}
-    }
+pub(crate) fn run_check(cmd: &str, guard: &crate::guard::Guard, deadline: std::time::Duration) -> Result<Verdict, String> {
+    guard.permit(crate::guard::Act::Run(cmd)).map_err(|e| format!("the check command was refused: {e}"))?;
+    let cmd = guard.vault().restore(cmd)?;
     let mut child = std::process::Command::new("/bin/sh")
         .arg("-c")
-        .arg(cmd)
+        .arg(&cmd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -303,6 +298,10 @@ pub(crate) fn drive_loop<T: crate::ai::Transport>(
             }
             crate::ai::RunOutcome::Cancelled => return LoopRun { outcome: LoopOutcome::Cancelled, ..st },
             crate::ai::RunOutcome::Error(e) => return LoopRun { outcome: LoopOutcome::Error(e.clone()), ..st },
+            // The maker cannot do the work the guard refuses, and the next iteration would
+            // ask it to try the same thing again. Stop here and report the reason rather
+            // than spending the whole bound discovering it once per iteration.
+            crate::ai::RunOutcome::Refused(why) => return LoopRun { outcome: LoopOutcome::Error(why.clone()), ..st },
             _ => {}
         }
 
@@ -380,8 +379,8 @@ pub(crate) fn drive_loop_for_test<T: crate::ai::Transport>(
 ) -> TestRun {
     struct NoTools;
     impl crate::ai::ToolRunner for NoTools {
-        fn run(&mut self, _: &str, _: &str) -> Result<String, String> {
-            Err("no tools in this scenario".into())
+        fn run(&mut self, _: &str, _: &str) -> crate::ai::ToolOutcome {
+            crate::ai::ToolOutcome::Failed("no tools in this scenario".into())
         }
     }
     let run = drive_loop(client, maker, &mut NoTools, &mut crate::ai::NoopObserver, goal, state, check_label, verify);

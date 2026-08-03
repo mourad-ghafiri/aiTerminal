@@ -3,8 +3,8 @@
 //! nothing for the CLI), so this crate reads no PTY and stays testable against
 //! `MockPlatform`.
 //!
-//! Secret redaction is NOT done here — it is the host's single responsibility,
-//! applied via the `framework::security` policy (fed by the `redactor` plugin)
+//! Hiding secrets is NOT done here — it is the host's single responsibility,
+//! applied via the `framework::guard` policy (fed by the `ai-guard` plugin)
 //! before this context, and any tool result, leaves for a model.
 
 /// What the caller knows about the focused terminal right now.

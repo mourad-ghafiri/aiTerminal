@@ -1,9 +1,0 @@
-name = "a redaction rule with no scope applies everywhere"
-tags = ["config", "security"]
-
-[[step]]
-config = ["[[redact]]", "pattern = \"a\"", "[[redact]]", "pattern = \"b\"", "scope = \"ai\""]
-
-[[step]]
-expect = "all,ai"
-field = "redaction_scopes"

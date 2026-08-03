@@ -20,8 +20,8 @@ use crate::cli::agentloop::{LoopOutcome, LoopState, drive_loop, fnv1a};
 /// A runner that refuses every tool (the scripted maker never calls one).
 struct NoTools;
 impl crate::ai::ToolRunner for NoTools {
-    fn run(&mut self, name: &str, _args: &str) -> Result<String, String> {
-        Err(format!("no tool '{name}'"))
+    fn run(&mut self, name: &str, _args: &str) -> crate::ai::ToolOutcome {
+        crate::ai::ToolOutcome::Failed(format!("no tool '{name}'"))
     }
 }
 

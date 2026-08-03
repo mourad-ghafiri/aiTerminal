@@ -1,0 +1,20 @@
+name = "an ordinary command is not mistaken for a path"
+tags = ["guard", "paths", "commands"]
+
+# Reading paths out of a command line is a heuristic, and a heuristic that fired on
+# everyday work would be worse than none: people would switch it off. A URL is not a
+# path, and neither is a flag.
+
+[[setup.guard.path]]
+pattern = "/clients/"
+rule = "deny"
+
+[[step]]
+run = "grep -r TODO src/"
+[[step]]
+expect_verdict = "allow"
+
+[[step]]
+run = "git clone https://host/clients/repo.git"
+[[step]]
+expect_verdict = "allow"

@@ -2,7 +2,7 @@ use super::*;
 
 fn run(method: &str, args: &[(&str, &str)]) -> Result<Json, String> {
     let ctx = CapCtx {
-        policy: std::sync::Arc::new(crate::security::Policy::new()),
+        guard: std::sync::Arc::new(crate::guard::Guard::default()),
         app_data: None,
         remote_enabled: true,
         origin: String::new(),

@@ -1,0 +1,25 @@
+name = "an env file stays readable, because the vault is what makes it safe"
+tags = ["guard", "paths", "vault"]
+
+# `.env` is deliberately NOT on the floor. Reading it is the everyday case, and blocking
+# it would only push people to turn the guard off. What protects you is that its values
+# leave as placeholders and come back as themselves.
+
+[setup]
+home = "/nowhere/person"
+
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "db-password"
+
+[[step]]
+read = "~/project/.env"
+[[step]]
+expect_verdict = "allow"
+
+[[step]]
+hide = "DB_PASSWORD=pw-example0"
+[[step]]
+expect_not_text = ["pw-example0"]
+[[step]]
+expect_text = "DB_PASSWORD=«db-password-1»"

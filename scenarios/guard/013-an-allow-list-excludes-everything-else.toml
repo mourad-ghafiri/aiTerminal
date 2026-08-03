@@ -1,0 +1,21 @@
+name = "a non-empty allow-list excludes everything it does not name"
+tags = ["guard", "commands"]
+
+# An empty allow-list means "anything not denied". The moment one rule exists it
+# becomes the whole of what may run.
+
+[[setup.guard.command]]
+pattern = "^git\\b"
+rule = "allow"
+
+[[step]]
+run = "git status"
+[[step]]
+expect_verdict = "allow"
+
+[[step]]
+run = "ls -la"
+[[step]]
+expect_verdict = "deny"
+[[step]]
+expect_reason = ["allow-list"]

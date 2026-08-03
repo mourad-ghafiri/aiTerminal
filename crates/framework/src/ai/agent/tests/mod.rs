@@ -21,9 +21,9 @@ struct MockRunner {
     calls: Vec<(String, String)>,
 }
 impl ToolRunner for MockRunner {
-    fn run(&mut self, name: &str, args: &str) -> Result<String, String> {
+    fn run(&mut self, name: &str, args: &str) -> ToolOutcome {
         self.calls.push((name.to_string(), args.to_string()));
-        Ok(format!("ran {name}"))
+        ToolOutcome::Done(format!("ran {name}"))
     }
 }
 
@@ -410,8 +410,8 @@ fn transcript_stays_bounded_when_tools_return_megabytes() {
     // the model is handed a preview plus a path.
     struct HugeRunner;
     impl ToolRunner for HugeRunner {
-        fn run(&mut self, _name: &str, _args: &str) -> Result<String, String> {
-            Ok("x".repeat(5 * 1024 * 1024))
+        fn run(&mut self, _name: &str, _args: &str) -> ToolOutcome {
+            ToolOutcome::Done("x".repeat(5 * 1024 * 1024))
         }
     }
     let transport = ScriptedTransport::new(vec![
@@ -455,8 +455,8 @@ fn a_result_small_enough_to_carry_is_left_alone() {
     // an extra turn bought for nothing.
     struct SmallRunner;
     impl ToolRunner for SmallRunner {
-        fn run(&mut self, _name: &str, _args: &str) -> Result<String, String> {
-            Ok("fn main() {\n    println!(\"hi\");\n}\n".into())
+        fn run(&mut self, _name: &str, _args: &str) -> ToolOutcome {
+            ToolOutcome::Done("fn main() {\n    println!(\"hi\");\n}\n".into())
         }
     }
     let transport = ScriptedTransport::new(vec![
@@ -481,8 +481,8 @@ fn a_small_window_survives_a_run_that_would_have_overflowed_it() {
     // by sending a prompt the provider would reject.
     struct BigRunner;
     impl ToolRunner for BigRunner {
-        fn run(&mut self, _n: &str, _a: &str) -> Result<String, String> {
-            Ok("result line\n".repeat(4_000))
+        fn run(&mut self, _n: &str, _a: &str) -> ToolOutcome {
+            ToolOutcome::Done("result line\n".repeat(4_000))
         }
     }
     #[derive(Default)]
@@ -512,6 +512,7 @@ fn a_small_window_survives_a_run_that_would_have_overflowed_it() {
         // model actually offers.
         context_window: 8_192,
         compact_at: 0.75,
+        guard_brief: String::new(),
         scratch: scratch.clone(),
     };
     let mut obs = Watcher::default();
@@ -536,7 +537,7 @@ fn an_agent_can_read_and_free_its_own_context() {
     // and without any tool runner being involved at all.
     struct NeverCalled;
     impl ToolRunner for NeverCalled {
-        fn run(&mut self, n: &str, _a: &str) -> Result<String, String> {
+        fn run(&mut self, n: &str, _a: &str) -> ToolOutcome {
             panic!("the runner must never see a ctx.* call, got {n}")
         }
     }
@@ -554,6 +555,7 @@ fn an_agent_can_read_and_free_its_own_context() {
         max_steps: 5,
         context_window: 8_192,
         compact_at: 0.75,
+        guard_brief: String::new(),
         scratch: scratch.clone(),
     };
     let run = run_agent(&client, &agent, "go", "", &mut NeverCalled, &mut NoopObserver);
@@ -778,8 +780,8 @@ fn a_compacting_turn_has_its_spinner_up_before_it_folds_anything() {
     // the only way to reach a compaction.
     struct Chatty;
     impl ToolRunner for Chatty {
-        fn run(&mut self, _n: &str, _a: &str) -> Result<String, String> {
-            Ok("a line of output that says something about the project\n".repeat(60))
+        fn run(&mut self, _n: &str, _a: &str) -> ToolOutcome {
+            ToolOutcome::Done("a line of output that says something about the project\n".repeat(60))
         }
     }
     // Distinct args each turn, so the stuck-loop breaker never fires and the run gets far
@@ -794,6 +796,7 @@ fn a_compacting_turn_has_its_spinner_up_before_it_folds_anything() {
         max_steps: 8,
         context_window: 8_192,
         compact_at: 0.5,
+        guard_brief: String::new(),
         scratch: scratch.clone(),
     };
     let mut obs = Order::default();

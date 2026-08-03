@@ -62,6 +62,9 @@ pub(crate) fn outcome_glyph(outcome: &crate::ai::RunOutcome) -> &'static str {
         crate::ai::RunOutcome::Completed => "\u{2713}",
         crate::ai::RunOutcome::Cancelled => "\u{23f9}",
         crate::ai::RunOutcome::StepLimit | crate::ai::RunOutcome::ToolStall => "\u{26a0}",
+        // Its own glyph, because it is its own thing: nothing broke and nothing ran out —
+        // the machine said no. The same mark the refusal itself carries.
+        crate::ai::RunOutcome::Refused(_) => "\u{26d4}",
         crate::ai::RunOutcome::Error(_) => "\u{2717}",
     }
 }

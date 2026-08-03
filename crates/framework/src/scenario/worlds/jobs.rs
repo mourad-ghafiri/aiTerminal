@@ -17,7 +17,7 @@ use platform::transport::ScriptedTransport;
 use super::super::world::{self, World};
 use crate::ai::{self, Client};
 use crate::jobs::{self, Action, Job, Task};
-use crate::security::Policy;
+use crate::guard::Guard;
 
 pub struct JobsWorld {
     /// A temp `$HOME` for the record store; `HOME` is restored when this world drops.
@@ -28,7 +28,7 @@ pub struct JobsWorld {
     /// configured" — the case that must still work.
     model_says: Option<String>,
     /// The guard a shell job is checked against.
-    policy: Policy,
+    guard: Guard,
     /// Whether a scheduled job's sleeper process is still alive (`false` = the reboot case).
     sleeper_alive: bool,
     /// The id of the last job this scenario created — every assertion reads it.
@@ -48,20 +48,32 @@ fn clock() -> u64 {
     corelib::datetime::to_unix(2026, 3, 10, 12, 0, 0, platform::os::utc_offset_secs()) as u64
 }
 
+/// The scenario's own command rules, written in the guard's vocabulary — one parser, so a
+/// journey and a config file cannot disagree about what a rule means.
+fn scenario_guard(setup: &Toml) -> Result<Guard, String> {
+    let deny = world::list(setup, "deny").unwrap_or_default();
+    let confirm = world::list(setup, "confirm").unwrap_or_default();
+    let mut doc = String::new();
+    for (pattern, rule) in deny.iter().map(|d| (d, "deny")).chain(confirm.iter().map(|c| (c, "confirm"))) {
+        doc.push_str(&format!("[[guard.command]]\npattern = \"{pattern}\"\nrule = \"{rule}\"\n"));
+    }
+    let parsed = corelib::wire::Toml::parse(&doc).map_err(|e| format!("guard rules: {e}"))?;
+    let empty = corelib::wire::Toml::Table(Vec::new());
+    let (guard, skipped) = Guard::compile(&[&crate::guard::RuleSet::parse(parsed.get("guard").unwrap_or(&empty))], crate::guard::Base::here());
+    match skipped.is_empty() {
+        true => Ok(guard),
+        false => Err(format!("these rules do not compile: {}", skipped.join(" \u{b7} "))),
+    }
+}
+
 pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
     let (home, _) = crate::test_home::lock_home("scenario-jobs");
-    let mut policy = Policy::new();
-    for pat in world::list(setup, "deny").unwrap_or_default() {
-        policy.add_deny(&pat).map_err(|e| format!("deny pattern {pat:?}: {e}"))?;
-    }
-    for pat in world::list(setup, "confirm").unwrap_or_default() {
-        policy.add_confirm(&pat).map_err(|e| format!("confirm pattern {pat:?}: {e}"))?;
-    }
+    let guard = scenario_guard(setup)?;
     Ok(Box::new(JobsWorld {
         _home: home,
         now: world::int(setup, "now").map(|n| n as u64).unwrap_or_else(clock),
         model_says: None,
-        policy,
+        guard,
         sleeper_alive: false,
         last: None,
         reading: None,
@@ -186,7 +198,7 @@ impl World for JobsWorld {
             let Task::Shell(cmd) = &job.task else {
                 return Err("this job is an agent task, so the command guard never sees it".into());
             };
-            let got = crate::cli::guard_refusal(&self.policy, &cmd.display()).unwrap_or_else(|| "allowed".into());
+            let got = crate::cli::guard_refusal(&self.guard, &cmd.display()).unwrap_or_else(|| "allowed".into());
             return contains(&got, &want, "the guard's verdict");
         }
         Err(world::unknown_verb(step))

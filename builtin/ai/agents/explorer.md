@@ -1,5 +1,5 @@
 ---
-tools = ["fs.read", "fs.list", "fs.stat", "fs.glob", "fs.search", "sys.run", "sec.check_command"]
+tools = ["fs.read", "fs.list", "fs.stat", "fs.glob", "fs.search", "sys.run", "guard.check"]
 description = "Fast read-only scout — maps the relevant code and reports back tightly."
 skills = ["concise"]
 max_steps = 12

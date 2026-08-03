@@ -1,0 +1,15 @@
+name = "the same secret is always the same placeholder, and a different one is not"
+tags = ["guard", "secrets", "vault"]
+
+# A stable identifier is what lets a model reason about a value it cannot see — "the one
+# in line 3 is the one in line 7". Two values must never collapse into one name.
+
+[[setup.guard.secret]]
+pattern = "AKIA[0-9A-Z]+"
+name = "aws-key"
+
+[[step]]
+hide = "first AKIAEXAMPLEONLY00000, again AKIAEXAMPLEONLY00000, other AKIAEXAMPLEONLY11111"
+
+[[step]]
+expect_text = "first «aws-key-1», again «aws-key-1», other «aws-key-2»"

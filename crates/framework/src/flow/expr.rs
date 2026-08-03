@@ -23,7 +23,7 @@
 //! names, so a condition that mentions a node that does not exist, or one that is
 //! not upstream, is a parse-time error rather than a silent `false` at midnight.
 
-use crate::security::regex::Regex;
+use crate::guard::regex::Regex;
 
 /// A parsed `when` condition.
 #[derive(Clone, Debug, PartialEq)]

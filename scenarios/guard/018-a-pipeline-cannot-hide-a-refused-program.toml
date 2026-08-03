@@ -1,0 +1,19 @@
+name = "a harmless first stage cannot shield what follows it"
+tags = ["guard", "commands"]
+
+# One shell line can run several programs. The guard judges every segment of every
+# line, so a rule anchored on a program still finds it in the middle of a pipeline.
+
+[[setup.guard.command]]
+pattern = "^wipe-the-lot"
+rule = "deny"
+
+[[step]]
+run = "echo starting && wipe-the-lot --everything"
+[[step]]
+expect_verdict = "deny"
+
+[[step]]
+run = "echo starting | wipe-the-lot"
+[[step]]
+expect_verdict = "deny"

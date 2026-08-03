@@ -4,7 +4,7 @@ fn svc() -> (QueueObj, CapCtx, PathBuf) {
     let dir = std::env::temp_dir().join(format!("tt-queue-{}-{:?}", std::process::id(), std::thread::current().id()));
     let _ = std::fs::remove_dir_all(&dir);
     let ctx = CapCtx {
-        policy: std::sync::Arc::new(crate::security::Policy::new()),
+        guard: std::sync::Arc::new(crate::guard::Guard::default()),
         app_data: Some(dir.clone()),
         remote_enabled: true,
         origin: "terminal://ai/".into(),

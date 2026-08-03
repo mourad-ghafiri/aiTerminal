@@ -1,0 +1,17 @@
+name = "deny outranks confirm"
+tags = ["guard", "commands"]
+
+# A command matching both tiers is refused, not queued for approval — the stricter
+# answer is the one that stands.
+
+[[setup.guard.command]]
+pattern = "\\bsudo\\b"
+rule = "confirm"
+[[setup.guard.command]]
+pattern = "\\bmkfs\\b"
+rule = "deny"
+
+[[step]]
+run = "sudo mkfs.ext4 /dev/disk9"
+[[step]]
+expect_verdict = "deny"

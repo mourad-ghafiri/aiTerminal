@@ -21,23 +21,30 @@ pub(crate) fn os(method: &str, args: &[(String, String)]) -> Result<Json, String
 }
 
 
-pub(crate) fn sec(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
+/// The `guard` family — an agent asking the guard a question instead of finding out by
+/// being refused. `act` is the same word the guard's own vocabulary uses, so what an agent
+/// can ask about is exactly what the guard can decide.
+pub(crate) fn guard(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
     match method {
-        "sec.check_command" => {
-            let cmd = arg(args, 0, "cmd").ok_or("sec.check_command: missing cmd")?;
-            let (verdict, reason) = match ctx.policy.check_command(cmd) {
-                crate::security::Verdict::Allow => ("allow", String::new()),
-                crate::security::Verdict::Confirm { reason } => ("confirm", reason),
-                crate::security::Verdict::Deny { reason } => ("deny", reason),
+        "guard.check" => {
+            let target = arg(args, 1, "target").or_else(|| arg(args, 0, "cmd")).ok_or("guard.check: missing target")?;
+            let path = std::path::Path::new(target);
+            let act = match arg(args, 0, "act").unwrap_or("run").trim().to_ascii_lowercase().as_str() {
+                "read" => crate::guard::Act::Read(path),
+                "write" => crate::guard::Act::Write(path),
+                _ => crate::guard::Act::Run(target),
+            };
+            let (verdict, reason) = match ctx.guard.judge(act) {
+                crate::guard::Decision::Allow => ("allow", String::new()),
+                crate::guard::Decision::Confirm { reason } => ("confirm", reason),
+                crate::guard::Decision::Deny { reason } => ("deny", reason),
             };
             Ok(obj(&[("verdict", Json::Str(verdict.into())), ("reason", Json::Str(reason))]))
         }
-        "sec.redact" => {
-            let text = arg(args, 0, "text").unwrap_or("");
-            let scope = crate::security::RedactScope::parse(arg(args, 1, "scope").unwrap_or("all"));
-            Ok(Json::Str(ctx.policy.redact(text, scope)))
-        }
-        _ => Err(format!("unknown sec method '{method}'")),
+        // Masking, not hiding: an agent scrubbing something it is about to write into a
+        // report wants the secret gone for good, not a placeholder that would put it back.
+        "guard.mask" => Ok(Json::Str(ctx.guard.mask(arg(args, 0, "text").unwrap_or("")))),
+        _ => Err(format!("unknown guard method '{method}'")),
     }
 }
 

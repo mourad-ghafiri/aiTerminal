@@ -1,0 +1,16 @@
+name = "text that leaves this process keeps neither the secret nor the placeholder"
+tags = ["guard", "secrets", "vault"]
+
+# The window writes a session file the CLI reads back, and the CLI has a different
+# vault. A placeholder there could never be turned back into anything, so what crosses
+# a process boundary is masked for good.
+
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "db-password"
+scope = "ai"
+
+[[step]]
+scrub = "DB_PASSWORD=pw-example0"
+[[step]]
+expect_text = "DB_PASSWORD=«redacted»"

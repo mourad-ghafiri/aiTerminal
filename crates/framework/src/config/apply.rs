@@ -4,7 +4,7 @@ use super::*;
 /// Adding one is a line here and a function below — never an edit to a single long
 /// walk over the whole document.
 type Section = fn(&mut Config, &Toml);
-const SECTIONS: [(&str, Section); 16] = [
+const SECTIONS: [(&str, Section); 15] = [
     ("appearance", apply_appearance),
     ("behavior", apply_behavior),
     ("md", apply_md),
@@ -18,8 +18,7 @@ const SECTIONS: [(&str, Section); 16] = [
     ("shell", apply_shell),
     ("registry", apply_registry),
     ("logging", apply_logging),
-    ("security", apply_security),
-    ("redact", apply_redact),
+    ("guard", apply_guard),
     ("keybinding", apply_keybinding),
 ];
 
@@ -29,7 +28,7 @@ impl Config {
     /// into a [`Config`], then `apply_toml` a profile's `config.toml` on top, so everything the
     /// profile declares overrides the global. A profile that declares any `[[ai.model]]`
     /// REPLACES the inherited pool (not merged); scalars/maps override in place; the
-    /// `keybinding`/`redact` lists append (the keymap is "later wins", redaction is additive).
+    /// `keybinding`/`guard` lists append (the keymap is "later wins", the guard is additive).
     pub(crate) fn apply_toml(&mut self, text: &str) {
         // A syntax error collapses the WHOLE document to empty, silently reverting every
         // setting to its default — warn so the user learns their config wasn't applied
@@ -351,38 +350,14 @@ fn apply_logging(c: &mut Config, lg: &Toml) {
     }
 }
 
-fn apply_security(c: &mut Config, sec: &Toml) {
-    let strs = |v: &Toml| {
-        v.as_array()
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
-            .unwrap_or_default()
-    };
-    if let Some(v) = sec.get("allowed_commands") {
-        c.allowed_commands = strs(v);
-    }
-    if let Some(v) = sec.get("denied_commands") {
-        c.denied_commands = strs(v);
-    }
-    if let Some(v) = sec.get("confirm_commands") {
-        c.confirm_commands = strs(v);
-    }
-    if let Some(v) = sec.get("auto_safe_commands") {
-        c.auto_safe_commands = strs(v);
-    }
-}
-
-fn apply_redact(c: &mut Config, reds: &Toml) {
-let Some(reds) = reds.as_array() else { return };
-    for r in reds {
-        if let Some(pattern) = r.get("pattern").and_then(|v| v.as_str()) {
-            c.redactions.push(Redaction {
-                pattern: pattern.to_string(),
-                replacement: r.get("replacement").and_then(|v| v.as_str()).unwrap_or("\u{ab}redacted\u{bb}").to_string(),
-                scope: r.get("scope").and_then(|v| v.as_str()).unwrap_or("all").to_string(),
-                literal: r.get("literal").and_then(|v| v.as_bool()).unwrap_or(false),
-            });
-        }
-    }
+/// `[guard]` — read by the guard's own parser, the same one a plugin manifest comes
+/// through, so a rule cannot mean one thing in a config file and another in a plugin.
+///
+/// Rules **append** rather than replace, like `[[keybinding]]` before
+/// them: a profile layered on top adds its restrictions to the global ones, because the
+/// alternative is a profile that silently drops the rules you wrote once for everything.
+fn apply_guard(c: &mut Config, guard: &Toml) {
+    c.guard.extend(crate::guard::RuleSet::parse(guard));
 }
 
 fn apply_keybinding(c: &mut Config, kbs: &Toml) {

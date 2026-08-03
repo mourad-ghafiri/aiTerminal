@@ -1,0 +1,20 @@
+name = "the model is told the rules before it starts, and what a placeholder is"
+tags = ["guard", "briefing"]
+
+# A model that learns the rules by being refused spends its budget discovering them.
+# Told up front, it works around what it cannot have — and the placeholder sentence is
+# the one without which the vault cannot work at all, because the model would report the
+# secret as missing.
+
+[[setup.guard.command]]
+pattern = "wipe-the-lot"
+rule = "deny"
+[[setup.guard.path]]
+pattern = "/clients/"
+rule = "deny"
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "db-password"
+
+[[step]]
+expect_briefing = ["wipe-the-lot", "/clients/", "db-password", "PLACEHOLDER", "stop and say"]

@@ -55,26 +55,24 @@ fn folder_label_is_the_basename() {
     assert_eq!(folder_label("  "), None, "blank path → no label");
 }
 
-fn redacting_policy() -> crate::security::Policy {
-    let mut p = crate::security::Policy::new();
-    p.add_redaction("AKIA[0-9A-Z]{6}", "«key»", crate::security::RedactScope::Terminal, false).unwrap();
-    p
+fn masking_guard() -> crate::guard::Guard {
+    crate::guard::Guard::from_toml("[[guard.secret]]\npattern = \"AKIA[0-9A-Z]{6}\"\nscope = \"terminal\"\n")
 }
 
 #[test]
 fn redact_terminal_masks_plain_text() {
-    let p = redacting_policy();
-    assert_eq!(redact_terminal("token AKIA123ABC done", &p), "token «key» done");
+    let p = masking_guard();
+    assert_eq!(redact_terminal("token AKIA123ABC done", &p), format!("token {} done", crate::guard::MASK));
 }
 
 #[test]
 fn redact_terminal_preserves_ansi_escapes() {
-    let p = redacting_policy();
+    let p = masking_guard();
     // SGR colour + an OSC title around the secret — escape bytes must survive
     // untouched while only the printable run is masked.
     let input = "\u{1b}[31mAKIA123ABC\u{1b}[0m\u{1b}]0;AKIA123ABC\u{07}tail";
     let out = redact_terminal(input, &p);
-    assert_eq!(out, "\u{1b}[31m«key»\u{1b}[0m\u{1b}]0;AKIA123ABC\u{07}tail");
+    assert_eq!(out, format!("\u{1b}[31m{}\u{1b}[0m\u{1b}]0;AKIA123ABC\u{07}tail", crate::guard::MASK));
     // The CSI and OSC control sequences are byte-identical to the input.
     assert!(out.contains("\u{1b}[31m") && out.contains("\u{1b}[0m"));
     assert!(out.contains("\u{1b}]0;AKIA123ABC\u{07}"));
@@ -82,65 +80,72 @@ fn redact_terminal_preserves_ansi_escapes() {
 
 #[test]
 fn redact_terminal_noop_without_rules() {
-    let p = crate::security::Policy::new();
+    let p = crate::guard::Guard::default();
     let s = "\u{1b}[1mhello\u{1b}[0m world";
     assert_eq!(redact_terminal(s, &p), s);
 }
 
 #[test]
-fn build_policy_threads_confirm_tier() {
+fn a_config_carries_all_three_tiers_into_the_guard() {
+    use crate::guard::{Act, Decision};
     let mut config = Config::default();
-    config.denied_commands = vec!["^rm\\b".to_string()];
-    config.confirm_commands = vec!["\\bforce\\b".to_string()];
-    config.allowed_commands = vec!["^git".to_string()];
-    let registry = crate::plugin::PluginRegistry::new();
-    let p = crate::security::build_policy(&config, &registry);
-    assert!(matches!(p.check_command("git status"), crate::security::Verdict::Allow));
-    assert!(matches!(p.check_command("git push --force"), crate::security::Verdict::Confirm { .. }));
-    assert!(matches!(p.check_command("rm file"), crate::security::Verdict::Deny { .. }));
+    config.guard = crate::guard::RuleSet::parse(
+        corelib::wire::Toml::parse(
+            "[[guard.command]]\npattern = \"^tidy\\\\b\"\nrule = \"deny\"\n\
+             [[guard.command]]\npattern = \"\\\\bforce\\\\b\"\nrule = \"confirm\"\n\
+             [[guard.command]]\npattern = \"^(git|tidy)\"\nrule = \"allow\"\n",
+        )
+        .unwrap()
+        .get("guard")
+        .unwrap(),
+    );
+    let p = crate::guard::build(&config, &crate::plugin::PluginRegistry::new());
+    assert!(matches!(p.judge(Act::Run("git status")), Decision::Allow));
+    assert!(matches!(p.judge(Act::Run("git push --force")), Decision::Confirm { .. }));
+    assert!(matches!(p.judge(Act::Run("tidy up")), Decision::Deny { .. }));
 }
 
-// The default command-guard + redactor PLUGINS supply the policy (the guard
-// crate is gone). The rules are registry DATA (builtin/plugins/) the user
-// installs — loaded here from the repo, not embedded. These golden tests fail
-// if a default rule's regex is silently dropped (build_policy skips a bad
-// pattern), so they double as a compile check. All strings are INERT literals.
-fn default_policy() -> crate::security::Policy {
+// The `ai-guard` PLUGIN supplies the defaults: they are registry DATA the user installs
+// (builtin/plugins/), loaded here from the repo rather than embedded. These golden tests
+// fail if a default rule's regex is silently dropped — `build` skips a pattern that will
+// not compile — so they double as a compile check on the shipped policy. Every string
+// below is an INERT literal.
+fn shipped_guard() -> crate::guard::Guard {
     let mut reg = crate::plugin::PluginRegistry::new();
-    for name in ["command-guard", "redactor"] {
-        let p = format!("{}/../../builtin/plugins/{name}/plugin.toml", env!("CARGO_MANIFEST_DIR"));
-        let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {p}: {e}"));
-        reg.add_trusted(crate::plugin::Manifest::parse(&text).unwrap());
-    }
-    crate::security::build_policy(&Config::default(), &reg)
+    let p = format!("{}/../../builtin/plugins/ai-guard/plugin.toml", env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {p}: {e}"));
+    reg.add_trusted(crate::plugin::Manifest::parse(&text).unwrap());
+    crate::guard::build(&Config::default(), &reg)
 }
 
 #[test]
-fn command_guard_plugin_enforces_default_deny_and_confirm() {
-    use crate::security::Verdict;
-    let p = default_policy();
-    assert!(matches!(p.check_command("rm -rf /"), Verdict::Deny { .. }), "catastrophic rm denied");
-    assert!(matches!(p.check_command(":(){ :|:& };:"), Verdict::Deny { .. }), "fork bomb denied");
-    assert!(matches!(p.check_command("sudo apt install x"), Verdict::Confirm { .. }), "sudo confirmed");
-    assert!(matches!(p.check_command("git push --force origin"), Verdict::Confirm { .. }), "force-push confirmed");
+fn the_shipped_guard_refuses_what_it_promises_to() {
+    use crate::guard::{Act, Decision};
+    let p = shipped_guard();
+    assert!(matches!(p.judge(Act::Run("mkfs.ext4 /dev/disk2")), Decision::Deny { .. }), "reformatting denied");
+    assert!(matches!(p.judge(Act::Run(":(){ :|:& };:")), Decision::Deny { .. }), "fork bomb denied");
+    assert!(matches!(p.judge(Act::Run("sudo apt install x")), Decision::Confirm { .. }), "sudo confirmed");
+    assert!(matches!(p.judge(Act::Run("git push --force origin")), Decision::Confirm { .. }), "force-push confirmed");
     // ordinary commands stay allowed
-    assert!(matches!(p.check_command("ls -la"), Verdict::Allow));
-    assert!(matches!(p.check_command("git status"), Verdict::Allow));
+    assert!(matches!(p.judge(Act::Run("ls -la")), Decision::Allow));
+    assert!(matches!(p.judge(Act::Run("git status")), Decision::Allow));
 }
 
 #[test]
-fn redactor_plugin_is_the_single_redaction_source() {
-    use crate::security::RedactScope::Ai;
-    let p = default_policy();
+fn the_shipped_guard_is_the_single_source_of_secret_rules() {
+    let p = shipped_guard();
     // Each "secret" is an INERT literal that the redactor plugin's rules must scrub.
     // They keep the SHAPE a rule matches — that is what is under test — but carry no
     // entropy, so they are recognisably placeholders rather than anything that reads
     // like a credential. Nothing that could be mistaken for a real key belongs in a
     // repository, least of all in the tests for the thing that hides keys.
-    assert!(!p.redact("key sk-ant-example-only-not-a-key", Ai).contains("example-only-not-a-key"));
-    assert!(!p.redact("AKIAEXAMPLEONLY00000 here", Ai).contains("AKIAEXAMPLEONLY00000"));
-    assert!(!p.redact("Authorization: Bearer eyJabc.def.ghi", Ai).contains("eyJabc.def.ghi"));
-    assert!(!p.redact("API_KEY=supersecretvalue123", Ai).contains("supersecretvalue123"));
+    assert!(!p.hide("key sk-ant-example-only-not-a-key").contains("example-only-not-a-key"));
+    assert!(!p.hide("AKIAEXAMPLEONLY00000 here").contains("AKIAEXAMPLEONLY00000"));
+    assert!(!p.hide("Authorization: Bearer eyJabc.def.ghi").contains("eyJabc.def.ghi"));
+    assert!(!p.hide("API_KEY=supersecretvalue123").contains("supersecretvalue123"));
     // ordinary text is untouched
-    assert_eq!(p.redact("cargo build --release", Ai), "cargo build --release");
+    assert_eq!(p.hide("cargo build --release"), "cargo build --release");
+    // …and every one of them comes back, which is what makes the run still work.
+    let hidden = p.hide("AWS_ACCESS_KEY_ID=AKIAEXAMPLEONLY00000");
+    assert_eq!(p.vault().restore(&hidden).unwrap(), "AWS_ACCESS_KEY_ID=AKIAEXAMPLEONLY00000");
 }

@@ -1,0 +1,16 @@
+name = "a confirm rule asks rather than refusing"
+tags = ["guard", "commands"]
+
+# Three tiers, not two: some commands are fine once a person has looked at them.
+# Wherever there is nobody to ask — an agent, a job, a flow node — this is a refusal.
+
+[[setup.guard.command]]
+pattern = "\\bsudo\\b"
+rule = "confirm"
+
+[[step]]
+run = "sudo apt install ripgrep"
+[[step]]
+expect_verdict = "confirm"
+[[step]]
+expect_reason = ["sudo"]

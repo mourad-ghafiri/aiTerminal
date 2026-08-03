@@ -1,0 +1,19 @@
+name = "the default scope guards what leaves and leaves your own screen alone"
+tags = ["guard", "secrets", "scopes"]
+
+# This is why `cat .env` still shows you your own values. A rule that masked the display
+# by default would be hiding a secret from the one person entitled to it.
+
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "db-password"
+
+[[step]]
+hide = "DB_PASSWORD=pw-example0"
+[[step]]
+expect_text = "DB_PASSWORD=«db-password-1»"
+
+[[step]]
+mask = "DB_PASSWORD=pw-example0"
+[[step]]
+expect_text = "DB_PASSWORD=pw-example0"

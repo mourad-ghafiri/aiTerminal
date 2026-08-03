@@ -195,7 +195,7 @@ impl MemoryWorld {
 
     fn ctx(&self) -> crate::caps::CapCtx {
         crate::caps::CapCtx {
-            policy: std::sync::Arc::new(crate::security::Policy::new()),
+            guard: std::sync::Arc::new(crate::guard::Guard::default()),
             app_data: None,
             remote_enabled: false,
             origin: "scenario://memory/".into(),

@@ -154,7 +154,7 @@ fn builtin_config_parses_back_to_defaults() {
     assert_eq!(Config::from_toml(DEFAULT_CONFIG), Config::default());
     // …and it documents every parseable key (a spot-check the active set is full).
     for key in
-        ["locale", "scrollback", "share_terminal_context", "auto_safe_commands", "top_p", "max_tokens", "require_pairing", "plain_text", "attach"]
+        ["locale", "scrollback", "share_terminal_context", "guard.command", "guard.path", "guard.secret", "top_p", "max_tokens", "require_pairing", "plain_text", "attach"]
     {
         assert!(DEFAULT_CONFIG.contains(key), "the default config should document `{key}`");
     }
@@ -351,19 +351,29 @@ fn feature_toggles_default_on() {
 }
 
 #[test]
-fn security_section_parses() {
+fn the_guard_section_parses_all_three_subjects() {
+    use crate::guard::{Scope, rules::{CommandRule, PathRule}};
     let c = Config::from_toml(
-        "[security]\nallowed_commands = [\"^git\"]\ndenied_commands = [\"^sudo\"]\n\
-             confirm_commands = [\"\\\\bforce\\\\b\"]\n\
-             [[redact]]\npattern = \"SECRET\"\nreplacement = \"X\"\nscope = \"ai\"\nliteral = true\n",
+        "[[guard.command]]\npattern = \"^git\"\nrule = \"allow\"\n\
+         [[guard.path]]\npattern = \"/clients/\"\nrule = \"read-only\"\n\
+         [[guard.secret]]\npattern = \"SECRET\"\nname = \"token\"\nscope = \"ai\"\nliteral = true\n",
     );
-    assert_eq!(c.allowed_commands, vec!["^git".to_string()]);
-    assert_eq!(c.denied_commands, vec!["^sudo".to_string()]);
-    assert_eq!(c.confirm_commands, vec!["\\bforce\\b".to_string()]);
-    assert_eq!(c.redactions.len(), 1);
-    assert_eq!(c.redactions[0].pattern, "SECRET");
-    assert_eq!(c.redactions[0].scope, "ai");
-    assert!(c.redactions[0].literal);
+    assert_eq!(c.guard.commands[0].pattern, "^git");
+    assert_eq!(c.guard.commands[0].rule, CommandRule::Allow);
+    assert_eq!(c.guard.paths[0].rule, PathRule::ReadOnly);
+    assert_eq!(c.guard.secrets[0].pattern, "SECRET");
+    assert_eq!(c.guard.secrets[0].name, "token");
+    assert_eq!(c.guard.secrets[0].scope, Scope::Ai);
+    assert!(c.guard.secrets[0].literal);
+}
+
+#[test]
+fn a_profile_adds_its_guard_rules_to_the_ones_you_wrote_once() {
+    // Rules APPEND, like keybindings before them: a profile that replaced them would
+    // silently drop the restrictions you wrote for everything.
+    let mut c = Config::from_toml("[[guard.command]]\npattern = \"^tidy\"\nrule = \"deny\"\n");
+    c.apply_toml("[[guard.command]]\npattern = \"^wipe\"\nrule = \"deny\"\n");
+    assert_eq!(c.guard.commands.len(), 2);
 }
 
 #[test]
@@ -377,9 +387,9 @@ fn keybindings_parse() {
 }
 
 #[test]
-fn security_defaults_empty() {
-    let c = Config::default();
-    assert!(c.allowed_commands.is_empty() && c.denied_commands.is_empty() && c.redactions.is_empty());
+fn the_guard_starts_with_nothing_of_its_own() {
+    // The defaults ship as the `ai-guard` plugin, so a bare config refuses nothing.
+    assert!(Config::default().guard.is_empty());
 }
 
 #[test]

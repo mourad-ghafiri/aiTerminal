@@ -78,8 +78,8 @@ pub(crate) fn fit_context(budget: &crate::ai::ContextBudget, prompt: &str, block
 }
 
 /// A pure agent tool runner: routes a model tool call to `caps::run` (no live host),
-/// intercepts `task.run` (sub-agent delegation), and redacts every result before it
-/// re-enters the loop.
+/// intercepts `task.run` (sub-agent delegation), and hides every secret in a result
+/// before it re-enters the loop.
 pub(crate) struct CliToolRunner {
     pub(crate) ctx: crate::caps::CapCtx,
     pub(crate) mcp: Option<crate::ai::McpHub>,
@@ -91,19 +91,29 @@ pub(crate) struct CliToolRunner {
     pub(crate) trace: Option<std::sync::Arc<dyn crate::flow::board::ToolTrace>>,
 }
 impl crate::ai::ToolRunner for CliToolRunner {
-    fn run(&mut self, name: &str, args: &str) -> Result<String, String> {
-        let redact = |this: &CliToolRunner, s: String| this.ctx.policy.redact(&s, crate::security::RedactScope::Ai);
+    fn run(&mut self, name: &str, args: &str) -> crate::ai::ToolOutcome {
+        // Everything a tool returns is hidden before the model reads it — the loop's own
+        // egress point, so a secret in a file's contents or a command's output becomes a
+        // placeholder there and nowhere later.
+        let hide = |this: &CliToolRunner, s: String| this.ctx.guard.hide(&s);
         if name == "task.run" {
-            let out = self.run_delegation(args)?;
-            return Ok(redact(self, out));
+            return match self.run_delegation(args) {
+                Ok(out) => crate::ai::ToolOutcome::Done(hide(self, out)),
+                Err(e) => classify(hide(self, e)),
+            };
         }
         if name.starts_with("mcp.") {
             let parsed = match corelib::wire::Json::parse(args) {
                 Ok(o @ corelib::wire::Json::Obj(_)) => o,
                 _ => corelib::wire::Json::Obj(Vec::new()),
             };
-            let out = self.mcp.as_mut().ok_or("mcp: no servers are running")?.call(name, parsed)?;
-            return Ok(redact(self, out));
+            let Some(mcp) = self.mcp.as_mut() else {
+                return crate::ai::ToolOutcome::Failed("mcp: no servers are running".into());
+            };
+            return match mcp.call(name, parsed) {
+                Ok(out) => crate::ai::ToolOutcome::Done(hide(self, out)),
+                Err(e) => classify(hide(self, e)),
+            };
         }
         let pairs = tool_args_to_pairs(args);
         // A concise, TIMED tool trace, so a streaming run shows its work. What it is
@@ -130,7 +140,22 @@ impl crate::ai::ToolRunner for CliToolRunner {
             // No sink at all: a delegate sub-agent, whose parent is the one drawing.
             (None, _) => eprintln!("{}  {line}{}", muted(), reset()),
         }
-        result.map(|j| redact(self, json_text(&j)))
+        match result {
+            Ok(j) => crate::ai::ToolOutcome::Done(hide(self, json_text(&j))),
+            Err(e) => classify(hide(self, e)),
+        }
+    }
+}
+
+/// A failed call, sorted into the two things it can be.
+///
+/// The guard raises its refusals through one function and recognises them through one
+/// other, so this is the whole of the classification — and the loop above it reasons over
+/// a type rather than over a string.
+fn classify(error: String) -> crate::ai::ToolOutcome {
+    match crate::guard::is_refusal(&error) {
+        true => crate::ai::ToolOutcome::Refused(error),
+        false => crate::ai::ToolOutcome::Failed(error),
     }
 }
 
@@ -292,6 +317,10 @@ pub(crate) fn run_sub_agent(sub: &SubAgentCtx, ctx: crate::caps::CapCtx, depth: 
         max_steps: 12,
         context_window: sub.context.0,
         compact_at: sub.context.1,
+        // The delegate works under the same guard as its parent — the ctx it is handed
+        // carries it — so it is told the same rules. A sub-agent that discovered them by
+        // being refused would spend the parent's budget doing it.
+        guard_brief: ctx.guard.briefing(),
         scratch: run_scratch(),
     };
     let client = crate::ai::Client::new(sub.settings.clone(), crate::ai::CurlTransport::default());
@@ -306,7 +335,7 @@ fn default_safe_tools() -> Vec<String> {
 
 /// Assemble the tool-loop plumbing shared by `--agent` and `--flow`: the MCP hub,
 /// the capability context, and the delegation context.
-pub(crate) fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::AiSettings, workspace_root: Option<std::path::PathBuf>, policy: std::sync::Arc<crate::security::Policy>, with_mcp: bool) -> CliToolRunner {
+pub(crate) fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::AiSettings, workspace_root: Option<std::path::PathBuf>, guard: std::sync::Arc<crate::guard::Guard>, with_mcp: bool) -> CliToolRunner {
     // The agent's file WRITES are confined to the invocation directory; MCP servers
     // come from the global `ai/mcp/` declarations.
     let workspace = workspace_root.or_else(|| std::env::current_dir().ok());
@@ -334,7 +363,7 @@ pub(crate) fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::Ai
         None
     };
     CliToolRunner {
-        ctx: crate::caps::CapCtx { policy, app_data, remote_enabled: cfg.ai_network, origin: "terminal://ai/".into(), sandbox: workspace, memory_dir },
+        ctx: crate::caps::CapCtx { guard, app_data, remote_enabled: cfg.ai_network, origin: "terminal://ai/".into(), sandbox: workspace, memory_dir },
         mcp,
         trace: None,
         sub: SubAgentCtx {

@@ -43,14 +43,14 @@ pub(crate) fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
     let goal = goal.as_str();
 
     let registry = crate::plugin::load_registry(&cfg);
-    let policy = std::sync::Arc::new(crate::security::build_policy(&cfg, &registry));
+    let guard = std::sync::Arc::new(crate::guard::build(&cfg, &registry));
     let workspace = std::env::current_dir().ok();
     let session = crate::ai::Session::for_cwd();
     let agent_name = prior.as_ref().map_or_else(
         || spec.agent.clone().unwrap_or_else(|| "coder".into()),
         |p| p.agent.clone(),
     );
-    let Some(mut maker) = build_agent_spec(&agent_name, context_settings(&cfg)) else {
+    let Some(mut maker) = build_agent_spec(&agent_name, context_settings(&cfg), &guard) else {
         eprintln!("aiTerminal: no agent '{agent_name}' — {}", available_agents_hint());
         return 2;
     };
@@ -84,7 +84,7 @@ pub(crate) fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
     let check_deadline = std::time::Duration::from_secs(cfg.loop_check_timeout);
     let verifier = match &prior {
         Some(p) => p.verifier.clone(),
-        None => choose_verifier(&spec, &cfg, goal, &policy),
+        None => choose_verifier(&spec, &cfg, goal, &guard),
     };
     eprintln!(
         "{}\u{1F501} {}{}",
@@ -100,7 +100,7 @@ pub(crate) fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
     // nothing to do.
     let mut seed = String::new();
     if let Some(cmd) = verifier.command() {
-        match run_check(cmd, &policy, check_deadline) {
+        match run_check(cmd, &guard, check_deadline) {
             Err(e) => {
                 eprintln!("aiTerminal: {e}");
                 return 2;
@@ -140,7 +140,7 @@ pub(crate) fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
     let folder_mem = session.as_ref().map(|s| s.memory_dir());
     let folder_ctx = format!("{}{}", session_preamble(session.as_ref()), memory_preamble(&cfg, goal, folder_mem.as_deref()));
     if !folder_ctx.trim().is_empty() {
-        let folder_ctx = policy.redact(&folder_ctx, crate::security::RedactScope::Ai);
+        let folder_ctx = guard.hide(&folder_ctx);
         maker.system = format!("{}\n\n{}", maker.system.trim_end(), folder_ctx);
     }
     let cancel = crate::ai::CancelToken::new();
@@ -150,7 +150,7 @@ pub(crate) fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(bounds.timeout);
     let _watchdog = wire_deadline(cancel.clone(), bounds.timeout);
     let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default()).with_images(media).with_cancel(cancel);
-    let mut runner = build_runner(&cfg, &settings, workspace, policy.clone(), true);
+    let mut runner = build_runner(&cfg, &settings, workspace, guard.clone(), true);
     if let Some(hub) = &runner.mcp {
         for (name, describe) in hub.tools() {
             maker.tools.push(crate::ai::ToolSpec { name, describe });
@@ -200,7 +200,7 @@ pub(crate) fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
     let verifier_cmd = verifier.command().map(str::to_string);
     let verify = |answer: &str| {
         let verdict = match &verifier_cmd {
-            Some(cmd) => run_check(cmd, &cap_ctx.policy, check_deadline)?,
+            Some(cmd) => run_check(cmd, &cap_ctx.guard, check_deadline)?,
             None => run_reviewer(&sub, cap_ctx.clone(), goal, answer),
         };
         // Write the iteration down as it happens — a run that is killed mid-flight still
@@ -287,7 +287,7 @@ fn choose_verifier(
     spec: &LoopSpec,
     cfg: &crate::config::Config,
     goal: &str,
-    policy: &crate::security::Policy,
+    guard: &crate::guard::Guard,
 ) -> crate::loops::Verifier {
     if let Some(cmd) = &spec.check {
         return crate::loops::Verifier::Check { command: cmd.clone(), source: crate::loops::Source::Explicit };
@@ -301,7 +301,7 @@ fn choose_verifier(
         // A verifier is supposed to OBSERVE. Anything the guard stops — a deploy, a push —
         // is a command that would change the world to measure it, so it is refused and the
         // reviewer takes over.
-        Some(cmd) if guard_refusal(policy, &cmd).is_none() => {
+        Some(cmd) if guard_refusal(guard, &cmd).is_none() => {
             crate::loops::Verifier::Check { command: cmd, source: crate::loops::Source::Proposed }
         }
         Some(cmd) => {

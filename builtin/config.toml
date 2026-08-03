@@ -4,7 +4,7 @@
 #
 # This is the GLOBAL config. A PROFILE can override any of these keys for itself: each
 # profile keeps a config.toml under ~/.aiTerminal/profiles/<id>/ that layers on top of this
-# file (theme, ai, plugins, keymaps, security…). Manage profiles from the terminal with
+# file (theme, ai, plugins, keymaps, the guard…). Manage profiles from the terminal with
 # `@profile` (list/create/rename/delete/switch) — each profile also remembers its own
 # tabs/splits (workspace). See docs/configuration.md.
 
@@ -242,7 +242,7 @@ enabled          = false
 require_pairing  = true    # a chat must send the 6-digit code first. Turning this off
                            # trusts `allow` alone — only do that on a machine you own.
 plain_text       = "run"   # what a plain (non-slash) message means:
-                           #   "run"    — execute it, subject to the [security] guard
+                           #   "run"    — execute it, subject to the guard
                            #   "ignore" — do nothing; require an explicit /run
 screenshot       = "document"  # how /shot arrives: "document" (the PNG byte-for-byte)
                                # or "photo" (the chat app recompresses — small text blurs)
@@ -296,22 +296,46 @@ level          = "error"
 # How many daily log files to keep; older ones are pruned on rollover. 0 = keep all.
 retention_days = 7
 
-[security]
-# Command guard — what AI-suggested commands and agent `sys.run` may run. Patterns are regex.
-# Defaults below (empty) = everything allowed, nothing denied (zero friction).
-#   allowed_commands : OPTIONAL whitelist — enforced only when non-empty.
-#   denied_commands  : ALWAYS enforced, and WINS over the allow-list.
-allowed_commands = []      # e.g. ["^git\\b", "^ls\\b", "^cd\\b"]
-denied_commands  = []      # e.g. ["^sudo\\b"]
-confirm_commands = []      # ask before running, e.g. ["\\bforce\\b"]  (deny > confirm > allow)
-# The AI's Auto-mode SAFE-LIST: the only commands the agent auto-runs un-prompted in Auto
-# mode (anything else prompts). Defaults ship in the `command-guard` plugin; add yours here.
-auto_safe_commands = []    # e.g. ["^docker\\s+ps\\b", "^kubectl\\s+get\\b"]
+# ── The AI guard ──────────────────────────────────────────────────────────────
+# ONE policy over everything an AI feature can do to this machine: what may RUN,
+# what may be TOUCHED, and what may LEAVE. The same three tables work here, in a
+# profile, and in any plugin's plugin.toml.
+#
+# Precedence is the same for commands and paths: deny > confirm > allow-list.
+# An empty allow-list means "everything the tiers above have not refused".
+#
+# The defaults ship as the `ai-guard` plugin, so this section is empty: whatever
+# you write here is ADDED to them, and yours is the rule a refusal names.
 
-# Redaction — replace string/regex matches with a placeholder before they are
-# shown or sent. scope = "terminal" | "ai" | "all" (default "all").
-# Add rules as top-level [[redact]] tables, e.g.:
-# [[redact]]
-# pattern     = "token=\\S+"     # regex (or set literal = true for an exact string)
-# replacement = "token=«hidden»"
-# scope       = "ai"             # only redact when sending to the AI
+# What may run. Each pattern is a regex, tested against the whole command, every
+# line, every pipeline segment, and each segment's program name.
+#   rule = "deny"     never runs
+#   rule = "confirm"  a person has to say yes (so it is refused in an unattended run)
+#   rule = "allow"    an allow-LIST: once any exists, anything unmatched is denied
+#   rule = "auto"     Auto mode may run it un-prompted (deny/confirm still win)
+#
+# [[guard.command]]
+# pattern = "^docker\\s+ps\\b"
+# rule    = "auto"
+
+# What may be touched. Regexes over the resolved ABSOLUTE path, applied to the
+# file tools AND to the paths a shell command names.
+#   rule = "deny"       never read, never changed
+#   rule = "read-only"  read freely, never modified
+#   rule = "allow"      an allow-LIST, as above
+#
+# [[guard.path]]
+# pattern = "/clients/"
+# rule    = "deny"
+
+# What may leave. A match is swapped for a placeholder named after its rule
+# («acme-key-1») on its way to a model, a tool or a chat — and swapped BACK for the
+# real value the moment the text returns to this machine, so a run can use a key it
+# was never shown. Nothing is written down: the values live in memory for one run.
+#   name    = names the placeholder (never the value); defaults to "secret"
+#   scope   = "ai" (default, egress only) | "terminal" (mask on screen) | "all"
+#   literal = true skips the regex engine for an exact string
+#
+# [[guard.secret]]
+# pattern = "acme_[a-z0-9]{32}"
+# name    = "acme-key"

@@ -1,0 +1,20 @@
+name = "a pattern that will not compile is skipped, and the rest still guards"
+tags = ["guard", "robustness"]
+
+# A bad regex in a config file or a plugin must never stop the terminal from starting,
+# and must never quietly take the whole policy down with it.
+
+[setup]
+bad_rules = true
+
+[[setup.guard.command]]
+pattern = "[unclosed"
+rule = "deny"
+[[setup.guard.command]]
+pattern = "wipe-the-lot"
+rule = "deny"
+
+[[step]]
+run = "wipe-the-lot --everything"
+[[step]]
+expect_verdict = "deny"

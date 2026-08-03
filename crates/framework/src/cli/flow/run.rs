@@ -84,7 +84,7 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
     }
 
     let registry = crate::plugin::load_registry(&cfg);
-    let policy = std::sync::Arc::new(crate::security::build_policy(&cfg, &registry));
+    let guard = std::sync::Arc::new(crate::guard::build(&cfg, &registry));
     let workspace = std::env::current_dir().ok();
 
     // The record exists from the first moment, so a run killed at node one is still
@@ -159,7 +159,7 @@ pub(crate) fn run_flow_cli(spec: FlowSpec, resume: Option<String>) -> i32 {
         flow: &flow,
         cfg: &cfg,
         settings,
-        policy,
+        guard,
         workspace,
         input,
         run_id: run_id.clone(),

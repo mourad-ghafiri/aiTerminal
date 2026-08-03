@@ -1,7 +1,7 @@
 /* ============================================================================
    scenes.js — the scene builders shared by the site's showcase and the film:
    the Telegram phone that stands beside the terminal (@gate), the @md split
-   editor, and the redactor's before/after view.
+   editor, and the guard's before/after view of what leaves.
 
    These live here rather than in showcase.js because video.html tells the same
    story with the same pieces. One implementation, two stages — a claim the
@@ -364,9 +364,9 @@ function makePhone(host) {
   };
 }
 
-/* ── the redactor: the same lines, before and after they leave ─────────────
+/* ── secrets: the same lines, before and after they leave ─────────────────
    Two aligned columns so the eye can pair them line for line. The right-hand
-   side is not invented: these are the exact strings the shipped `redactor`
+   side is not invented: these are the exact strings the shipped `ai-guard`
    rules produce, including the cases where the `KEY=value` rule takes the key
    name with it (`ANTHROPIC_API_KEY=sk-…` → `ANTHROPIC_«redacted»`).
 
@@ -376,9 +376,9 @@ function makePhone(host) {
    rule that matched, which is the part that actually documents anything. */
 const REDACT_ROWS = [
   ["DATABASE_URL=postgres://db.internal/prod", "DATABASE_URL=postgres://db.internal/prod", ""],
-  ["AWS_ACCESS_KEY_ID=AKIA…", "AWS_ACCESS_KEY_ID=«redacted»", "AKIA[0-9A-Z]{16}"],
-  ["ANTHROPIC_API_KEY=sk-ant-…", "ANTHROPIC_«redacted»", "sk-[A-Za-z0-9_-]{16,}"],
-  ["GITHUB_TOKEN=ghp_…", "GITHUB_«redacted»", "gh[pousr]_[A-Za-z0-9]{20,}"],
+  ["AWS_ACCESS_KEY_ID=AKIA…", "AWS_ACCESS_KEY_ID=«aws-key-1»", "AKIA[0-9A-Z]{16}"],
+  ["ANTHROPIC_API_KEY=sk-ant-…", "ANTHROPIC_«credential-1»", "sk-[A-Za-z0-9_-]{16,}"],
+  ["GITHUB_TOKEN=ghp_…", "GITHUB_«credential-2»", "gh[pousr]_[A-Za-z0-9]{20,}"],
   ["LOG_LEVEL=debug", "LOG_LEVEL=debug", ""],
 ];
 
@@ -389,7 +389,7 @@ function buildRedactView(w) {
   grid.append(
     el("div", "rw-red-head", "on your screen"),
     el("div", "rw-red-head mid", ""),
-    el("div", "rw-red-head out", "what leaves your machine")
+    el("div", "rw-red-head out", "what the model sees")
   );
 
   REDACT_ROWS.forEach(([before, after, rule]) => {
@@ -406,9 +406,9 @@ function buildRedactView(w) {
   const foot = el("div", "rw-red-foot");
   foot.append(
     el("span", "rw-red-lock", "🔒"),
-    el("span", null, "9 rules · redactor plugin · scope "),
+    el("span", null, "9 rules · ai-guard plugin · scope "),
     el("b", null, "ai"),
-    el("span", "rw-red-note", " — the values stay intact on your own screen")
+    el("span", "rw-red-note", " — a placeholder becomes the real value again the moment it comes back")
   );
 
   root.append(grid, foot);

@@ -78,7 +78,7 @@
     <a href="#tools">The tool catalog</a>
     <b>Trust</b>
     <a href="#security">Security</a>
-    <a href="#redaction">The redactor</a>
+    <a href="#redaction">Secrets</a>
     <a href="#logging">Logging</a>
     <a href="#architecture">Architecture</a>
     <a href="#testing">Testing</a>
@@ -130,7 +130,7 @@ cp -R dist/aiTerminal.app /Applications/
 
 <span class="c"># the release set: dist/aiTerminal-macos-{arm64,x86_64,universal}.zip</span>
 ./tools/bundle-macos.sh all      <span class="c"># needs: rustup target add aarch64-apple-darwin x86_64-apple-darwin</span></code></pre>
-    <p>First launch seeds <code>~/.aiTerminal/</code> with the default config, 19 themes, 31 plugins,
+    <p>First launch seeds <code>~/.aiTerminal/</code> with the default config, 19 themes, 30 plugins,
       keymaps, agents, flows and skills — every one an editable file. Nothing is ever overwritten
       after that: your edits win.</p>
 
@@ -855,7 +855,7 @@ README.md  crates  docs
       six-digit code printed <i>in your terminal</i>, which only someone looking at your screen can
       read. Until a chat pairs it gets no reply at all. Five wrong codes close pairing for the
       session, only one chat may be paired at a time, and every command still passes your
-      <code>[security]</code> guard with your redaction rules applied on the way out.
+      guard, with your secret rules applied on the way out.
       Read <a href="https://github.com/mouradghafiri/aiTerminal/blob/main/docs/gate.md">docs/gate.md</a>
       — including what it does <i>not</i> protect against — before enabling it.</div>
 
@@ -1098,9 +1098,10 @@ confirm_quit       = <span class="s">true</span></code></pre>
       <tr><td><code>[plugins]</code></td><td><code>enabled</code> · <code>disabled = [...]</code></td></tr>
       <tr><td><code>[shell]</code></td><td><code>integration</code></td></tr>
       <tr><td><code>[logging]</code></td><td><code>level</code> = off|error|warn|info|debug|trace · <code>retention_days</code> (default 7)</td></tr>
-      <tr><td><code>[security]</code></td><td><code>allowed_commands</code> · <code>denied_commands</code> · <code>confirm_commands</code> · <code>auto_safe_commands</code></td></tr>
+      <tr><td><code>[[guard.command]]</code></td><td><code>pattern</code> · <code>rule</code> = deny|confirm|allow|auto</td></tr>
+      <tr><td><code>[[guard.path]]</code></td><td><code>pattern</code> · <code>rule</code> = deny|read-only|allow</td></tr>
       <tr><td><code>[[keybinding]]</code></td><td><code>key</code> · <code>action</code></td></tr>
-      <tr><td><code>[[redact]]</code></td><td><code>pattern</code> · <code>replacement</code> · <code>scope</code> = terminal|ai|all · <code>literal</code></td></tr>
+      <tr><td><code>[[guard.secret]]</code></td><td><code>pattern</code> · <code>name</code> · <code>scope</code> = ai|terminal|all · <code>literal</code></td></tr>
     </table></div>
     <div class="callout"><b>Live reload.</b> A running window follows config edits, profile switches
       and <code>@theme</code> within a second — and <kbd>⌘,</kbd> reloads instantly.</div>
@@ -1119,7 +1120,7 @@ gs = <span class="s">"git status -sb"</span>
 align = <span class="s">"right"</span>; template = <span class="s">"🔧 {my.var}"</span>
 
 <span class="c"># plus: [[abbr]] [[completion]] [[keybinding]] [[allow_command]]</span>
-<span class="c"># [[deny_command]] [[confirm_command]] [[redact]] shell.zsh shell.bash</span></code></pre>
+<span class="c"># [[guard.command]] [[guard.path]] [[guard.secret]] shell.zsh shell.bash</span></code></pre>
     <p>31 builtins ship (git, docker, kubernetes, rust, python, node, github, extract, jump,
       autosuggest, syntax-highlight, history, lineedit, sudo, clipboard, encode, weather, web-search, …).
       Trusted plugin shell snippets are sourced into your shell; third-party installs go under
@@ -1381,18 +1382,27 @@ Added <span class="ab">--json</span> to the export command, with a test.
     <h2 id="security">Security</h2>
     <p><b>The AI proposes, the guard disposes.</b></p>
     <ul>
-      <li><b>Command guard</b> — three regex tiers, <b>deny &gt; confirm &gt; allow</b>. Defaults deny fork bombs, <code>rm -rf /</code>, <code>mkfs</code>, raw disk writes; confirm <code>sudo</code>, force-pushes, <code>rm -rf</code>, <code>curl | sh</code>. Auto mode additionally runs only a safe-list of read-only commands.</li>
-      <li><b>The redactor</b> — nine scoped rules rewrite secrets on their way out, before a model, a chat app or the session file ever sees them. <a href="#redaction">Full reference below.</a></li>
+      <li><b>Commands</b> — three regex tiers, <b>deny &gt; confirm &gt; allow</b>, judged over the whole line, every pipeline segment and each segment's program name. Defaults deny fork bombs, <code>rm -rf /</code>, <code>mkfs</code>, raw disk writes; confirm <code>sudo</code>, force-pushes, <code>rm -rf</code>, <code>curl | sh</code>. Auto mode additionally runs only a safe-list of read-only commands.</li>
+      <li><b>Paths</b> — the same three tiers over the resolved absolute path, reaching the file tools <i>and</i> the paths a shell command names. A small floor (<code>~/.ssh</code>, <code>~/.aws</code>, <code>~/.gnupg</code>, this terminal's own config and gate records, private-key files) is native and cannot be switched off by disabling a plugin.</li>
+      <li><b>Secrets</b> — nine scoped rules swap a value for a placeholder on its way out and swap the real value back in the moment the text returns. <a href="#redaction">Full reference below.</a></li>
+      <li><b>A refusal is information</b> — the model is told the rules before it starts, works around what it cannot have, and stops with a reason (<code>refused</code>, exit 1) when it cannot.</li>
       <li><b>Agent confinement</b> — per-agent tool allowlists; file writes sandboxed to the invocation directory; secret-path reads blocked; sub-agents are read-only and cannot re-delegate; agent names and job ids are validated before touching the filesystem.</li>
       <li><b>Keys</b> — never searched for on your machine; only config/env supply them; request bodies never appear in process argv.</li>
     </ul>
 
 
-    <h2 id="redaction">The redactor — secrets stay on your machine</h2>
+    <h2 id="redaction">Secrets — out as a placeholder, back as themselves</h2>
     <p>A secret you <code>cat</code> is <i>yours</i>: it is already on your screen, your disk, your
       environment. The boundary that matters is <b>egress</b> — the moment text is about to leave for
-      a model, a chat app, or a file another process can read. The redactor sits exactly there and
-      rewrites matches to <code>«redacted»</code> before they cross.</p>
+      a model, a tool, or a chat app. The guard sits exactly there and swaps each match for a
+      placeholder named after its rule (<code>«aws-key-1»</code>) — then swaps the real value back in
+      the moment the text returns to this machine, as a command about to run or a tool's arguments.
+      So an agent can <i>use</i> a database password it was never shown.</p>
+    <p>Before this, redaction was one-way: the model saw <code>«redacted»</code> and the command it
+      wrote back could not connect to anything, so people turned redaction off and their keys went to
+      a model. The round trip is what makes the safe thing also the useful thing. Nothing is written
+      down — the values live in memory for one run, and a placeholder from another run is refused
+      rather than run.</p>
 
     <pre><code><span class="p">❯</span> cat .env
 DATABASE_URL=postgres://db.internal/prod
@@ -1428,9 +1438,9 @@ LOG_LEVEL=debug                                 <span class="c">← untouched</s
       phone is off-machine either way, so the narrower reading would be the wrong one.</p>
 
     <h3>The nine default rules</h3>
-    <p>They ship as the <code>redactor</code> plugin, all scoped <code>ai</code>. The mechanism is
+    <p>They ship as the <code>ai-guard</code> plugin, all scoped <code>ai</code>. The mechanism is
       native; the plugin only supplies the rules, so you can edit them or
-      <code>@plugin disable redactor</code> outright.</p>
+      <code>@plugin disable ai-guard</code> outright.</p>
     <div class="table-wrap"><table>
       <tr><th>Catches</th><th>Pattern</th></tr>
       <tr><td>AWS access key ids</td><td><code>AKIA[0-9A-Z]{16}</code></td></tr>
@@ -1449,29 +1459,41 @@ LOG_LEVEL=debug                                 <span class="c">← untouched</s
       display too, which is what you want before screen-sharing or recording.</div>
 
     <h3>Your own rules</h3>
-    <p>Add <code>[[redact]]</code> tables to <code>config.toml</code> — or to any plugin's
-      <code>plugin.toml</code>. Config rules run <b>before</b> plugin rules, so yours get first
-      refusal on a match.</p>
-    <pre><code><span class="k">[[redact]]</span>
-pattern     = <span class="s">"acme_[a-z0-9]{32}"</span>   <span class="c"># regex by default</span>
-replacement = <span class="s">"«acme key»"</span>          <span class="c"># optional; defaults to «redacted»</span>
-scope       = <span class="s">"all"</span>                 <span class="c"># terminal | ai | all</span>
+    <p>The same three tables work in <code>config.toml</code>, in a profile, and in any plugin's
+      <code>plugin.toml</code> — one parser reads all three. Config rules run <b>before</b> plugin
+      rules, so yours are the one a refusal names.</p>
+    <pre><code><span class="k">[[guard.command]]</span>
+pattern = <span class="s">"^docker\s+ps\b"</span>
+rule    = <span class="s">"auto"</span>                   <span class="c"># deny | confirm | allow | auto</span>
 
-<span class="k">[[redact]]</span>
-pattern = <span class="s">"10.0.42.17"</span>              <span class="c"># an exact string</span>
-literal = <span class="n">true</span>                      <span class="c"># skip the regex engine entirely</span>
-scope   = <span class="s">"ai"</span></code></pre>
+<span class="k">[[guard.path]]</span>
+pattern = <span class="s">"/clients/"</span>
+rule    = <span class="s">"deny"</span>                   <span class="c"># deny | read-only | allow</span>
+
+<span class="k">[[guard.secret]]</span>
+pattern = <span class="s">"acme_[a-z0-9]{32}"</span>      <span class="c"># regex by default</span>
+name    = <span class="s">"acme-key"</span>               <span class="c"># names its placeholder: «acme-key-1»</span>
+scope   = <span class="s">"all"</span>                    <span class="c"># terminal | ai | all</span>
+
+<span class="k">[[guard.secret]]</span>
+pattern = <span class="s">"10.0.42.17"</span>             <span class="c"># an exact string</span>
+literal = <span class="n">true</span>                     <span class="c"># skip the regex engine entirely</span></code></pre>
 
     <h3>Properties worth knowing</h3>
     <ul>
       <li><b>Step-budgeted engine</b> — a pathological pattern fails fast instead of hanging your
         terminal. There is no ReDoS surface, even from a plugin you installed.</li>
-      <li><b>A bad pattern is skipped, not fatal</b> — it prints <code>security rule skipped — …</code>
+      <li><b>A bad pattern is skipped, not fatal</b> — it prints <code>guard rule skipped — …</code>
         and the rest of the policy still loads.</li>
+      <li><b>One value, one placeholder</b> — the same secret always reads back the same, so a model
+        can carry it from a file it read into a command it writes and reason about it as one thing.
+        A different value gets a different name.</li>
+      <li><b>Anything crossing a process boundary is masked instead</b> — the window's session file is
+        read by the CLI, which has a different vault, so a placeholder there could never come back.</li>
       <li><b>Clean text costs nothing</b> — each rule carries its literal head (<code>sk-</code>,
         <code>AKIA</code>) as a <code>contains</code> prefilter, and a rule that changes nothing never
         reallocates. This runs on every PTY chunk.</li>
-      <li><b>Agents can call it</b> — <code>sec.redact(text, scope)</code> is in the tool catalog, so
+      <li><b>Agents can call it</b> — <code>guard.mask(text, scope)</code> is in the tool catalog, so
         an agent can scrub something before writing it into a file or a report.</li>
       <li><b>It is not a secret scanner</b> — it rewrites text in flight; it does not search your
         disk, and it cannot mask a secret that never passes through it. API keys are never hunted for

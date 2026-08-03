@@ -1,0 +1,19 @@
+name = "a program is recognised by its name, not by how it was spelled"
+tags = ["guard", "commands"]
+
+# A rule written about `sudo` is about the program. An absolute path or a pair of
+# quotes changes the string and not the program.
+
+[[setup.guard.command]]
+pattern = "^sudo\\b"
+rule = "confirm"
+
+[[step]]
+run = "/usr/bin/sudo apt install ripgrep"
+[[step]]
+expect_verdict = "confirm"
+
+[[step]]
+run = "\"sudo\" apt install ripgrep"
+[[step]]
+expect_verdict = "confirm"

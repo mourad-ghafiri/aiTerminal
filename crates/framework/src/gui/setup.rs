@@ -14,12 +14,12 @@ pub(crate) struct PaneFactory {
     config: Config,
     default_zoom: f32,
     dirty: DirtyFlag,
-    policy: Arc<crate::security::Policy>,
+    guard: Arc<crate::guard::Guard>,
 }
 
 impl PaneFactory {
-    pub fn new(config: Config, default_zoom: f32, dirty: DirtyFlag, policy: Arc<crate::security::Policy>) -> Self {
-        PaneFactory { config, default_zoom, dirty, policy }
+    pub fn new(config: Config, default_zoom: f32, dirty: DirtyFlag, guard: Arc<crate::guard::Guard>) -> Self {
+        PaneFactory { config, default_zoom, dirty, guard }
     }
 
     /// The pane shown at startup — a fresh shell; a spawn failure is fatal (the
@@ -51,7 +51,7 @@ impl PaneFactory {
         let theme = Config::resolve_theme(&self.config.theme);
         let integ = crate::shell::prepare(&self.config, &registry, &theme, &self.config.shell);
         Ok(Pane::terminal(
-            Session::spawn(&self.dirty, &self.config.shell, self.policy.clone(), integ, self.config.scrollback, cwd, restore, dims)?,
+            Session::spawn(&self.dirty, &self.config.shell, self.guard.clone(), integ, self.config.scrollback, cwd, restore, dims)?,
             self.default_zoom,
         ))
     }
@@ -65,13 +65,13 @@ impl GuiApp {
         crate::i18n::install(config.i18n_catalog());
 
         // Plugin + config contributions (declarative — no code): the keymap and the
-        // security policy.
+        // security guard.
         let registry = crate::plugin::load_registry(&config);
         let keymap = build_keymap(&config, &registry);
-        let policy = Arc::new(crate::security::build_policy(&config, &registry));
+        let guard = Arc::new(crate::guard::build(&config, &registry));
 
         let default_zoom = config.zoom;
-        let factory = PaneFactory::new(config.clone(), default_zoom, dirty.clone(), policy.clone());
+        let factory = PaneFactory::new(config.clone(), default_zoom, dirty.clone(), guard.clone());
         // Restore the active profile's saved workspace (all tabs/panes), or open a fresh
         // shell when it has none — so a single default profile just opens a terminal
         // while a profile with saved work comes back exactly as it was left.
@@ -127,7 +127,7 @@ impl GuiApp {
             pane_stamps: std::collections::HashMap::new(),
             config,
             default_zoom,
-            policy,
+            guard,
             switcher: TabSwitcher::new(),
             confirm: Confirm::new(),
             session_ctx: String::new(),
@@ -163,7 +163,7 @@ impl GuiApp {
     }
 
     /// Apply a freshly-loaded [`Config`] live: theme, fonts, zoom, tab bar, keymap,
-    /// security policy, and the pane factory (so NEW panes pick up the changes).
+    /// security guard, and the pane factory (so NEW panes pick up the changes).
     /// Shared by `Cmd-,` reload and a live profile switch, so the two never drift.
     pub(in crate::gui) fn apply_config(&mut self, new: Config) {
         crate::i18n::install(new.i18n_catalog());
@@ -183,8 +183,8 @@ impl GuiApp {
         }
         let registry = crate::plugin::load_registry(&new);
         self.keymap = build_keymap(&new, &registry);
-        self.policy = Arc::new(crate::security::build_policy(&new, &registry));
-        self.factory = PaneFactory::new(new.clone(), new.zoom, self.dirty.clone(), self.policy.clone());
+        self.guard = Arc::new(crate::guard::build(&new, &registry));
+        self.factory = PaneFactory::new(new.clone(), new.zoom, self.dirty.clone(), self.guard.clone());
         // A font-family change needs a fresh glyph cache.
         if new.font_family != self.config.font_family {
             self.cache = None;

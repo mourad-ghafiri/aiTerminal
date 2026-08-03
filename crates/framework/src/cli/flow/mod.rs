@@ -71,7 +71,7 @@ pub(crate) fn flow_names() -> Vec<String> {
 
 /// What the verifier needs from outside itself: the installed agents and the guard.
 struct FlowWorld {
-    policy: std::sync::Arc<crate::security::Policy>,
+    guard: std::sync::Arc<crate::guard::Guard>,
     agents: Vec<crate::ai::defs::Agent>,
 }
 
@@ -89,7 +89,7 @@ impl FlowWorld {
         let cfg = crate::config::Config::load();
         let registry = crate::plugin::load_registry(&cfg);
         FlowWorld {
-            policy: std::sync::Arc::new(crate::security::build_policy(&cfg, &registry)),
+            guard: std::sync::Arc::new(crate::guard::build(&cfg, &registry)),
             agents: crate::ai::defs::load_agents(&crate::config::Config::agents_dir()),
         }
     }
@@ -101,10 +101,10 @@ impl crate::flow::verify::World for FlowWorld {
     }
     fn guard(&self, command: &str) -> crate::flow::verify::Guard {
         use crate::flow::verify::Guard;
-        match self.policy.check_command(command) {
-            crate::security::Verdict::Allow => Guard::Allow,
-            crate::security::Verdict::Confirm { reason } => Guard::Confirm(reason),
-            crate::security::Verdict::Deny { reason } => Guard::Deny(reason),
+        match self.guard.judge(crate::guard::Act::Run(&command)) {
+            crate::guard::Decision::Allow => Guard::Allow,
+            crate::guard::Decision::Confirm { reason } => Guard::Confirm(reason),
+            crate::guard::Decision::Deny { reason } => Guard::Deny(reason),
         }
     }
     fn agent_names(&self) -> Vec<String> {

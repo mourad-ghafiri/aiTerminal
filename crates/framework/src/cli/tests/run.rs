@@ -2,19 +2,19 @@ use crate::cli::agents::build_agent_spec;
 use crate::cli::flow::{flow_names, load_flow};
 use crate::cli::run::{CONFIRM_MARK, EDIT_MARK, RUN_MARK, command_marker, error_comment, instructions_preamble, json_text, memory_preamble, session_lines, session_preamble, tool_args_to_pairs};
 use crate::cli::runner::{build_runner, fit_context, parse_delegation, run_scratch};
-use crate::security::Verdict;
+use crate::guard::Decision;
 
 #[test]
 fn command_marker_honours_mode_and_guard() {
-    let allow = || Some(Verdict::Allow);
+    let allow = || Some(Decision::Allow);
     // Allowed: manual reviews, auto runs.
     assert_eq!(command_marker(Some("ls -la"), allow(), "manual", ""), format!("{EDIT_MARK}ls -la"));
     assert_eq!(command_marker(Some("ls -la"), allow(), "auto", ""), format!("{RUN_MARK}ls -la"));
     // A confirm-tier command ALWAYS reviews, even in auto mode (safety).
-    let confirm = Some(Verdict::Confirm { reason: "x".into() });
+    let confirm = Some(Decision::Confirm { reason: "x".into() });
     assert_eq!(command_marker(Some("rm -rf build"), confirm, "auto", ""), format!("{CONFIRM_MARK}rm -rf build"));
     // A denied command is a comment, never run.
-    let deny = Some(Verdict::Deny { reason: "fork bomb".into() });
+    let deny = Some(Decision::Deny { reason: "fork bomb".into() });
     assert_eq!(command_marker(Some(":(){ :|:& };:"), deny, "auto", ""), "# blocked by guard: fork bomb");
     // No command → the model's refusal text becomes a comment.
     assert_eq!(command_marker(None, None, "manual", "I can't help with that"), "# I can't help with that");
@@ -88,13 +88,13 @@ fn global_instructions_ground_agents_and_qa() {
     let (_h, _home) = crate::test_home::lock_home("cli-instructions");
     crate::config::Config::ensure_default();
     std::fs::write(crate::config::Config::instructions_path(), "Always answer in haiku.").unwrap();
-    let spec = build_agent_spec("coder", (0, crate::ai::DEFAULT_COMPACT_AT)).expect("bundled coder agent");
+    let spec = build_agent_spec("coder", (0, crate::ai::DEFAULT_COMPACT_AT), &crate::guard::Guard::default()).expect("bundled coder agent");
     assert!(spec.system.starts_with("Always answer in haiku."), "instructions lead the system prompt");
     assert!(instructions_preamble().contains("Always answer in haiku."));
     assert!(instructions_preamble().contains("aiTerminal.md"), "the preamble names its source");
     std::fs::write(crate::config::Config::instructions_path(), "   ").unwrap();
     assert!(instructions_preamble().is_empty(), "blank file → no preamble");
-    let spec = build_agent_spec("coder", (0, crate::ai::DEFAULT_COMPACT_AT)).unwrap();
+    let spec = build_agent_spec("coder", (0, crate::ai::DEFAULT_COMPACT_AT), &crate::guard::Guard::default()).unwrap();
     assert!(!spec.system.starts_with("##"), "blank instructions add nothing");
 }
 
@@ -165,8 +165,8 @@ fn the_tool_families_an_agent_declares_actually_work() {
     let (_h, _home) = crate::test_home::lock_home("cli-app-data");
     crate::config::Config::ensure_default();
     let cfg = crate::config::Config::load();
-    let policy = std::sync::Arc::new(crate::security::Policy::new());
-    let runner = build_runner(&cfg, &cfg.ai_settings(), None, policy, false);
+    let guard = std::sync::Arc::new(crate::guard::Guard::default());
+    let runner = build_runner(&cfg, &cfg.ai_settings(), None, guard, false);
     let ctx = &runner.ctx;
     assert!(ctx.app_data.is_some(), "a terminal run has somewhere to keep its own state");
 
@@ -289,8 +289,8 @@ fn folder_session_flows_into_context_and_runner() {
 
     // 3) build_runner scopes the agent's memory.* tools to THIS folder's session store.
     let settings = cfg.ai_settings();
-    let policy = std::sync::Arc::new(crate::security::Policy::new());
-    let runner = build_runner(&cfg, &settings, Some(ws.clone()), policy, false);
+    let guard = std::sync::Arc::new(crate::guard::Guard::default());
+    let runner = build_runner(&cfg, &settings, Some(ws.clone()), guard, false);
     assert_eq!(runner.ctx.memory_dir.as_deref(), Some(session.memory_dir().as_path()), "runner memory is folder-scoped");
 }
 

@@ -220,15 +220,29 @@ pub(crate) fn available_agents_hint() -> String {
     }
 }
 
-/// Build a full [`AgentSpec`](crate::ai::AgentSpec) for the named on-disk agent
-/// (tool descriptions injected from `caps`, the global `aiTerminal.md`
-/// instructions prepended to the system prompt), or `None` when it doesn't exist.
-pub(crate) fn build_agent_spec(name: &str, context: (u32, f32)) -> Option<crate::ai::AgentSpec> {
+/// Build a full [`AgentSpec`](crate::ai::AgentSpec) for the named on-disk agent, or `None`
+/// when it doesn't exist: tool descriptions injected from `caps`, the global
+/// `aiTerminal.md` instructions prepended to the system prompt, and **the guard's own
+/// briefing** appended to it.
+///
+/// ONE builder, taking the guard, so `@agent`, `@flow`, `@loop` and `@job` cannot drift
+/// into running an agent that was never told what this machine refuses — which is the
+/// difference between a run that works around a refusal and a run that spends its whole
+/// budget rediscovering it.
+pub(crate) fn build_agent_spec(name: &str, context: (u32, f32), guard: &crate::guard::Guard) -> Option<crate::ai::AgentSpec> {
     let raw = crate::ai::defs::build_agent(&crate::config::Config::agents_dir(), &crate::config::Config::skills_dir(), &crate::config::Config::prompts_dir(), name)?;
     let tools = raw.tools.into_iter().map(|n| crate::ai::ToolSpec { describe: crate::caps::describe(&n).to_string(), name: n }).collect();
     let global = instructions();
     let system = if global.is_empty() { raw.system } else { format!("{global}\n\n{}", raw.system) };
-    Some(crate::ai::AgentSpec { system, tools, max_steps: raw.max_steps, context_window: context.0, compact_at: context.1, scratch: run_scratch() })
+    Some(crate::ai::AgentSpec {
+        system,
+        tools,
+        max_steps: raw.max_steps,
+        context_window: context.0,
+        compact_at: context.1,
+        guard_brief: guard.briefing(),
+        scratch: run_scratch(),
+    })
 }
 
 /// Wire Ctrl+C to a [`CancelToken`](crate::ai::CancelToken): installs the
@@ -269,13 +283,13 @@ impl Drop for SigintWatch {
 /// Run an agent's tool loop headlessly, streaming tokens live into one region of the
 /// terminal (answer → stdout, tool calls → the same region, reasoning → stderr), with the
 /// header/footer chrome. A foreground-tracked `@job` also keeps a copy in its job log.
-pub(crate) fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::ai::AiSettings, name: &str, prompt: &str, ctx: &str, workspace_root: Option<std::path::PathBuf>, policy: std::sync::Arc<crate::security::Policy>, media: Vec<crate::ai::ImageData>, log: Option<std::fs::File>) -> i32 {
-    let Some(mut agent) = build_agent_spec(name, context_settings(cfg)) else {
+pub(crate) fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::ai::AiSettings, name: &str, prompt: &str, ctx: &str, workspace_root: Option<std::path::PathBuf>, guard: std::sync::Arc<crate::guard::Guard>, media: Vec<crate::ai::ImageData>, log: Option<std::fs::File>) -> i32 {
+    let Some(mut agent) = build_agent_spec(name, context_settings(cfg), &guard) else {
         eprintln!("aiTerminal: no agent '{name}' — {}", available_agents_hint());
         return 2;
     };
     let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default()).with_images(media);
-    let mut runner = build_runner(cfg, &settings, workspace_root, policy, true);
+    let mut runner = build_runner(cfg, &settings, workspace_root, guard, true);
     if let Some(hub) = &runner.mcp {
         for (name, describe) in hub.tools() {
             agent.tools.push(crate::ai::ToolSpec { name, describe });
@@ -303,6 +317,6 @@ pub(crate) fn run_agent_streaming(cfg: &crate::config::Config, settings: crate::
 }
 
 /// The `--agent` flag path (no job record).
-pub(crate) fn run_agent_cli(cfg: &crate::config::Config, settings: crate::ai::AiSettings, name: &str, prompt: &str, ctx: &str, workspace_root: Option<std::path::PathBuf>, policy: std::sync::Arc<crate::security::Policy>, media: Vec<crate::ai::ImageData>) -> i32 {
-    run_agent_streaming(cfg, settings, name, prompt, ctx, workspace_root, policy, media, None)
+pub(crate) fn run_agent_cli(cfg: &crate::config::Config, settings: crate::ai::AiSettings, name: &str, prompt: &str, ctx: &str, workspace_root: Option<std::path::PathBuf>, guard: std::sync::Arc<crate::guard::Guard>, media: Vec<crate::ai::ImageData>) -> i32 {
+    run_agent_streaming(cfg, settings, name, prompt, ctx, workspace_root, guard, media, None)
 }

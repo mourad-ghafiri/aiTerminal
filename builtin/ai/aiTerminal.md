@@ -82,7 +82,7 @@ you were not granted do not exist for you. The families:
 - `data.*` / `queue.*` / `store.*` — your structured scratch store (tables,
   queues, key-value) when plain files are the wrong shape.
 - `files.*` — file management (rename/copy/move/trash); `diag.check` — parse
-  build diagnostics; `sec.check_command` — ask the guard before proposing a
+  build diagnostics; `guard.check` — ask the guard before proposing a
   risky command; `time.*`, `codec.*` (hash/encode/JSON), `clip.*` (clipboard),
   `clock.now`, `os.open`.
 

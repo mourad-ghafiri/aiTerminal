@@ -31,7 +31,7 @@ mod tools;
 pub mod transcript;
 
 // Curated flat surface — callers write `framework::ai::Client`, `…::run_agent`, …
-pub use agent::{run_agent, AgentObserver, AgentRun, AgentSpec, NoopObserver, RunOutcome, ToolRunner, ToolSpec, ToolStep};
+pub use agent::{run_agent, AgentObserver, AgentRun, AgentSpec, NoopObserver, RunOutcome, ToolOutcome, ToolRunner, ToolSpec, ToolStep};
 pub use budget::{ContextBudget, HeuristicEstimator, TokenEstimator, DEFAULT_COMPACT_AT};
 pub use client::Client;
 pub use compact::{CompactionReport, CompactionStage, Ladder, Summarizer};

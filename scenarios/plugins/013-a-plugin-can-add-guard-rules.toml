@@ -1,14 +1,14 @@
-name = "a plugin can add command-guard and redaction rules"
-tags = ["plugins", "security"]
+name = "a plugin can add guard rules, in the same vocabulary a config file uses"
+tags = ["plugins", "guard"]
 
-# This is how the shipped defaults arrive: the guard and the redactor are plugins,
-# so you can read, edit or remove them.
-
-[[step]]
-plugin = ["name = \"command-guard\"", "[[deny_command]]", "pattern = \"rm -rf /\"", "[[redact]]", "pattern = \"AKIA\\\\w+\""]
+# This is how the shipped defaults arrive: the whole guard policy is a plugin, so you
+# can read it, edit it, or remove it. A plugin can only ever ADD a restriction.
 
 [[step]]
-expect_denied = ["rm -rf /"]
+plugin = ["name = \"ai-guard\"", "[[guard.command]]", "pattern = \"wipe-the-lot\"", "rule = \"deny\"", "[[guard.secret]]", "pattern = \"AKIA\\\\w+\""]
 
 [[step]]
-expect_redactions = ["AKIA\\w+"]
+expect_denied = ["wipe-the-lot"]
+
+[[step]]
+expect_secrets = ["AKIA\\w+"]

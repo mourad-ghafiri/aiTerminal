@@ -1,0 +1,21 @@
+name = "a read-only path is read freely and never changed"
+tags = ["guard", "paths"]
+
+# The middle tier for paths: an agent may look at your system config and reason about
+# it, and may not edit it.
+
+[[setup.guard.path]]
+pattern = "^/etc/"
+rule = "read-only"
+
+[[step]]
+read = "/etc/hosts"
+[[step]]
+expect_verdict = "allow"
+
+[[step]]
+write = "/etc/hosts"
+[[step]]
+expect_verdict = "deny"
+[[step]]
+expect_reason = ["read-only"]

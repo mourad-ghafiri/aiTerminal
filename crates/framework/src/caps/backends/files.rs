@@ -1,4 +1,4 @@
-use crate::caps::backends::paths::{apply_edit, file_category, fs_path_rel, fs_read_guard, fs_write_guard, mtime_secs, path_ext, ws_rel};
+use crate::caps::backends::paths::{allow_read, allow_write, apply_edit, file_category, fs_path_rel, mtime_secs, path_ext, ws_rel};
 use corelib::wire::Json;
 
 use crate::caps::*;
@@ -49,7 +49,7 @@ fn measure_walk(dir: &std::path::Path, m: &mut Measure, cap: usize) {
 /// a 1 MiB per-file cap, a `max` hit cap, and a global file `budget` so a huge tree can't
 /// hang the worker.
 #[allow(clippy::too_many_arguments)]
-fn search_walk(dir: &std::path::Path, root: &std::path::Path, query: &str, re: Option<&crate::security::regex::Regex>, max: usize, hits: &mut Vec<(String, usize, String)>, budget: &mut usize) {
+fn search_walk(dir: &std::path::Path, root: &std::path::Path, query: &str, re: Option<&crate::guard::regex::Regex>, max: usize, hits: &mut Vec<(String, usize, String)>, budget: &mut usize) {
     fn skip(name: &str) -> bool {
         name.starts_with('.') || matches!(name, "target" | "node_modules" | "dist" | "build" | "vendor" | "Pods")
     }
@@ -143,7 +143,7 @@ fn fs_list(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
         Some(p) if !p.trim().is_empty() => fs_path_rel(ctx, p)?,
         _ => ctx.sandbox.clone().or_else(platform::os::home_dir).ok_or("fs.list: missing path")?,
     };
-    fs_read_guard(&dir)?;
+    allow_read(&dir, ctx)?;
     let show_hidden = matches!(arg(args, 1, "hidden"), Some("true" | "1"));
     let sort = arg(args, 2, "sort").unwrap_or("name");
     let entries = std::fs::read_dir(&dir).map_err(|e| format!("fs.list: {e}"))?;
@@ -190,7 +190,7 @@ fn fs_list(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
 }
 fn fs_stat(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
     let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.stat: missing path")?)?;
-    fs_read_guard(&p)?;
+    allow_read(&p, ctx)?;
     let meta = std::fs::metadata(&p).map_err(|e| format!("fs.stat: {e}"))?;
     let is_dir = meta.is_dir();
     Ok(obj(&[
@@ -206,7 +206,7 @@ fn fs_measure(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
     // can never freeze the caller (caps run on the main thread). `partial` is set
     // when the visited-entry cap is hit; symlinked dirs are not followed (no cycles).
     let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.measure: missing path")?)?;
-    fs_read_guard(&p)?;
+    allow_read(&p, ctx)?;
     const CAP: usize = 20_000;
     let mut m = Measure::default();
     measure_walk(&p, &mut m, CAP);
@@ -220,7 +220,7 @@ fn fs_measure(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
 }
 fn fs_read(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
     let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.read: missing path")?)?;
-    fs_read_guard(&p)?;
+    allow_read(&p, ctx)?;
     // The model-supplied `max` is CLAMPED — `max: 999999999` must not
     // defeat the cap — and only `max` bytes are ever read (a 10 GB file
     // costs 1 MiB of memory at most, not the whole file).
@@ -266,10 +266,10 @@ fn fs_search(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
         Some(p) if !p.trim().is_empty() => fs_path_rel(ctx, p)?,
         _ => ctx.sandbox.clone().ok_or("fs.search: no path and no workspace to search")?,
     };
-    fs_read_guard(&root)?;
+    allow_read(&root, ctx)?;
     let max = arg(args, 3, "max").and_then(|s| s.parse::<usize>().ok()).unwrap_or(80).clamp(1, 500);
     let re = if use_regex {
-        Some(crate::security::regex::Regex::new(query).map_err(|e| format!("fs.search: bad regex: {e}"))?)
+        Some(crate::guard::regex::Regex::new(query).map_err(|e| format!("fs.search: bad regex: {e}"))?)
     } else {
         None
     };
@@ -286,10 +286,21 @@ fn fs_search(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
     }
     Ok(Json::Str(out))
 }
+/// Text on its way ONTO the disk, with the placeholders in it turned back into values.
+///
+/// This is what makes an agent that has never seen your database password able to write a
+/// config file that holds it: it copies `«db-password-1»` through from the file it read,
+/// and the value lands on disk. A placeholder from another run is refused rather than
+/// written, because a config file containing the literal text `«db-password-1»` is a bug
+/// that surfaces days later somewhere else entirely.
+fn written(content: &str, ctx: &CapCtx) -> Result<String, String> {
+    ctx.guard.vault().restore(content).map_err(|e| format!("fs: {e}"))
+}
+
 fn fs_write(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
     let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.write: missing path")?)?;
-    let content = arg(args, 1, "content").unwrap_or("");
-    fs_write_guard(&p, ctx)?;
+    let content = &written(arg(args, 1, "content").unwrap_or(""), ctx)?;
+    allow_write(&p, ctx)?;
     // Diff against the prior contents (empty for a new file) so the change is visible.
     let before = std::fs::read_to_string(&p).unwrap_or_default();
     if let Some(parent) = p.parent() {
@@ -301,16 +312,16 @@ fn fs_write(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
 }
 fn fs_mkdir(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
     let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.mkdir: missing path")?)?;
-    fs_write_guard(&p, ctx)?;
+    allow_write(&p, ctx)?;
     std::fs::create_dir_all(&p).map_err(|e| format!("fs.mkdir: {e}"))?;
     Ok(obj(&[("path", Json::Str(p.to_string_lossy().into_owned()))]))
 }
 fn fs_edit(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
     let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.edit: missing path")?)?;
     let find = arg(args, 1, "find").ok_or("fs.edit: missing find")?;
-    let replace = arg(args, 2, "replace").unwrap_or("");
+    let replace = &written(arg(args, 2, "replace").unwrap_or(""), ctx)?;
     let all = matches!(arg(args, 3, "all"), Some("true" | "1"));
-    fs_write_guard(&p, ctx)?;
+    allow_write(&p, ctx)?;
     if find.is_empty() {
         return Err("fs.edit: `find` must be non-empty".into());
     }
@@ -326,15 +337,15 @@ fn fs_edit(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
 }
 fn fs_delete(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
     let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.delete: missing path")?)?;
-    fs_write_guard(&p, ctx)?;
+    allow_write(&p, ctx)?;
     std::fs::remove_file(&p).map_err(|e| format!("fs.delete: {e}"))?;
     Ok(obj(&[("path", Json::Str(p.to_string_lossy().into_owned())), ("deleted", Json::Bool(true))]))
 }
 fn fs_append(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
     use std::io::Write;
     let p = fs_path_rel(ctx, arg(args, 0, "path").ok_or("fs.append: missing path")?)?;
-    let content = arg(args, 1, "content").unwrap_or("");
-    fs_write_guard(&p, ctx)?;
+    let content = &written(arg(args, 1, "content").unwrap_or(""), ctx)?;
+    allow_write(&p, ctx)?;
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("fs.append: {e}"))?;
     }
@@ -345,8 +356,8 @@ fn fs_append(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
 fn fs_copy(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
     let src = fs_path_rel(ctx, arg(args, 0, "src").ok_or("fs.copy: missing src")?)?;
     let dst = fs_path_rel(ctx, arg(args, 1, "dst").ok_or("fs.copy: missing dst")?)?;
-    fs_read_guard(&src)?;
-    fs_write_guard(&dst, ctx)?;
+    allow_read(&src, ctx)?;
+    allow_write(&dst, ctx)?;
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("fs.copy: {e}"))?;
     }
@@ -357,8 +368,8 @@ fn fs_move(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
     let src = fs_path_rel(ctx, arg(args, 0, "src").ok_or("fs.move: missing src")?)?;
     let dst = fs_path_rel(ctx, arg(args, 1, "dst").ok_or("fs.move: missing dst")?)?;
     // Both endpoints mutate the tree → both must be inside the workspace.
-    fs_write_guard(&src, ctx)?;
-    fs_write_guard(&dst, ctx)?;
+    allow_write(&src, ctx)?;
+    allow_write(&dst, ctx)?;
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("fs.move: {e}"))?;
     }
@@ -371,7 +382,7 @@ fn fs_glob(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
         Some(r) => fs_path_rel(ctx, r)?,
         None => ctx.sandbox.clone().ok_or("fs.glob: no root and no workspace")?,
     };
-    fs_read_guard(&root)?;
+    allow_read(&root, ctx)?;
     let mut out: Vec<String> = Vec::new();
     glob_walk(&root, &root, pattern, &mut out, 0);
     out.sort();

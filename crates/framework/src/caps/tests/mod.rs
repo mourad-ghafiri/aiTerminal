@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use super::*;
-use super::backends::{glob_match, html_to_markdown, is_blocked_ip, is_secret_path, ssrf_resolve, url_host_port};
+use super::backends::{glob_match, html_to_markdown, is_blocked_ip, ssrf_resolve, url_host_port};
 
 #[test]
 fn glob_matches_star_doublestar_question() {
@@ -16,15 +16,21 @@ fn glob_matches_star_doublestar_question() {
     assert!(!m("*.rs", "main.toml"));
 }
 
+/// The guard a caps test runs under: no rules of its own, but the built-in FLOOR, which
+/// is what the product always has and what these tests are about.
+fn plain_guard() -> Arc<crate::guard::Guard> {
+    Arc::new(crate::guard::Guard::rooted("", crate::guard::Base::here()))
+}
+
 fn ctx() -> CapCtx {
-    CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None }
+    CapCtx { guard: plain_guard(), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None }
 }
 
 
 
 
 fn ctx_ws(root: &std::path::Path) -> CapCtx {
-    CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: None, remote_enabled: true, origin: String::new(), sandbox: Some(root.to_path_buf()), memory_dir: None }
+    CapCtx { guard: plain_guard(), app_data: None, remote_enabled: true, origin: String::new(), sandbox: Some(root.to_path_buf()), memory_dir: None }
 }
 
 fn tmpdir(tag: &str) -> PathBuf {
@@ -219,14 +225,15 @@ fn fs_read_blocks_secret_paths() {
     let ok = dir.join("notes.txt");
     std::fs::write(&ok, "hello").unwrap();
     assert_eq!(run("fs.read", &[("path".into(), ok.display().to_string())], &ctx()).unwrap().get("text").and_then(Json::as_str), Some("hello"));
-    // Secret directories are flagged regardless of extension.
-    let home = std::env::var("HOME").unwrap_or_default();
-    if !home.is_empty() {
-        assert!(is_secret_path(std::path::Path::new(&format!("{home}/.ssh/id_rsa"))));
-        assert!(is_secret_path(std::path::Path::new(&format!("{home}/.aws/credentials"))));
-        assert!(is_secret_path(std::path::Path::new(&format!("{home}/.aiTerminal/config.toml"))));
-        assert!(!is_secret_path(std::path::Path::new(&format!("{home}/Documents/notes.md"))));
-    }
+    // The credential directories are off limits whatever the file is called. Judged
+    // against a MADE-UP home, so this states the rule without going near a real one.
+    let home = std::path::Path::new("/nowhere/person");
+    let g = crate::guard::Guard::rooted("", crate::guard::Base { home: Some(home.into()), cwd: None });
+    let refuses = |rel: &str| matches!(g.judge(crate::guard::Act::Read(&home.join(rel))), crate::guard::Decision::Deny { .. });
+    assert!(refuses(".ssh/id_rsa"));
+    assert!(refuses(".aws/credentials"));
+    assert!(refuses(".aiTerminal/config.toml"));
+    assert!(!refuses("Documents/notes.md"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -251,7 +258,7 @@ fn web_read_md_fixture_and_remote_guards() {
     let r = run("web.read", &[("url".into(), format!("md://{}", f.display()))], &ctx()).unwrap();
     assert!(r.get("markdown").and_then(Json::as_str).unwrap().contains("# Doc"));
     // https with remote disabled → error (no egress)
-    let no_remote = CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: None };
+    let no_remote = CapCtx { guard: plain_guard(), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: None };
     assert!(run("web.read", &[("url".into(), "https://example.com".into())], &no_remote).is_err());
     // an SSRF host is blocked even with remote enabled
     assert!(run("web.read", &[("url".into(), "https://localhost/x".into())], &ctx()).is_err());
@@ -262,13 +269,13 @@ fn web_read_md_fixture_and_remote_guards() {
 
 #[test]
 fn sys_run_guard_sees_canonical_argv_not_quoted_bypass() {
-    let mut policy = crate::security::Policy::new();
-    policy.add_deny("^rm\\b").unwrap(); // an anchored deny rule
-    let ctx = CapCtx { policy: Arc::new(policy), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
+    // An anchored deny rule, written the way a config file writes one.
+    let guard = crate::guard::Guard::from_toml("[[guard.command]]\npattern = \"^rm\\b\"\nrule = \"deny\"\n");
+    let ctx = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
     // Quoting used to slip past `^rm` (raw string starts with `"`); now the guard sees
     // the canonical de-quoted command, so it is still blocked.
-    assert!(run("sys.run", &[("cmd".into(), "\"rm\" -rf /tmp/whatever".into())], &ctx).unwrap_err().contains("blocked"));
-    assert!(run("sys.run", &[("cmd".into(), "rm -rf /tmp/whatever".into())], &ctx).unwrap_err().contains("blocked"));
+    assert!(run("sys.run", &[("cmd".into(), "\"rm\" -rf /tmp/whatever".into())], &ctx).unwrap_err().contains("the guard refused"));
+    assert!(run("sys.run", &[("cmd".into(), "rm -rf /tmp/whatever".into())], &ctx).unwrap_err().contains("the guard refused"));
     // An unterminated quote is rejected (no mangled-token execution).
     assert!(run("sys.run", &[("cmd".into(), "echo \"oops".into())], &ctx).unwrap_err().contains("unterminated"));
     // A benign command still runs.
@@ -300,19 +307,17 @@ fn ssrf_blocks_private_and_encoded_hosts() {
 }
 
 #[test]
-fn sec_is_query_only() {
-    let mut policy = crate::security::Policy::new();
-    policy.add_deny("rm").unwrap();
-    let ctx = CapCtx { policy: Arc::new(policy), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
-    let r = run("sec.check_command", &[("cmd".into(), "rm -rf x".into())], &ctx).unwrap();
+fn asking_the_guard_never_runs_anything() {
+    let guard = crate::guard::Guard::from_toml("[[guard.command]]\npattern = \"rm\"\nrule = \"deny\"\n");
+    let ctx = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
+    let r = run("guard.check", &[("act".into(), "run".into()), ("target".into(), "rm -rf x".into())], &ctx).unwrap();
     assert_eq!(r.get("verdict").and_then(Json::as_str), Some("deny"));
 }
 
 #[test]
 fn sys_run_blocked_by_guard() {
-    let mut policy = crate::security::Policy::new();
-    policy.add_deny("^danger").unwrap();
-    let ctx = CapCtx { policy: Arc::new(policy), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
+    let guard = crate::guard::Guard::from_toml("[[guard.command]]\npattern = \"^danger\"\nrule = \"deny\"\n");
+    let ctx = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
     // `danger --now` is an INERT literal — the guard rejects it, it never runs.
     assert!(run("sys.run", &[("cmd".into(), "danger --now".into())], &ctx).is_err());
 }
@@ -322,12 +327,11 @@ fn sys_run_confirm_is_blocked_in_noninteractive_path() {
     // A `Confirm` verdict has no UI to prompt here (background agent / app
     // capability path) → deny-wins, it must NOT execute. (`git status` is an
     // inert literal; the confirm rule rejects it before any exec.)
-    let mut policy = crate::security::Policy::new();
-    policy.add_confirm("^git ").unwrap();
-    let ctx = CapCtx { policy: Arc::new(policy), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
+    let guard = crate::guard::Guard::from_toml("[[guard.command]]\npattern = \"^git \"\nrule = \"confirm\"\n");
+    let ctx = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
     let r = run("sys.run", &[("cmd".into(), "git status".into())], &ctx);
     assert!(r.is_err(), "Confirm-class command must not run unprompted");
-    assert!(format!("{}", r.unwrap_err()).contains("confirmation"));
+    assert!(format!("{}", r.unwrap_err()).contains("the guard refused"));
 }
 
 #[test]
@@ -335,7 +339,7 @@ fn store_requires_app_sandbox() {
     assert!(run("store.get", &[("key".into(), "x".into())], &ctx()).is_err());
     let dir = std::env::temp_dir().join(format!("tt-caps-store-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let c = CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: Some(dir.clone()), remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
+    let c = CapCtx { guard: plain_guard(), app_data: Some(dir.clone()), remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
     run("store.set", &[("key".into(), "pref".into()), ("value".into(), "{\"x\":1}".into())], &c).unwrap();
     let got = run("store.get", &[("key".into(), "pref".into())], &c).unwrap();
     assert_eq!(got.get("x").and_then(Json::as_f64), Some(1.0));
@@ -420,7 +424,7 @@ fn pure_families_work_with_no_host() {
 // BEFORE any socket — on the [ai] network switch or the https-only rule) ──────
 
 fn ctx_offline() -> CapCtx {
-    CapCtx { policy: Arc::new(crate::security::Policy::new()), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: None }
+    CapCtx { guard: plain_guard(), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: None }
 }
 
 #[test]
@@ -580,10 +584,9 @@ fn ddg_results_parse_title_url_snippet() {
 #[test]
 fn sys_run_guard_blocks_a_denied_program_anywhere_in_a_pipeline() {
     let ws = tmpdir("sysguard");
-    let mut policy = crate::security::Policy::new();
-    policy.add_deny(r"\brm\b").unwrap();
+    let guard = crate::guard::Guard::from_toml("[[guard.command]]\npattern = \"\\brm\\b\"\nrule = \"deny\"\n");
     let c = CapCtx {
-        policy: Arc::new(policy),
+        guard: Arc::new(guard),
         app_data: None,
         remote_enabled: true,
         origin: String::new(),
@@ -592,7 +595,7 @@ fn sys_run_guard_blocks_a_denied_program_anywhere_in_a_pipeline() {
     };
     // `rm` denied even chained after an allowed command → the whole run is blocked.
     let err = run("sys.run", &[("cmd".into(), "echo hi && rm -rf x".into())], &c).unwrap_err();
-    assert!(err.contains("blocked by guard"), "guard blocks pipelines: {err}");
+    assert!(err.contains("the guard refused"), "the guard reads a pipeline: {err}");
     let _ = std::fs::remove_dir_all(&ws);
 }
 

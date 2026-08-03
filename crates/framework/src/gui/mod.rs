@@ -213,7 +213,7 @@ impl Session {
     fn spawn(
         dirty: &DirtyFlag,
         shell: &str,
-        policy: Arc<crate::security::Policy>,
+        guard: Arc<crate::guard::Guard>,
         integ: crate::shell::ShellSpawn,
         scrollback: usize,
         cwd: Option<&str>,
@@ -256,7 +256,7 @@ impl Session {
             let (pty, term, dirty, exited) = (pty.clone(), term.clone(), dirty.clone(), exited.clone());
             // Only redact when terminal-scope rules exist, so the default path
             // stays a raw byte feed (no lossy UTF-8 round-trip, zero overhead).
-            let redact = policy.has_scope(crate::security::RedactScope::Terminal);
+            let redact = guard.masks_display();
             thread::spawn(move || {
                 // 64 KiB reads: a fast producer needs 8× fewer lock acquisitions
                 // (and wakes) than the old 8 KiB buffer for the same throughput.
@@ -268,7 +268,7 @@ impl Session {
                             // Redact BEFORE taking the term lock — the regex pass must
                             // never extend the window the render thread waits on.
                             let redacted =
-                                redact.then(|| redact_terminal(&String::from_utf8_lossy(&buf[..n]), &policy));
+                                redact.then(|| redact_terminal(&String::from_utf8_lossy(&buf[..n]), &guard));
                             // Poison-tolerant lock + parser isolation: a panic on one byte
                             // chunk (a terminal-emulator edge case) is caught + logged by the
                             // panic hook and skipped — the reader keeps this PTY alive instead
@@ -487,7 +487,7 @@ pub struct GuiApp {
     config: Config,
     default_zoom: f32,
     /// The security policy (command guard + redaction), from config + plugins.
-    policy: Arc<crate::security::Policy>,
+    guard: Arc<crate::guard::Guard>,
     /// The tab quick-switcher overlay (Cmd+P / Cmd+K), if open.
     switcher: TabSwitcher,
     /// The close confirmation, if open. Above the switcher in every sense: it takes
@@ -527,14 +527,14 @@ fn append_crash_line(path: &std::path::Path, line: &str) {
 
 /// Redact terminal output, applying rules only to printable text runs and never
 /// to ANSI escape sequences (so colours/cursor moves are never corrupted).
-pub(crate) fn redact_terminal(text: &str, policy: &crate::security::Policy) -> String {
+pub(crate) fn redact_terminal(text: &str, guard: &crate::guard::Guard) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::new();
     let mut run = String::new();
     let mut i = 0;
     let flush = |run: &mut String, out: &mut String| {
         if !run.is_empty() {
-            out.push_str(&policy.redact(run, crate::security::RedactScope::Terminal));
+            out.push_str(&guard.mask(&run));
             run.clear();
         }
     };

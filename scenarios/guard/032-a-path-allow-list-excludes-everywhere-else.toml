@@ -1,0 +1,19 @@
+name = "a path allow-list excludes everywhere else"
+tags = ["guard", "paths"]
+
+# The same shape as the command allow-list: once one rule exists, it is the whole of
+# what may be touched.
+
+[[setup.guard.path]]
+pattern = "^/work/"
+rule = "allow"
+
+[[step]]
+read = "/work/project/notes.md"
+[[step]]
+expect_verdict = "allow"
+
+[[step]]
+read = "/elsewhere/notes.md"
+[[step]]
+expect_verdict = "deny"

@@ -1,0 +1,158 @@
+# ai-guard — the default policy for what an AI feature may do to this machine.
+#
+# The guard MECHANISM is native (framework::guard, over the in-house regex engine);
+# this plugin supplies the default RULES as declarative data, in the same three
+# tables `config.toml` uses. Plugins can only ever ADD a restriction — deny wins,
+# and nothing here can remove a rule you wrote.
+#
+# Disable or edit this plugin to change the defaults. What it CANNOT open is the
+# guard's own floor (~/.ssh, ~/.aws, ~/.gnupg, ~/.config/gh, this terminal's config
+# and gate records, private-key files): those are native, always in force, and
+# deliberately not data — a guard you can switch off by disabling a plugin is not
+# a guard.
+name = "ai-guard"
+version = "1.0.0"
+description = "Default rules for the AI guard: what may run, what may be touched, and what may leave."
+author = "aiTerminal"
+
+# ── Commands: refused outright ────────────────────────────────────────────────
+# Each is a regex, tested against the whole command, every line, every pipeline
+# segment, and each segment's program name — so a benign first stage cannot
+# shield what follows it.
+
+# A fork bomb.
+[[guard.command]]
+pattern = ":\\(\\)\\s*\\{\\s*:\\|:"
+rule = "deny"
+# A recursive delete of the filesystem root.
+[[guard.command]]
+pattern = "rm\\s+-[rf]+\\s+/(\\s|$)"
+rule = "deny"
+# Reformatting a filesystem.
+[[guard.command]]
+pattern = "\\bmkfs\\b"
+rule = "deny"
+# A raw write to a block device.
+[[guard.command]]
+pattern = "dd\\s+.*of=/dev/"
+rule = "deny"
+[[guard.command]]
+pattern = ">\\s*/dev/sd"
+rule = "deny"
+
+# ── Commands: a person has to say yes ─────────────────────────────────────────
+# Refused outright wherever there is nobody to ask — an agent's tool call, a
+# detached job, a flow node.
+[[guard.command]]
+pattern = "\\bsudo\\b"
+rule = "confirm"
+[[guard.command]]
+pattern = "git\\s+push\\s+.*--force"
+rule = "confirm"
+[[guard.command]]
+pattern = "\\brm\\s+-rf\\b"
+rule = "confirm"
+[[guard.command]]
+pattern = "chmod\\s+-R\\b"
+rule = "confirm"
+[[guard.command]]
+pattern = "curl\\b.*\\|\\s*(sh|bash)"
+rule = "confirm"
+
+# ── Commands: Auto mode may run these un-prompted ─────────────────────────────
+# Read-only / inspection / non-mutating dev commands. Anything NOT matched here
+# PROMPTS in Auto mode; deny and confirm above still win. A `|` after the program
+# restricts it to safe subcommands (`git status|log`, never `git push`).
+
+# Plain inspection utilities — no flag makes these mutate state.
+[[guard.command]]
+pattern = "^(ls|pwd|cat|head|tail|wc|echo|printf|which|whoami|hostname|id|uname|date|env|printenv|tree|file|stat|basename|dirname|realpath|readlink|du|df|ps|top|uptime|sysctl)\\b"
+rule = "auto"
+# Search and read tools (`find` is excluded — it can `-delete` and `-exec`).
+[[guard.command]]
+pattern = "^(grep|egrep|fgrep|rg|ag|ack|sort|uniq|cut|column|nl|tac|diff|cmp|sha256sum|md5sum|cksum|less|more|jq|yq)\\b"
+rule = "auto"
+# git — the read-only subcommands only.
+[[guard.command]]
+pattern = "^git\\s+(status|log|diff|show|branch|remote|blame|describe|rev-parse|ls-files|ls-tree|cat-file|shortlog|tag\\s*$|config\\s+--get|config\\s+--list|config\\s+-l)\\b"
+rule = "auto"
+# Rust — the non-mutating cargo subcommands (no `install`/`publish`/`add`/`run`).
+[[guard.command]]
+pattern = "^cargo\\s+(check|test|build|clippy|fmt|tree|metadata|doc|bench|version|--version)\\b"
+rule = "auto"
+# Node/JS — the test/lint/build scripts (no `install`/`add`/`publish`/`exec`).
+[[guard.command]]
+pattern = "^(npm|pnpm|yarn)\\s+(test|run|lint|ls|list|why|outdated|--version|-v)\\b"
+rule = "auto"
+# Other toolchains — read/test/build verbs only.
+[[guard.command]]
+pattern = "^(python3?|node|deno|go|ruby|java|javac|tsc|make)\\s+(--version|-v|version)\\b"
+rule = "auto"
+[[guard.command]]
+pattern = "^go\\s+(test|build|vet|fmt|list|version|env)\\b"
+rule = "auto"
+[[guard.command]]
+pattern = "^python3?\\s+-m\\s+(pytest|unittest)\\b"
+rule = "auto"
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+# Regexes over the resolved ABSOLUTE path, applied to the file tools AND to the
+# paths a shell command names. Nothing ships denied here beyond the native floor;
+# these are the shape of a rule you would write. Uncomment or add your own.
+#
+# [[guard.path]]
+# pattern = "/clients/"        # never read, never changed
+# rule    = "deny"
+#
+# [[guard.path]]
+# pattern = "^/etc/"           # read freely, never modified
+# rule    = "read-only"
+#
+# [[guard.path]]
+# pattern = "^/Users/you/work/" # an allow-list: nothing outside it may be touched
+# rule    = "allow"
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# What must never reach a model, a tool, or a chat app. Each match leaves as a
+# placeholder named after its rule (`«aws-key-1»`) and comes back as the real
+# value the moment the text returns to this machine — so a run can USE a key it
+# was never shown. `scope` defaults to `ai` (egress only), which is why `cat .env`
+# still shows you your own values; add `scope = "terminal"` to mask them on screen
+# too, or `scope = "all"` for both.
+
+# AWS access key ids.
+[[guard.secret]]
+pattern = "AKIA[0-9A-Z]{16}"
+name = "aws-key"
+# OpenAI / Anthropic-style keys.
+[[guard.secret]]
+pattern = "sk-[A-Za-z0-9_-]{16,}"
+name = "api-key"
+# GitHub tokens (ghp_/gho_/ghu_/ghs_/ghr_).
+[[guard.secret]]
+pattern = "gh[pousr]_[A-Za-z0-9]{20,}"
+name = "github-token"
+# Slack tokens.
+[[guard.secret]]
+pattern = "xox[abps]-[A-Za-z0-9-]{8,}"
+name = "slack-token"
+# Google API keys.
+[[guard.secret]]
+pattern = "AIza[A-Za-z0-9_-]{20,}"
+name = "google-key"
+# Bearer / Authorization tokens.
+[[guard.secret]]
+pattern = "(?i)bearer\\s+[A-Za-z0-9._~+/-]+=*"
+name = "bearer-token"
+# JWTs (header.payload.signature).
+[[guard.secret]]
+pattern = "eyJ[A-Za-z0-9_-]+\\.eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"
+name = "jwt"
+# KEY=VALUE / KEY: VALUE where the key name looks sensitive.
+[[guard.secret]]
+pattern = "(?i)(api[_-]?key|access[_-]?key|client[_-]?secret|token|secret|password|passwd|credential|auth)[\"']?\\s*[:=]\\s*\\S+"
+name = "credential"
+# A PEM private-key block that surfaced in tool output.
+[[guard.secret]]
+pattern = "-----BEGIN[A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END[A-Z ]*-----"
+name = "private-key"

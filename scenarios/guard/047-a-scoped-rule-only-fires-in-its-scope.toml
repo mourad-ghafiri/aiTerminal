@@ -1,0 +1,21 @@
+name = "a rule scoped to the screen masks the screen and nothing else"
+tags = ["guard", "secrets", "scopes"]
+
+# Two different jobs. `hide` is for text leaving the machine and is reversible; `mask`
+# is for the display and is not — you cannot un-mask a screen, and somebody who scoped
+# a rule to `terminal` meant "I do not want to look at this".
+
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "db-password"
+scope = "terminal"
+
+[[step]]
+mask = "DB_PASSWORD=pw-example0"
+[[step]]
+expect_text = "DB_PASSWORD=«redacted»"
+
+[[step]]
+hide = "DB_PASSWORD=pw-example0"
+[[step]]
+expect_text = "DB_PASSWORD=pw-example0"

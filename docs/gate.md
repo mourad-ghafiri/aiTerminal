@@ -260,12 +260,13 @@ apply:
    pairing for the session, and while nobody is paired the code rotates every ten
    minutes so a gate left running overnight isn't still advertising last night's.
 3. **One chat at a time.** Once paired, a second chat is refused.
-4. **The command guard.** Every remote command goes through the same `[security]`
-   rules as an AI suggestion: `denied_commands` blocks it outright, `confirm_commands`
-   holds it until you reply `/yes`. See [security.md](security.md).
-5. **Redaction.** Your `[[redact]]` rules are applied to everything leaving the
-   machine — **both** the `terminal` and `ai` scopes, because a chat app is off-machine
-   either way.
+4. **The guard.** Every remote command goes through the same rules as an AI
+   suggestion: a `deny` rule blocks it outright, a `confirm` rule holds it until you
+   reply `/yes`. See [security.md](security.md).
+5. **Secrets.** Your `[[guard.secret]]` rules apply to everything leaving the machine —
+   **both** scopes, because a chat app is off-machine either way. What your phone gets is
+   a placeholder, and a command you send back carrying one runs here with the real value
+   in it: your phone can use a key it has never seen.
 6. **Visibility.** Every remote command, blocked attempt, and reply is echoed in the
    pane.
 7. **A restart never replays.** On start the gate acknowledges the whole message

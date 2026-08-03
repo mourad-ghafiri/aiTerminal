@@ -1,0 +1,16 @@
+name = "a denied command is refused, and says which rule refused it"
+tags = ["guard", "commands"]
+
+# The command below is only ever a STRING here. The world has no shell and no process:
+# `judge` is pure policy over text.
+
+[[setup.guard.command]]
+pattern = "wipe-the-lot"
+rule = "deny"
+
+[[step]]
+run = "wipe-the-lot --everything"
+[[step]]
+expect_verdict = "deny"
+[[step]]
+expect_reason = ["wipe-the-lot"]

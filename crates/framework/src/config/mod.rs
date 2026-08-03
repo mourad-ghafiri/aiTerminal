@@ -24,17 +24,6 @@ mod settings;
 /// round-trips to [`Config::default`] (guarded by `builtin_config_parses_back_to_defaults`).
 pub const DEFAULT_CONFIG: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtin/config.toml"));
 
-/// A redaction rule (raw config form; the app compiles it into a `guard` policy).
-#[derive(Clone, Debug, PartialEq)]
-pub struct Redaction {
-    pub pattern: String,
-    pub replacement: String,
-    /// "terminal" | "ai" | "all" (default "all").
-    pub scope: String,
-    /// `true` → exact-substring; `false` (default) → regex.
-    pub literal: bool,
-}
-
 /// The share a `[[ai.model]]` gets when it declares no `weight` — a full 100, so a
 /// single model needs no weight at all and a hand-written pool reads as percentages.
 pub const DEFAULT_WEIGHT: u32 = 100;
@@ -224,7 +213,7 @@ pub struct Config {
     /// this, not the chat id, is what actually authenticates a remote user.
     pub gates_require_pairing: bool,
     /// What a plain (non-slash) chat message means: `"run"` (default — execute it,
-    /// subject to the `[security]` command guard) or `"ignore"` (require `/run`).
+    /// subject to the guard) or `"ignore"` (require `/run`).
     pub gates_plain_text: String,
     /// How `/shot` is delivered: `"document"` (default — the PNG byte-for-byte) or
     /// `"photo"` (the chat app recompresses it, which smudges small glyphs).
@@ -247,19 +236,11 @@ pub struct Config {
     /// Days of daily log files to keep under `logs/`; older are pruned. `0` = keep all.
     pub log_retention_days: usize,
 
-    // ---- security ----
-    /// Command allow-list (regex). Empty = all allowed.
-    pub allowed_commands: Vec<String>,
-    /// Command deny-list (regex). Empty = none denied. Deny wins.
-    pub denied_commands: Vec<String>,
-    /// Confirm-before-run list (regex). Matched commands prompt the user.
-    pub confirm_commands: Vec<String>,
-    /// Auto-pilot safe-list (regex): the ONLY commands the AI agent auto-runs in Auto mode
-    /// (everything else prompts). Defaults ship as the `command-guard` plugin's `safe_command`
-    /// rules; user config can add more.
-    pub auto_safe_commands: Vec<String>,
-    /// Redaction rules (replace string/regex matches with a placeholder).
-    pub redactions: Vec<Redaction>,
+    // ---- the guard (`[[guard.command]]` / `[[guard.path]]` / `[[guard.secret]]`) ----
+    /// What this config says about what may run, what may be touched, and what may leave.
+    /// Raw rules, in the one vocabulary every surface writes them in; `guard::build`
+    /// compiles them together with every enabled plugin's.
+    pub guard: crate::guard::RuleSet,
 
     /// Custom keybindings: (chord, action-name). Override the defaults.
     pub keybindings: Vec<(String, String)>,
@@ -327,11 +308,7 @@ impl Default for Config {
             gates: Vec::new(),
             log_level: "error".into(),
             log_retention_days: 7,
-            allowed_commands: Vec::new(),
-            denied_commands: Vec::new(),
-            confirm_commands: Vec::new(),
-            auto_safe_commands: Vec::new(),
-            redactions: Vec::new(),
+            guard: crate::guard::RuleSet::default(),
             keybindings: Vec::new(),
         }
     }

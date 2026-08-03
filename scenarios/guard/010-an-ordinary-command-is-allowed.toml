@@ -1,0 +1,10 @@
+name = "an ordinary command is allowed with no rules in the way"
+tags = ["guard", "commands"]
+
+# The guard's default is zero friction: an empty policy refuses nothing, so the
+# terminal you install is the terminal you already know.
+
+[[step]]
+run = "git status"
+[[step]]
+expect_verdict = "allow"

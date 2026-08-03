@@ -20,12 +20,12 @@ pub(crate) mod web;
 
 /// The family entry points the registry in `caps::mod` dispatches to.
 pub(super) use crate::caps::backends::{
-    files::fs, misc::{clock, os, sec, store}, ssrf::net, sysrun::sys, web::web,
+    files::fs, misc::{clock, guard, os, store}, ssrf::net, sysrun::sys, web::web,
 };
 
 /// Path handling and guards, shared with `caps::files` and `caps::git`.
 pub(super) use crate::caps::backends::nav::{expand_tilde, first_heading};
-pub(super) use crate::caps::backends::paths::{fs_path, is_secret_path};
+pub(super) use crate::caps::backends::paths::fs_path;
 
 /// The SSRF rules `caps::git` and `caps::http` apply to their own fetches.
 pub(super) use crate::caps::backends::ssrf::{ssrf_pin, ssrf_resolve, url_host_port};

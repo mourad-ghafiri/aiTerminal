@@ -2,7 +2,7 @@
 //!
 //! The overlay is the part that bites people: a profile layers on top of the global
 //! file, and *how* it layers differs per section. Scalars override in place, the model
-//! pool is replaced wholesale, and keybindings and redaction rules append. A scenario
+//! pool is replaced wholesale, and keybindings and guard rules append. A scenario
 //! states which, so the rule cannot drift.
 //!
 //! Entirely in memory: `Config::from_toml` + `apply_toml` never touch disk.
@@ -103,11 +103,12 @@ impl ConfigWorld {
             "shell_integration" => c.shell_integration.to_string(),
             "log_level" => c.log_level.clone(),
             "log_retention_days" => c.log_retention_days.to_string(),
-            "denied_commands" => c.denied_commands.join(","),
-            "confirm_commands" => c.confirm_commands.join(","),
-            "allowed_commands" => c.allowed_commands.join(","),
-            "redactions" => c.redactions.iter().map(|r| r.pattern.clone()).collect::<Vec<_>>().join(","),
-            "redaction_scopes" => c.redactions.iter().map(|r| r.scope.clone()).collect::<Vec<_>>().join(","),
+            "guard_commands" => c.guard.commands.iter().map(|r| r.pattern.clone()).collect::<Vec<_>>().join(","),
+            "guard_command_rules" => c.guard.commands.iter().map(|r| format!("{:?}", r.rule).to_lowercase()).collect::<Vec<_>>().join(","),
+            "guard_paths" => c.guard.paths.iter().map(|r| r.pattern.clone()).collect::<Vec<_>>().join(","),
+            "guard_path_rules" => c.guard.paths.iter().map(|r| format!("{:?}", r.rule).to_lowercase()).collect::<Vec<_>>().join(","),
+            "guard_secrets" => c.guard.secrets.iter().map(|r| r.pattern.clone()).collect::<Vec<_>>().join(","),
+            "guard_secret_scopes" => c.guard.secrets.iter().map(|r| format!("{:?}", r.scope).to_lowercase()).collect::<Vec<_>>().join(","),
             "keybindings" => c.keybindings.iter().map(|(k, a)| format!("{k}={a}")).collect::<Vec<_>>().join(","),
             "gates_enabled" => c.gates_enabled.to_string(),
             "gates_attach" => c.gates_attach.to_string(),

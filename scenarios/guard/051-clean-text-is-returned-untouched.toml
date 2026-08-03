@@ -1,0 +1,19 @@
+name = "clean text is returned untouched, and costs nothing"
+tags = ["guard", "secrets"]
+
+# This runs on every PTY chunk and every string bound for a model, almost always over
+# text with nothing in it. Ordinary punctuation is not mistaken for a placeholder either.
+
+[[setup.guard.secret]]
+pattern = "AKIA[0-9A-Z]+"
+name = "aws-key"
+
+[[step]]
+hide = "cargo build --release"
+[[step]]
+expect_text = "cargo build --release"
+
+[[step]]
+restore = "il a dit «bonjour»"
+[[step]]
+expect_text = "il a dit «bonjour»"

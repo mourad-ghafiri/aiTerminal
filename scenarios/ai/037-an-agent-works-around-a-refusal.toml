@@ -1,0 +1,32 @@
+name = "an agent refused once works around it and still finishes"
+tags = ["ai", "guard", "degradation"]
+
+# The behaviour that matters most about a refusal: it is information, not a crash. The
+# guard declines one thing, the agent is told why, and the run carries on and answers.
+# Nothing here executes: `wipe-the-lot` is a string the guard rejects.
+
+[setup]
+deny = ["wipe-the-lot"]
+max_steps = 6
+
+[[step]]
+tool = "sys.run"
+[[step]]
+tool_refused = ["sys.run=wipe-the-lot --everything"]
+
+[[step]]
+tool = "fs.list"
+[[step]]
+tool_returns = ["fs.list=build/ dist/ target/"]
+
+[[step]]
+model_says_in_turn = ["@tool sys.run {\"cmd\":\"wipe-the-lot --everything\"}", "@tool fs.list {\"path\":\".\"}", "The build output lives in build/, dist/ and target/. I could not clear them — the guard refuses that command — so here is what to remove by hand."]
+
+[[step]]
+agent = "clean up the build output"
+
+[[step]]
+expect_outcome = "completed"
+
+[[step]]
+expect_answer_contains = ["build/", "the guard refuses"]

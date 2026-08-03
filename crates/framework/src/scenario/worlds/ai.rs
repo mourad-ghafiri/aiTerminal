@@ -19,7 +19,7 @@ use super::super::world::{self, World};
 use crate::ai::{
     self, AgentSpec, Client, CommandReply, ReplySink, RunOutcome, ToolRunner, ToolSpec,
 };
-use crate::security::Policy;
+use crate::guard::Guard;
 
 pub struct AiWorld {
     /// How the scripted model speaks the wire — the fixtures are built in this dialect.
@@ -36,7 +36,7 @@ pub struct AiWorld {
     /// Scripted tool outcomes: `Ok` is what the tool returned, `Err` is how it failed.
     tool_results: HashMap<String, Result<String, String>>,
     /// The guard `@ai --command` runs a suggested command past.
-    policy: Policy,
+    guard: Guard,
     /// How the shell is configured to treat an allowed command — `auto` or `manual`.
     command_mode: String,
     /// What the last action produced.
@@ -79,19 +79,31 @@ enum Dialect {
     OpenAi,
 }
 
+/// The scenario's own command rules, written in the guard's vocabulary — one parser, so a
+/// journey and a config file cannot disagree about what a rule means.
+fn scenario_guard(setup: &Toml) -> Result<Guard, String> {
+    let deny = world::list(setup, "deny").unwrap_or_default();
+    let confirm = world::list(setup, "confirm").unwrap_or_default();
+    let mut doc = String::new();
+    for (pattern, rule) in deny.iter().map(|d| (d, "deny")).chain(confirm.iter().map(|c| (c, "confirm"))) {
+        doc.push_str(&format!("[[guard.command]]\npattern = \"{pattern}\"\nrule = \"{rule}\"\n"));
+    }
+    let parsed = corelib::wire::Toml::parse(&doc).map_err(|e| format!("guard rules: {e}"))?;
+    let empty = corelib::wire::Toml::Table(Vec::new());
+    let (guard, skipped) = Guard::compile(&[&crate::guard::RuleSet::parse(parsed.get("guard").unwrap_or(&empty))], crate::guard::Base::here());
+    match skipped.is_empty() {
+        true => Ok(guard),
+        false => Err(format!("these rules do not compile: {}", skipped.join(" \u{b7} "))),
+    }
+}
+
 pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
     let dialect = match world::text(setup, "dialect").unwrap_or_else(|| "anthropic".into()).as_str() {
         "anthropic" => Dialect::Anthropic,
         "openai" => Dialect::OpenAi,
         other => return Err(format!("unknown provider dialect {other:?}")),
     };
-    let mut policy = Policy::new();
-    for pat in world::list(setup, "deny").unwrap_or_default() {
-        policy.add_deny(&pat).map_err(|e| format!("deny pattern {pat:?}: {e}"))?;
-    }
-    for pat in world::list(setup, "confirm").unwrap_or_default() {
-        policy.add_confirm(&pat).map_err(|e| format!("confirm pattern {pat:?}: {e}"))?;
-    }
+    let guard = scenario_guard(setup)?;
     Ok(Box::new(AiWorld {
         dialect,
         turns: Vec::new(),
@@ -99,9 +111,9 @@ pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
         max_steps: world::int(setup, "max_steps").unwrap_or(6).clamp(1, 50) as u32,
         // Big enough that an ordinary scenario never compacts by accident.
         context_window: world::int(setup, "context_window").unwrap_or(200_000).max(0) as usize,
-        scratch: std::env::temp_dir().join(format!("aiterm-scenario-{}-{:p}", std::process::id(), &policy)),
+        scratch: std::env::temp_dir().join(format!("aiterm-scenario-{}-{:p}", std::process::id(), &guard)),
         tool_results: HashMap::new(),
-        policy,
+        guard,
         command_mode: world::text(setup, "command_mode").unwrap_or_else(|| "manual".into()),
         last: Outcome::default(),
     }))
@@ -141,6 +153,21 @@ impl World for AiWorld {
         }
         if let Some(pairs) = world::list(step, "tool_fails") {
             return self.script_tools(&pairs, Err);
+        }
+        // A tool the GUARD refuses. `sys.run=<command>` means "this is what the model
+        // asked for" — and the refusal is produced by the real guard, from the setup's own
+        // rules, so a scenario cannot invent a refusal the loop would not recognise as one.
+        if let Some(pairs) = world::list(step, "tool_refused") {
+            for p in &pairs {
+                let (name, cmd) = p.split_once('=').ok_or_else(|| format!("tool entry {p:?} needs name=command"))?;
+                let refusal = self
+                    .guard
+                    .permit(crate::guard::Act::Run(cmd.trim()))
+                    .err()
+                    .ok_or_else(|| format!("the guard allows {cmd:?} — add the rule that refuses it to [setup]"))?;
+                self.tool_results.insert(name.trim().to_string(), Err(refusal));
+            }
+            return Ok(());
         }
         // A tool that really does return a lot. Written as one line and a repeat count
         // so the fixture stays readable — a scenario about a 40 000-character build log
@@ -347,7 +374,7 @@ impl AiWorld {
             }
             CommandReply::Command(cmd) => {
                 out.command = Some(cmd.clone());
-                let verdict = self.policy.check_command(cmd);
+                let verdict = self.guard.judge(crate::guard::Act::Run(&cmd));
                 crate::cli::command_marker(Some(cmd), Some(verdict), &self.command_mode, cmd)
             }
             CommandReply::Answer => crate::cli::ANSWER_MARK.to_string(),
@@ -364,6 +391,10 @@ impl AiWorld {
             max_steps: self.max_steps,
             context_window: self.context_window as u32,
             compact_at: ai::DEFAULT_COMPACT_AT,
+            // What the model is told about this scenario's own rules — the same briefing
+            // the product splices in, so a journey about an agent working around a
+            // refusal drives the prompt the product actually sends.
+            guard_brief: self.guard.briefing(),
             scratch: self.scratch.clone(),
         };
         let mut runner = ScriptedRunner { results: self.tool_results.clone(), calls: Vec::new() };
@@ -450,11 +481,16 @@ struct ScriptedRunner {
 }
 
 impl ToolRunner for ScriptedRunner {
-    fn run(&mut self, name: &str, args: &str) -> Result<String, String> {
+    fn run(&mut self, name: &str, args: &str) -> crate::ai::ToolOutcome {
         self.calls.push(format!("{name} {}", args.trim()).trim_end().to_string());
         match self.results.get(name) {
-            Some(r) => r.clone(),
-            None => Err(format!("no result scripted for the tool {name:?}")),
+            Some(Ok(out)) => crate::ai::ToolOutcome::Done(out.clone()),
+            // Sorted by the guard's own recogniser, exactly as the CLI runner sorts it —
+            // so a scenario about an agent working around a refusal drives the real rule
+            // rather than a scenario-only notion of what a refusal is.
+            Some(Err(e)) if crate::guard::is_refusal(e) => crate::ai::ToolOutcome::Refused(e.clone()),
+            Some(Err(e)) => crate::ai::ToolOutcome::Failed(e.clone()),
+            None => crate::ai::ToolOutcome::Failed(format!("no result scripted for the tool {name:?}")),
         }
     }
 }
@@ -514,6 +550,7 @@ fn outcome_name(outcome: Option<&RunOutcome>) -> String {
         Some(RunOutcome::Cancelled) => "cancelled".into(),
         Some(RunOutcome::StepLimit) => "step_limit".into(),
         Some(RunOutcome::ToolStall) => "tool_stall".into(),
+        Some(RunOutcome::Refused(_)) => "refused".into(),
         None => "none".into(),
     }
 }

@@ -99,11 +99,11 @@ pub(crate) fn run_prompt_as_agent(agent: &str, prompt: &str, mut log: Option<std
     if settings.resolve_key().is_none() {
         return job_setup_error(&mut log, &crate::ai::setup_hint(&settings));
     }
-    if build_agent_spec(agent, context_settings(&cfg)).is_none() {
+    let registry = crate::plugin::load_registry(&cfg);
+    let guard = std::sync::Arc::new(crate::guard::build(&cfg, &registry));
+    if build_agent_spec(agent, context_settings(&cfg), &guard).is_none() {
         return job_setup_error(&mut log, &format!("no agent '{agent}' \u{2014} {}", available_agents_hint()));
     }
-    let registry = crate::plugin::load_registry(&cfg);
-    let policy = std::sync::Arc::new(crate::security::build_policy(&cfg, &registry));
     // A job gets the same grounding as any AI run: global instructions + this folder's
     // session digest + folder-first memory recall + attachments (all redacted). Its
     // `memory.*` writes are folder-scoped via `build_runner`.
@@ -115,8 +115,8 @@ pub(crate) fn run_prompt_as_agent(agent: &str, prompt: &str, mut log: Option<std
         session_preamble(session.as_ref()),
         memory_preamble(&cfg, &prompt, folder_mem.as_deref()),
     );
-    let ctx = policy.redact(&ctx, crate::security::RedactScope::Ai);
-    let code = run_agent_streaming(&cfg, settings, agent, &prompt, &ctx, std::env::current_dir().ok(), policy, media, log);
+    let ctx = guard.hide(&ctx);
+    let code = run_agent_streaming(&cfg, settings, agent, &prompt, &ctx, std::env::current_dir().ok(), guard, media, log);
     record_session_run(session.as_ref(), "@job", &prompt, &outcome_label(code));
     code
 }

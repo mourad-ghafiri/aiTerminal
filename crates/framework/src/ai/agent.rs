@@ -38,6 +38,11 @@ pub struct AgentSpec {
     pub context_window: u32,
     /// `[ai] compact_at` — the fraction of the usable window that triggers compaction.
     pub compact_at: f32,
+    /// What this machine's guard refuses, and what a secret placeholder is
+    /// (`guard::Guard::briefing`). System material: the model is being told the rules it
+    /// works under, and a model that has to discover them by being refused spends its
+    /// budget doing so. Empty when there is nothing to say.
+    pub guard_brief: String,
     /// Where offloaded tool results are written. Each run gets its own directory so
     /// two concurrent flow nodes cannot overwrite each other's output.
     pub scratch: PathBuf,
@@ -51,15 +56,43 @@ impl Default for AgentSpec {
             max_steps: 6,
             context_window: 0,
             compact_at: DEFAULT_COMPACT_AT,
+            guard_brief: String::new(),
             scratch: std::env::temp_dir(),
         }
     }
 }
 
-/// Executes a tool call. The host gates each call (consent + the command guard);
-/// the result is tainted text fed back to the model.
+/// How a tool call came back.
+///
+/// A **refusal is not a failure**. The machine declined, deliberately, and the run may well
+/// finish without whatever it declined — so the loop counts refusals instead of treating
+/// one as an error. Three in a row with nothing achieved between them is the honest
+/// signal that this run cannot do what it was asked, and that is where it stops.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ToolOutcome {
+    Done(String),
+    /// The tool broke, or was called wrongly. The model gets the message and tries again.
+    Failed(String),
+    /// The guard said no.
+    Refused(String),
+}
+
+impl ToolOutcome {
+    /// What the model reads back. A refusal and a failure both belong in the transcript —
+    /// a model that cannot see why its last call produced nothing will simply repeat it.
+    pub fn text(self) -> String {
+        match self {
+            ToolOutcome::Done(s) => s,
+            ToolOutcome::Failed(e) => format!("error: {e}"),
+            ToolOutcome::Refused(r) => r,
+        }
+    }
+}
+
+/// Executes a tool call. The host gates each call (consent + the guard); the result is
+/// tainted text fed back to the model.
 pub trait ToolRunner {
-    fn run(&mut self, name: &str, args: &str) -> Result<String, String>;
+    fn run(&mut self, name: &str, args: &str) -> ToolOutcome;
 }
 
 /// One executed tool step (for display + telemetry).
@@ -85,6 +118,15 @@ pub enum RunOutcome {
     StepLimit,
     /// The stuck-loop breaker fired (identical tool calls, no progress).
     ToolStall,
+    /// The guard refused what the run needed, repeatedly, and it got nowhere in between.
+    /// Distinct from [`Error`](RunOutcome::Error) because nothing is broken and distinct
+    /// from [`StepLimit`](RunOutcome::StepLimit) because trying again changes nothing —
+    /// the answer is to change the rules or the task.
+    ///
+    /// Named for what the guard did, not for what happened to the run: a flow board
+    /// already says `blocked` about a node an upstream failure stopped, and those are two
+    /// different facts.
+    Refused(String),
 }
 
 /// The outcome of an agent run.
@@ -340,6 +382,13 @@ pub fn run_agent<T: Transport>(
         system.push_str("\n\n");
     }
     system.push_str(&tool_instructions(&agent.tools));
+    // The guard's rules are system material too, and they go LAST: they are the constraints
+    // on everything above, and a model reading its instructions should meet them knowing
+    // what it may not do rather than finding out three refusals in.
+    if !agent.guard_brief.trim().is_empty() {
+        system.push_str("\n\n");
+        system.push_str(agent.guard_brief.trim());
+    }
 
     let task = match context.trim().is_empty() {
         true => user_prompt.to_string(),
@@ -356,6 +405,12 @@ pub fn run_agent<T: Transport>(
     // `looks_like_tool_attempt`. Corrections still consume the `max_steps` budget.
     let mut corrections = 0u32;
     const MAX_CORRECTIONS: u32 = 2;
+    // Consecutive guard refusals, cleared by any call that actually did something. A run
+    // that is refused, adapts, and gets on with it never trips this; a run that is refused
+    // three times having achieved nothing in between is not going to finish the task, and
+    // saying so now is better than saying "step budget exhausted" six turns later.
+    let mut refusals: Vec<String> = Vec::new();
+    const MAX_REFUSALS: usize = 3;
     let max = agent.max_steps.max(1);
     // Everything this agent may call, by name. The parser needs it to recognise a call
     // that arrives with no marker at all (`sys.run {"cmd":"ls"}`), which is what a model
@@ -454,20 +509,27 @@ pub fn run_agent<T: Transport>(
                     // and rewrites the transcript, which is loop state — routing it through
                     // `caps` (whose families are all pure over disk) would mean a globally
                     // mutable transcript for no gain.
-                    let result = if let Some(ctx_tool) = CtxTool::parse(&name) {
+                    let outcome = if let Some(ctx_tool) = CtxTool::parse(&name) {
                         let mut summarizer = ClientSummarizer { client, model: &turn_model, input_tokens: 0, output_tokens: 0 };
                         let out = ctx_tool.run(&args, &mut transcript, &est, &budget, agent, &ladder, &mut summarizer, observer);
                         usage.input += summarizer.input_tokens;
                         usage.output += summarizer.output_tokens;
-                        out
+                        ToolOutcome::Done(out)
                     } else if agent.tools.iter().any(|t| t.name == name) {
                         // Only allow declared tools; anything else is reported back inert.
-                        runner.run(&name, &args).unwrap_or_else(|e| format!("error: {e}"))
+                        runner.run(&name, &args)
                     } else {
                         // Inert, and only for THIS call: one bad name in a batch must not
                         // discard the work the other calls in it would have done.
-                        format!("error: tool '{name}' is not available to this agent")
+                        ToolOutcome::Failed(format!("tool '{name}' is not available to this agent"))
                     };
+                    match &outcome {
+                        ToolOutcome::Refused(why) => refusals.push(why.clone()),
+                        // Anything that ran — or even failed on its own terms — is progress
+                        // away from whatever the guard was refusing.
+                        _ => refusals.clear(),
+                    }
+                    let result = outcome.text();
                     // Bound it BEFORE storing or forwarding: what the model sees is what the
                     // step record keeps, and what a later turn re-sends. A big result goes to
                     // a file the moment it arrives — carrying it inline would cost its tokens
@@ -494,6 +556,14 @@ pub fn run_agent<T: Transport>(
                             let answer = wind_down(client, &candidates, &mut transcript, &turn_model, &why, &mut usage, observer);
                             return finish(answer, steps, usage, RunOutcome::ToolStall, model_used);
                         }
+                    }
+                    // Refused, refused, refused, and nothing achieved in between. Stop —
+                    // and say what was needed, because that is the only useful thing left:
+                    // whoever reads this has to change a rule or change the task.
+                    if refusals.len() >= MAX_REFUSALS {
+                        let why = format!("this run needs things the guard refuses: {}", refusals.join("; "));
+                        let answer = wind_down(client, &candidates, &mut transcript, &turn_model, &why, &mut usage, observer);
+                        return finish(answer, steps, usage, RunOutcome::Refused(why), model_used);
                     }
                 }
             }

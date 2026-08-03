@@ -432,7 +432,7 @@ notAfter=Oct 12 08:21:44 2026 GMT</pre>
 
       <div class="uc">
         <h3><span class="em">🧯</span>Your own guard rules</h3>
-        <p>The three tiers are config: add a <code>[security] confirm_commands</code> pattern and it binds you <em>and</em> every agent.</p>
+        <p>The three tiers are config: add a <code>[[guard.command]]</code> table with <code>rule = "confirm"</code> and it binds you <em>and</em> every agent.</p>
         <pre><span class="d"># config.toml: confirm_commands = ["reset --hard"]</span>
 <span class="p">❯</span> <span class="ab">@ai</span><span class="c"> roll back to the previous release tag</span>
 <span class="w">⚠ review before running — matches a confirm rule  /reset --hard/</span>
@@ -505,7 +505,7 @@ load 2.1 1.8 1.6 · battery 84% (charging)</pre>
 
       <div class="uc">
         <h3><span class="em">🛡</span>The guard still applies remotely</h3>
-        <p>A remote command meets the same <code>[security]</code> rules as an AI suggestion — denied outright, or held until you reply <code>/yes</code>.</p>
+        <p>A remote command meets the same guard as an AI suggestion — denied outright, or held until you reply <code>/yes</code>.</p>
         <pre><span class="d">You ▸</span> rm -rf /
 <span class="d">Bot ◂</span> <span class="e">✗ blocked by guard</span> — matches a denied pattern.
 <span class="d">You ▸</span> git push --force
@@ -515,7 +515,7 @@ load 2.1 1.8 1.6 · battery 84% (charging)</pre>
 
       <div class="uc">
         <h3><span class="em">🙈</span>Secrets never reach the chat</h3>
-        <p>Your <code>[[redact]]</code> rules apply to everything leaving the machine — <em>both</em> scopes, because a chat app is off-machine either way. Your screen still shows the real thing.</p>
+        <p>Your <code>[[guard.secret]]</code> rules apply to everything leaving the machine — <em>both</em> scopes, because a chat app is off-machine either way. Your screen still shows the real thing, and a command you send back carrying a placeholder runs here with the real value in it.</p>
         <pre><span class="d">You ▸</span> cat .env
 <span class="d">Bot ◂</span> AWS_ACCESS_KEY_ID=<span class="g">«redacted»</span>
        ANTHROPIC_<span class="g">«redacted»</span>

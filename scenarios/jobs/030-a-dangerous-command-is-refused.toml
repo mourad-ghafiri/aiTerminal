@@ -18,4 +18,4 @@ job = ["ship the latest build every hour"]
 expect_kind = "shell"
 
 [[step]]
-expect_guard = "blocked by the command guard"
+expect_guard = "the guard refused"

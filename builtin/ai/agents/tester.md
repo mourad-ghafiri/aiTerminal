@@ -1,5 +1,5 @@
 ---
-tools = ["fs.read", "fs.list", "fs.stat", "fs.glob", "fs.search", "fs.write", "fs.edit", "sys.run", "sec.check_command", "todo.set", "todo.add", "todo.done", "todo.list"]
+tools = ["fs.read", "fs.list", "fs.stat", "fs.glob", "fs.search", "fs.write", "fs.edit", "sys.run", "guard.check", "todo.set", "todo.add", "todo.done", "todo.list"]
 description = "Writes and runs tests; reproduces a failure, then fixes it."
 skills = ["concise", "verification", "testing", "debugging"]
 max_steps = 18

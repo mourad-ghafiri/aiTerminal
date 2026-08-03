@@ -21,7 +21,7 @@
 //!
 //! **This is remote code execution over a chat app.** It is off until `[gates] enabled`
 //! is set, nothing is accepted until a chat sends the code printed in the pane, and
-//! every command passes the same `[security]` guard as an AI suggestion. See
+//! every command passes the same guard as an AI suggestion. See
 //! `docs/gate.md`, which also states plainly what that guard cannot do.
 
 pub mod attach;
@@ -318,13 +318,13 @@ fn relay(
     let registry = crate::plugin::load_registry(cfg);
     let session = GateSession::spawn(cfg, &registry, cols, rows)?;
 
-    let policy = Arc::new(crate::security::build_policy(cfg, &registry));
+    let guard = Arc::new(crate::guard::build(cfg, &registry));
     let pre_authorized = !spec.allow.is_empty();
     let auth = Auth::new(cfg.gates_require_pairing, spec.allow.clone(), clock.now_ms(), auth::new_code());
     let code = auth.display_code();
     let mut gate = Gate::new(
         auth,
-        policy,
+        guard,
         Settings {
             plain_runs: cfg.gates_plain_text == "run",
             max_reply_messages: cfg.gates_max_reply_messages,

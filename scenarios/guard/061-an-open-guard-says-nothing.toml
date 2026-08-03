@@ -1,0 +1,13 @@
+name = "a guard with nothing to say says nothing"
+tags = ["guard", "briefing"]
+
+# Every sentence in a system prompt costs tokens on every turn of every run. A policy
+# that refuses nothing must not describe itself.
+
+[[step]]
+run = "wipe-the-lot --everything"
+[[step]]
+expect_verdict = "allow"
+
+[[step]]
+expect_briefing = [""]

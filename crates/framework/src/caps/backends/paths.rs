@@ -78,11 +78,28 @@ pub(crate) fn file_category(is_dir: bool, ext: &str) -> &'static str {
     }
 }
 
+/// May this path be read, listed or stat-ed? One question, asked of the guard, so a rule
+/// written once in `config.toml` reaches every `fs.*` method.
+pub(crate) fn allow_read(p: &std::path::Path, ctx: &CapCtx) -> Result<(), String> {
+    ctx.guard.permit(crate::guard::Act::Read(p))
+}
+
+/// May this path be created, modified, moved or deleted?
+///
+/// Two different questions, in this order. **Containment** first — a write must land
+/// inside the workspace the run was started in, which is a property of this run and not of
+/// any policy. Then the **guard**, which is the policy: an off-limits or read-only path is
+/// refused even when it sits right inside the workspace.
+pub(crate) fn allow_write(p: &std::path::Path, ctx: &CapCtx) -> Result<(), String> {
+    contained(p, ctx)?;
+    ctx.guard.permit(crate::guard::Act::Write(p))
+}
+
 /// Confine a WRITE target to the active workspace: require a workspace, reject `..`
 /// segments, and require the path to live under the root (canonicalizing the nearest
 /// existing ancestor so a symlink can't escape). Read-only `fs` browsing never calls
 /// this — only writes/mkdir/edit/delete do, so the file browser stays unrestricted.
-pub(crate) fn fs_write_guard(target: &std::path::Path, ctx: &CapCtx) -> Result<(), String> {
+fn contained(target: &std::path::Path, ctx: &CapCtx) -> Result<(), String> {
     let root = ctx.sandbox.as_ref().ok_or("fs: no workspace set — writes are disabled")?;
     if target.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return Err("fs: '..' is not allowed in a write path".into());
@@ -148,37 +165,3 @@ pub(crate) fn ws_rel(p: &std::path::Path, ctx: &CapCtx) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned())
 }
 
-/// Whether a path is a well-known SECRET (SSH/GPG/cloud creds, private-key files, the
-/// terminal's own config which holds the API key). Such paths are NOT readable through the
-/// `fs` browser/agent surface — so prompt-injection can't steer an agent to read a private
-/// key and leak it to the model (defense beyond best-effort redaction). The user can still
-/// `cat` it in the terminal; this only blocks the programmatic `fs.*` read surface.
-pub(crate) fn is_secret_path(p: &std::path::Path) -> bool {
-    let home = platform::os::home_dir().map(|p| p.display().to_string()).unwrap_or_default();
-    let s = p.to_string_lossy();
-    let under = |dir: &str| !home.is_empty() && (s == format!("{home}/{dir}") || s.starts_with(&format!("{home}/{dir}/")));
-    if under(".ssh") || under(".aws") || under(".gnupg") || under(".config/gh") {
-        return true;
-    }
-    if !home.is_empty() && s == format!("{home}/.aiTerminal/config.toml") {
-        return true;
-    }
-    // Live `@gate` records: a paired chat id and the gateway's own state. An agent
-    // reading these learns who can drive the terminal remotely.
-    if under(".aiTerminal/gates") {
-        return true;
-    }
-    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-    matches!(name, "id_rsa" | "id_dsa" | "id_ecdsa" | "id_ed25519" | ".netrc")
-        || matches!(ext.to_ascii_lowercase().as_str(), "pem" | "key" | "p12" | "pfx")
-}
-
-/// Deny `fs` reads/listings/stats of secret paths.
-pub(crate) fn fs_read_guard(p: &std::path::Path) -> Result<(), String> {
-    if is_secret_path(p) {
-        Err("fs: reading a sensitive path (keys/credentials) is blocked".into())
-    } else {
-        Ok(())
-    }
-}

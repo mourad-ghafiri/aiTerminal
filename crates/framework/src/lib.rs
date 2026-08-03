@@ -2,7 +2,7 @@
 //! AI-first terminal: the window runtime, the plugin/theme/keymap constructs, and
 //! the AI runtime the `@ai` / `@<agent>` shell integration drives.
 //!
-//! - `security` — the command guard + redactor over the in-house regex engine.
+//! - `guard`    — the AI guard (commands, paths, secrets) over the in-house regex engine.
 //! - `caps`     — the native-object standard library (the AI agents' tools).
 //! - `plugin`   — the declarative plugin construct: manifests, registry, store.
 //! - `config` / `theme` / `keymap` — configuration, theme resolution, keymaps.
@@ -26,6 +26,7 @@ pub mod config;
 pub(crate) mod flow;
 pub(crate) mod flowruns;
 pub mod gate;
+pub mod guard;
 pub mod gui;
 pub mod i18n;
 pub mod jobs;
@@ -40,7 +41,6 @@ pub mod profile;
 pub mod render;
 #[cfg(test)]
 mod scenario;
-pub mod security;
 pub mod shell;
 pub mod theme;
 

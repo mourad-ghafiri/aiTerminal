@@ -61,16 +61,17 @@ AI works for you.
 | `[shell]` | `integration` (master switch for injected aliases/snippets/colors) |
 | `[registry]` | `dir` — where the bundled `builtin/` lives (empty = auto-resolve) |
 | `[logging]` | `level` (off/error/warn/info/debug/trace), `retention_days` |
-| `[security]` | `allowed_commands`, `denied_commands`, `confirm_commands`, `auto_safe_commands` (regex lists) |
 | `[[keybinding]]` | `key = "cmd+shift+x"`, `action = "split_down"` (see keybindings.md) |
-| `[[redact]]` | `pattern`, `replacement`, `scope` (terminal/ai/all), `literal` |
+| `[[guard.command]]` | `pattern`, `rule` (`deny` \| `confirm` \| `allow` \| `auto`) — what may run |
+| `[[guard.path]]` | `pattern`, `rule` (`deny` \| `read-only` \| `allow`) — what may be read or changed |
+| `[[guard.secret]]` | `pattern`, `name` (names its placeholder), `scope` (ai/terminal/all), `literal` — what may leave |
 
 The seeded `config.toml` documents every key inline — it is the reference.
 
 ### ⚠️ Table order matters
 
 TOML assigns every bare `key = value` to the table header **above** it. Array-of-table
-blocks — `[[ai.model]]`, `[[keybinding]]`, `[[redact]]` — open a new table, so any
+blocks — `[[ai.model]]`, `[[keybinding]]`, `[[guard.command]]` — open a new table, so any
 plain section key written after one joins *that* block instead of the section:
 
 ```toml

@@ -314,24 +314,17 @@ document.addEventListener("DOMContentLoaded", () => {
         { do: "out", spans: [ACC("❯ "), ACC2("du -sh . && git ls-files | wc -l"), S("t-cursor", "")] },
       ],
     },
-    "command-guard": {
-      text: "The default command-safety rules — catastrophic commands denied, risky ones confirmed.",
+    "ai-guard": {
+      text: "The whole default policy — what may run, what may be touched, and what may leave.",
       demo: (w) => [
         { do: "cmd", text: "@ai wipe the whole disk" },
         { do: "spin", label: "thinking…", ms: 700 },
-        { do: "out", spans: [ERR("# blocked by guard: matches a deny rule  /rm -rf \\//")] },
-        { do: "cmd", text: "@ai force push my branch" },
-        { do: "spin", label: "thinking…", ms: 700 },
-        { do: "out", spans: [WARN("⚠ "), DIM("review before running — /git push --force/")] },
-      ],
-    },
-    "redactor": {
-      text: "Secret redaction before AI egress — AWS/OpenAI/GitHub keys, JWTs, PEM blocks.",
-      demo: (w) => [
-        { do: "cmd", text: "export AWS_KEY=AKIA…" },
-        { do: "cmd", text: "@ai why did the deploy fail?" },
-        { do: "out", spans: [DIM("  context sent: export AWS_KEY="), WARN("«redacted»")] },
-        { do: "out", spans: [DIM("  the model never sees your secrets")] },
+        { do: "out", spans: [ERR("# blocked by guard: matches a denied command  /mkfs/")] },
+        { do: "cmd", text: "cat .env" },
+        { do: "out", spans: [S("", "DB_PASSWORD=hunter2-not-a-real-one")] },
+        { do: "cmd", text: "@agent coder \"connect and count the users\"" },
+        { do: "out", spans: [DIM("  the model sees   "), WARN("«db-password-1»")] },
+        { do: "out", spans: [DIM("  your machine runs"), S("", " psql …:hunter2-not-a-real-one@…")] },
       ],
     },
   };
@@ -343,7 +336,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "git", "github", "docker", "kubernetes", "rust", "python", "node",
     "extract", "clipboard", "encode", "web-search", "weather", "world-clock",
     "notes", "sysinfo", "colored-man", "common",
-    "ai-terminal", "command-guard", "redactor",
+    "ai-terminal", "ai-guard",
   ];
 
   /* accordion: exactly one category open */

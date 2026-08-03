@@ -1,0 +1,22 @@
+name = "rules compose, so a key takes its own name with it"
+tags = ["guard", "secrets"]
+
+# Each rule runs over the previous one's output. A value caught by a shape rule can be
+# caught again by a `KEY=value` rule, which takes the key's NAME with it — which is
+# exactly the direction you want to be wrong in.
+
+[[setup.guard.secret]]
+pattern = "pw-[a-z0-9]+"
+name = "db-password"
+[[setup.guard.secret]]
+pattern = "(?i)password[:=]\\S+"
+name = "credential"
+
+[[step]]
+hide = "DB_PASSWORD=pw-example0"
+
+[[step]]
+expect_not_text = ["pw-example0"]
+
+[[step]]
+expect_text = "DB_«credential-1»"

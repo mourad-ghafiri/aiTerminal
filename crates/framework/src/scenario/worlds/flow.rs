@@ -19,7 +19,7 @@ use std::sync::Mutex;
 
 use super::super::world::{self, World};
 use crate::flow::{expr, tmpl, verify, Flow, Kind};
-use crate::security::Policy;
+use crate::guard::Guard;
 use platform::orchestrator::{self, Driver, Plan, Status};
 use platform::transport::ScriptedTransport;
 
@@ -28,7 +28,7 @@ pub struct FlowWorld {
     agents: Vec<String>,
     /// Which of those write files, for the concurrency warning.
     writers: Vec<String>,
-    policy: Policy,
+    guard: Guard,
     concurrency: usize,
     /// The graph under test.
     flow: Option<Flow>,
@@ -69,20 +69,32 @@ struct Outcome {
     attempts: Vec<(String, u32)>,
 }
 
+/// The scenario's own command rules, written in the guard's vocabulary — one parser, so a
+/// journey and a config file cannot disagree about what a rule means.
+fn scenario_guard(setup: &Toml) -> Result<Guard, String> {
+    let deny = world::list(setup, "deny").unwrap_or_default();
+    let confirm = world::list(setup, "confirm").unwrap_or_default();
+    let mut doc = String::new();
+    for (pattern, rule) in deny.iter().map(|d| (d, "deny")).chain(confirm.iter().map(|c| (c, "confirm"))) {
+        doc.push_str(&format!("[[guard.command]]\npattern = \"{pattern}\"\nrule = \"{rule}\"\n"));
+    }
+    let parsed = corelib::wire::Toml::parse(&doc).map_err(|e| format!("guard rules: {e}"))?;
+    let empty = corelib::wire::Toml::Table(Vec::new());
+    let (guard, skipped) = Guard::compile(&[&crate::guard::RuleSet::parse(parsed.get("guard").unwrap_or(&empty))], crate::guard::Base::here());
+    match skipped.is_empty() {
+        true => Ok(guard),
+        false => Err(format!("these rules do not compile: {}", skipped.join(" \u{b7} "))),
+    }
+}
+
 pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
-    let mut policy = Policy::new();
-    for pat in world::list(setup, "deny").unwrap_or_default() {
-        policy.add_deny(&pat).map_err(|e| format!("deny pattern {pat:?}: {e}"))?;
-    }
-    for pat in world::list(setup, "confirm").unwrap_or_default() {
-        policy.add_confirm(&pat).map_err(|e| format!("confirm pattern {pat:?}: {e}"))?;
-    }
+    let guard = scenario_guard(setup)?;
     let agents = world::list(setup, "agents")
         .unwrap_or_else(|| ["coder", "explorer", "reviewer", "tester"].iter().map(|s| s.to_string()).collect());
     Ok(Box::new(FlowWorld {
         writers: world::list(setup, "writers").unwrap_or_else(|| vec!["coder".into(), "tester".into()]),
         agents,
-        policy,
+        guard,
         concurrency: world::int(setup, "concurrency").unwrap_or(4).clamp(1, 16) as usize,
         flow: None,
         says: Vec::new(),
@@ -373,10 +385,10 @@ impl verify::World for FlowWorld {
         })
     }
     fn guard(&self, command: &str) -> verify::Guard {
-        match self.policy.check_command(command) {
-            crate::security::Verdict::Allow => verify::Guard::Allow,
-            crate::security::Verdict::Confirm { reason } => verify::Guard::Confirm(reason),
-            crate::security::Verdict::Deny { reason } => verify::Guard::Deny(reason),
+        match self.guard.judge(crate::guard::Act::Run(&command)) {
+            crate::guard::Decision::Allow => verify::Guard::Allow,
+            crate::guard::Decision::Confirm { reason } => verify::Guard::Confirm(reason),
+            crate::guard::Decision::Deny { reason } => verify::Guard::Deny(reason),
         }
     }
     fn agent_names(&self) -> Vec<String> {

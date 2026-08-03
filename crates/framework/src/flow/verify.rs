@@ -16,7 +16,7 @@ use super::tmpl::{Field, Ref};
 use super::{Flow, Input, Kind, Node};
 
 /// What the outside world has to say — installed agents and the command guard.
-/// A trait so the whole verifier is testable without a home directory, a policy
+/// A trait so the whole verifier is testable without a home directory, a guard
 /// file, or an agent on disk.
 pub(crate) trait World {
     /// The tools this agent declares, or `None` when there is no such agent.

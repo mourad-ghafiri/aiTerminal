@@ -102,15 +102,21 @@ See [shell.md](shell.md).
 
 ## Security
 
-A command guard (allow/confirm/deny) over AI-suggested commands and agent `sys.run`.
+One guard, three subjects: what may **run** (allow/confirm/deny over AI-suggested
+commands and agent `sys.run`), what may be **touched** (path rules that reach the file
+tools *and* the paths a command names), and what may **leave**.
 
-**The redactor** rewrites secrets on their way *out* — AWS/OpenAI/Anthropic/GitHub/
-Slack/Google keys, bearer tokens, JWTs, PEM blocks and any sensitive-looking
-`KEY=value` become `«redacted»` before a model, a chat app or the session file ever
-sees them. It is targeted, not blanket: your connection strings and log levels pass
-through, so the AI keeps enough context to be useful. And it is scoped — the nine
-shipped rules are `ai`-only, so `cat .env` still shows *you* your own values; add
-`scope = "terminal"` to mask them on screen too, which is what you want before a
-screen-share.
+**Secrets leave as placeholders and come back as themselves.** AWS/OpenAI/Anthropic/
+GitHub/Slack/Google keys, bearer tokens, JWTs, PEM blocks and any sensitive-looking
+`KEY=value` become `«aws-key-1»` before a model, a chat app or the session file ever
+sees them — and the real value goes back in the moment the text returns to this
+machine. So an agent can *use* a database password it was never shown. It is targeted,
+not blanket: your connection strings and log levels pass through, so the AI keeps
+enough context to be useful. And it is scoped — the nine shipped rules are `ai`-only,
+so `cat .env` still shows *you* your own values; add `scope = "terminal"` to mask them
+on screen too, which is what you want before a screen-share.
 
-See [security.md](security.md#the-redactor--secrets-stay-on-your-machine).
+A refusal is information, not a crash: the model is told the rules before it starts,
+works around what it cannot have, and stops with a reason when it cannot.
+
+See [security.md](security.md).

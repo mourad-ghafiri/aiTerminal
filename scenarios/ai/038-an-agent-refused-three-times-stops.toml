@@ -1,0 +1,27 @@
+name = "an agent refused three times over stops and says what it needed"
+tags = ["ai", "guard", "degradation"]
+
+# The other half of the rule. A run that is refused, adapts, and gets on with it is
+# fine; a run refused three times with nothing achieved in between cannot do what it
+# was asked, and saying so now beats saying "step budget exhausted" six turns later.
+#
+# The outcome is its own — not an error (nothing broke) and not a step limit (trying
+# again changes nothing).
+
+[setup]
+deny = ["wipe-the-lot"]
+max_steps = 8
+
+[[step]]
+tool = "sys.run"
+[[step]]
+tool_refused = ["sys.run=wipe-the-lot --everything"]
+
+[[step]]
+model_says_in_turn = ["@tool sys.run {\"cmd\":\"wipe-the-lot --everything\"}", "@tool sys.run {\"cmd\":\"wipe-the-lot --all\"}", "@tool sys.run {\"cmd\":\"wipe-the-lot -f\"}", "I could not do this: every way of clearing the build output is refused by the guard."]
+
+[[step]]
+agent = "clean up the build output"
+
+[[step]]
+expect_outcome = "refused"

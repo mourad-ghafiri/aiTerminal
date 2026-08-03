@@ -1,0 +1,30 @@
+name = "the auto-run list is separate from the tiers that refuse"
+tags = ["guard", "commands", "auto"]
+
+# Two different questions. `auto` says what Auto mode may run WITHOUT asking; the
+# tiers say what may run at all. Being on the auto list never overrides a refusal.
+
+[[setup.guard.command]]
+pattern = "^git\\s+(status|log)\\b"
+rule = "auto"
+[[setup.guard.command]]
+pattern = "\\bsudo\\b"
+rule = "deny"
+
+[[step]]
+expect_auto = true
+cmd = "git status --short"
+
+[[step]]
+expect_auto = false
+cmd = "git push origin main"
+
+[[step]]
+run = "git status --short"
+[[step]]
+expect_verdict = "allow"
+
+[[step]]
+run = "sudo git status"
+[[step]]
+expect_verdict = "deny"

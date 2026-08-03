@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn ai_scenarios() {
-    check("ai", 27);
+    check("ai", 30);
 }
 
 #[test]
@@ -31,8 +31,8 @@ fn terminal_scenarios() {
 }
 
 #[test]
-fn security_scenarios() {
-    check("security", 15);
+fn guard_scenarios() {
+    check("guard", 31);
 }
 
 #[test]

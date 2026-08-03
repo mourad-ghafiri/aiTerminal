@@ -255,7 +255,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   /* The phone (`makePhone`), the `@md` split editor (`buildMdEditor`) and the
-     redactor view (`buildRedactView`) come from js/scenes.js — video.html
+     secrets view (`buildRedactView`) come from js/scenes.js — video.html
      stages the same scenes, so they belong to neither page alone. */
 
   /* ---------------- features ---------------- */
@@ -900,7 +900,7 @@ document.addEventListener("DOMContentLoaded", () => {
     gateSafe: {
       opts: { title: "aiTerminal — @gate telegram", tabs: [{ title: "Terminal [project][@gate]", active: true }] },
       caption: () => caption("A paired chat still meets the guard",
-        "A remote command goes through the same <code>[security]</code> rules as an AI suggestion — <b>denied</b> outright, or <b>held</b> until you reply <code>/yes</code>. Your <code>[[redact]]</code> rules apply to everything leaving the machine, in <em>both</em> scopes, because a chat app is off-machine either way. And every remote command, block and reply is echoed in the pane, so the screen in front of you is always the truth.",
+        "A remote command goes through the same guard as an AI suggestion — <b>denied</b> outright, or <b>held</b> until you reply <code>/yes</code>. Your <code>[[guard.secret]]</code> rules apply to everything leaving the machine, in <em>both</em> scopes, because a chat app is off-machine either way — and a command you send back carrying a placeholder runs here with the real value in it, so your phone can use a key it has never seen. Every remote command, block and reply is echoed in the pane, so the screen in front of you is always the truth.",
         "<span class=\"lbl\">deny</span><span class=\"lbl\">confirm</span><span class=\"lbl\">redact</span><span class=\"lbl\">echoed in the pane</span>"),
       demo(w, myEpoch) {
         const g = makePhone(phoneEl);
@@ -1059,8 +1059,8 @@ document.addEventListener("DOMContentLoaded", () => {
     },
 
     redact: {
-      caption: () => caption("Your secrets <em>never leave the room</em>",
-        "Nine regex rules — AWS · OpenAI · Anthropic · GitHub · Slack · Google keys, bearer tokens, JWTs, PEM blocks and any <code>KEY=value</code> that looks sensitive — rewrite text on its way out. The AI still gets the shape of your config; it never gets the secret. Add <code>scope = \"terminal\"</code> and the masking applies to your screen too."),
+      caption: () => caption("Your secrets leave as <em>placeholders</em> — and come back",
+        "Nine regex rules — AWS · OpenAI · Anthropic · GitHub · Slack · Google keys, bearer tokens, JWTs, PEM blocks and any <code>KEY=value</code> that looks sensitive — swap a value for <code>«aws-key-1»</code> on its way out, and swap the real value back in the moment the text returns to your machine. So an agent can <em>use</em> a database password it was never shown. The model gets the shape of your config and never the secret. Add <code>scope = \"terminal\"</code> and the masking applies to your screen too."),
       demo(w, myEpoch) {
         run(w, myEpoch, [
           { do: "pause", ms: 300 },
@@ -1077,6 +1077,12 @@ document.addEventListener("DOMContentLoaded", () => {
           { do: "call", fn: async (t) => buildRedactView(t) },
           { do: "pause", ms: 1400 },
           { do: "out", spans: [FG("db.internal has no port — try "), ACC2("db.internal:5432"), FG(" in DATABASE_URL")] },
+          { do: "pause", ms: 900 },
+          { do: "cmd", text: "@agent coder \"connect and count the users\"" },
+          { do: "out", spans: [MUT("  ⚙ sys.run  "), FG("psql postgres://app:"), WARN("«credential-1»"), FG("@db.internal:5432 -c …")], ms: 80 },
+          { do: "out", spans: [MUT("  ↺ the real value went back in here, and nowhere else")], ms: 80 },
+          { do: "out", spans: [FG(" count ")], ms: 60 },
+          { do: "out", spans: [FG(" 1 284 ")], ms: 60 },
         ]);
       },
     },

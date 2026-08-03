@@ -151,35 +151,6 @@ pub struct Keybinding {
     pub action: String,
 }
 
-/// A security command-guard pattern contributed by a plugin (regex).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AllowCommand {
-    pub pattern: String,
-}
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DenyCommand {
-    pub pattern: String,
-}
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConfirmCommand {
-    pub pattern: String,
-}
-/// An auto-pilot **safe** command pattern (regex): the AI agent may auto-run a matching
-/// command in Auto mode without a prompt. Plugins only ADD to this allowlist.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SafeCommand {
-    pub pattern: String,
-}
-
-/// A redaction rule contributed by a plugin.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RedactRule {
-    pub pattern: String,
-    pub replacement: String,
-    pub scope: String,
-    pub literal: bool,
-}
-
 /// A parsed plugin manifest.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Manifest {
@@ -193,12 +164,11 @@ pub struct Manifest {
     pub completions: Vec<CompletionSpec>,
     /// Terminal customization: chord → built-in action name.
     pub keybindings: Vec<Keybinding>,
-    /// Security: command allow/deny/confirm/safe patterns + redaction rules.
-    pub allow_commands: Vec<AllowCommand>,
-    pub deny_commands: Vec<DenyCommand>,
-    pub confirm_commands: Vec<ConfirmCommand>,
-    pub safe_commands: Vec<SafeCommand>,
-    pub redact_rules: Vec<RedactRule>,
+    /// What this plugin contributes to the guard: `[[guard.command]]`, `[[guard.path]]`
+    /// and `[[guard.secret]]` tables, in the same vocabulary `config.toml` uses. A plugin
+    /// can only ever ADD a restriction — deny still wins, and nothing here can remove a
+    /// rule the user wrote.
+    pub guard: crate::guard::RuleSet,
     /// A shell-init snippet the plugin contributes to the spawned shell (its
     /// `shell.zsh` / `shell.bash` sibling files). This is how a plugin ships a
     /// feature — completion, autosuggestions, history, the prompt, alias hints — as
@@ -306,45 +276,10 @@ impl Manifest {
                 }
             }
         }
-        if let Some(a) = doc.get("allow_command").and_then(|v| v.as_array()) {
-            for x in a {
-                if let Some(p) = x.get("pattern").and_then(|v| v.as_str()) {
-                    m.allow_commands.push(AllowCommand { pattern: p.to_string() });
-                }
-            }
-        }
-        if let Some(a) = doc.get("deny_command").and_then(|v| v.as_array()) {
-            for x in a {
-                if let Some(p) = x.get("pattern").and_then(|v| v.as_str()) {
-                    m.deny_commands.push(DenyCommand { pattern: p.to_string() });
-                }
-            }
-        }
-        if let Some(a) = doc.get("confirm_command").and_then(|v| v.as_array()) {
-            for x in a {
-                if let Some(p) = x.get("pattern").and_then(|v| v.as_str()) {
-                    m.confirm_commands.push(ConfirmCommand { pattern: p.to_string() });
-                }
-            }
-        }
-        if let Some(a) = doc.get("safe_command").and_then(|v| v.as_array()) {
-            for x in a {
-                if let Some(p) = x.get("pattern").and_then(|v| v.as_str()) {
-                    m.safe_commands.push(SafeCommand { pattern: p.to_string() });
-                }
-            }
-        }
-        if let Some(a) = doc.get("redact").and_then(|v| v.as_array()) {
-            for x in a {
-                if let Some(p) = x.get("pattern").and_then(|v| v.as_str()) {
-                    m.redact_rules.push(RedactRule {
-                        pattern: p.to_string(),
-                        replacement: x.get("replacement").and_then(|v| v.as_str()).unwrap_or("\u{ab}redacted\u{bb}").to_string(),
-                        scope: x.get("scope").and_then(|v| v.as_str()).unwrap_or("all").to_string(),
-                        literal: x.get("literal").and_then(|v| v.as_bool()).unwrap_or(false),
-                    });
-                }
-            }
+        // The guard's own vocabulary, read by the guard's own parser — the same call the
+        // config file makes, so `[[guard.command]]` means one thing in this product.
+        if let Some(g) = doc.get("guard") {
+            m.guard = crate::guard::RuleSet::parse(g);
         }
         Ok(m)
     }
@@ -624,25 +559,17 @@ impl PluginRegistry {
         self.entries.iter().filter(|e| e.enabled).flat_map(|e| e.manifest.keybindings.clone()).collect()
     }
 
-    /// Security command allow-patterns from enabled plugins.
-    pub fn allow_commands(&self) -> Vec<AllowCommand> {
-        self.entries.iter().filter(|e| e.enabled).flat_map(|e| e.manifest.allow_commands.clone()).collect()
-    }
-    /// Security command deny-patterns from enabled plugins.
-    pub fn deny_commands(&self) -> Vec<DenyCommand> {
-        self.entries.iter().filter(|e| e.enabled).flat_map(|e| e.manifest.deny_commands.clone()).collect()
-    }
-    /// Security command confirm-patterns from enabled plugins.
-    pub fn confirm_commands(&self) -> Vec<ConfirmCommand> {
-        self.entries.iter().filter(|e| e.enabled).flat_map(|e| e.manifest.confirm_commands.clone()).collect()
-    }
-    /// Auto-pilot safe-command patterns from enabled plugins (the Auto-mode allowlist).
-    pub fn safe_commands(&self) -> Vec<SafeCommand> {
-        self.entries.iter().filter(|e| e.enabled).flat_map(|e| e.manifest.safe_commands.clone()).collect()
-    }
-    /// Redaction rules from enabled plugins.
-    pub fn redact_rules(&self) -> Vec<RedactRule> {
-        self.entries.iter().filter(|e| e.enabled).flat_map(|e| e.manifest.redact_rules.clone()).collect()
+    /// Every enabled plugin's guard rules, in load order, as one set.
+    ///
+    /// Disabled plugins contribute nothing — which is exactly why the rules that would
+    /// compromise this machine are the guard's own floor rather than data a plugin
+    /// supplies (see `guard::path::floor`).
+    pub fn guard_rules(&self) -> crate::guard::RuleSet {
+        let mut all = crate::guard::RuleSet::default();
+        for e in self.entries.iter().filter(|e| e.enabled) {
+            all.extend(e.manifest.guard.clone());
+        }
+        all
     }
 }
 
