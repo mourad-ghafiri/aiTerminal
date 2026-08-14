@@ -126,7 +126,7 @@ impl Editor {
     fn on_editor_key(&mut self, key: Key, l: &Layout) {
         match key {
             Key::Char(c) => self.buf.insert_char(c),
-            Key::Enter => self.buf.insert_newline(),
+            Key::Enter | Key::Ctrl('j') => self.buf.insert_newline(),
             Key::Tab => {
                 for _ in 0..4 {
                     self.buf.insert_char(' ');

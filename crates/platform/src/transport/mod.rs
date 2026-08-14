@@ -35,6 +35,12 @@ impl CancelToken {
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::SeqCst)
     }
+    /// Arm the flag again for a NEW piece of work. A token is one-way within a run;
+    /// a sitting that runs many turns re-arms it between them rather than rebuilding
+    /// the client each time.
+    pub fn reset(&self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 /// One decoded item from a streaming response.

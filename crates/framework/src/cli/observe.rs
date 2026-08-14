@@ -241,6 +241,8 @@ pub(crate) struct CliObserver {
     suppress_turn: bool,
     /// The waiting spinner for the current turn (stopped on the first token).
     spinner: Option<Spinner>,
+    /// `Some` = a panel elsewhere draws the wait; called at each turn's start.
+    turn_hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
     /// The label every turn's spinner animates — one per RUN, shared with each spinner
     /// in turn, because it carries the aside rotation.
     waiting: SharedWaiting,
@@ -254,7 +256,7 @@ pub(crate) struct CliObserver {
 impl CliObserver {
     /// A run drawn into `view`.
     pub(crate) fn new(view: SharedView) -> Self {
-        CliObserver { view, pending: String::new(), suppress_line: false, suppress_turn: false, spinner: None, waiting: SharedWaiting::new(Box::new(WAIT.to_string())), thinking_open: false, show_reasoning: false }
+        CliObserver { view, pending: String::new(), suppress_line: false, suppress_turn: false, spinner: None, turn_hook: None, waiting: SharedWaiting::new(Box::new(WAIT.to_string())), thinking_open: false, show_reasoning: false }
     }
 
     /// Opt into streaming the model's raw reasoning text (off by default).
@@ -266,6 +268,14 @@ impl CliObserver {
     /// Give the wait something to say — `[motivation]`, resolved once for the whole run.
     pub(crate) fn with_motivation(mut self, cfg: &crate::config::Config) -> Self {
         self.waiting = SharedWaiting::new(Motivated::label(WAIT, cfg));
+        self
+    }
+
+    /// The workspace panel owns the waiting display: no spinner of our own, and the
+    /// hook is called at each model turn's start so the panel's clock (and the muse
+    /// banking behind it) follows the turns.
+    pub(crate) fn with_panel(mut self, on_turn: std::sync::Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.turn_hook = Some(on_turn);
         self
     }
 
@@ -389,10 +399,14 @@ impl crate::ai::AgentObserver for CliObserver {
         self.pending.clear();
         self.suppress_line = false;
         self.suppress_turn = false;
-        // A fresh model turn: spin until its first token arrives.
+        // A fresh model turn: spin until its first token arrives — unless a panel
+        // elsewhere owns the waiting display, which is only told the turn began.
         self.thinking_open = false;
         self.wake();
-        self.spinner = Some(Spinner::start(self.waiting.clone()));
+        match &self.turn_hook {
+            Some(hook) => hook(),
+            None => self.spinner = Some(Spinner::start(self.waiting.clone())),
+        }
     }
 
     fn on_delta(&mut self, text: &str) {

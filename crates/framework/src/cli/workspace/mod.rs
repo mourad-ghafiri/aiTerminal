@@ -11,11 +11,13 @@
 //! `!` commands are judged like any other, and a project's guard rules can only
 //! tighten. The REPL adds an input surface, never an execution surface.
 
+pub(crate) mod chrome;
 pub(crate) mod init;
 pub(crate) mod input;
 pub(crate) mod repl;
 pub(crate) mod slash;
 pub(crate) mod trust;
+pub(crate) mod tui;
 
 use std::sync::{Arc, Mutex};
 
@@ -42,14 +44,15 @@ pub(crate) fn ai_workspace_cmd(args: &[String]) -> i32 {
     let session = crate::ai::Session::at(&root, &crate::config::Config::sessions_dir());
     let session_dir = session.memory_dir().parent().map(|p| p.to_path_buf());
 
-    // The trust gate, through the same editor the conversation will use.
-    let input: repl::SharedInput = Arc::new(Mutex::new(Box::new(input::TermEditor::new(
-        session_dir.as_ref().map(|d| d.join("chat").join("history")),
-    ))));
+    // The trust gate, in plain cooked mode BEFORE any chrome exists — a y/N on a
+    // question is not a TUI's job, and raw mode must not start until it is answered.
     let mut ask = |question: &str| {
         eprintln!("{}{question}{}", accent(), reset());
-        let mut input = input.lock().unwrap_or_else(|e| e.into_inner());
-        matches!(input.read_line("  open it? [y/N] ", &[]), Some(l) if matches!(l.trim(), "y" | "Y" | "yes" | "Yes"))
+        eprint!("  open it? [y/N] ");
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        matches!(line.trim(), "y" | "Y" | "yes" | "Yes")
     };
     let trusted = match session_dir.as_deref() {
         Some(dir) => trust::establish(&root, dir, &mut ask),
@@ -77,12 +80,52 @@ pub(crate) fn ai_workspace_cmd(args: &[String]) -> i32 {
     let runner = crate::cli::runner::build_runner(&cfg, &settings, Some(root.clone()), guard.clone(), hub);
     let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default());
 
-    let mut repl = repl::Repl::new(ws, cfg, settings, client, guard, runner, input, session_dir);
+    // The chrome: the anchored panel on stderr, sized live, and the sitting's raw
+    // keyboard behind it. Built here and nowhere else — tests drive the headless core.
+    let chrome = chrome::Chrome::new(
+        Box::new(std::io::stderr()),
+        Box::new(|| (crate::cli::style::term_cols(), crate::cli::style::term_rows())),
+    );
+    let sitting = tui::Tui::start(chrome.clone());
+    let describe = describe_for_dropdown(&ws);
+    let hist = session_dir.as_ref().map(|d| d.join("chat").join("history"));
+    let input: repl::SharedInput = Arc::new(Mutex::new(Box::new(tui::TuiInput::new(chrome.clone(), sitting.keys.clone(), describe, hist))));
+    let asker = Arc::new(tui::ChromeAsk { chrome: chrome.clone(), keys: sitting.keys.clone() });
+
+    let mut repl = repl::Repl::new(ws, cfg, settings, client, guard, runner, input, session_dir)
+        .with_tui(chrome, sitting.pulse.clone());
+    // The panel's approver replaces the plain one: the guard's confirm renders as
+    // the amber ask-block and is answered from the keyboard. Same rule, same words.
+    repl.runner.ctx.approver = asker;
     repl.header(granted);
     if resume {
         repl.resume_last();
     }
     repl.drive()
+}
+
+/// Everything the dropdown can explain: built-ins with their about text, the
+/// overlay's prompt commands, the `@` verbs, and the installed agents.
+fn describe_for_dropdown(ws: &crate::config::overlay::Workspace) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = slash::BUILTINS.iter().map(|c| (c.name.to_string(), c.about.to_string())).collect();
+    for p in crate::ai::defs::load_prompts_in(&ws.prompts_dirs()) {
+        out.push((format!("/{}", p.name), "your prompt command".into()));
+    }
+    for (verb, about) in [
+        ("@flow", "run a workflow graph inline"),
+        ("@job", "schedule or run a tracked job"),
+        ("@loop", "iterate until a check passes"),
+        ("@agent", "the installed agents"),
+        ("@mcp", "the declared MCP servers"),
+    ] {
+        out.push((verb.into(), about.into()));
+    }
+    for a in crate::ai::defs::load_agents_in(&ws.agents_dirs()) {
+        out.push((format!("@{}", a.name), a.description.chars().take(60).collect()));
+    }
+    out.sort();
+    out.dedup_by(|a, b| a.0 == b.0);
+    out
 }
 
 /// The glyph a turn's footer opens with — shared with the agent CLI's vocabulary.

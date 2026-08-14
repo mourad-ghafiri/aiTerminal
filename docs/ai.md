@@ -766,9 +766,34 @@ and the product's whole `@` language works mid-conversation.
 | anything else | a conversation turn |
 
 Slash surface: `/help` `/init` `/clear` `/compact` `/model` `/agent` `/agents` `/mcp`
-`/memory` `/cost` `/readonly` `/trust` `/resume` `/exit` — Tab completes both the `/`
-and `@` vocabularies. `/readonly` is plan mode: the toolset narrows to the safe
-(read-only) set. `@workspace --continue` folds the folder's last conversation back in.
+`/memory` `/cost` `/readonly` `/trust` `/resume` `/exit`. `/readonly` is plan mode:
+the toolset narrows to the safe (read-only) set. `@workspace --continue` folds the
+folder's last conversation back in.
+
+### The chrome
+
+A bordered **input box** anchors the bottom of the pane, the conversation scrolls
+above it, and one dim status row states the sitting: root · build/plan · persona ·
+serving model · tokens and cost · overlay dot. The border's color states the mode —
+accent for build, amber for plan. Typing `/` or `@` opens an **autocomplete
+dropdown** (↑/↓ select, Tab accepts); while a turn runs the box becomes a working
+row — spinner, elapsed, the muse's aside, `esc interrupts` — and anything you type
+meanwhile becomes the **draft** of your next message, waiting in the box when the
+answer lands. A guard `confirm` arrives as an amber ask-block answered with y/N.
+
+| Key | Does |
+| --- | --- |
+| `Enter` | send · `Ctrl+J` newline (the box grows, ↑/↓ walk the rows) |
+| `Tab` | complete `/` and `@` · accept the dropdown selection |
+| `Shift+Tab` | toggle plan/build |
+| `↑` / `↓` | history (or dropdown / draft rows) |
+| `Esc` | close the dropdown · clear the line · **interrupt a running turn** |
+| `Ctrl+A/E/B/F/W/U/K` | emacs-style line editing |
+| `Ctrl+C` | clear; twice on an empty line leaves · `Ctrl+D` on empty leaves |
+
+The streamed answer and the panel are ONE repaint region (the flow board's own
+paint contract), so the spinner animates under a streaming diagram and nothing
+ever climbs over anything.
 
 ### The project overlay
 

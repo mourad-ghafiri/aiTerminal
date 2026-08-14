@@ -17,6 +17,8 @@ pub(crate) enum Key {
     End,
     PageUp,
     PageDown,
+    /// Shift+Tab (`ESC [ Z`) — the mode-toggle gesture.
+    BackTab,
     Ctrl(char),
     Mouse { btn: u32, col: usize, row: usize, pressed: bool },
     Unknown,
@@ -36,7 +38,10 @@ pub(crate) fn parse_key(buf: &[u8]) -> Option<(Key, usize)> {
                 _ => Some((Key::Esc, 1)),
             }
         }
-        b'\r' | b'\n' => Some((Key::Enter, 1)),
+        b'\r' => Some((Key::Enter, 1)),
+        // A bare LF is Ctrl+J at a raw-mode keyboard (and the newline inside pasted
+        // text) — distinct from Enter, so a chat box can grow instead of submitting.
+        b'\n' => Some((Key::Ctrl('j'), 1)),
         0x7f | 0x08 => Some((Key::Backspace, 1)),
         b'\t' => Some((Key::Tab, 1)),
         0x01..=0x1a => Some((Key::Ctrl((b - 1 + b'a') as char), 1)),
@@ -78,6 +83,7 @@ fn parse_csi(buf: &[u8]) -> Option<(Key, usize)> {
         b'D' => Key::Left,
         b'H' => Key::Home,
         b'F' => Key::End,
+        b'Z' => Key::BackTab,
         b'~' => match first {
             1 | 7 => Key::Home,
             4 | 8 => Key::End,

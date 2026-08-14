@@ -60,6 +60,12 @@ pub(crate) struct Repl<T: crate::ai::Transport> {
     /// Where this conversation is appended, redacted, for `--continue`.
     chat_log: Option<std::path::PathBuf>,
     session_dir: Option<std::path::PathBuf>,
+    /// The chrome, when this sitting has one — `None` in tests and the world.
+    tui: Option<(super::chrome::Chrome, Arc<super::tui::Pulse>)>,
+    /// The sitting's cancel, re-armed per turn; Esc trips it through the Pulse.
+    cancel: crate::ai::CancelToken,
+    /// The model that actually served the last turn, for the status row.
+    served: String,
 }
 
 /// How a handled line leaves the loop.
@@ -88,6 +94,9 @@ impl<T: crate::ai::Transport> Repl<T> {
         let agents = crate::ai::defs::load_agents_in(&ws.agents_dirs()).into_iter().map(|a| a.name).collect();
         let stamp = corelib::datetime::format(now_unix() as i64, "%Y%m%d-%H%M%S", 0);
         let chat_log = session_dir.as_ref().map(|d| d.join("chat").join(format!("{stamp}.md")));
+        // One cancel for the sitting, re-armed per turn — Esc trips it mid-stream.
+        let cancel = crate::ai::CancelToken::new();
+        let client = client.with_cancel(cancel.clone());
         Repl {
             ws,
             cfg,
@@ -105,6 +114,41 @@ impl<T: crate::ai::Transport> Repl<T> {
             spent: (0, 0, 0.0),
             chat_log,
             session_dir,
+            tui: None,
+            cancel,
+            served: String::new(),
+        }
+    }
+
+    /// Attach the chrome: the panel renders the sitting; the pulse carries a
+    /// running turn's cancel and clock for the ticker.
+    pub(crate) fn with_tui(mut self, chrome: super::chrome::Chrome, pulse: Arc<super::tui::Pulse>) -> Repl<T> {
+        self.tui = Some((chrome, pulse));
+        self
+    }
+
+    /// Everything the status row states, freshly composed.
+    fn status(&self) -> super::chrome::Status {
+        super::chrome::Status {
+            root: self.ws.root.file_name().and_then(|s| s.to_str()).unwrap_or("workspace").to_string(),
+            plan: self.readonly,
+            persona: self.persona.clone(),
+            model: match self.served.is_empty() {
+                true => self.client.model().id.clone(),
+                false => self.served.clone(),
+            },
+            tokens: (self.spent.0, self.spent.1),
+            cost: self.spent.2,
+            overlay_on: self.ws.overlaid(),
+        }
+    }
+
+    /// Say one styled line to the person — through the chrome when there is one, so
+    /// the panel is never overwritten; plain stderr otherwise.
+    fn say(&self, line: &str) {
+        match &self.tui {
+            Some((chrome, _)) => chrome.print(format!("{line}\r\n").as_bytes()),
+            None => eprintln!("{line}"),
         }
     }
 
@@ -129,7 +173,7 @@ impl<T: crate::ai::Transport> Repl<T> {
     }
 
     fn note(&self, text: &str) {
-        eprintln!("{}{text}{}", muted(), reset());
+        self.say(&format!("{}{text}{}", muted(), reset()));
     }
 
     /// The header: exactly what loaded, so nothing rides in unseen.
@@ -137,7 +181,7 @@ impl<T: crate::ai::Transport> Repl<T> {
         let (dim, a, r) = (muted(), accent(), reset());
         let model = self.settings.pool.entries.len();
         let strategy = format!("{:?}", self.settings.pool.strategy).to_lowercase();
-        eprintln!("{a}\u{2726} workspace \u{b7} {}{r}", self.ws.root.display());
+        self.say(&format!("{a}\u{2726} workspace \u{b7} {}{r}", self.ws.root.display()));
         let overlay = match (trusted, self.ws.overlaid()) {
             (false, _) => "project overlay OFF (trust declined \u{2014} /trust to revisit)".to_string(),
             (true, false) => "no project .aiTerminal/ \u{2014} global config serves".to_string(),
@@ -149,12 +193,12 @@ impl<T: crate::ai::Transport> Repl<T> {
                 )
             }
         };
-        eprintln!("{dim}  {overlay}{r}");
+        self.say(&format!("{dim}  {overlay}{r}"));
         if let Some((name, _)) = self.ws.project_instructions() {
-            eprintln!("{dim}  instructions: {name}{r}");
+            self.say(&format!("{dim}  instructions: {name}{r}"));
         }
-        eprintln!("{dim}  {model} model(s) in the pool \u{b7} strategy {strategy} \u{b7} answers render as Markdown (+ diagrams){r}");
-        eprintln!("{dim}  /help lists the commands \u{b7} @flow @job @loop and @<agent> work right here \u{b7} ! runs a guarded command{r}");
+        self.say(&format!("{dim}  {model} model(s) in the pool \u{b7} strategy {strategy} \u{b7} answers render as Markdown (+ diagrams){r}"));
+        self.say(&format!("{dim}  /help lists the commands \u{b7} @flow @job @loop and @<agent> work right here \u{b7} ! runs a guarded command{r}"));
     }
 
     /// The main loop. Returns the exit code.
@@ -231,14 +275,14 @@ impl<T: crate::ai::Transport> Repl<T> {
 
     fn help(&self) {
         let (dim, r) = (muted(), reset());
-        eprintln!("{dim}input rules \u{2014} first match wins: /command \u{b7} !shell \u{b7} @verb|@agent|@file \u{b7} else a message{r}");
+        self.say(&format!("{dim}input rules \u{2014} first match wins: /command \u{b7} !shell \u{b7} @verb|@agent|@file \u{b7} else a message{r}"));
         for c in BUILTINS {
-            eprintln!("  {}{:<10}{r} {dim}{}{r}", accent(), c.name, c.about);
+            self.say(&format!("  {}{:<10}{r} {dim}{}{r}", accent(), c.name, c.about));
         }
         for p in &self.prompts {
-            eprintln!("  {}/{:<9}{r} {dim}your prompt command{r}", accent(), p.name);
+            self.say(&format!("  {}/{:<9}{r} {dim}your prompt command{r}", accent(), p.name));
         }
-        eprintln!("{dim}@flow/@job/@loop/@agent run inline; @<agent> asks one agent; @<path> attaches a file{r}");
+        self.say(&format!("{dim}@flow/@job/@loop/@agent run inline; @<agent> asks one agent; @<path> attaches a file{r}"));
     }
 
     // ── the conversation ──────────────────────────────────────────────────
@@ -310,6 +354,66 @@ impl<T: crate::ai::Transport> Repl<T> {
         ctx
     }
 
+    /// The view + observer a streamed run uses, chrome-aware. In TUI mode the panel
+    /// becomes the run's SUFFIX (one repaint region, one erase count) and its
+    /// Working row the run's only spinner, muse aside included; headless keeps the
+    /// plain stream the tests and the scenario world drive.
+    fn open_stream(&mut self, base: &str) -> (SharedView, CliObserver) {
+        match &self.tui {
+            Some((chrome, pulse)) => {
+                self.cancel.reset();
+                let waiting = crate::cli::observe::SharedWaiting::new(crate::cli::observe::Motivated::label(base, &self.cfg));
+                pulse.begin(self.cancel.clone(), waiting);
+                chrome.set_status(self.status());
+                chrome.set(super::chrome::PanelState::Working { label: base.to_string(), draft: String::new() });
+                let suffix = {
+                    let chrome = chrome.clone();
+                    std::sync::Arc::new(move || chrome.suffix_rows())
+                };
+                let view = SharedView::new(
+                    RunView::new(Box::new(std::io::stderr()), None, markdown_opts(crate::cli::style::err_is_tty())).with_suffix(suffix),
+                );
+                let hook: Arc<dyn Fn() + Send + Sync> = {
+                    let view = view.clone();
+                    Arc::new(move || view.with(|v| v.repaint_tail()))
+                };
+                chrome.stream_owned(hook);
+                let obs = CliObserver::new(view.clone()).with_reasoning(self.cfg.ai_show_reasoning).with_panel({
+                    let pulse = pulse.clone();
+                    Arc::new(move || pulse.turn_started())
+                });
+                (view, obs)
+            }
+            None => {
+                let view = SharedView::new(RunView::new(Box::new(std::io::stdout()), None, markdown_opts(out_is_tty())).quiet());
+                let obs = CliObserver::new(view.clone()).with_reasoning(self.cfg.ai_show_reasoning).with_motivation(&self.cfg);
+                (view, obs)
+            }
+        }
+    }
+
+    /// Settle a streamed run: totals, the panel handed back, the footer, the rule.
+    fn close_stream(&mut self, run: &crate::ai::AgentRun, started: std::time::Instant) {
+        if !run.model_used.is_empty() {
+            self.served = run.model_used.clone();
+        }
+        let cost = self.client.model().cost(run.usage.input as u64, run.usage.output as u64);
+        self.spent.0 += run.usage.input as u64;
+        self.spent.1 += run.usage.output as u64;
+        self.spent.2 += cost;
+        if let Some((chrome, pulse)) = &self.tui {
+            pulse.end();
+            chrome.stream_released();
+            chrome.set_status(self.status());
+        }
+        let (dim, r) = (muted(), reset());
+        self.say(&format!(
+            "{dim}{}{r}",
+            crate::cli::format::run_footer_with(super::outcome_glyph(&run.outcome), started.elapsed(), run.steps.len(), run.usage, Some(cost), self.cfg.ai_budget)
+        ));
+        self.say(&format!("{dim}\u{2726}{r}"));
+    }
+
     /// One conversation turn: the persistent transcript, streamed, footered, logged.
     fn turn(&mut self, text: &str) {
         let (prompt, _media, file_ctx) = crate::cli::attach::collect_attachments(text);
@@ -331,22 +435,13 @@ impl<T: crate::ai::Transport> Repl<T> {
         }
 
         let started = std::time::Instant::now();
-        let view = SharedView::new(RunView::new(Box::new(std::io::stdout()), None, markdown_opts(out_is_tty())).quiet());
-        let mut obs = CliObserver::new(view.clone()).with_reasoning(self.cfg.ai_show_reasoning).with_motivation(&self.cfg);
+        let (view, mut obs) = self.open_stream("thinking\u{2026}");
         self.runner.trace = Some(Arc::new(view));
-        let transcript = self.transcript.as_mut().expect("set above");
-        let run = crate::ai::run_agent_over(&self.client, &spec, transcript, &mut self.runner, &mut obs);
+        let mut transcript = self.transcript.take().expect("set above");
+        let run = crate::ai::run_agent_over(&self.client, &spec, &mut transcript, &mut self.runner, &mut obs);
+        self.transcript = Some(transcript);
         finish_streamed(&mut obs, &run.answer);
-        let cost = self.client.model().cost(run.usage.input as u64, run.usage.output as u64);
-        self.spent.0 += run.usage.input as u64;
-        self.spent.1 += run.usage.output as u64;
-        self.spent.2 += cost;
-        eprintln!(
-            "{}{}{}",
-            muted(),
-            crate::cli::format::run_footer_with(super::outcome_glyph(&run.outcome), started.elapsed(), run.steps.len(), run.usage, Some(cost), self.cfg.ai_budget),
-            reset()
-        );
+        self.close_stream(&run, started);
         self.log_exchange(&prompt, &run.answer);
     }
 
@@ -356,16 +451,21 @@ impl<T: crate::ai::Transport> Repl<T> {
         match crate::caps::run("sys.run", &pairs, &self.runner.ctx) {
             Ok(out) => {
                 let text = crate::cli::run::json_text(&out);
-                println!("{}", self.guard.mask(&text));
+                self.say(&self.guard.mask(&text));
                 self.pending.push(format!("[I ran `{}` here; it printed:]\n{}", self.guard.hide(cmd), self.guard.hide(&text)));
             }
-            Err(e) => eprintln!("{}", self.guard.mask(&e)),
+            Err(e) => self.say(&self.guard.mask(&e)),
         }
     }
 
     /// `@flow …` / `@job …` / `@loop …` / `@agent` / `@mcp` — the real command,
     /// inline; its outcome becomes part of the conversation.
     fn inline(&mut self, argv: &[String]) {
+        // The real command owns the screen (a flow paints its own live board); the
+        // panel withdraws and returns when the next prompt paints it.
+        if let Some((chrome, _)) = &self.tui {
+            chrome.hide();
+        }
         let code = crate::cli::ai(argv);
         self.pending.push(format!("[I ran `@{}` in this workspace; it exited {code}]", argv.join(" ")));
     }
@@ -395,23 +495,13 @@ impl<T: crate::ai::Transport> Repl<T> {
                 spec.tools.push(crate::ai::ToolSpec { name: n, describe });
             }
         }
-        eprintln!("{}\u{2726} @{name}{}", accent(), reset());
+        self.say(&format!("{}\u{2726} @{name}{}", accent(), reset()));
         let started = std::time::Instant::now();
-        let view = SharedView::new(RunView::new(Box::new(std::io::stdout()), None, markdown_opts(out_is_tty())).quiet());
-        let mut obs = CliObserver::new(view.clone()).with_reasoning(self.cfg.ai_show_reasoning).with_motivation(&self.cfg);
+        let (view, mut obs) = self.open_stream(&format!("@{name} working\u{2026}"));
         self.runner.trace = Some(Arc::new(view));
         let run = crate::cli::agents::start_agent(&self.client, &spec, &self.guard, task, "", &mut self.runner, &mut obs);
         finish_streamed(&mut obs, &run.answer);
-        let cost = self.client.model().cost(run.usage.input as u64, run.usage.output as u64);
-        self.spent.0 += run.usage.input as u64;
-        self.spent.1 += run.usage.output as u64;
-        self.spent.2 += cost;
-        eprintln!(
-            "{}{}{}",
-            muted(),
-            crate::cli::format::run_footer_with(super::outcome_glyph(&run.outcome), started.elapsed(), run.steps.len(), run.usage, Some(cost), self.cfg.ai_budget),
-            reset()
-        );
+        self.close_stream(&run, started);
         let answer: String = run.answer.chars().take(4000).collect();
         self.pending.push(format!("[@{name} was asked: {}]\n[it answered:]\n{answer}", self.guard.hide(task)));
         self.log_exchange(&format!("@{name} {task}"), &run.answer);
@@ -438,11 +528,11 @@ impl<T: crate::ai::Transport> Repl<T> {
             return;
         }
         let strategy = format!("{:?}", self.settings.pool.strategy).to_lowercase();
-        eprintln!("{dim}the pool serves every turn \u{b7} strategy {strategy}{r}");
+        self.say(&format!("{dim}the pool serves every turn \u{b7} strategy {strategy}{r}"));
         for m in &self.settings.pool.entries {
-            eprintln!("  {}{}{r} {dim}weight {}{r}", accent(), m.model.id, m.weight);
+            self.say(&format!("  {}{}{r} {dim}weight {}{r}", accent(), m.model.id, m.weight));
         }
-        eprintln!("{dim}serving now: {}{r}", self.client.model().id);
+        self.say(&format!("{dim}serving now: {}{r}", self.client.model().id));
     }
 
     fn pin(&mut self, name: Option<String>) {
@@ -466,7 +556,7 @@ impl<T: crate::ai::Transport> Repl<T> {
         for a in crate::ai::defs::load_agents_in(&self.ws.agents_dirs()) {
             let local = self.ws.overlaid() && self.ws.agents_dirs()[0].join(format!("{}.md", a.name)).is_file();
             let tag = if local { " (project)" } else { "" };
-            eprintln!("  {}@{}{r}{dim}{tag} \u{2014} {}{r}", accent(), a.name, a.description.chars().take(80).collect::<String>());
+            self.say(&format!("  {}@{}{r}{dim}{tag} \u{2014} {}{r}", accent(), a.name, a.description.chars().take(80).collect::<String>()));
         }
     }
 
@@ -478,8 +568,8 @@ impl<T: crate::ai::Transport> Repl<T> {
         let (dim, r) = (muted(), reset());
         for s in hub.lock().unwrap_or_else(|e| e.into_inner()).report() {
             match s.error.is_empty() {
-                true => eprintln!("  {}{:<14}{r} {dim}{} \u{b7} {} \u{b7} {} tool(s){r}", accent(), s.name, s.reach, s.era, s.tools),
-                false => eprintln!("  {}{:<14}{r} {dim}\u{2717} {}{r}", accent(), s.name, s.error),
+                true => self.say(&format!("  {}{:<14}{r} {dim}{} \u{b7} {} \u{b7} {} tool(s){r}", accent(), s.name, s.reach, s.era, s.tools)),
+                false => self.say(&format!("  {}{:<14}{r} {dim}\u{2717} {}{r}", accent(), s.name, s.error)),
             }
         }
     }
@@ -490,7 +580,7 @@ impl<T: crate::ai::Transport> Repl<T> {
                 let pairs = vec![("text".to_string(), self.guard.hide(&text))];
                 match crate::caps::run("memory.add", &pairs, &self.runner.ctx) {
                     Ok(_) => self.note("remembered \u{2014} it will be recalled in this folder"),
-                    Err(e) => eprintln!("{}", self.guard.mask(&e)),
+                    Err(e) => self.say(&self.guard.mask(&e)),
                 }
             }
             None => {

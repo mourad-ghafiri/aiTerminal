@@ -128,3 +128,29 @@ fn trust_is_asked_once_remembered_and_reopened_only_by_what_executes() {
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&session);
 }
+
+#[test]
+fn ctrl_j_grows_a_multiline_draft_and_the_caret_walks_its_rows() {
+    let mut b = LineBuffer::default();
+    typed(&mut b, "first");
+    b.apply(&Key::Ctrl('j'));
+    typed(&mut b, "second");
+    assert_eq!(b.rows(), vec!["first".to_string(), "second".to_string()], "Ctrl+J grows the box; Enter still submits");
+    assert_eq!(b.row_col(), (1, 6));
+    assert!(b.move_row(false), "the caret walks up inside the draft");
+    assert_eq!(b.row_col(), (0, 5), "the column clamps to the shorter row");
+    assert!(!b.move_row(false), "…and the top edge falls through to history");
+    // Ctrl+K kills to end of LINE, never through the newline.
+    b.apply(&Key::Home);
+    b.apply(&Key::Ctrl('k'));
+    assert_eq!(b.rows(), vec!["".to_string(), "second".to_string()]);
+}
+
+#[test]
+fn shift_tab_arrives_as_backtab_from_its_escape() {
+    use crate::mdedit::key::parse_key;
+    assert_eq!(parse_key(b"\x1b[Z"), Some((Key::BackTab, 3)));
+    // …and a bare LF is Ctrl+J, distinct from Enter's CR.
+    assert_eq!(parse_key(b"\n"), Some((Key::Ctrl('j'), 1)));
+    assert_eq!(parse_key(b"\r"), Some((Key::Enter, 1)));
+}

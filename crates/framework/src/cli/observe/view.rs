@@ -77,6 +77,26 @@ impl RunView {
         }
     }
 
+    /// Attach the workspace chrome's panel as the live tail's suffix: from here on
+    /// the streamed answer and the panel are ONE repaint region with one erase count,
+    /// which is what lets a spinner animate under a streaming diagram without either
+    /// ever climbing over the other.
+    pub(crate) fn with_suffix(mut self, suffix: std::sync::Arc<dyn Fn() -> Vec<String> + Send + Sync>) -> Self {
+        if let Some(live) = self.live.as_mut() {
+            live.set_suffix(suffix);
+        }
+        self
+    }
+
+    /// One animation frame: erase the tail (suffix included), paint it again. The
+    /// workspace ticker's beat while a turn streams; a no-op off a terminal.
+    pub(crate) fn repaint_tail(&mut self) {
+        if let Some(live) = self.live.as_mut() {
+            live.suspend(&mut self.screen);
+            live.resume(&mut self.screen);
+        }
+    }
+
     /// Quieten the keyboard for this view's lifetime.
     ///
     /// A separate step, not part of `new`, and deliberately so: it touches the REAL
