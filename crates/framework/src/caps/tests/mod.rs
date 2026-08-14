@@ -23,14 +23,14 @@ fn plain_guard() -> Arc<crate::guard::Guard> {
 }
 
 fn ctx() -> CapCtx {
-    CapCtx { guard: plain_guard(), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None }
+    CapCtx { guard: plain_guard(), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) }
 }
 
 
 
 
 fn ctx_ws(root: &std::path::Path) -> CapCtx {
-    CapCtx { guard: plain_guard(), app_data: None, remote_enabled: true, origin: String::new(), sandbox: Some(root.to_path_buf()), memory_dir: None }
+    CapCtx { guard: plain_guard(), app_data: None, remote_enabled: true, origin: String::new(), sandbox: Some(root.to_path_buf()), memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) }
 }
 
 fn tmpdir(tag: &str) -> PathBuf {
@@ -258,7 +258,7 @@ fn web_read_md_fixture_and_remote_guards() {
     let r = run("web.read", &[("url".into(), format!("md://{}", f.display()))], &ctx()).unwrap();
     assert!(r.get("markdown").and_then(Json::as_str).unwrap().contains("# Doc"));
     // https with remote disabled → error (no egress)
-    let no_remote = CapCtx { guard: plain_guard(), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: None };
+    let no_remote = CapCtx { guard: plain_guard(), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) };
     assert!(run("web.read", &[("url".into(), "https://example.com".into())], &no_remote).is_err());
     // an SSRF host is blocked even with remote enabled
     assert!(run("web.read", &[("url".into(), "https://localhost/x".into())], &ctx()).is_err());
@@ -271,7 +271,7 @@ fn web_read_md_fixture_and_remote_guards() {
 fn sys_run_guard_sees_canonical_argv_not_quoted_bypass() {
     // An anchored deny rule, written the way a config file writes one.
     let guard = crate::guard::Guard::from_toml("[[guard.command]]\npattern = \"^rm\\b\"\nrule = \"deny\"\n");
-    let ctx = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
+    let ctx = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) };
     // Quoting used to slip past `^rm` (raw string starts with `"`); now the guard sees
     // the canonical de-quoted command, so it is still blocked.
     assert!(run("sys.run", &[("cmd".into(), "\"rm\" -rf /tmp/whatever".into())], &ctx).unwrap_err().contains("the guard refused"));
@@ -309,7 +309,7 @@ fn ssrf_blocks_private_and_encoded_hosts() {
 #[test]
 fn asking_the_guard_never_runs_anything() {
     let guard = crate::guard::Guard::from_toml("[[guard.command]]\npattern = \"rm\"\nrule = \"deny\"\n");
-    let ctx = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
+    let ctx = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) };
     let r = run("guard.check", &[("act".into(), "run".into()), ("target".into(), "rm -rf x".into())], &ctx).unwrap();
     assert_eq!(r.get("verdict").and_then(Json::as_str), Some("deny"));
 }
@@ -317,7 +317,7 @@ fn asking_the_guard_never_runs_anything() {
 #[test]
 fn sys_run_blocked_by_guard() {
     let guard = crate::guard::Guard::from_toml("[[guard.command]]\npattern = \"^danger\"\nrule = \"deny\"\n");
-    let ctx = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
+    let ctx = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) };
     // `danger --now` is an INERT literal — the guard rejects it, it never runs.
     assert!(run("sys.run", &[("cmd".into(), "danger --now".into())], &ctx).is_err());
 }
@@ -328,7 +328,7 @@ fn sys_run_confirm_is_blocked_in_noninteractive_path() {
     // capability path) → deny-wins, it must NOT execute. (`git status` is an
     // inert literal; the confirm rule rejects it before any exec.)
     let guard = crate::guard::Guard::from_toml("[[guard.command]]\npattern = \"^git \"\nrule = \"confirm\"\n");
-    let ctx = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
+    let ctx = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) };
     let r = run("sys.run", &[("cmd".into(), "git status".into())], &ctx);
     assert!(r.is_err(), "Confirm-class command must not run unprompted");
     assert!(format!("{}", r.unwrap_err()).contains("the guard refused"));
@@ -339,7 +339,7 @@ fn store_requires_app_sandbox() {
     assert!(run("store.get", &[("key".into(), "x".into())], &ctx()).is_err());
     let dir = std::env::temp_dir().join(format!("tt-caps-store-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let c = CapCtx { guard: plain_guard(), app_data: Some(dir.clone()), remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None };
+    let c = CapCtx { guard: plain_guard(), app_data: Some(dir.clone()), remote_enabled: true, origin: String::new(), sandbox: None, memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) };
     run("store.set", &[("key".into(), "pref".into()), ("value".into(), "{\"x\":1}".into())], &c).unwrap();
     let got = run("store.get", &[("key".into(), "pref".into())], &c).unwrap();
     assert_eq!(got.get("x").and_then(Json::as_f64), Some(1.0));
@@ -424,7 +424,7 @@ fn pure_families_work_with_no_host() {
 // BEFORE any socket — on the [ai] network switch or the https-only rule) ──────
 
 fn ctx_offline() -> CapCtx {
-    CapCtx { guard: plain_guard(), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: None }
+    CapCtx { guard: plain_guard(), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) }
 }
 
 #[test]
@@ -591,7 +591,7 @@ fn sys_run_guard_blocks_a_denied_program_anywhere_in_a_pipeline() {
         remote_enabled: true,
         origin: String::new(),
         sandbox: Some(ws.clone()),
-        memory_dir: None,
+        memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk),
     };
     // `rm` denied even chained after an allowed command → the whole run is blocked.
     let err = run("sys.run", &[("cmd".into(), "echo hi && rm -rf x".into())], &c).unwrap_err();
@@ -606,7 +606,7 @@ fn asking_the_guard_about_a_path_gets_the_same_answer_the_tool_would_give() {
     // to judge `~/x` as a literal directory called `~`, answer "allow", and then `fs.read`
     // would refuse it — worse than not having the question at all.
     let dir = tmpdir("guardcheck");
-    let c = CapCtx { guard: plain_guard(), app_data: None, remote_enabled: false, origin: String::new(), sandbox: Some(dir.clone()), memory_dir: None };
+    let c = CapCtx { guard: plain_guard(), app_data: None, remote_enabled: false, origin: String::new(), sandbox: Some(dir.clone()), memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) };
     let pem = dir.join("server.pem");
     std::fs::write(&pem, "not a key").unwrap();
     let verdict = |target: &str| {
@@ -638,7 +638,7 @@ fn a_command_that_only_becomes_dangerous_once_a_secret_is_put_back_never_runs() 
     );
     // What an `fs.read` of a hostile `.env` would have handed back, hidden as it left.
     let token = guard.hide("PASS=x;wipe-the-lot everything");
-    let c = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: false, origin: String::new(), sandbox: Some(ws.clone()), memory_dir: None };
+    let c = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: false, origin: String::new(), sandbox: Some(ws.clone()), memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) };
     let err = run("sys.run", &[("cmd".into(), format!("echo {}", token.trim()))], &c).unwrap_err();
     assert!(err.contains("the guard refused"), "{err}");
     assert!(!err.contains("wipe-the-lot"), "and the refusal does not print what it was protecting: {err}");
@@ -652,7 +652,7 @@ fn a_secret_written_into_a_file_lands_as_the_real_value() {
     let ws = tmpdir("writeback");
     let guard = crate::guard::Guard::from_toml("[[guard.secret]]\npattern = \"pw-[a-z0-9]+\"\nname = \"db-password\"\n");
     let token = guard.hide("pw-example0");
-    let c = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: false, origin: String::new(), sandbox: Some(ws.clone()), memory_dir: None };
+    let c = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: false, origin: String::new(), sandbox: Some(ws.clone()), memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) };
     run("fs.write", &[("path".into(), "config.yml".into()), ("content".into(), format!("password: {token}"))], &c).unwrap();
     assert_eq!(std::fs::read_to_string(ws.join("config.yml")).unwrap(), "password: pw-example0");
     // …and reading it back hands the model the placeholder again, never the value.
@@ -669,11 +669,80 @@ fn a_memory_keeps_neither_the_secret_nor_a_placeholder() {
     let store = tmpdir("memscrub");
     let guard = crate::guard::Guard::from_toml("[[guard.secret]]\npattern = \"pw-[a-z0-9]+\"\nname = \"db-password\"\n");
     let token = guard.hide("pw-example0");
-    let c = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: Some(store.clone()) };
+    let c = CapCtx { guard: Arc::new(guard), app_data: None, remote_enabled: false, origin: String::new(), sandbox: None, memory_dir: Some(store.clone()), approver: std::sync::Arc::new(crate::guard::NobodyToAsk) };
     run("memory.add", &[("text".into(), format!("the staging password is {token}"))], &c).unwrap();
     let found = crate::cli::run::json_text(&run("memory.list", &[], &c).unwrap());
     assert!(!found.contains("pw-example0"), "the value was written down: {found}");
     assert!(!found.contains("db-password-1"), "so was a placeholder nothing could resolve: {found}");
     assert!(found.contains("redacted"), "and what is there says so: {found}");
     let _ = std::fs::remove_dir_all(&store);
+}
+
+/// A scripted approver: answers what it was told to, and REMEMBERS being asked —
+/// which is what lets a test assert that `Deny` never consults anybody.
+struct ScriptedApprover {
+    answer: bool,
+    asked: std::sync::Mutex<Vec<String>>,
+}
+
+impl crate::guard::Approver for ScriptedApprover {
+    fn approve(&self, act: &str, _reason: &str) -> bool {
+        self.asked.lock().unwrap_or_else(|e| e.into_inner()).push(act.to_string());
+        self.answer
+    }
+}
+
+#[test]
+fn a_confirm_rule_asks_the_approver_and_a_deny_never_does() {
+    let guard = crate::guard::Guard::from_toml(
+        "[[guard.command]]\npattern = \"^touch-the-config\"\nrule = \"confirm\"\n[[guard.command]]\npattern = \"^wipe-the-lot\"\nrule = \"deny\"\n",
+    );
+    let make = |answer| {
+        let approver = std::sync::Arc::new(ScriptedApprover { answer, asked: std::sync::Mutex::new(Vec::new()) });
+        let ctx = CapCtx {
+            guard: Arc::new(guard.clone()),
+            app_data: None,
+            remote_enabled: false,
+            origin: String::new(),
+            sandbox: None,
+            memory_dir: None,
+            approver: approver.clone(),
+        };
+        (ctx, approver)
+    };
+
+    // "y" lets a confirm-tier act proceed…
+    let (ctx, approver) = make(true);
+    assert!(ctx.allow(crate::guard::Act::Run("touch-the-config now")).is_ok());
+    assert_eq!(approver.asked.lock().unwrap().len(), 1, "the human was asked once");
+
+    // …"n" refuses in the guard's own sentence…
+    let (ctx, _) = make(false);
+    let err = ctx.allow(crate::guard::Act::Run("touch-the-config now")).unwrap_err();
+    assert!(crate::guard::is_refusal(&err), "{err}");
+
+    // …and a DENY refuses without the approver ever hearing about it. Deny is deny:
+    // no dialog, no human override, no path around the rule.
+    let (ctx, approver) = make(true);
+    let err = ctx.allow(crate::guard::Act::Run("wipe-the-lot --everything")).unwrap_err();
+    assert!(crate::guard::is_refusal(&err), "{err}");
+    assert!(approver.asked.lock().unwrap().is_empty(), "deny must never consult the approver");
+}
+
+#[test]
+fn headless_contexts_still_refuse_a_confirm() {
+    // The seam must not soften anything that has nobody at the terminal: the default
+    // approver answers no, so an agent/flow/job run behaves exactly as it always has.
+    let guard = crate::guard::Guard::from_toml("[[guard.command]]\npattern = \"^touch-the-config\"\nrule = \"confirm\"\n");
+    let ctx = CapCtx {
+        guard: Arc::new(guard),
+        app_data: None,
+        remote_enabled: false,
+        origin: String::new(),
+        sandbox: None,
+        memory_dir: None,
+        approver: std::sync::Arc::new(crate::guard::NobodyToAsk),
+    };
+    let err = ctx.allow(crate::guard::Act::Run("touch-the-config now")).unwrap_err();
+    assert!(crate::guard::is_refusal(&err), "{err}");
 }

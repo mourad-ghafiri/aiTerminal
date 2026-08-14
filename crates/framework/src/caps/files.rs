@@ -156,14 +156,14 @@ fn rejects_traversal(p: &Path) -> Result<(), String> {
 /// because the click came from a window.
 fn user_read_guard(p: &Path, ctx: &CapCtx) -> Result<(), String> {
     rejects_traversal(p)?;
-    ctx.guard.permit(crate::guard::Act::Read(p))
+    ctx.allow(crate::guard::Act::Read(p))
 }
 
 /// A path we are about to MUTATE (create/rename/move/trash target): no `..`, allowed by the
 /// guard, and under an allowed write root.
 fn user_write_guard(p: &Path, ctx: &CapCtx) -> Result<(), String> {
     rejects_traversal(p)?;
-    ctx.guard.permit(crate::guard::Act::Write(p))?;
+    ctx.allow(crate::guard::Act::Write(p))?;
     if allowed_write_roots().iter().any(|r| p == r.as_path() || p.starts_with(r)) {
         Ok(())
     } else {

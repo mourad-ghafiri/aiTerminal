@@ -81,7 +81,7 @@ pub(crate) fn file_category(is_dir: bool, ext: &str) -> &'static str {
 /// May this path be read, listed or stat-ed? One question, asked of the guard, so a rule
 /// written once in `config.toml` reaches every `fs.*` method.
 pub(crate) fn allow_read(p: &std::path::Path, ctx: &CapCtx) -> Result<(), String> {
-    ctx.guard.permit(crate::guard::Act::Read(p))
+    ctx.allow(crate::guard::Act::Read(p))
 }
 
 /// May this path be created, modified, moved or deleted?
@@ -92,7 +92,7 @@ pub(crate) fn allow_read(p: &std::path::Path, ctx: &CapCtx) -> Result<(), String
 /// refused even when it sits right inside the workspace.
 pub(crate) fn allow_write(p: &std::path::Path, ctx: &CapCtx) -> Result<(), String> {
     contained(p, ctx)?;
-    ctx.guard.permit(crate::guard::Act::Write(p))
+    ctx.allow(crate::guard::Act::Write(p))
 }
 
 /// Confine a WRITE target to the active workspace: require a workspace, reject `..`

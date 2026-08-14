@@ -51,6 +51,18 @@ pub struct CapCtx {
     /// the `memory.*` family writes here and recalls folder-first-then-global; `None`
     /// falls back to the global store. Threaded from the run's project session.
     pub memory_dir: Option<PathBuf>,
+    /// Who answers a guard `Confirm` for this run. Headless runs carry
+    /// [`NobodyToAsk`](crate::guard::NobodyToAsk) (a `Confirm` refuses, as ever);
+    /// a workspace conversation carries the person at the terminal.
+    pub approver: Arc<dyn crate::guard::Approver>,
+}
+
+impl CapCtx {
+    /// The one door a capability asks before acting: the guard's judgement, with
+    /// this run's approver answering any `Confirm`. `Deny` never asks anybody.
+    pub fn allow(&self, act: crate::guard::Act) -> Result<(), String> {
+        self.guard.permit_with(act, &*self.approver)
+    }
 }
 
 /// The standard-library registry (pure families). Built once per process; each

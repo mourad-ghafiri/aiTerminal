@@ -7,7 +7,7 @@ fn run(method: &str, args: &[(&str, &str)]) -> Result<Json, String> {
         remote_enabled: true,
         origin: String::new(),
         sandbox: None,
-        memory_dir: None,
+        memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk),
     };
     let a: Vec<(String, String)> = args.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     CodecObj.invoke(method, &a, &ctx, &mut crate::caps::host::NullHost)

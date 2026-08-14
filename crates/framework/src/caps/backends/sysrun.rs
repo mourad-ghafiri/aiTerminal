@@ -22,7 +22,7 @@ pub(crate) fn sys(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Resu
             // ONE question. The guard knows how to read a command line — every line, every
             // pipeline segment, each segment's program, and the paths it names — so there is
             // nothing here to keep in step with it.
-            ctx.guard.permit(crate::guard::Act::Run(cmd))?;
+            ctx.allow(crate::guard::Act::Run(cmd))?;
             // The secrets go back in LAST, immediately before the shell sees the line, so a
             // real value exists only for the length of this call: never in the transcript
             // the model reads back, never in a log, never in the guard's own refusal text.

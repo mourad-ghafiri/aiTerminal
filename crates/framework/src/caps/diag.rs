@@ -128,7 +128,7 @@ fn check(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
         ]));
     };
     // Re-ask the guard about the checker command, exactly like `sys.run`.
-    ctx.guard.permit(crate::guard::Act::Run(&checker.argv.join(" ")))?;
+    ctx.allow(crate::guard::Act::Run(&checker.argv.join(" ")))?;
     let (prog, rest) = checker.argv.split_first().expect("checker argv is non-empty");
     let out = Command::new(prog)
         .args(rest)

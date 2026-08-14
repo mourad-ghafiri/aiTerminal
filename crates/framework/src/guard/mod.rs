@@ -44,7 +44,7 @@ use secret::Secrets;
 
 pub use command::split;
 pub use path::Base;
-pub use rules::{RuleSet, Scope};
+pub use rules::{CommandRule, PathRule, RuleSet, Scope};
 pub use secret::{Vault, MASK};
 
 /// The words a refusal starts with, wherever it is raised.
@@ -89,6 +89,26 @@ pub enum Decision {
     /// call, a detached job, a flow node — this is a refusal.
     Confirm { reason: String },
     Deny { reason: String },
+}
+
+/// Somebody who can answer a `Confirm` decision — or nobody.
+///
+/// A Strategy seam, not a UI: the guard never draws anything. The workspace REPL
+/// implements this by asking the person at the terminal; everything headless uses
+/// [`NobodyToAsk`], which preserves the rule that an unanswerable `Confirm` refuses.
+pub trait Approver: Send + Sync {
+    /// Whether `act` (already described in the guard's own words) may proceed,
+    /// given the rule's `reason`. `false` refuses with the standard sentence.
+    fn approve(&self, act: &str, reason: &str) -> bool;
+}
+
+/// The headless answer: `Confirm` refuses, exactly as it always has.
+pub struct NobodyToAsk;
+
+impl Approver for NobodyToAsk {
+    fn approve(&self, _act: &str, _reason: &str) -> bool {
+        false
+    }
 }
 
 impl Decision {
@@ -177,8 +197,21 @@ impl Guard {
     /// command. `Confirm` is a refusal here — there is no one at the terminal to answer —
     /// and the message is the one sentence every surface refuses in.
     pub fn permit(&self, act: Act) -> Result<(), String> {
+        self.permit_with(act, &NobodyToAsk)
+    }
+
+    /// [`permit`](Self::permit), with somebody who can answer a `Confirm`.
+    ///
+    /// `Deny` never asks — deny is deny, everywhere, always. `Confirm` is the rule
+    /// that *wants* a human, and for years every surface spent it as a refusal
+    /// because no surface had one. A workspace conversation does: its approver puts
+    /// the question to the person sitting there, and their "n" refuses in exactly
+    /// the sentence a headless run refuses in. The guard stays pure — the approver
+    /// is a callback, and what it looks like on screen is its caller's business.
+    pub fn permit_with(&self, act: Act, approver: &dyn Approver) -> Result<(), String> {
         match self.judge(act) {
             Decision::Allow => Ok(()),
+            Decision::Confirm { reason } if approver.approve(&act.describe(), &reason) => Ok(()),
             other => Err(format!("{REFUSED} {} — {}", act.describe(), other.why())),
         }
     }
@@ -300,8 +333,20 @@ impl Guard {
 /// the window, the CLI and every agent run. A rule that will not compile is reported to
 /// stderr and skipped; a bad pattern must never stop the terminal from starting.
 pub fn build(config: &crate::config::Config, registry: &crate::plugin::PluginRegistry) -> Guard {
+    build_with_project(config, registry, None)
+}
+
+/// [`build`], with a trusted project's contribution folded in last — ALREADY
+/// tightened by [`overlay::tighten`](crate::config::overlay::tighten): the compiler
+/// never sees a loosening tier from a repo, whatever the caller forgot.
+pub fn build_with_project(config: &crate::config::Config, registry: &crate::plugin::PluginRegistry, project: Option<&RuleSet>) -> Guard {
     let plugins = registry.guard_rules();
-    let (guard, skipped) = Guard::compile(&[&config.guard, &plugins], Base::here());
+    let tightened = project.map(|p| crate::config::overlay::tighten(p.clone()).0);
+    let mut sets: Vec<&RuleSet> = vec![&config.guard, &plugins];
+    if let Some(p) = &tightened {
+        sets.push(p);
+    }
+    let (guard, skipped) = Guard::compile(&sets, Base::here());
     for why in skipped {
         eprintln!("aiTerminal: guard rule skipped — {why}");
     }

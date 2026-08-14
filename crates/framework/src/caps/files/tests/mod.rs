@@ -18,7 +18,7 @@ fn ctx_at(home: Option<PathBuf>) -> CapCtx {
         remote_enabled: false,
         origin: "test://files/".into(),
         sandbox: None,
-        memory_dir: None,
+        memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk),
     }
 }
 

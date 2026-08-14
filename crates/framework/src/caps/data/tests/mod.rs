@@ -45,7 +45,7 @@ fn svc() -> (DataObj, CapCtx, PathBuf) {
         remote_enabled: true,
         origin: "terminal://ai/".into(),
         sandbox: None,
-        memory_dir: None,
+        memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk),
     };
     (DataObj, ctx, dir)
 }
@@ -95,7 +95,7 @@ fn data_requires_app_sandbox() {
         remote_enabled: true,
         origin: String::new(),
         sandbox: None,
-        memory_dir: None,
+        memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk),
     };
     assert!(DataObj.invoke("data.tables", &[], &ctx, &mut crate::caps::host::NullHost).is_err());
 }
