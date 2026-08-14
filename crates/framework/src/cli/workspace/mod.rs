@@ -12,13 +12,13 @@
 //! tighten. The REPL adds an input surface, never an execution surface.
 
 pub(crate) mod banner;
-pub(crate) mod chrome;
 pub(crate) mod init;
 pub(crate) mod input;
 pub(crate) mod repl;
+pub(crate) mod screen;
 pub(crate) mod slash;
 pub(crate) mod trust;
-pub(crate) mod tui;
+pub(crate) mod ui;
 
 use std::sync::{Arc, Mutex};
 
@@ -79,42 +79,34 @@ pub(crate) fn ai_workspace_cmd(args: &[String]) -> i32 {
     let runner = crate::cli::runner::build_runner(&cfg, &settings, Some(root.clone()), guard.clone(), hub);
     let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default());
 
-    // The chrome: the anchored panel on stderr, sized live, and the sitting's raw
-    // keyboard behind it. Built here and nowhere else — tests drive the headless core.
-    let chrome = chrome::Chrome::new(
-        Box::new(std::io::stderr()),
-        Box::new(|| (crate::cli::style::term_cols(), crate::cli::style::term_rows())),
-    );
-    let sitting = tui::Tui::start(chrome.clone());
+    // The whole terminal becomes the workspace: alt screen in, restored on every
+    // exit path — then ONE loop owns it: keys in, whole frames out, everything
+    // else (this REPL included) only sends events. That single ownership is the
+    // stability the panel era could not give.
+    let _screen = AltScreen::enter();
     let describe = describe_for_dropdown(&ws);
     let hist = session_dir.as_ref().map(|d| d.join("chat").join("history"));
-    let input: repl::SharedInput = Arc::new(Mutex::new(Box::new(tui::TuiInput::new(chrome.clone(), sitting.keys.clone(), describe, hist))));
-    let asker = Arc::new(tui::ChromeAsk { chrome: chrome.clone(), keys: sitting.keys.clone() });
-
-    let mut repl = repl::Repl::new(ws, cfg, settings, client, guard, runner, input, session_dir)
-        .with_tui(chrome.clone(), sitting.pulse.clone());
-    // The panel's approver replaces the plain one: the guard's confirm renders as
-    // the amber ask-block and is answered from the keyboard. Same rule, same words.
-    repl.runner.ctx.approver = asker;
-
-    // The whole terminal becomes the workspace: alt screen in, everything restored
-    // on the way out whatever the exit path — and the sitting opens on the banner
-    // with the input mid-screen, until the first message anchors it down.
-    let _screen = AltScreen::enter();
     let facts = banner::Facts {
-        root: repl.ws.root.display().to_string(),
-        overlay: repl.overlay_line(granted),
-        instructions: repl.ws.project_instructions().map(|(name, _)| name),
-        pool: repl.settings.resolve_key().is_some().then(|| {
+        root: root.display().to_string(),
+        overlay: repl::overlay_line_for(&ws, granted),
+        instructions: ws.project_instructions().map(|(name, _)| name),
+        pool: settings.resolve_key().is_some().then(|| {
             format!(
                 "{} model(s) \u{b7} strategy {}",
-                repl.settings.pool.entries.len(),
-                format!("{:?}", repl.settings.pool.strategy).to_lowercase()
+                settings.pool.entries.len(),
+                format!("{:?}", settings.pool.strategy).to_lowercase()
             )
         }),
     };
     let cols = crate::cli::style::term_cols();
-    chrome.open_centered(banner::render(&facts, cols), banner::compact(&facts));
+    let sitting = ui::start(banner::render(&facts, cols), banner::compact(&facts), describe, hist);
+    let input: repl::SharedInput = Arc::new(Mutex::new(Box::new(ui::UiLines(sitting.clone()))));
+    let asker = Arc::new(ui::UiAsk(sitting.clone()));
+
+    let mut repl = repl::Repl::new(ws, cfg, settings, client, guard, runner, input, session_dir).with_ui(sitting);
+    // The loop's approver: the guard's confirm renders as the amber ask-block and
+    // is answered from the keyboard. Same rule, same words, one keyboard owner.
+    repl.runner.ctx.approver = asker;
     if resume {
         repl.resume_last();
     }

@@ -1,7 +1,7 @@
 pub(crate) mod view;
 
 use crate::cli::style::{err_is_tty, muted, reset};
-pub(crate) use view::{Chrome, RunView, SharedView};
+pub(crate) use view::{Chrome, RunView, SharedView, TailSink};
 
 /// What a run says while it is waiting on the model. One string, because three commands
 /// showing three different words for the same state is three things to learn.

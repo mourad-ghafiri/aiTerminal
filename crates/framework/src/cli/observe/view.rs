@@ -63,12 +63,20 @@ pub(crate) struct RunView {
     ///
     /// `None` off a terminal — there is no echo to turn off, and nothing repaints anyway.
     quiet: Option<platform::os::RawGuard>,
+    /// Where the in-progress block's rows go under the compositor. `None` = direct.
+    tail_sink: Option<Box<dyn TailSink>>,
+}
+
+/// The compositor's hand: receives the streaming block's current rows.
+pub(crate) trait TailSink: Send {
+    fn tail(&mut self, rows: Vec<String>);
 }
 
 impl RunView {
     pub(crate) fn new(screen: Box<dyn Write + Send>, log: Option<std::fs::File>, md: Option<(corelib::md::Style, usize)>) -> RunView {
         RunView {
             quiet: None,
+            tail_sink: None,
             screen,
             log,
             live: md.map(|(style, width)| LiveMarkdown::new(style, width, term_rows().saturating_sub(2))),
@@ -77,23 +85,20 @@ impl RunView {
         }
     }
 
-    /// Attach the workspace chrome's panel as the live tail's suffix: from here on
-    /// the streamed answer and the panel are ONE repaint region with one erase count,
-    /// which is what lets a spinner animate under a streaming diagram without either
-    /// ever climbing over the other.
-    pub(crate) fn with_suffix(mut self, suffix: std::sync::Arc<dyn Fn() -> Vec<String> + Send + Sync>) -> Self {
+    /// Composed mode: the workspace compositor draws the screen; this view COMMITS
+    /// content through its writer (which appends to the compositor's log) and hands
+    /// the in-progress block to `sink` as rows. No cursor byte ever leaves here.
+    pub(crate) fn composed(mut self, sink: Box<dyn TailSink>) -> Self {
         if let Some(live) = self.live.as_mut() {
-            live.set_suffix(suffix);
+            live.compose();
         }
+        self.tail_sink = Some(sink);
         self
     }
 
-    /// One animation frame: erase the tail (suffix included), paint it again. The
-    /// workspace ticker's beat while a turn streams; a no-op off a terminal.
-    pub(crate) fn repaint_tail(&mut self) {
-        if let Some(live) = self.live.as_mut() {
-            live.suspend(&mut self.screen);
-            live.resume(&mut self.screen);
+    fn share_tail(&mut self) {
+        if let (Some(live), Some(sink)) = (&self.live, &mut self.tail_sink) {
+            sink.tail(live.pending_rows());
         }
     }
 
@@ -133,6 +138,7 @@ impl RunView {
                 let _ = self.screen.flush();
             }
         }
+        self.share_tail();
         // The log keeps the SOURCE, not the rendering: Markdown a person can read back,
         // rather than one terminal's idea of how to draw it.
         self.to_log(text);
@@ -145,6 +151,9 @@ impl RunView {
             l.flush(&mut self.screen);
         }
         let _ = self.screen.flush();
+        if let Some(sink) = &mut self.tail_sink {
+            sink.tail(Vec::new());
+        }
     }
 
     /// A chrome line, printed above the live tail and staying where it is put.
@@ -171,7 +180,9 @@ impl RunView {
     /// Only on a terminal: off one there is no cursor to climb with, and a log that
     /// showed the call starting and then finishing is a log that is telling the truth.
     pub(crate) fn recommit(&mut self, chrome: Chrome, line: &str) {
-        if self.live.is_none() {
+        // Off a terminal — or under the compositor, where there is no cursor to climb
+        // with — the running line stays and the finished line follows it.
+        if self.live.is_none() || self.live.as_ref().is_some_and(|l| l.is_composed()) {
             return self.commit(chrome, line);
         }
         if let Some(l) = &mut self.live {

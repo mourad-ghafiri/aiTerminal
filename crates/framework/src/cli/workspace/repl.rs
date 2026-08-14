@@ -61,7 +61,7 @@ pub(crate) struct Repl<T: crate::ai::Transport> {
     chat_log: Option<std::path::PathBuf>,
     session_dir: Option<std::path::PathBuf>,
     /// The chrome, when this sitting has one — `None` in tests and the world.
-    tui: Option<(super::chrome::Chrome, Arc<super::tui::Pulse>)>,
+    ui: Option<Arc<super::ui::UiHandle>>,
     /// The sitting's cancel, re-armed per turn; Esc trips it through the Pulse.
     cancel: crate::ai::CancelToken,
     /// The model that actually served the last turn, for the status row.
@@ -114,37 +114,21 @@ impl<T: crate::ai::Transport> Repl<T> {
             spent: (0, 0, 0.0),
             chat_log,
             session_dir,
-            tui: None,
+            ui: None,
             cancel,
             served: String::new(),
         }
     }
 
-    /// Attach the chrome: the panel renders the sitting; the pulse carries a
-    /// running turn's cancel and clock for the ticker.
-    pub(crate) fn with_tui(mut self, chrome: super::chrome::Chrome, pulse: Arc<super::tui::Pulse>) -> Repl<T> {
-        self.tui = Some((chrome, pulse));
+    /// Attach the compositor loop: everything this REPL shows goes through it.
+    pub(crate) fn with_ui(mut self, ui: Arc<super::ui::UiHandle>) -> Repl<T> {
+        self.ui = Some(ui);
         self
     }
 
-    /// The overlay's one-line summary, for the banner.
-    pub(crate) fn overlay_line(&self, trusted: bool) -> String {
-        match (trusted, self.ws.overlaid()) {
-            (false, _) => "project overlay OFF (trust declined \u{2014} /trust to revisit)".to_string(),
-            (true, false) => "no project .aiTerminal/ \u{2014} global config serves".to_string(),
-            (true, true) => {
-                let o = crate::config::overlay::Workspace::offering(&self.ws.root);
-                format!(
-                    "project overlay ON \u{2014} {} agent(s) \u{b7} {} skill(s) \u{b7} {} prompt(s) \u{b7} {} flow(s) \u{b7} {} mcp",
-                    o.agents, o.skills, o.prompts, o.flows, o.mcp
-                )
-            }
-        }
-    }
-
     /// Everything the status row states, freshly composed.
-    fn status(&self) -> super::chrome::Status {
-        super::chrome::Status {
+    fn status(&self) -> super::screen::Status {
+        super::screen::Status {
             root: self.ws.root.file_name().and_then(|s| s.to_str()).unwrap_or("workspace").to_string(),
             plan: self.readonly,
             persona: self.persona.clone(),
@@ -161,8 +145,10 @@ impl<T: crate::ai::Transport> Repl<T> {
     /// Say one styled line to the person — through the chrome when there is one, so
     /// the panel is never overwritten; plain stderr otherwise.
     fn say(&self, line: &str) {
-        match &self.tui {
-            Some((chrome, _)) => chrome.print(format!("{line}\r\n").as_bytes()),
+        match &self.ui {
+            Some(ui) => {
+                let _ = ui.events.send(super::ui::Event::Append(line.to_string()));
+            }
             None => eprintln!("{line}"),
         }
     }
@@ -203,11 +189,6 @@ impl<T: crate::ai::Transport> Repl<T> {
             let Some(line) = line else { break };
             if line.trim().is_empty() {
                 continue;
-            }
-            // The first real line ends the opening screen: the panel drops to the
-            // bottom and stays there for the rest of the sitting.
-            if let Some((chrome, _)) = &self.tui {
-                chrome.ensure_bottom();
             }
             match self.handle(&line) {
                 Flow::Stay => {}
@@ -354,27 +335,21 @@ impl<T: crate::ai::Transport> Repl<T> {
     /// Working row the run's only spinner, muse aside included; headless keeps the
     /// plain stream the tests and the scenario world drive.
     fn open_stream(&mut self, base: &str) -> (SharedView, CliObserver) {
-        match &self.tui {
-            Some((chrome, pulse)) => {
+        match &self.ui {
+            Some(ui) => {
                 self.cancel.reset();
                 let waiting = crate::cli::observe::SharedWaiting::new(crate::cli::observe::Motivated::label(base, &self.cfg));
-                pulse.begin(self.cancel.clone(), waiting);
-                chrome.set_status(self.status());
-                chrome.set(super::chrome::PanelState::Working { label: base.to_string(), draft: String::new(), steering: None });
-                let suffix = {
-                    let chrome = chrome.clone();
-                    std::sync::Arc::new(move || chrome.suffix_rows())
-                };
+                ui.pulse.begin(self.cancel.clone(), waiting);
+                let _ = ui.events.send(super::ui::Event::Status(self.status()));
+                let _ = ui.events.send(super::ui::Event::Working { label: base.to_string() });
+                // The view never touches the terminal: commits become Append events,
+                // the in-progress block becomes Tail events, the loop draws both.
                 let view = SharedView::new(
-                    RunView::new(Box::new(std::io::stderr()), None, markdown_opts(crate::cli::style::err_is_tty())).with_suffix(suffix),
+                    RunView::new(Box::new(super::ui::AppendWriter::new(ui.events.clone())), None, markdown_opts(true))
+                        .composed(Box::new(super::ui::TailEvents(ui.events.clone()))),
                 );
-                let hook: Arc<dyn Fn() + Send + Sync> = {
-                    let view = view.clone();
-                    Arc::new(move || view.with(|v| v.repaint_tail()))
-                };
-                chrome.stream_owned(hook);
                 let obs = CliObserver::new(view.clone()).with_reasoning(self.cfg.ai_show_reasoning).with_panel({
-                    let pulse = pulse.clone();
+                    let pulse = ui.pulse.clone();
                     Arc::new(move || pulse.turn_started())
                 });
                 (view, obs)
@@ -396,10 +371,9 @@ impl<T: crate::ai::Transport> Repl<T> {
         self.spent.0 += run.usage.input as u64;
         self.spent.1 += run.usage.output as u64;
         self.spent.2 += cost;
-        if let Some((chrome, pulse)) = &self.tui {
-            pulse.end();
-            chrome.stream_released();
-            chrome.set_status(self.status());
+        if let Some(ui) = &self.ui {
+            ui.pulse.end();
+            let _ = ui.events.send(super::ui::Event::Status(self.status()));
         }
         let (dim, r) = (muted(), reset());
         self.say(&format!(
@@ -446,7 +420,7 @@ impl<T: crate::ai::Transport> Repl<T> {
         let (view, mut obs) = self.open_stream("thinking\u{2026}");
         self.runner.trace = Some(Arc::new(view));
         let mut transcript = self.transcript.take().expect("set above");
-        let mut steer = PulseSteer(self.tui.as_ref().map(|(_, p)| p.clone()), self.guard.clone());
+        let mut steer = PulseSteer(self.ui.as_ref().map(|ui| ui.pulse.clone()), self.guard.clone());
         let run = crate::ai::run_agent_over(&self.client, &spec, &mut transcript, &mut self.runner, &mut obs, &mut steer);
         self.transcript = Some(transcript);
         finish_streamed(&mut obs, &run.answer);
@@ -475,10 +449,17 @@ impl<T: crate::ai::Transport> Repl<T> {
         // so the conversation reads as one document with the run embedded.
         let (dim, r) = (muted(), reset());
         self.say(&format!("{dim}\u{2500}\u{2500} @{} {}\u{2500}\u{2500}{r}", argv.join(" "), "\u{2500}".repeat(8)));
-        if let Some((chrome, _)) = &self.tui {
-            chrome.hide();
+        // The run owns the terminal: the loop clears and stops painting (the ack
+        // says the screen is really free), and Resume repaints the whole frame.
+        if let Some(ui) = &self.ui {
+            let (ack, freed) = std::sync::mpsc::channel();
+            let _ = ui.events.send(super::ui::Event::Suspend(ack));
+            let _ = freed.recv_timeout(std::time::Duration::from_secs(2));
         }
         let code = crate::cli::ai(argv);
+        if let Some(ui) = &self.ui {
+            let _ = ui.events.send(super::ui::Event::Resume);
+        }
         let glyph = if code == 0 { "\u{2713}" } else { "\u{2717}" };
         self.say(&format!("{dim}\u{2500}\u{2500} {glyph} @{} \u{b7} exit {code} {}\u{2500}\u{2500}{r}", argv.first().map(String::as_str).unwrap_or(""), "\u{2500}".repeat(8)));
         self.pending.push(format!("[I ran `@{}` in this workspace; it exited {code}]", argv.join(" ")));
@@ -628,12 +609,27 @@ impl<T: crate::ai::Transport> Repl<T> {
 /// The workspace's steer: reads what the ticker collected off the keyboard while
 /// the run worked. Hidden by the guard before it joins the conversation — an
 /// interjection is user text off this machine like any other.
-struct PulseSteer(Option<Arc<super::tui::Pulse>>, Arc<crate::guard::Guard>);
+struct PulseSteer(Option<Arc<super::ui::Pulse>>, Arc<crate::guard::Guard>);
 
 impl crate::ai::Steer for PulseSteer {
     fn take(&mut self) -> Option<String> {
         let raw = self.0.as_ref()?.take_steer()?;
         Some(self.1.hide(&raw))
+    }
+}
+
+/// The overlay's one-line summary, for the banner and the header alike.
+pub(crate) fn overlay_line_for(ws: &crate::config::overlay::Workspace, trusted: bool) -> String {
+    match (trusted, ws.overlaid()) {
+        (false, _) => "project overlay OFF (trust declined \u{2014} /trust to revisit)".to_string(),
+        (true, false) => "no project .aiTerminal/ \u{2014} global config serves".to_string(),
+        (true, true) => {
+            let o = crate::config::overlay::Workspace::offering(&ws.root);
+            format!(
+                "project overlay ON \u{2014} {} agent(s) \u{b7} {} skill(s) \u{b7} {} prompt(s) \u{b7} {} flow(s) \u{b7} {} mcp",
+                o.agents, o.skills, o.prompts, o.flows, o.mcp
+            )
+        }
     }
 }
 

@@ -79,10 +79,11 @@ pub(crate) struct LiveMarkdown {
     max_rows: usize,
     /// Screen lines the current tail occupies (what the next erase must undo).
     painted: usize,
-    /// Rows appended BELOW the tail on every repaint — the workspace chrome's panel.
-    /// Counted into `painted`, so the tail and the panel are one region with one
-    /// erase count: the board's "one writer" rule, kept by construction.
-    suffix: Option<std::sync::Arc<dyn Fn() -> Vec<String> + Send + Sync>>,
+    /// Composed mode: the workspace compositor owns the screen — this renderer
+    /// COMMITS blocks and exposes [`pending_rows`](Self::pending_rows), and never
+    /// writes a cursor movement of its own. Direct mode (every non-workspace
+    /// surface) keeps the classic single-owner tail repaint.
+    composed: bool,
 }
 
 /// The escape sequence to erase a `painted`-line tail: return to its first line, clear below.
@@ -173,12 +174,26 @@ pub(crate) fn clamp_tail(rendered: &str, max_rows: usize) -> (String, usize) {
 
 impl LiveMarkdown {
     pub(crate) fn new(style: corelib::md::Style, width: usize, max_rows: usize) -> Self {
-        LiveMarkdown { sr: corelib::md::StreamRenderer::new(style, width, &[DIAGRAM_LANG]), style, width, max_rows: if max_rows == 0 { 40 } else { max_rows }, painted: 0, suffix: None }
+        LiveMarkdown { sr: corelib::md::StreamRenderer::new(style, width, &[DIAGRAM_LANG]), style, width, max_rows: if max_rows == 0 { 40 } else { max_rows }, painted: 0, composed: false }
     }
 
-    /// Attach the panel rows painted under the tail from now on.
-    pub(crate) fn set_suffix(&mut self, suffix: std::sync::Arc<dyn Fn() -> Vec<String> + Send + Sync>) {
-        self.suffix = Some(suffix);
+    /// Switch to composed mode: commits only, no cursor writes, tail exposed as rows.
+    pub(crate) fn compose(&mut self) {
+        self.composed = true;
+    }
+
+    pub(crate) fn is_composed(&self) -> bool {
+        self.composed
+    }
+
+    /// The in-progress block as rows for a compositor frame (viewport-clamped).
+    pub(crate) fn pending_rows(&self) -> Vec<String> {
+        let rendered = self.render_pending();
+        if rendered.is_empty() {
+            return Vec::new();
+        }
+        let (text, _) = clamp_tail(&rendered, self.max_rows);
+        text.split('\n').map(str::to_string).collect()
     }
 
     /// A streamed answer has no document directory, so only absolute paths and (when
@@ -203,34 +218,26 @@ impl LiveMarkdown {
     }
 
     fn paint(&mut self, w: &mut dyn std::io::Write) {
+        if self.composed {
+            return; // the compositor draws the tail from `pending_rows`
+        }
         let rendered = self.render_pending();
-        let (text, n) = match rendered.is_empty() {
-            true => (String::new(), 0),
-            false => clamp_tail(&rendered, self.max_rows),
-        };
+        if rendered.is_empty() {
+            self.painted = 0;
+            return;
+        }
+        let (text, n) = clamp_tail(&rendered, self.max_rows);
         let _ = w.write_all(text.as_bytes());
-        let extra = match &self.suffix {
-            None => 0,
-            Some(suffix) => {
-                let rows = suffix();
-                for (i, row) in rows.iter().enumerate() {
-                    if n > 0 || i > 0 {
-                        let _ = w.write_all(b"\r\n");
-                    }
-                    let _ = w.write_all(b"\r");
-                    let _ = w.write_all(row.as_bytes());
-                }
-                rows.len()
-            }
-        };
-        self.painted = n + extra;
+        self.painted = n;
     }
 
     /// Feed a streamed delta: erase the old tail, commit any newly-completed blocks, repaint the
     /// in-progress tail.
     pub(crate) fn push(&mut self, w: &mut dyn std::io::Write, delta: &str) {
         self.adapt_size(w);
-        let _ = w.write_all(erase_seq(self.painted).as_bytes());
+        if !self.composed {
+            let _ = w.write_all(erase_seq(self.painted).as_bytes());
+        }
         self.painted = 0;
         for c in self.sr.push(delta) {
             Self::write_chunk(w, c);
@@ -247,6 +254,9 @@ impl LiveMarkdown {
     /// was painted. A tool trace on stderr writing between two repaints is exactly that
     /// "something else", and the climb then lands on the trace and erases it.
     pub(crate) fn suspend(&mut self, w: &mut dyn std::io::Write) {
+        if self.composed {
+            return;
+        }
         let _ = w.write_all(erase_seq(self.painted).as_bytes());
         self.painted = 0;
     }
@@ -260,7 +270,9 @@ impl LiveMarkdown {
     /// Finalize: erase the tail and commit whatever remains as final output.
     pub(crate) fn flush(&mut self, w: &mut dyn std::io::Write) {
         self.adapt_size(w);
-        let _ = w.write_all(erase_seq(self.painted).as_bytes());
+        if !self.composed {
+            let _ = w.write_all(erase_seq(self.painted).as_bytes());
+        }
         self.painted = 0;
         for c in self.sr.finish() {
             Self::write_chunk(w, c);

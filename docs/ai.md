@@ -802,9 +802,11 @@ dim rules, their own live boards embedded in the conversation.
 | `Ctrl+A/E/B/F/W/U/K` | emacs-style line editing |
 | `Ctrl+C` | clear; twice on an empty line leaves · `Ctrl+D` on empty leaves |
 
-The streamed answer and the panel are ONE repaint region (the flow board's own
-paint contract), so the spinner animates under a streaming diagram and nothing
-ever climbs over anything.
+The screen is drawn by a **compositor**: one loop owns the terminal, every key
+and every streamed line arrives as an event in one queue, and each change becomes
+one complete frame — every row painted, the panel always the last rows. That is
+the stability guarantee: whatever interleaves, the next frame is whole (the same
+single-model rendering opencode's Bubble Tea foundation uses).
 
 ### The project overlay
 
