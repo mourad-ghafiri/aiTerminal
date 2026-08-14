@@ -127,6 +127,21 @@ impl<T: crate::ai::Transport> Repl<T> {
         self
     }
 
+    /// The overlay's one-line summary, for the banner.
+    pub(crate) fn overlay_line(&self, trusted: bool) -> String {
+        match (trusted, self.ws.overlaid()) {
+            (false, _) => "project overlay OFF (trust declined \u{2014} /trust to revisit)".to_string(),
+            (true, false) => "no project .aiTerminal/ \u{2014} global config serves".to_string(),
+            (true, true) => {
+                let o = crate::config::overlay::Workspace::offering(&self.ws.root);
+                format!(
+                    "project overlay ON \u{2014} {} agent(s) \u{b7} {} skill(s) \u{b7} {} prompt(s) \u{b7} {} flow(s) \u{b7} {} mcp",
+                    o.agents, o.skills, o.prompts, o.flows, o.mcp
+                )
+            }
+        }
+    }
+
     /// Everything the status row states, freshly composed.
     fn status(&self) -> super::chrome::Status {
         super::chrome::Status {
@@ -176,31 +191,6 @@ impl<T: crate::ai::Transport> Repl<T> {
         self.say(&format!("{}{text}{}", muted(), reset()));
     }
 
-    /// The header: exactly what loaded, so nothing rides in unseen.
-    pub(crate) fn header(&self, trusted: bool) {
-        let (dim, a, r) = (muted(), accent(), reset());
-        let model = self.settings.pool.entries.len();
-        let strategy = format!("{:?}", self.settings.pool.strategy).to_lowercase();
-        self.say(&format!("{a}\u{2726} workspace \u{b7} {}{r}", self.ws.root.display()));
-        let overlay = match (trusted, self.ws.overlaid()) {
-            (false, _) => "project overlay OFF (trust declined \u{2014} /trust to revisit)".to_string(),
-            (true, false) => "no project .aiTerminal/ \u{2014} global config serves".to_string(),
-            (true, true) => {
-                let o = crate::config::overlay::Workspace::offering(&self.ws.root);
-                format!(
-                    "project overlay ON \u{2014} {} agent(s) \u{b7} {} skill(s) \u{b7} {} prompt(s) \u{b7} {} flow(s) \u{b7} {} mcp",
-                    o.agents, o.skills, o.prompts, o.flows, o.mcp
-                )
-            }
-        };
-        self.say(&format!("{dim}  {overlay}{r}"));
-        if let Some((name, _)) = self.ws.project_instructions() {
-            self.say(&format!("{dim}  instructions: {name}{r}"));
-        }
-        self.say(&format!("{dim}  {model} model(s) in the pool \u{b7} strategy {strategy} \u{b7} answers render as Markdown (+ diagrams){r}"));
-        self.say(&format!("{dim}  /help lists the commands \u{b7} @flow @job @loop and @<agent> work right here \u{b7} ! runs a guarded command{r}"));
-    }
-
     /// The main loop. Returns the exit code.
     pub(crate) fn drive(&mut self) -> i32 {
         loop {
@@ -213,6 +203,11 @@ impl<T: crate::ai::Transport> Repl<T> {
             let Some(line) = line else { break };
             if line.trim().is_empty() {
                 continue;
+            }
+            // The first real line ends the opening screen: the panel drops to the
+            // bottom and stays there for the rest of the sitting.
+            if let Some((chrome, _)) = &self.tui {
+                chrome.ensure_bottom();
             }
             match self.handle(&line) {
                 Flow::Stay => {}
@@ -365,7 +360,7 @@ impl<T: crate::ai::Transport> Repl<T> {
                 let waiting = crate::cli::observe::SharedWaiting::new(crate::cli::observe::Motivated::label(base, &self.cfg));
                 pulse.begin(self.cancel.clone(), waiting);
                 chrome.set_status(self.status());
-                chrome.set(super::chrome::PanelState::Working { label: base.to_string(), draft: String::new() });
+                chrome.set(super::chrome::PanelState::Working { label: base.to_string(), draft: String::new(), steering: None });
                 let suffix = {
                     let chrome = chrome.clone();
                     std::sync::Arc::new(move || chrome.suffix_rows())
@@ -414,8 +409,21 @@ impl<T: crate::ai::Transport> Repl<T> {
         self.say(&format!("{dim}\u{2726}{r}"));
     }
 
+    /// AI is optional to OPEN a workspace; it is required to spend. The gate sits at
+    /// the spending moments, and its answer is the setup hint, not a refusal to exist.
+    fn configured(&self) -> bool {
+        if self.settings.resolve_key().is_some() {
+            return true;
+        }
+        self.note(&format!("no model is configured \u{2014} {}", crate::ai::setup_hint(&self.settings)));
+        false
+    }
+
     /// One conversation turn: the persistent transcript, streamed, footered, logged.
     fn turn(&mut self, text: &str) {
+        if !self.configured() {
+            return;
+        }
         let (prompt, _media, file_ctx) = crate::cli::attach::collect_attachments(text);
         let mut message = self.guard.hide(&prompt);
         if !file_ctx.trim().is_empty() {
@@ -438,7 +446,8 @@ impl<T: crate::ai::Transport> Repl<T> {
         let (view, mut obs) = self.open_stream("thinking\u{2026}");
         self.runner.trace = Some(Arc::new(view));
         let mut transcript = self.transcript.take().expect("set above");
-        let run = crate::ai::run_agent_over(&self.client, &spec, &mut transcript, &mut self.runner, &mut obs);
+        let mut steer = PulseSteer(self.tui.as_ref().map(|(_, p)| p.clone()), self.guard.clone());
+        let run = crate::ai::run_agent_over(&self.client, &spec, &mut transcript, &mut self.runner, &mut obs, &mut steer);
         self.transcript = Some(transcript);
         finish_streamed(&mut obs, &run.answer);
         self.close_stream(&run, started);
@@ -462,16 +471,24 @@ impl<T: crate::ai::Transport> Repl<T> {
     /// inline; its outcome becomes part of the conversation.
     fn inline(&mut self, argv: &[String]) {
         // The real command owns the screen (a flow paints its own live board); the
-        // panel withdraws and returns when the next prompt paints it.
+        // panel withdraws behind an opening rule and returns after the closing one,
+        // so the conversation reads as one document with the run embedded.
+        let (dim, r) = (muted(), reset());
+        self.say(&format!("{dim}\u{2500}\u{2500} @{} {}\u{2500}\u{2500}{r}", argv.join(" "), "\u{2500}".repeat(8)));
         if let Some((chrome, _)) = &self.tui {
             chrome.hide();
         }
         let code = crate::cli::ai(argv);
+        let glyph = if code == 0 { "\u{2713}" } else { "\u{2717}" };
+        self.say(&format!("{dim}\u{2500}\u{2500} {glyph} @{} \u{b7} exit {code} {}\u{2500}\u{2500}{r}", argv.first().map(String::as_str).unwrap_or(""), "\u{2500}".repeat(8)));
         self.pending.push(format!("[I ran `@{}` in this workspace; it exited {code}]", argv.join(" ")));
     }
 
     /// `@<agent> task`: one agent, one answer, folded into the conversation.
     fn agent_run(&mut self, name: &str, task: &str) {
+        if !self.configured() {
+            return;
+        }
         if task.trim().is_empty() {
             self.note(&format!("@{name} needs a task \u{2014} `@{name} <what you want done>`"));
             return;
@@ -605,6 +622,18 @@ impl<T: crate::ai::Transport> Repl<T> {
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
             let _ = writeln!(f, "## You\n{}\n\n## {}\n{}\n", self.guard.hide(prompt), corelib::brand::NAME, self.guard.hide(answer));
         }
+    }
+}
+
+/// The workspace's steer: reads what the ticker collected off the keyboard while
+/// the run worked. Hidden by the guard before it joins the conversation — an
+/// interjection is user text off this machine like any other.
+struct PulseSteer(Option<Arc<super::tui::Pulse>>, Arc<crate::guard::Guard>);
+
+impl crate::ai::Steer for PulseSteer {
+    fn take(&mut self) -> Option<String> {
+        let raw = self.0.as_ref()?.take_steer()?;
+        Some(self.1.hide(&raw))
     }
 }
 

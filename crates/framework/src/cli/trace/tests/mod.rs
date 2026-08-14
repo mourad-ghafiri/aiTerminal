@@ -115,3 +115,14 @@ fn anything_else_falls_back_to_how_much_came_back() {
     let big = result(&Json::Str("x".repeat(2048)));
     assert!(big.contains("KB"), "{big}");
 }
+
+#[test]
+fn the_glyph_says_what_kind_of_thing_acted() {
+    // Read at a glance, the way the flow board's states are: an external MCP server,
+    // a delegated sub-agent and the memory are not "a tool" — each gets its mark.
+    let done = |name: &str| super::call(name, &args(&[("path", "x")])).done("1ms", "ok");
+    assert!(done("fs.read").starts_with('\u{2699}'), "a native tool keeps the gear");
+    assert!(done("mcp.docs.search").starts_with('\u{2301}'), "an MCP server is external: {}", done("mcp.docs.search"));
+    assert!(done("task.run").starts_with('\u{2727}'), "a delegate sparkles");
+    assert!(done("memory.add").starts_with('\u{25c6}'), "the memory is a diamond");
+}

@@ -27,6 +27,8 @@ pub struct WorkspaceWorld {
     lines: Vec<String>,
     /// What the trust gate is answered with.
     trust_answer: bool,
+    /// Whether a model is configured — `model = "none"` in setup opens without one.
+    configured: bool,
     /// Every question the trust gate asked.
     asked: Vec<String>,
     /// Every request body the sitting posted, oldest first.
@@ -50,6 +52,7 @@ pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
         turns: Vec::new(),
         lines: Vec::new(),
         trust_answer: world::text(setup, "trust").map(|t| t == "y").unwrap_or(true),
+        configured: world::text(setup, "model").map(|m| m != "none").unwrap_or(true),
         asked: Vec::new(),
         sent: Vec::new(),
         overlaid: None,
@@ -57,9 +60,10 @@ pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
     }))
 }
 
-fn settings() -> ai::AiSettings {
+fn settings(configured: bool) -> ai::AiSettings {
     let mut model = ai::provider::builtin_default().resolve("claude-opus-4-8");
-    model.api_key = Some("scenario-key-never-sent".into());
+    model.api_key = configured.then(|| "scenario-key-never-sent".to_string());
+    model.api_key_env = String::new();
     ai::AiSettings { pool: ai::ModelPool::single(model) }
 }
 
@@ -85,11 +89,11 @@ impl WorkspaceWorld {
         let guard = std::sync::Arc::new(guard.at(Some(self.root.clone())));
         // No MCP hub in a scenario: nothing may spawn. The mcp declarations still
         // COUNT for the trust prompt, which is exactly the boundary under test.
-        let runner = crate::cli::runner::build_runner(&cfg, &settings(), Some(self.root.clone()), guard.clone(), None);
-        let client = ai::Client::new(settings(), ScriptedTransport::new(self.turns.clone()));
+        let runner = crate::cli::runner::build_runner(&cfg, &settings(self.configured), Some(self.root.clone()), guard.clone(), None);
+        let client = ai::Client::new(settings(self.configured), ScriptedTransport::new(self.turns.clone()));
         let input: crate::cli::workspace::repl::SharedInput =
             std::sync::Arc::new(std::sync::Mutex::new(Box::new(ScriptedLines::new(self.lines.clone()))));
-        let mut repl = Repl::new(ws, cfg, settings(), client, guard, runner, input, Some(self.session_dir.clone()));
+        let mut repl = Repl::new(ws, cfg, settings(self.configured), client, guard, runner, input, Some(self.session_dir.clone()));
         let code = repl.drive();
         if code != 0 {
             return Err(format!("the sitting exited {code}"));

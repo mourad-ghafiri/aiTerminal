@@ -916,7 +916,7 @@ fn a_persistent_transcript_carries_a_conversation_across_calls() {
     let mut runner = MockRunner { calls: Vec::new() };
 
     let mut transcript = fresh_transcript(&agent, "what is the capital of France?", "");
-    let first = run_agent_over(&client, &agent, &mut transcript, &mut runner, &mut NoopObserver);
+    let first = run_agent_over(&client, &agent, &mut transcript, &mut runner, &mut NoopObserver, &mut Unsteered);
     assert_eq!(first.answer, "Paris is the capital of France.");
     assert!(
         matches!(transcript.turns().last(), Some(Turn::Assistant(a)) if a == &first.answer),
@@ -924,7 +924,7 @@ fn a_persistent_transcript_carries_a_conversation_across_calls() {
     );
 
     transcript.push(Turn::User("and how many people live there?".into()));
-    let second = run_agent_over(&client, &agent, &mut transcript, &mut runner, &mut NoopObserver);
+    let second = run_agent_over(&client, &agent, &mut transcript, &mut runner, &mut NoopObserver, &mut Unsteered);
     assert_eq!(second.answer, "It has about two million inhabitants.");
 
     // The second REQUEST carried the whole first exchange.
@@ -933,4 +933,41 @@ fn a_persistent_transcript_carries_a_conversation_across_calls() {
     assert!(bodies[1].contains("capital of France"), "the first question rides along");
     assert!(bodies[1].contains("Paris is the capital"), "and the first answer does too: {}", &bodies[1]);
     assert!(bodies[1].contains("how many people"), "with the new question last");
+}
+
+#[test]
+fn a_steer_message_joins_at_the_turn_boundary_and_the_model_is_asked_to_decide() {
+    // The workspace's smart interruption: someone types while the run works; the
+    // message joins the conversation between turns — never mid-request — and the
+    // instruction that rides with it hands the DECISION to the model.
+    struct Once(Option<String>);
+    impl Steer for Once {
+        fn take(&mut self) -> Option<String> {
+            self.0.take()
+        }
+    }
+    let transport = ScriptedTransport::new(vec![
+        text_sse("@tool sys.run {\"cmd\":\"date\"}", 10, 5),
+        text_sse("Noted your interjection — finishing this step first, then switching.", 8, 6),
+    ]);
+    let client = Client::new(keyed_settings(), transport);
+    let agent = AgentSpec {
+        system: "You are helpful.".into(),
+        tools: vec![ToolSpec { name: "sys.run".into(), describe: "run a command".into() }],
+        max_steps: 4,
+        ..Default::default()
+    };
+    let mut runner = MockRunner { calls: Vec::new() };
+    let mut transcript = fresh_transcript(&agent, "check the date", "");
+    // The interjection is waiting before the run even starts: it must ride into the
+    // FIRST request too (the boundary rule, not a special case for later turns).
+    let mut steer = Once(Some("actually also check the timezone".into()));
+    let run = run_agent_over(&client, &agent, &mut transcript, &mut runner, &mut NoopObserver, &mut steer);
+    assert_eq!(run.outcome, RunOutcome::Completed);
+    let bodies = client.transport().sent();
+    assert!(bodies[0].contains("the user interjects mid-run"), "the interjection joined turn 1: {}", &bodies[0]);
+    assert!(bodies[0].contains("check the timezone"));
+    assert!(bodies[0].contains("say which you chose"), "…with the decision handed to the model");
+    // Drained once — turn 2 carries the history, not a duplicate injection.
+    assert_eq!(bodies[1].matches("the user interjects mid-run").count(), 1);
 }

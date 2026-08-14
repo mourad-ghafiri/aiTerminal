@@ -1,6 +1,6 @@
 # Testing
 
-aiTerminal has **1507 unit tests** and **327 scenarios**, and the whole suite runs in a
+aiTerminal has **1512 unit tests** and **328 scenarios**, and the whole suite runs in a
 few seconds with no network, no API key, no window, and no changes to your machine.
 
 ```sh
@@ -39,7 +39,7 @@ So the suite has both, and they are aimed at different targets.
 
 ## Unit tests
 
-1507 of them (1035 in `framework`, 337 in `corelib`, 135 in `platform`), beside the code
+1512 of them (1040 in `framework`, 337 in `corelib`, 135 in `platform`), beside the code
 they test. Named as sentences, so a failure reads as a statement about the product rather
 than a symbol that broke:
 
@@ -131,7 +131,7 @@ scenario must never pass silently.
 
 ### Coverage
 
-327 journeys across every feature. Each folder's test asserts a minimum count, so
+328 journeys across every feature. Each folder's test asserts a minimum count, so
 coverage cannot silently shrink.
 
 | Folder | # | What a journey drives |
@@ -150,7 +150,7 @@ coverage cannot silently shrink.
 | `shell/` | 10 | the init script sourced into your shell |
 | `keymap/` | 10 | chords, actions, and which binding wins |
 | `theme/` | 8 | tokens, round-trip, fallback |
-| `workspace/` | 8 | the folder as a conversation: the trust gate and what it names, a transcript that remembers, a confirm asked and answered both ways, the project overlay shadowing an agent, plan mode, `!` feeding the next turn, prompt files as slash commands |
+| `workspace/` | 9 | the folder as a conversation: the trust gate and what it names, a transcript that remembers, a confirm asked and answered both ways, the project overlay shadowing an agent, plan mode, `!` feeding the next turn, prompt files as slash commands |
 | `memory/` | 8 | what an agent remembers, where, and what it forgets |
 
 The `cli/` folder is where a **command** is proved rather than the machinery behind it.

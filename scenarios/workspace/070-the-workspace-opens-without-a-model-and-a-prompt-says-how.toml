@@ -1,0 +1,19 @@
+name = "the workspace opens without a model, and only a prompt asks for one"
+tags = ["workspace"]
+
+# AI is optional to OPEN a workspace: browsing, /help and the trust gate all work
+# with nothing configured. The moments that would SPEND answer with the setup hint
+# instead — and post NOTHING, which is what this journey pins.
+
+[setup]
+home = "ws-no-model"
+model = "none"
+
+[[step]]
+type = ["/help", "hello, are you there?", "@coder try something"]
+
+[[step]]
+open = "now"
+
+[[step]]
+expect_requests = 0

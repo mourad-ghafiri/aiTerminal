@@ -15,6 +15,10 @@ const ASK: &str = "Explore this folder (list files, read the important ones) and
                    Reply with ONLY the file's Markdown content — no preamble, no fences around the whole.";
 
 pub(crate) fn run<T: crate::ai::Transport>(repl: &mut super::repl::Repl<T>) {
+    if repl.settings.resolve_key().is_none() {
+        eprintln!("aiTerminal: /init surveys with a model \u{2014} {}", crate::ai::setup_hint(&repl.settings));
+        return;
+    }
     let target = repl.ws.root.join("aiTerminal.md");
     if target.exists() {
         let overwrite = {

@@ -11,6 +11,7 @@
 //! `!` commands are judged like any other, and a project's guard rules can only
 //! tighten. The REPL adds an input surface, never an execution surface.
 
+pub(crate) mod banner;
 pub(crate) mod chrome;
 pub(crate) mod init;
 pub(crate) mod input;
@@ -66,11 +67,9 @@ pub(crate) fn ai_workspace_cmd(args: &[String]) -> i32 {
     let ws = crate::config::overlay::Workspace::open(&root, granted);
     let base = crate::config::Config::load();
     let cfg = ws.config(&base);
+    // No model? The workspace still opens — browsing, /help, !, /mcp all work; the
+    // moments that would SPEND answer with the setup hint instead.
     let settings = cfg.ai_settings();
-    if settings.resolve_key().is_none() {
-        eprintln!("aiTerminal: {}", crate::ai::setup_hint(&settings));
-        return 2;
-    }
     let registry = crate::plugin::load_registry(&cfg);
     let guard = crate::guard::build_with_project(&cfg, &registry, ws.project_rules().as_ref());
     let guard = Arc::new(guard.at(Some(root.clone())));
@@ -93,15 +92,57 @@ pub(crate) fn ai_workspace_cmd(args: &[String]) -> i32 {
     let asker = Arc::new(tui::ChromeAsk { chrome: chrome.clone(), keys: sitting.keys.clone() });
 
     let mut repl = repl::Repl::new(ws, cfg, settings, client, guard, runner, input, session_dir)
-        .with_tui(chrome, sitting.pulse.clone());
+        .with_tui(chrome.clone(), sitting.pulse.clone());
     // The panel's approver replaces the plain one: the guard's confirm renders as
     // the amber ask-block and is answered from the keyboard. Same rule, same words.
     repl.runner.ctx.approver = asker;
-    repl.header(granted);
+
+    // The whole terminal becomes the workspace: alt screen in, everything restored
+    // on the way out whatever the exit path — and the sitting opens on the banner
+    // with the input mid-screen, until the first message anchors it down.
+    let _screen = AltScreen::enter();
+    let facts = banner::Facts {
+        root: repl.ws.root.display().to_string(),
+        overlay: repl.overlay_line(granted),
+        instructions: repl.ws.project_instructions().map(|(name, _)| name),
+        pool: repl.settings.resolve_key().is_some().then(|| {
+            format!(
+                "{} model(s) \u{b7} strategy {}",
+                repl.settings.pool.entries.len(),
+                format!("{:?}", repl.settings.pool.strategy).to_lowercase()
+            )
+        }),
+    };
+    let cols = crate::cli::style::term_cols();
+    chrome.open_centered(banner::render(&facts, cols), banner::compact(&facts));
     if resume {
         repl.resume_last();
     }
     repl.drive()
+}
+
+/// The sitting's screen: alt screen + hidden cursor on enter (the panel draws its
+/// own caret), everything restored on drop — a panic or a `?` still hands the
+/// person their terminal back exactly as it was.
+struct AltScreen;
+
+impl AltScreen {
+    fn enter() -> AltScreen {
+        use std::io::Write;
+        let mut err = std::io::stderr();
+        let _ = err.write_all(b"\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H");
+        let _ = err.flush();
+        AltScreen
+    }
+}
+
+impl Drop for AltScreen {
+    fn drop(&mut self) {
+        use std::io::Write;
+        let mut err = std::io::stderr();
+        let _ = err.write_all(b"\x1b[?25h\x1b[?1049l");
+        let _ = err.flush();
+    }
 }
 
 /// Everything the dropdown can explain: built-ins with their about text, the

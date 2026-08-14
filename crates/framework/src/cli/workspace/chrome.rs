@@ -47,8 +47,10 @@ pub(crate) struct EditView {
     pub rows: Vec<String>,
     /// `(row, col)` of the caret within `rows`.
     pub cursor: (usize, usize),
-    /// Filtered `(name, about)` matches; empty = no dropdown.
-    pub dropdown: Vec<(String, String)>,
+    /// `None` = no completion band. `Some(matches)` = the band is OPEN — it holds a
+    /// constant [`DROP_ROWS`] height however many matches remain, so the box above
+    /// it never moves while you type. That stillness is the whole point.
+    pub dropdown: Option<Vec<(String, String)>>,
     pub selected: usize,
 }
 
@@ -58,9 +60,9 @@ pub(crate) enum PanelState {
     /// Withdrawn — an inline run (`@flow`…) owns the screen.
     Hidden,
     Editing(EditView),
-    /// A turn is running: the composed waiting label (base + muse aside) and any
-    /// follow-up typed ahead.
-    Working { label: String, draft: String },
+    /// A turn is running: the composed waiting label (base + muse aside), any
+    /// follow-up being typed, and an interjection already sent into the run.
+    Working { label: String, draft: String, steering: Option<String> },
     /// The guard's confirm, waiting on y/N.
     Ask { act: String, reason: String },
 }
@@ -73,12 +75,6 @@ pub(crate) fn render(state: &PanelState, status: &Status, cols: usize, frame: us
         PanelState::Hidden => {}
         PanelState::Editing(edit) => {
             let ink = if status.plan { warn() } else { accent() };
-            for (i, (name, about)) in edit.dropdown.iter().take(DROP_ROWS).enumerate() {
-                out.push(match i == edit.selected {
-                    true => format!("  {ink}\u{25b8} {name:<12}{r} {about}"),
-                    false => format!("    {dim}{name:<12} {about}{r}"),
-                });
-            }
             let inner = cols.saturating_sub(2);
             out.push(format!("{ink}\u{256d}{}\u{256e}{r}", "\u{2500}".repeat(inner)));
             let empty = edit.rows.iter().all(|row| row.is_empty());
@@ -103,11 +99,25 @@ pub(crate) fn render(state: &PanelState, status: &Status, cols: usize, frame: us
                 }
             }
             out.push(format!("{ink}\u{2570}{}\u{256f}{r}", "\u{2500}".repeat(inner)));
+            // The completion band, BELOW the box: a constant-height reservation while
+            // open, so filtering matches never shoves the box or the text around.
+            if let Some(matches) = &edit.dropdown {
+                for i in 0..DROP_ROWS {
+                    out.push(match matches.get(i) {
+                        Some((name, about)) if i == edit.selected => format!("  {ink}\u{25b8} {name:<12}{r} {about}"),
+                        Some((name, about)) => format!("    {dim}{name:<12} {about}{r}"),
+                        None => String::new(),
+                    });
+                }
+            }
             out.push(status_row(status));
         }
-        PanelState::Working { label, draft } => {
+        PanelState::Working { label, draft, steering } => {
             let spin = FRAMES[frame % FRAMES.len()];
-            out.push(format!("{}{spin}{r} {label} {dim}\u{b7} esc interrupts{r}", accent()));
+            out.push(format!("{}{spin}{r} {label} {dim}\u{b7} esc interrupts \u{b7} enter sends a mid-run note{r}", accent()));
+            if let Some(msg) = steering {
+                out.push(format!("{}\u{21b3} steering: {msg} {dim}(the model will decide at its next step){r}", warn()));
+            }
             if !draft.trim().is_empty() {
                 out.push(format!("{dim}\u{21b3} draft: {draft}{r}"));
             }
@@ -164,11 +174,24 @@ struct Painted {
     cols: usize,
 }
 
+/// Where the panel lives on screen.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Anchor {
+    /// The opening screen: banner high, the box mid-screen — until the first message.
+    Center,
+    /// The conversation: content scrolls, the panel pinned to the bottom.
+    Bottom,
+}
+
 struct Core {
     state: PanelState,
     status: Status,
     painted: Painted,
     frame: usize,
+    anchor: Anchor,
+    /// The opening banner (full) and its two-line form for the anchored era.
+    banner: Vec<String>,
+    compact: Vec<String>,
     /// While a turn streams: the hook that asks the view for a frame — the view owns
     /// the region and the panel rides as its suffix.
     stream: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -189,6 +212,9 @@ impl Chrome {
             status: Status::default(),
             painted: Painted::default(),
             frame: 0,
+            anchor: Anchor::Bottom,
+            banner: Vec::new(),
+            compact: Vec::new(),
             stream: None,
             out,
             size,
@@ -266,6 +292,38 @@ impl Chrome {
         self.refresh();
     }
 
+    /// The opening screen: remember the banner and paint the centered frame.
+    pub(crate) fn open_centered(&self, banner: Vec<String>, compact: Vec<String>) {
+        {
+            let mut core = self.lock();
+            core.banner = banner;
+            core.compact = compact;
+            core.anchor = Anchor::Center;
+        }
+        self.refresh();
+    }
+
+    /// Leave the opening screen for the conversation: one clear, the compact banner
+    /// at the top as ordinary content, the panel pinned to the bottom from here on.
+    /// A no-op once anchored — every caller may ask without checking.
+    pub(crate) fn ensure_bottom(&self) {
+        {
+            let mut core = self.lock();
+            if core.anchor == Anchor::Bottom {
+                return;
+            }
+            core.anchor = Anchor::Bottom;
+            let _ = core.out.write_all(b"\x1b[?2026h\x1b[2J\x1b[H");
+            let compact = core.compact.join("\r\n");
+            let _ = core.out.write_all(compact.as_bytes());
+            let _ = core.out.write_all(b"\r\n");
+            core.painted = Painted::default();
+            paint_body(&mut core);
+            let _ = core.out.write_all(b"\x1b[?2026l");
+            let _ = core.out.flush();
+        }
+    }
+
     /// Withdraw the panel entirely (an inline run owns the screen).
     pub(crate) fn hide(&self) {
         self.set(PanelState::Hidden);
@@ -275,6 +333,7 @@ impl Chrome {
     /// content region ended), write, repaint below — one synchronized frame.
     /// Content must be newline-terminated; [`ChromeWriter`] guarantees it.
     pub(crate) fn print(&self, content: &[u8]) {
+        self.ensure_bottom();
         let mut core = self.lock();
         let _ = core.out.write_all(b"\x1b[?2026h");
         let erase = erase_seq(core.painted.lines);
@@ -294,6 +353,9 @@ impl Chrome {
 /// count (or reset when the window narrowed/shrank under it — the board's rule),
 /// paint the rows, remember the shape.
 fn paint(core: &mut Core) {
+    if core.anchor == Anchor::Center {
+        return paint_centered(core);
+    }
     let _ = core.out.write_all(b"\x1b[?2026h");
     let (cols, rows) = (core.size)();
     let fits = core.painted.cols <= cols && (rows == 0 || core.painted.lines < rows);
@@ -306,6 +368,32 @@ fn paint(core: &mut Core) {
     paint_body(core);
     let _ = core.out.write_all(b"\x1b[?2026l");
     let _ = core.out.flush();
+}
+
+/// The opening frame: everything absolute, everything centered — cleared and
+/// redrawn whole per keystroke, atomically (mdedit's own model; BSU/ESU makes it
+/// flicker-free). The panel renders at a reading width, not the full window.
+fn paint_centered(core: &mut Core) {
+    let (cols, rows) = (core.size)();
+    let width = cols.min(88);
+    let mut frame = String::from("\x1b[2J\x1b[H");
+    let panel = render(&core.state, &core.status, width, core.frame);
+    let banner_top = rows.saturating_sub(core.banner.len() + panel.len() + 4) / 3;
+    let mut at = banner_top.max(1);
+    for row in super::banner::centered(core.banner.clone(), cols) {
+        frame.push_str(&format!("\x1b[{at};1H{row}"));
+        at += 1;
+    }
+    at += 2;
+    for row in super::banner::centered(panel, cols) {
+        frame.push_str(&format!("\x1b[{at};1H{row}"));
+        at += 1;
+    }
+    let _ = core.out.write_all(b"\x1b[?2026h");
+    let _ = core.out.write_all(frame.as_bytes());
+    let _ = core.out.write_all(b"\x1b[?2026l");
+    let _ = core.out.flush();
+    core.painted = Painted::default();
 }
 
 /// Paint the rows only (no erase, no sync markers) — shared by [`paint`] and

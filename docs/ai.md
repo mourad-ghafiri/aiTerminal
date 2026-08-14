@@ -748,8 +748,14 @@ With **no model configured**, `@job` still reads `in 5m`, `at 17:30`, `every hou
 
 ## `@workspace` — the folder as a conversation
 
-Type `@workspace` and the current folder opens as a chat: ask, follow up, and the
-conversation remembers — one transcript carries the whole sitting, compacted
+Type `@workspace` and the terminal becomes the workspace: the **whole screen**
+(alt screen — your shell is restored exactly as it was on exit) opens on a banner —
+the aiTerminal mark, the folder, what the overlay adds, the pool and its strategy —
+with the input box **centered** under it. Your first message anchors the panel to
+the bottom for the rest of the sitting. A model is NOT required to open: browsing,
+`/help`, `!` and `/mcp` all work; only a prompt answers with the setup hint.
+
+Ask, follow up, and the conversation remembers — one transcript carries the whole sitting, compacted
 automatically when the window demands it. Every answer renders live as Markdown with
 native diagrams, every model turn draws from your configured pool under its strategy,
 and the product's whole `@` language works mid-conversation.
@@ -779,7 +785,11 @@ accent for build, amber for plan. Typing `/` or `@` opens an **autocomplete
 dropdown** (↑/↓ select, Tab accepts); while a turn runs the box becomes a working
 row — spinner, elapsed, the muse's aside, `esc interrupts` — and anything you type
 meanwhile becomes the **draft** of your next message, waiting in the box when the
-answer lands. A guard `confirm` arrives as an amber ask-block answered with y/N.
+answer lands. A guard `confirm` arrives as an amber ask-block answered with y/N. Completions
+open in a fixed-height band BELOW the box, so filtering never moves what you are
+typing. Tool moments are marked by kind, flow-style: `⚙` native · `⌁` MCP ·
+`✧` delegate · `◆` memory — and inline `@flow`/`@job`/`@loop` runs are framed by
+dim rules, their own live boards embedded in the conversation.
 
 | Key | Does |
 | --- | --- |
@@ -788,6 +798,7 @@ answer lands. A guard `confirm` arrives as an amber ask-block answered with y/N.
 | `Shift+Tab` | toggle plan/build |
 | `↑` / `↓` | history (or dropdown / draft rows) |
 | `Esc` | close the dropdown · clear the line · **interrupt a running turn** |
+| `Enter` mid-run | **steer**: your note joins the run at its next step, and the MODEL decides — pivot now, or finish the current step first |
 | `Ctrl+A/E/B/F/W/U/K` | emacs-style line editing |
 | `Ctrl+C` | clear; twice on an empty line leaves · `Ctrl+D` on empty leaves |
 

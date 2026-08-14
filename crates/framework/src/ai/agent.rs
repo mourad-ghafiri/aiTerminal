@@ -68,6 +68,23 @@ impl Default for AgentSpec {
 /// finish without whatever it declined — so the loop counts refusals instead of treating
 /// one as an error. Three in a row with nothing achieved between them is the honest
 /// signal that this run cannot do what it was asked, and that is where it stops.
+/// A mid-run message channel INTO a running loop — the workspace's smart
+/// interruption. Drained once per turn boundary; the message becomes a user turn
+/// telling the model someone spoke, and the MODEL decides whether to pivot now or
+/// finish the step it is on. Headless runs use [`Unsteered`].
+pub trait Steer {
+    fn take(&mut self) -> Option<String>;
+}
+
+/// Nobody can interject: the headless default.
+pub struct Unsteered;
+
+impl Steer for Unsteered {
+    fn take(&mut self) -> Option<String> {
+        None
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ToolOutcome {
     Done(String),
@@ -373,7 +390,7 @@ pub fn run_agent<T: Transport>(
     observer: &mut dyn AgentObserver,
 ) -> AgentRun {
     let mut transcript = fresh_transcript(agent, user_prompt, context);
-    run_agent_over(client, agent, &mut transcript, runner, observer)
+    run_agent_over(client, agent, &mut transcript, runner, observer, &mut Unsteered)
 }
 
 /// The transcript a one-shot run opens with: the agent's instructions + the tool
@@ -416,8 +433,9 @@ pub fn run_agent_over<T: Transport>(
     transcript: &mut Transcript,
     runner: &mut dyn ToolRunner,
     observer: &mut dyn AgentObserver,
+    steer: &mut dyn Steer,
 ) -> AgentRun {
-    let run = run_loop(client, agent, transcript, runner, observer);
+    let run = run_loop(client, agent, transcript, runner, observer, steer);
     if !run.answer.trim().is_empty() {
         transcript.push(Turn::Assistant(run.answer.clone()));
     }
@@ -430,6 +448,7 @@ fn run_loop<T: Transport>(
     transcript: &mut Transcript,
     runner: &mut dyn ToolRunner,
     observer: &mut dyn AgentObserver,
+    steer: &mut dyn Steer,
 ) -> AgentRun {
     let est = HeuristicEstimator;
     let ladder = Ladder::default();
@@ -479,6 +498,14 @@ fn run_loop<T: Transport>(
         // below also returns promptly; this guard prevents the NEXT turn.
         if client.is_cancelled() {
             return finish("_(stopped)_".into(), steps, usage, RunOutcome::Cancelled, model_used);
+        }
+        // Someone spoke while the run worked. The message joins the conversation at
+        // this turn boundary — appended, never replacing anything — and the MODEL is
+        // the one that decides whether to pivot or to finish what it is doing first.
+        if let Some(message) = steer.take() {
+            transcript.push(Turn::User(format!(
+                "[the user interjects mid-run:] {message}\n(Address it now, or finish the current step first \u{2014} say which you chose.)"
+            )));
         }
         // The turn begins HERE, before the compaction check — because compacting is
         // itself a model call, and one made in the gap between two turns is a call with

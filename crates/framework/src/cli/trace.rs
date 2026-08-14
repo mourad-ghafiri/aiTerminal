@@ -62,7 +62,19 @@ impl Call {
 
     /// `⚙ sys.run     cargo test --workspace · 2.1s · 48 lines` — and what came back.
     pub(crate) fn done(&self, took: &str, result: &str) -> String {
-        format!("{} \u{b7} {took} \u{b7} {result}", self.head('\u{2699}'))
+        format!("{} \u{b7} {took} \u{b7} {result}", self.head(self.glyph()))
+    }
+
+    /// The glyph that says what KIND of thing acted — read at a glance, the way the
+    /// flow board's states are: `⌁` an external MCP server, `✧` a delegated
+    /// sub-agent, `◆` the memory, `⚙` a native tool.
+    fn glyph(&self) -> char {
+        match () {
+            _ if self.name.starts_with("mcp.") => '\u{2301}',
+            _ if self.name == "task.run" => '\u{2727}',
+            _ if self.name.starts_with("memory.") => '\u{25c6}',
+            _ => '\u{2699}',
+        }
     }
 
     /// `fs.read src/cli.rs` — the name and the subject it picked, which is what the

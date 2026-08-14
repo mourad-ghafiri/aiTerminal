@@ -33,7 +33,7 @@ fn edit(text: &str, cursor: (usize, usize)) -> PanelState {
     PanelState::Editing(EditView {
         rows: text.split('\n').map(str::to_string).collect(),
         cursor,
-        dropdown: Vec::new(),
+        dropdown: None,
         selected: 0,
     })
 }
@@ -92,7 +92,7 @@ fn the_dropdown_lists_matches_and_marks_the_selection() {
     let state = PanelState::Editing(EditView {
         rows: vec!["/re".into()],
         cursor: (0, 3),
-        dropdown: vec![("/readonly".into(), "plan mode".into()), ("/resume".into(), "reload".into())],
+        dropdown: Some(vec![("/readonly".into(), "plan mode".into()), ("/resume".into(), "reload".into())]),
         selected: 1,
     });
     let rows = render(&state, &s, 60, 0);
@@ -104,7 +104,7 @@ fn the_dropdown_lists_matches_and_marks_the_selection() {
 #[test]
 fn the_working_row_carries_the_muse_and_the_draft_and_the_escape_hint() {
     let s = Status::default();
-    let state = PanelState::Working { label: "thinking \u{b7} press cmd-P for the switcher".into(), draft: "and then?".into() };
+    let state = PanelState::Working { label: "thinking \u{b7} press cmd-P for the switcher".into(), draft: "and then?".into(), steering: None };
     let rows = render(&state, &s, 80, 3);
     let flat = strip(&rows.join("\n"));
     assert!(flat.contains("press cmd-P"), "the muse rides the working row");
@@ -149,7 +149,7 @@ fn every_row_respects_a_hostile_width() {
     let long = "w".repeat(300);
     for state in [
         edit(&long, (0, 4)),
-        PanelState::Working { label: long.clone(), draft: long.clone() },
+        PanelState::Working { label: long.clone(), draft: long.clone(), steering: None },
         PanelState::Ask { act: long.clone(), reason: long.clone() },
     ] {
         for row in render(&state, &s, 40, 0) {
@@ -209,9 +209,68 @@ fn a_stream_owner_takes_the_region_and_state_changes_route_through_it() {
     assert!(rec.text().contains("\x1b[0J"), "the panel is erased for the view to start clean");
     rec.clear();
     c.tick();
-    c.set(PanelState::Working { label: "t".into(), draft: String::new() });
+    c.set(PanelState::Working { label: "t".into(), draft: String::new(), steering: None });
     assert_eq!(*beats.lock().unwrap(), 2, "every repaint asks the OWNER");
     assert!(rec.text().is_empty(), "…and the chrome itself paints nothing");
     c.stream_released();
     assert!(!rec.text().is_empty(), "released: the chrome paints its own panel again");
+}
+
+#[test]
+fn the_completion_band_below_the_box_never_moves_the_box() {
+    // The band reserves its whole height while open, so the box's rows sit at the
+    // SAME indices with six matches, one, or none left — the calm the overlay owes.
+    let s = Status::default();
+    let box_top = |dropdown: Option<Vec<(String, String)>>| {
+        let state = PanelState::Editing(EditView { rows: vec!["/re".into()], cursor: (0, 3), dropdown, selected: 0 });
+        let rows = render(&state, &s, 80, 0);
+        (rows.iter().position(|r| r.contains("\u{256d}")).unwrap(), rows.len())
+    };
+    let many: Vec<(String, String)> = (0..6).map(|i| (format!("/cmd{i}"), "about".into())).collect();
+    let (top_many, len_many) = box_top(Some(many));
+    let (top_one, len_one) = box_top(Some(vec![("/readonly".into(), "plan".into())]));
+    assert_eq!(top_many, top_one, "the box holds still while matches filter");
+    assert_eq!(len_many, len_one, "…because the band's height is constant while open");
+    let (top_closed, len_closed) = box_top(None);
+    assert_eq!(top_closed, top_many, "the box is FIRST, so closing the band moves nothing above it");
+    assert!(len_closed < len_one, "…and the reservation is released when it closes");
+}
+
+#[test]
+fn the_opening_screen_is_one_absolute_centered_frame() {
+    let cols = 100usize;
+    let rec = Recorder::default();
+    let c = Chrome::new(Box::new(rec.clone()), Box::new(move || (cols, 40)));
+    let facts = super::super::banner::Facts { root: "/tmp/proj".into(), overlay: "no project .aiTerminal/".into(), instructions: None, pool: None };
+    let full = super::super::banner::render(&facts, cols);
+    let compact = super::super::banner::compact(&facts);
+    c.open_centered(full, compact);
+    c.set(edit("", (0, 0)));
+    let bytes = rec.text();
+    assert!(bytes.contains("\x1b[2J\x1b[H"), "the frame owns the whole screen");
+    assert!(bytes.contains(";1H"), "…positioned absolutely");
+    assert!(strip(&bytes).contains("/tmp/proj"), "the banner names the folder");
+    assert!(strip(&bytes).contains("no model configured yet"), "…and the unconfigured fact");
+
+    // The first message drops the panel to the bottom for good: compact banner as
+    // content, then the ordinary anchored flow.
+    rec.clear();
+    c.ensure_bottom();
+    let bytes = rec.text();
+    assert!(strip(&bytes).contains("\u{2726} aiTerminal \u{b7} /tmp/proj"), "the compact banner opens the scroll");
+    rec.clear();
+    c.print(b"an answer line\n");
+    assert!(!rec.text().contains("\x1b[2J"), "anchored: prints scroll, no full clears");
+}
+
+#[test]
+fn the_banner_yields_to_a_wordmark_when_the_window_is_narrow() {
+    let facts = super::super::banner::Facts { root: "p".into(), overlay: "o".into(), instructions: Some("AGENTS.md"), pool: Some("2 model(s) \u{b7} strategy weighted".into()) };
+    let wide = super::super::banner::render(&facts, 100).join("\n");
+    assert!(wide.contains("\u{256d}\u{2500}\u{256e}"), "the mark's strokes are there when there is room");
+    let narrow = super::super::banner::render(&facts, 40).join("\n");
+    assert!(!narrow.contains("\u{256d}\u{2500}\u{256e} \u{2577}"), "narrow folds to the wordmark");
+    assert!(strip(&narrow).contains("\u{2726} aiTerminal"));
+    assert!(strip(&wide).contains("strategy weighted"));
+    assert!(strip(&wide).contains("AGENTS.md"));
 }

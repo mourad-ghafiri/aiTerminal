@@ -77,7 +77,7 @@ fn theme_scenarios() {
 
 #[test]
 fn workspace_scenarios() {
-    check("workspace", 8);
+    check("workspace", 9);
 }
 
 #[test]

@@ -31,6 +31,9 @@ pub(crate) struct Pulse {
     /// When the current MODEL turn started waiting — reset per turn, which is what
     /// lets the muse bank the whole run's wait across turns.
     started: Mutex<Option<Instant>>,
+    /// A message typed and SENT while the run worked — the smart interruption. The
+    /// loop drains it at its next turn boundary and the model decides what to do.
+    steer: Mutex<Option<String>>,
 }
 
 impl Pulse {
@@ -49,6 +52,11 @@ impl Pulse {
         *self.waiting.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.started.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
+    /// The interjection, if one is waiting — drained by the running loop.
+    pub(crate) fn take_steer(&self) -> Option<String> {
+        self.steer.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
     fn cancel_now(&self) {
         if let Some(c) = self.cancel.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             c.cancel();
@@ -128,6 +136,18 @@ impl Tui {
                                         draft.pop();
                                     }
                                 }),
+                                // Enter mid-run SENDS the draft into the run: the loop
+                                // reads it at its next turn boundary and the model
+                                // decides — pivot, or finish the current step first.
+                                Key::Enter => chrome.update(|state, _| {
+                                    if let PanelState::Working { draft, steering, .. } = state {
+                                        let msg = std::mem::take(draft);
+                                        if !msg.trim().is_empty() {
+                                            *pulse.steer.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg.clone());
+                                            *steering = Some(msg);
+                                        }
+                                    }
+                                }),
                                 _ => {}
                             }
                         }
@@ -179,25 +199,27 @@ impl TuiInput {
         }
     }
 
-    /// The dropdown for the buffer's first token, when it speaks `/` or `@`.
-    fn dropdown(&self, buf: &LineBuffer, suppressed: bool) -> Vec<(String, String)> {
+    /// The completion band for the buffer's first token: `None` (closed) unless the
+    /// token speaks `/` or `@` and no argument has begun — then `Some(matches)`,
+    /// and the band holds its height however the matches filter.
+    fn dropdown(&self, buf: &LineBuffer, suppressed: bool) -> Option<Vec<(String, String)>> {
         if suppressed {
-            return Vec::new();
+            return None;
         }
         let text = buf.text();
         let token = text.split_whitespace().next().unwrap_or("");
         if token.is_empty() || !(token.starts_with('/') || token.starts_with('@')) || text.contains(' ') {
-            return Vec::new();
+            return None;
         }
-        self.describe.iter().filter(|(name, _)| name.starts_with(token) && name != &token).cloned().collect()
+        Some(self.describe.iter().filter(|(name, _)| name.starts_with(token) && name != &token).cloned().collect())
     }
 
-    fn paint(&self, buf: &LineBuffer, dropdown: &[(String, String)], selected: usize) {
+    fn paint(&self, buf: &LineBuffer, dropdown: &Option<Vec<(String, String)>>, selected: usize) {
         let (row, col) = buf.row_col();
         self.chrome.set(PanelState::Editing(EditView {
             rows: buf.rows(),
             cursor: (row, col),
-            dropdown: dropdown.to_vec(),
+            dropdown: dropdown.clone(),
             selected,
         }));
     }
@@ -220,6 +242,7 @@ impl LineSource for TuiInput {
         let mut suppressed = false;
         let mut dropdown = self.dropdown(&buf, suppressed);
         self.paint(&buf, &dropdown, selected);
+        let open = |d: &Option<Vec<(String, String)>>| d.as_ref().map(|m| m.len()).unwrap_or(0);
         loop {
             let key = {
                 let keys = self.keys.lock().unwrap_or_else(|e| e.into_inner());
@@ -233,8 +256,8 @@ impl LineSource for TuiInput {
             match key {
                 // The dropdown owns ↑/↓ while it is showing; history otherwise —
                 // and inside a multiline draft, the caret moves between rows first.
-                Key::Up if !dropdown.is_empty() => selected = selected.saturating_sub(1),
-                Key::Down if !dropdown.is_empty() => selected = (selected + 1).min(dropdown.len().saturating_sub(1)),
+                Key::Up if open(&dropdown) > 0 => selected = selected.saturating_sub(1),
+                Key::Down if open(&dropdown) > 0 => selected = (selected + 1).min(open(&dropdown).saturating_sub(1)),
                 Key::Up if buf.move_row(false) => {}
                 Key::Down if buf.move_row(true) => {}
                 Key::Up if hist_at > 0 => {
@@ -251,7 +274,7 @@ impl LineSource for TuiInput {
                         false => buf.set(&self.history[hist_at]),
                     }
                 }
-                Key::Tab => match dropdown.get(selected) {
+                Key::Tab => match dropdown.as_ref().and_then(|m| m.get(selected)) {
                     // Accept the selection: the token becomes the command, ready for input.
                     Some((name, _)) => {
                         buf.set(&format!("{name} "));
@@ -270,12 +293,12 @@ impl LineSource for TuiInput {
                     }
                     return Some("/readonly".into());
                 }
-                Key::Esc => match dropdown.is_empty() {
-                    true => {
+                Key::Esc => match dropdown.is_some() {
+                    false => {
                         buf = LineBuffer::default();
                         hist_at = self.history.len();
                     }
-                    false => suppressed = true,
+                    true => suppressed = true,
                 },
                 key => match buf.apply(&key) {
                     Edit::Accept => {
@@ -300,7 +323,7 @@ impl LineSource for TuiInput {
                 },
             }
             dropdown = self.dropdown(&buf, suppressed);
-            selected = selected.min(dropdown.len().saturating_sub(1));
+            selected = selected.min(open(&dropdown).saturating_sub(1));
             self.paint(&buf, &dropdown, selected);
         }
     }
