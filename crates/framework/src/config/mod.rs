@@ -15,6 +15,7 @@ use corelib::wire::Toml;
 mod apply;
 mod bootstrap;
 mod load;
+pub mod overlay;
 mod paths;
 mod settings;
 

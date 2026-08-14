@@ -899,3 +899,38 @@ fn a_refusal_followed_by_work_is_not_a_stopped_run() {
     let run = run_agent(&client, &agent, "clean up", "", &mut RefusesThenWorks(0), &mut NoopObserver);
     assert_eq!(run.outcome, RunOutcome::Completed, "progress between refusals clears the streak");
 }
+
+#[test]
+fn a_persistent_transcript_carries_a_conversation_across_calls() {
+    // The workspace REPL's whole mechanism: ONE transcript, one `run_agent_over` per
+    // user message. The second call must (a) still see the first exchange — including
+    // the first FINAL answer, which the loop now appends as the closing assistant
+    // turn — and (b) send it back to the model, because a conversation the model
+    // cannot see is not a conversation.
+    let transport = ScriptedTransport::new(vec![
+        text_sse("Paris is the capital of France.", 10, 5),
+        text_sse("It has about two million inhabitants.", 8, 6),
+    ]);
+    let client = Client::new(keyed_settings(), transport);
+    let agent = AgentSpec { system: "You are helpful.".into(), max_steps: 4, ..Default::default() };
+    let mut runner = MockRunner { calls: Vec::new() };
+
+    let mut transcript = fresh_transcript(&agent, "what is the capital of France?", "");
+    let first = run_agent_over(&client, &agent, &mut transcript, &mut runner, &mut NoopObserver);
+    assert_eq!(first.answer, "Paris is the capital of France.");
+    assert!(
+        matches!(transcript.turns().last(), Some(Turn::Assistant(a)) if a == &first.answer),
+        "the final answer must close the exchange in the transcript"
+    );
+
+    transcript.push(Turn::User("and how many people live there?".into()));
+    let second = run_agent_over(&client, &agent, &mut transcript, &mut runner, &mut NoopObserver);
+    assert_eq!(second.answer, "It has about two million inhabitants.");
+
+    // The second REQUEST carried the whole first exchange.
+    let bodies = client.transport().sent();
+    assert_eq!(bodies.len(), 2);
+    assert!(bodies[1].contains("capital of France"), "the first question rides along");
+    assert!(bodies[1].contains("Paris is the capital"), "and the first answer does too: {}", &bodies[1]);
+    assert!(bodies[1].contains("how many people"), "with the new question last");
+}

@@ -372,6 +372,14 @@ pub fn run_agent<T: Transport>(
     runner: &mut dyn ToolRunner,
     observer: &mut dyn AgentObserver,
 ) -> AgentRun {
+    let mut transcript = fresh_transcript(agent, user_prompt, context);
+    run_agent_over(client, agent, &mut transcript, runner, observer)
+}
+
+/// The transcript a one-shot run opens with: the agent's instructions + the tool
+/// protocol + the guard's rules as system material, and the grounded task as the
+/// first user turn.
+pub fn fresh_transcript(agent: &AgentSpec, user_prompt: &str, context: &str) -> Transcript {
     // The agent's instructions and the tool protocol are BOTH system material — the
     // model is being told who it is and how to act, not being conversed with. The
     // grounding context (terminal state, recalled memory) is the first user turn,
@@ -394,7 +402,35 @@ pub fn run_agent<T: Transport>(
         true => user_prompt.to_string(),
         false => format!("{}\n\n{user_prompt}", context.trim()),
     };
-    let mut transcript = Transcript::new(system, task);
+    Transcript::new(system, task)
+}
+
+/// The agentic loop over a conversation the CALLER owns — the workspace REPL's whole
+/// mechanism: one persistent [`Transcript`] carries every turn of a sitting, this
+/// function is called once per user message, and the compaction ladder inside keeps
+/// the window honest across the entire conversation. The final answer is appended as
+/// the closing assistant turn, so the NEXT call reads a finished exchange.
+pub fn run_agent_over<T: Transport>(
+    client: &Client<T>,
+    agent: &AgentSpec,
+    transcript: &mut Transcript,
+    runner: &mut dyn ToolRunner,
+    observer: &mut dyn AgentObserver,
+) -> AgentRun {
+    let run = run_loop(client, agent, transcript, runner, observer);
+    if !run.answer.trim().is_empty() {
+        transcript.push(Turn::Assistant(run.answer.clone()));
+    }
+    run
+}
+
+fn run_loop<T: Transport>(
+    client: &Client<T>,
+    agent: &AgentSpec,
+    transcript: &mut Transcript,
+    runner: &mut dyn ToolRunner,
+    observer: &mut dyn AgentObserver,
+) -> AgentRun {
     let est = HeuristicEstimator;
     let ladder = Ladder::default();
 
@@ -456,7 +492,7 @@ pub fn run_agent<T: Transport>(
             let mut summarizer = ClientSummarizer { client, model: &turn_model, input_tokens: 0, output_tokens: 0 };
             let report = {
                 let mut cctx = CompactCtx { scratch: agent.scratch.clone(), keep: "", summarizer: Some(&mut summarizer) };
-                ladder.run(&mut transcript, &est, &budget, &mut cctx)
+                ladder.run(transcript, &est, &budget, &mut cctx)
             };
             usage.input += summarizer.input_tokens;
             usage.output += summarizer.output_tokens;
@@ -517,7 +553,7 @@ pub fn run_agent<T: Transport>(
                     // mutable transcript for no gain.
                     let outcome = if let Some(ctx_tool) = CtxTool::parse(&name) {
                         let mut summarizer = ClientSummarizer { client, model: &turn_model, input_tokens: 0, output_tokens: 0 };
-                        let out = ctx_tool.run(&args, &mut transcript, &est, &budget, agent, &ladder, &mut summarizer, observer);
+                        let out = ctx_tool.run(&args, transcript, &est, &budget, agent, &ladder, &mut summarizer, observer);
                         usage.input += summarizer.input_tokens;
                         usage.output += summarizer.output_tokens;
                         ToolOutcome::Done(out)
@@ -559,7 +595,7 @@ pub fn run_agent<T: Transport>(
                     if let [.., c, b, a] = steps.as_slice() {
                         if a.name == b.name && b.name == c.name && a.args == b.args && b.args == c.args {
                             let why = format!("the tool `{}` was called repeatedly with no progress", a.name);
-                            let answer = wind_down(client, &candidates, &mut transcript, &turn_model, &why, &mut usage, observer);
+                            let answer = wind_down(client, &candidates, transcript, &turn_model, &why, &mut usage, observer);
                             return finish(answer, steps, usage, RunOutcome::ToolStall, model_used);
                         }
                     }
@@ -579,7 +615,7 @@ pub fn run_agent<T: Transport>(
                 }
                 if refused_turns >= MAX_REFUSED_TURNS {
                     let why = format!("this run needs things the guard refuses: {}", refused_why.join("; "));
-                    let answer = wind_down(client, &candidates, &mut transcript, &turn_model, &why, &mut usage, observer);
+                    let answer = wind_down(client, &candidates, transcript, &turn_model, &why, &mut usage, observer);
                     return finish(answer, steps, usage, RunOutcome::Refused(why), model_used);
                 }
             }
@@ -609,7 +645,7 @@ pub fn run_agent<T: Transport>(
         }
     }
     let why = format!("the step budget of {max} ran out");
-    let answer = wind_down(client, &candidates, &mut transcript, &turn_model, &why, &mut usage, observer);
+    let answer = wind_down(client, &candidates, transcript, &turn_model, &why, &mut usage, observer);
     finish(answer, steps, usage, RunOutcome::StepLimit, model_used)
 }
 
