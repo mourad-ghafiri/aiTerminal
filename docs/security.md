@@ -191,6 +191,12 @@ a `@job`'s carries the sentence somebody typed. None of those pass through the t
 which only ever sees results coming *back* — so a flow that read a config file with one node
 and reasoned about it with the next used to send the whole file to a model.
 
+In **workspace mode** (`@workspace`) the same pipeline serves a conversation, with
+two additions: a `confirm` rule reaches the person at the terminal (headless runs
+still refuse it — deny never asks anybody), and a project's own `.aiTerminal/`
+config loads only behind a per-folder trust prompt, with its guard rules filtered to
+tightening tiers — a cloned repo can never allow-list anything.
+
 An MCP call crosses the boundary in **both** directions, so it is guarded in both:
 the arguments the model wrote have their secret placeholders restored before they
 reach the server (a placeholder from another run is refused, never forwarded as

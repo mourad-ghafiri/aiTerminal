@@ -1,0 +1,31 @@
+name = "a project agent shadows the global one of the same name"
+tags = ["workspace", "overlay"]
+
+# The overlay's first-per-name rule, seen from inside a conversation: `@coder` in a
+# workspace whose .aiTerminal/ declares its own coder speaks with the PROJECT's
+# system prompt — the request body proves which one answered the call.
+
+[setup]
+home = "ws-shadow"
+
+[[step]]
+project_file = ".aiTerminal/agents/coder.md"
+body = """
+---
+description: this project's own coder
+tools: fs.read, fs.list
+---
+You are the PROJECT-LOCAL coder for this repository; its conventions outrank everything.
+"""
+
+[[step]]
+model_says_in_turn = ["Done — reviewed."]
+
+[[step]]
+type = ["@coder look at the build files"]
+
+[[step]]
+open = "now"
+
+[[step]]
+expect_request_contains = ["PROJECT-LOCAL coder", "look at the build files"]

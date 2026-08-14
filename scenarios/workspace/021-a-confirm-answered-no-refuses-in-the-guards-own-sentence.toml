@@ -1,0 +1,31 @@
+name = "a confirm answered 'no' refuses in the guard's own sentence"
+tags = ["workspace", "guard"]
+
+# The other half of the approval seam: "n" is a refusal exactly as a headless run
+# refuses — same sentence, same information back to the model. Deny would never have
+# asked at all; that property is pinned at the unit level, where the approver
+# records whether it was consulted.
+
+[setup]
+home = "ws-confirm-no"
+
+[[step]]
+project_file = ".aiTerminal/config.toml"
+body = """
+[[guard.command]]
+pattern = "^echo confirmed-hello"
+rule = "confirm"
+"""
+
+[[step]]
+model_says_in_turn = ["@tool sys.run {\"cmd\":\"echo confirmed-hello\"}", "Understood, it was refused."]
+
+[[step]]
+type = ["run the confirmed echo for me", "n"]
+
+[[step]]
+open = "now"
+
+[[step]]
+turn = 2
+expect_request_contains = ['refused running \"echo confirmed-hello\"']

@@ -40,6 +40,7 @@ command_not_found_handle() {
     @loop)    "${TT_BIN:-aiTerminal}" ai loop "$@"; return ;;
     @job)     "${TT_BIN:-aiTerminal}" ai job "$@"; return ;;
     @mcp)     "${TT_BIN:-aiTerminal}" ai mcp "$@"; return ;;
+    @workspace) "${TT_BIN:-aiTerminal}" ai workspace "$@"; return ;;
     @md)      "${TT_BIN:-aiTerminal}" md "$@"; return ;;
     @gate)    "${TT_BIN:-aiTerminal}" gate "$@"; return ;;
     @profile) "${TT_BIN:-aiTerminal}" profile "$@"; return ;;

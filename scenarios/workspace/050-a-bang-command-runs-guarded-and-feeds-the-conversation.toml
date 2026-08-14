@@ -1,0 +1,20 @@
+name = "a ! command runs guarded, and what it printed feeds the conversation"
+tags = ["workspace", "guard"]
+
+# `!` is a human's shell line — judged like any other act, and its output folded
+# into the next message, so "look at that" has a that.
+
+[setup]
+home = "ws-bang"
+
+[[step]]
+model_says_in_turn = ["I can see the marker in your command output."]
+
+[[step]]
+type = ["!echo workspace-marker-4711", "what did that print?"]
+
+[[step]]
+open = "now"
+
+[[step]]
+expect_request_contains = ["workspace-marker-4711", "what did that print"]

@@ -362,7 +362,13 @@ pub(crate) fn call_mcp(guard: &crate::guard::Guard, mcp: &Option<SharedHub>, nam
 /// declared (or nothing came up). Callers own the hub's lifetime: an agent run
 /// builds one for itself; a flow builds ONE and hands it to every node.
 pub(crate) fn launch_hub() -> Option<SharedHub> {
-    let servers = crate::ai::load_servers(&[crate::config::Config::mcp_dir()]);
+    launch_hub_in(&[crate::config::Config::mcp_dir()])
+}
+
+/// [`launch_hub`], over an explicit set of declaration dirs — the workspace passes
+/// its project-first overlay here, so a project's servers join the sitting's hub.
+pub(crate) fn launch_hub_in(dirs: &[std::path::PathBuf]) -> Option<SharedHub> {
+    let servers = crate::ai::load_servers(dirs);
     if servers.is_empty() {
         return None;
     }
@@ -396,7 +402,7 @@ pub(crate) fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::Ai
     // it shares the vault — a secret one node saw reads back the same in the next.
     let guard = std::sync::Arc::new(guard.at(workspace.clone()));
     CliToolRunner {
-        ctx: crate::caps::CapCtx { guard, app_data, remote_enabled: cfg.ai_network, origin: "terminal://ai/".into(), sandbox: workspace, memory_dir },
+        ctx: crate::caps::CapCtx { guard, app_data, remote_enabled: cfg.ai_network, origin: "terminal://ai/".into(), sandbox: workspace, memory_dir, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) },
         mcp,
         trace: None,
         sub: SubAgentCtx {

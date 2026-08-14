@@ -30,6 +30,7 @@ pub(crate) mod runner;
 pub(crate) mod style;
 pub(crate) mod theme;
 pub(crate) mod trace;
+pub(crate) mod workspace;
 
 #[cfg(test)]
 mod tests;

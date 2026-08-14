@@ -1,0 +1,15 @@
+name = "workspace mode needs a terminal, and says so instead of hanging"
+tags = ["cli", "workspace"]
+
+# `@workspace` is a conversation; piped stdin has nobody on it. The command must
+# refuse with an explanation and a clean exit — never sit waiting on input that
+# cannot arrive. (The conversation itself is proved in scenarios/workspace/.)
+
+[setup]
+home = "workspace-no-tty"
+
+[[step]]
+run = "@workspace"
+
+[[step]]
+expect_exit = 2

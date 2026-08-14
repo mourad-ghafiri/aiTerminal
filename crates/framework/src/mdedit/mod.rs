@@ -9,7 +9,7 @@
 mod buffer;
 mod chrome;
 mod editor;
-mod key;
+pub(crate) mod key;
 mod pager;
 mod preview;
 mod session;
@@ -28,7 +28,6 @@ pub(crate) use preview::preview_height;
 /// The scenario world drives the editor and the pager the way a person does.
 #[cfg(test)]
 pub(crate) use crate::mdedit::{
-    key::parse_key,
     pager::Pager,
     preview::{build_preview_at, DiagramPaint, PObj, PRow},
 };

@@ -18,3 +18,4 @@ pub mod plugins;
 pub mod shell;
 pub mod terminal;
 pub mod theme;
+pub mod workspace;

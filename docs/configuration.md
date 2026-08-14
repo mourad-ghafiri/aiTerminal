@@ -25,6 +25,7 @@ ai/                    everything AI:
   agents/*.md            agents (@<name>)     skills/*.md    skills
   prompts/*.md           prompt blocks        flows/*.toml   workflow graphs (@flow)
   mcp/*.toml             MCP servers (command = local | url = remote; see ai.md)
+  — a project may overlay all of the above from <root>/.aiTerminal/ (trust-gated; see ai.md)
   memory/*.md            global durable memory
   models/*.toml          the provider/model catalog
   jobs/<id>/             background job records (@job)

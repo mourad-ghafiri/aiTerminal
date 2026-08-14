@@ -200,7 +200,7 @@ impl MemoryWorld {
             remote_enabled: false,
             origin: "scenario://memory/".into(),
             sandbox: None,
-            memory_dir: self.folder_dir(),
+            memory_dir: self.folder_dir(), approver: std::sync::Arc::new(crate::guard::NobodyToAsk),
         }
     }
 }

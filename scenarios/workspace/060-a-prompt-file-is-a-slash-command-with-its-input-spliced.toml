@@ -1,0 +1,24 @@
+name = "a project prompt file is a slash command, with its input spliced in"
+tags = ["workspace", "overlay"]
+
+# Custom commands are plain files: every prompt in the overlay surfaces as /<name>.
+# The body reaches the model with the line's remainder where {{input}} asks.
+
+[setup]
+home = "ws-prompt-cmd"
+
+[[step]]
+project_file = ".aiTerminal/prompts/ship.md"
+body = "Prepare the release checklist for {{input}} in this repository."
+
+[[step]]
+model_says_in_turn = ["Checklist ready."]
+
+[[step]]
+type = ["/ship v2.0"]
+
+[[step]]
+open = "now"
+
+[[step]]
+expect_request_contains = ["Prepare the release checklist for v2.0"]

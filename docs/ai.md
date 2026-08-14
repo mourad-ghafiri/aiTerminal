@@ -746,6 +746,59 @@ pid and heals the record on the spot.
 With **no model configured**, `@job` still reads `in 5m`, `at 17:30`, `every hour` and
 `every day at 9am` itself — the planner is an upgrade, never a dependency.
 
+## `@workspace` — the folder as a conversation
+
+Type `@workspace` and the current folder opens as a chat: ask, follow up, and the
+conversation remembers — one transcript carries the whole sitting, compacted
+automatically when the window demands it. Every answer renders live as Markdown with
+native diagrams, every model turn draws from your configured pool under its strategy,
+and the product's whole `@` language works mid-conversation.
+
+### Input, first match wins
+
+| You type | What happens |
+| --- | --- |
+| `/command` | a slash command (below) — plus every prompt file as `/<name>` |
+| `!cmd` | ONE shell command, judged by the guard, its output shown and folded into the next turn |
+| `@flow …` / `@job …` / `@loop …` / `@agent` / `@mcp` | the real command, inline — the board paints right here, and the outcome feeds the conversation |
+| `@<agent> task` | one run of that agent (project overlay first), its answer folded in |
+| `@<path>` | attach a file, exactly as everywhere else |
+| anything else | a conversation turn |
+
+Slash surface: `/help` `/init` `/clear` `/compact` `/model` `/agent` `/agents` `/mcp`
+`/memory` `/cost` `/readonly` `/trust` `/resume` `/exit` — Tab completes both the `/`
+and `@` vocabularies. `/readonly` is plan mode: the toolset narrows to the safe
+(read-only) set. `@workspace --continue` folds the folder's last conversation back in.
+
+### The project overlay
+
+A repo can carry its own AI setup, exactly like the global one:
+
+```text
+<root>/aiTerminal.md         project instructions (AGENTS.md read when absent)
+<root>/.aiTerminal/
+  agents/  skills/  prompts/  flows/  mcp/     overlay the global dirs, project-first
+  config.toml                [ai] + bounds override; [guard] rules TIGHTEN only
+```
+
+First-per-name wins: a project `coder.md` shadows the global coder for this folder.
+`/init` surveys the project (read-only tools) and writes its `aiTerminal.md`.
+
+### Trust, and the guard
+
+The FIRST open of a folder asks — showing exactly what the project would inject
+(agents, skills, prompts, flows, **MCP servers — these run code as you**, config) —
+and remembers the answer per folder. It asks again only when the parts that execute
+change (a `git pull` that adds an MCP server re-opens the question). Declining opens
+the workspace on global config alone; `/trust` re-opens the question.
+
+The guard owns the boundary end to end. Every model action goes through the same
+tool pipeline as every agent run — deny is deny, everywhere. What workspace mode
+ADDS is a human: a `confirm`-tier rule, spent as a refusal in headless runs, here
+pauses the stream and asks you, once, for that act. A project's `[guard]` rules can
+only tighten (deny/confirm/read-only/secret); allow-tier rules from a repo are
+dropped and named. Conversation logs are stored redacted, like everything at rest.
+
 ## Exit codes & scripting
 
 Every AI command tells the shell the truth, so `$?`, `&&`, and CI compose:

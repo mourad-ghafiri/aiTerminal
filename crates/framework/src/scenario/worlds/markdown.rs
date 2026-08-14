@@ -9,7 +9,8 @@ use corelib::md::{self, Style};
 use corelib::wire::Toml;
 
 use super::super::world::{self, World};
-use crate::mdedit::{build_preview_at, parse_key, DiagramPaint, PRow, Pager};
+use crate::mdedit::key::parse_key;
+use crate::mdedit::{build_preview_at, DiagramPaint, PRow, Pager};
 
 pub struct MarkdownWorld {
     /// The document under test.

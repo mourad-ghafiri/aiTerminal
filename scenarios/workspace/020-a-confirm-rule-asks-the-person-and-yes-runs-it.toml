@@ -1,0 +1,39 @@
+name = "a confirm rule reaches the person at the terminal, and their yes runs it"
+tags = ["workspace", "guard"]
+
+# Headless runs spend a `confirm` as a refusal — there is nobody to ask. A workspace
+# HAS somebody. The model proposes a confirm-tier command; the guard pauses and asks;
+# the scripted "y" is this scenario's human; and the command's result reaches the
+# next turn, which is the proof it actually ran.
+
+[setup]
+home = "ws-confirm-yes"
+
+[[step]]
+project_file = ".aiTerminal/config.toml"
+body = """
+[[guard.command]]
+pattern = "^echo confirmed-hello"
+rule = "confirm"
+"""
+
+[[step]]
+model_says_in_turn = ["@tool sys.run {\"cmd\":\"echo confirmed-hello\"}", "It printed."]
+
+# The first line is the message; the second answers the guard's question.
+[[step]]
+type = ["run the confirmed echo for me", "y"]
+
+[[step]]
+open = "now"
+
+[[step]]
+turn = 2
+expect_request_contains = ["confirmed-hello"]
+
+# The briefing in the system prompt legitimately SAYS "the guard refused" — what
+# must be absent is the specific refusal of THIS command, which would have been the
+# tool's result had the yes not landed.
+[[step]]
+turn = 2
+expect_request_excludes = ['refused running \"echo confirmed-hello\"']

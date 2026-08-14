@@ -1,0 +1,25 @@
+name = "a conversation remembers its earlier turns"
+tags = ["workspace"]
+
+# The whole point of a chat mode: ONE transcript carries the sitting. The second
+# message's request must carry the first exchange — question AND answer — or the
+# model is meeting a stranger every turn.
+
+[setup]
+home = "ws-history"
+
+[[step]]
+model_says_in_turn = ["Paris.", "About two million."]
+
+[[step]]
+type = ["what is the capital of France?", "and how many people live there?"]
+
+[[step]]
+open = "now"
+
+[[step]]
+expect_requests = 2
+
+[[step]]
+turn = 2
+expect_request_contains = ["capital of France", "Paris.", "how many people"]

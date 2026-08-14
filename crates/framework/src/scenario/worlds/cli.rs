@@ -180,7 +180,7 @@ impl CliWorld {
             "plugin" => crate::cli::plugin(&rest),
             "gate" => crate::cli::gate(&rest),
             "md" => crate::cli::md(&rest),
-            "agent" | "flow" | "job" | "loop" | "mcp" | "ai" => {
+            "agent" | "flow" | "job" | "loop" | "mcp" | "workspace" | "ai" => {
                 let argv: Vec<String> = std::iter::once(head.to_string()).chain(rest).collect();
                 crate::cli::ai(&argv)
             }

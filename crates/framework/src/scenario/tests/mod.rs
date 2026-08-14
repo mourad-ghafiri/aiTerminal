@@ -7,7 +7,7 @@ fn ai_scenarios() {
 
 #[test]
 fn cli_scenarios() {
-    check("cli", 25);
+    check("cli", 26);
 }
 
 #[test]
@@ -73,6 +73,11 @@ fn keymap_scenarios() {
 #[test]
 fn theme_scenarios() {
     check("theme", 8);
+}
+
+#[test]
+fn workspace_scenarios() {
+    check("workspace", 8);
 }
 
 #[test]

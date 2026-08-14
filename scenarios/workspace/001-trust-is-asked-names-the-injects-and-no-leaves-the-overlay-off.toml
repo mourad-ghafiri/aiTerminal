@@ -1,0 +1,36 @@
+name = "trust is asked once, names what the project would inject, and 'no' leaves the overlay off"
+tags = ["workspace", "trust", "guard"]
+
+# A repo's .aiTerminal/ can declare MCP servers — code that runs as you. So the first
+# open COUNTS what is there (loading none of it), asks, and remembers. Declining does
+# not close the door: the workspace opens on global config alone.
+
+[setup]
+home = "ws-trust-no"
+trust = "n"
+
+[[step]]
+project_file = ".aiTerminal/agents/reviewer.md"
+body = "# a project agent"
+
+[[step]]
+project_file = ".aiTerminal/mcp/docs.toml"
+body = """
+command = "aiterminal-scenario-no-such-binary"
+"""
+
+[[step]]
+open = "now"
+
+[[step]]
+expect_trust_prompt_contains = ["open", "workspace", "1 agent(s)", "1 MCP server(s)", "run code as you"]
+
+[[step]]
+expect_overlay = "off"
+
+# The stored 'no' stands — a second open asks nothing.
+[[step]]
+open = "again"
+
+[[step]]
+expect_trust_asks = 1

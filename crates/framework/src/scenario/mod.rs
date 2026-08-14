@@ -44,6 +44,7 @@ const REGISTRY: &[(&str, Factory)] = &[
     ("shell", worlds::shell::build),
     ("terminal", worlds::terminal::build),
     ("theme", worlds::theme::build),
+    ("workspace", worlds::workspace::build),
 ];
 
 /// Run every `*.toml` in one feature's folder.
