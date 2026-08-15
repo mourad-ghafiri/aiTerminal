@@ -18,6 +18,7 @@ pub mod diff;
 mod mcp;
 pub mod memory;
 mod model;
+pub(crate) mod judge;
 pub(crate) mod plan;
 pub(crate) mod verify;
 pub mod pool;
@@ -31,7 +32,7 @@ mod tools;
 pub mod transcript;
 
 // Curated flat surface — callers write `framework::ai::Client`, `…::run_agent`, …
-pub use agent::{fresh_transcript, run_agent, run_agent_over, AgentObserver, Steer, Unsteered, AgentRun, AgentSpec, NoopObserver, RunOutcome, ToolOutcome, ToolRunner, ToolSpec, ToolStep};
+pub use agent::{compose_system, fresh_transcript, run_agent, run_agent_over, AgentObserver, Steer, Unsteered, AgentRun, AgentSpec, NoopObserver, RunOutcome, ToolOutcome, ToolRunner, ToolSpec, ToolStep};
 pub use budget::{ContextBudget, HeuristicEstimator, TokenEstimator, DEFAULT_COMPACT_AT};
 pub use client::Client;
 pub use compact::{CompactionReport, CompactionStage, Ladder, Summarizer};

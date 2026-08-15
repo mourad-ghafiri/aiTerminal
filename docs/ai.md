@@ -776,10 +776,11 @@ and the product's whole `@` language works mid-conversation.
 | `@<path>` | attach a file — images and PDFs ride the turn as real media; the band completes project files (`explain @src/ma` → `@src/main.rs`), even mid-sentence |
 | anything else | a conversation turn |
 
-Slash surface: `/help` `/init` `/clear` `/compact` `/model` `/agent` `/agents` `/mcp`
-`/memory` `/cost` `/readonly` `/status` `/retry` `/save` `/files` `/skills` `/keys`
-`/trust` `/sessions` `/resume [n]` `/undo` `/redo` `/export [path]` `/thinking`
-`/learn` `/changes` `/exit`. `/learn` asks the sitting to distill itself — a
+Slash surface: `/help` `/init` `/clear` `/compact [keep…]` `/mode` `/plan` `/build`
+`/auto` `/model` `/agent` `/agents` `/mcp` `/memory` `/cost` `/status` `/retry`
+`/save` `/files` `/skills` `/keys` `/trust` `/sessions` `/resume [n]` `/undo`
+`/redo` `/export [path]` `/thinking` `/learn` `/changes` `/guard` `/exit`.
+`/learn` asks the sitting to distill itself — a
 reusable method becomes a skill file under `.aiTerminal/skills/`, durable facts
 become memories (both through the guarded tools); `/changes` shows what the
 sitting changed (`git status` + `diff --stat`, judged like any `!` command). `/sessions` lists this folder's conversations and `/resume <n>` folds the
@@ -787,25 +788,66 @@ one you pick into your next message; `/undo` takes the last exchange out of the
 conversation (one `/redo` restores it); `/export` writes the whole redacted
 conversation through the guarded write path; `/thinking` toggles reasoning
 display for the sitting. A partly-typed command with the band open submits the
-**highlighted** match — Enter selects, so `/st⏎` is `/status`. `/readonly` is plan
-mode: the toolset narrows to the safe (read-only) set. `/resume` folds the folder's
+**highlighted** match — Enter selects, so `/st⏎` is `/status`. `/resume` folds the folder's
 last conversation back in.
+
+### The three modes — plan · build · auto
+
+Shift+Tab cycles them (`/mode`, or jump with `/plan` `/build` `/auto`); the
+header's pill and the panel's bar state the current one in its color — amber ·
+accent · green. The mode never changes what the guard *decides*, only which
+tools serve a turn and **who answers the guard's confirm-tier question**:
+
+- **Plan** — the safe (read-only) toolset and the planner's voice: the model
+  explores first, asks `ask.user` when a requirement is genuinely yours, and
+  when it knows enough ends its answer with ONE fenced ` ```plan ` block —
+  phases, each with concrete tasks. The surface raises the **approval modal**:
+  *Build it now* (approve, switch to build, start working the plan
+  immediately), *Approve — I'll drive* (switch and wait for you), or *Keep
+  planning* (Esc; nothing changes). Anything short of a well-formed plan is
+  just an answer — nothing is raised. Approval persists the plan beside the
+  chat log, **seeds the `todo.*` checklist** the model then keeps current, and
+  folds the plan into the next turn.
+- **Build** — the default: the full toolset; a confirm-tier act pauses and asks
+  you, once, in place.
+- **Auto** — the full toolset, and a second model — **the judge** — answers the
+  guard's confirms first. It is reasoning-blind (it reads the act and the
+  rule's own reason, never the model's argument for itself), treats the act as
+  untrusted data, and holds *uncertain means unsafe*. A safe verdict runs the
+  act with a visible `⚡ auto-approved — <why>` line; anything else — unsafe,
+  undecodable, unreachable — falls through to you, exactly as build mode asks.
+  Deny is forever deny; the judge can remove an interruption, never add a
+  permission. Auto needs a configured model, and every verdict is said out loud.
+
+`/compact [what to keep]` folds the conversation's history down **now** — the
+oldest exchanges become one written summary (steered by your keep note), big
+tool results offload to files first, and the report says what it bought. The
+same ladder still runs automatically when the window demands it; `/compact` is
+you asking early.
 
 ### The chrome
 
-A fresh open is a **home screen**: the mark, the folder and what its overlay
-adds, centered, with the **input panel** floating beneath — your first message
-anchors the conversation and pins the panel to the bottom for the sitting.
+A **sticky header** rides the top of the surface, always — home screen included:
+`✦ root` and the **mode pill** (amber plan · accent build · green auto) on the
+left with the pinned persona; the approved plan's progress (`▰▰▱▱▱ 3/9`), the
+serving model, tokens · cost, the overlay dot and — while a turn runs — a live
+`0:42` clock on the right (the least vital facts shed first when the window
+narrows; identity never does). The facts you glance at never scroll away and
+never hide behind the input.
 
-The panel is ONE shape for every state: a left accent bar whose color states the
-mode (accent = build, amber = plan and the guard's ask), an elevated surface,
-your draft as real lines with a true caret (it grows with Shift+Enter up to a
-third of the surface), and a **meta row inside the panel's bottom** — root ·
-build/plan · persona · serving model on the left, tokens · cost · overlay dot on
-the right. While a turn runs the meta row carries the spinner and the muse's
-aside (`esc interrupts · enter steers`) and anything you type becomes the
-**draft** of your next message; a guard `confirm` turns the panel amber and asks
-in place.
+A fresh open is a **home screen**: the wordmark drawn big, the folder and what
+its overlay adds, centered, with the **input panel** floating beneath at a
+step-larger scale — your first message anchors the conversation and pins the
+panel to the bottom for the sitting.
+
+The panel is ONE shape for every state: a left bar in the mode's color, an
+elevated surface, your draft as real lines with a true caret (it grows with
+Shift+Enter up to a third of the surface), and a **meta row inside the panel's
+bottom** that speaks for the state: each mode's own hint while you type; the
+spinner, the muse's aside, the elapsed clock and `esc interrupts · enter steers`
+while a turn runs — and when a plan is being worked, the working row names the
+**current task**. Anything you type mid-run becomes the **draft** of your next
+message; a guard `confirm` turns the panel amber and asks in place.
 
 Typing `/` or `@` opens the **completion popup** floating above the panel
 (fuzzy-ranked: prefix matches first, then subsequences, and what this folder
@@ -815,7 +857,10 @@ mid-sentence included), and a streaming answer's tail rides a floating card
 there too. Both are overlays: **the layout is deterministic** —
 nothing but a window resize or a growing draft can move the conversation. Tool
 moments are marked by kind, flow-style: `⚙` native · `⌁` MCP · `✧` delegate ·
-`◆` memory — and an inline `@flow`/`@job`/`@loop` run is embedded between dim
+`◆` memory — the glyph tinted by outcome (accent while running, green landed,
+amber failed) — and the model's `todo.*` checklist renders as a **card**: a
+`plan ▰▰▱▱▱ 2/5 · ▶ current task` header, done tasks ticked and dim, exactly one
+`▶` on what is being worked. An inline `@flow`/`@job`/`@loop` run is embedded between dim
 rules, its output streaming into the conversation line by line (in the app it
 runs as a child of our own binary with stdin closed, so a guard `confirm`
 refuses exactly as headless runs do, and Esc kills the run rather than orphaning
@@ -825,7 +870,7 @@ it).
 | --- | --- |
 | `Enter` | send · `Ctrl+J` / `Shift+Enter` newline (↑/↓ walk the rows) |
 | `Tab` | complete `/` and `@` · accept the dropdown selection |
-| `Shift+Tab` | toggle plan/build |
+| `Shift+Tab` | cycle plan → build → auto |
 | `↑` / `↓` | history (or dropdown / draft rows) |
 | `Esc` | close the band · clear the line · **interrupt a running turn** · on an empty idle bar, close the surface |
 | `Enter` mid-run | **steer**: your note joins the run at its next step, and the MODEL decides — pivot now, or finish the current step first |
@@ -899,7 +944,10 @@ runs rebuild the same guard in the same root, with fixed argv and no shell.
 
 What workspace mode ADDS is a human: a `confirm`-tier rule, spent as a refusal
 in headless runs, here pauses the stream and asks you, once, for that act — and
-ONLY the local keyboard can answer; no steered or remote text ever approves.
+ONLY the local keyboard can answer; no steered or remote text ever approves. In
+**auto mode** the judge answers those confirms first — tighten-only, every
+verdict said out loud, and you are the fallback the moment it declines (`/guard`
+says when the judge is on).
 A project's `[guard]` rules can only tighten (deny/confirm/read-only/secret);
 allow-tier rules from a repo are dropped and named. And the guard is
 consultable: `/guard` shows your active protections, `/guard <command>` (or

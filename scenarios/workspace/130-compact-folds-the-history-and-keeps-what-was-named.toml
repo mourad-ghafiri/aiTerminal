@@ -1,0 +1,26 @@
+name = "compact folds the history down and the next turn rides the summary"
+tags = ["workspace", "compact"]
+
+# The human's /compact: the oldest exchanges fold into one written summary (the
+# third scripted turn is the summarizer's reply — one shared transport), and the
+# next turn's request carries the summary where the folded detail used to be.
+
+[setup]
+home = "ws-compact"
+
+[[step]]
+model_says_in_turn = ["Answer one, carrying THE-LONG-DETAIL nobody needs later.", "Answer two.", "the distilled summary of the earlier work", "Answer three."]
+
+[[step]]
+type = ["first question", "second question", "/compact keep the decisions", "third question"]
+
+[[step]]
+open = "now"
+
+[[step]]
+turn = 4
+expect_request_contains = ["Earlier work (compacted)", "the distilled summary of the earlier work"]
+
+[[step]]
+turn = 4
+expect_request_excludes = ["THE-LONG-DETAIL"]

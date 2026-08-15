@@ -9,7 +9,7 @@ use super::super::gate::wrap_to;
 use super::*;
 
 /// The tips under the centered panel.
-const TIPS: &str = "enter sends \u{b7} shift+enter newline \u{b7} tab completes \u{b7} shift+tab plan \u{b7} esc interrupts \u{b7} \u{2318}J closes";
+const TIPS: &str = "enter sends \u{b7} shift+enter newline \u{b7} tab completes \u{b7} shift+tab mode \u{b7} esc interrupts \u{b7} \u{2318}J closes";
 
 /// Draw the welcome around the already-laid-out `panel` rect: facts above,
 /// tips below, everything centered and wrapped to the panel's width — nothing
@@ -47,21 +47,21 @@ pub(crate) fn draw_welcome(surface: &mut Surface, cache: &mut GlyphCache, theme:
     // The LOGO: real typography, big — `ai` in accent, `Terminal` in fg, bold,
     // over a soft shadow layer for depth. It scales down (and finally hides)
     // rather than ever clipping or crowding the facts.
-    let avail = panel.y - area.y - 24.0 - rows.len() as f32 * m.cell_h;
-    let logo_px = (base_px * 3.4).min(avail * 0.62).min(area.w * 0.11);
+    let avail = panel.y - area.y - 24.0 - rows.len() as f32 * (m.cell_h + 4.0);
+    let logo_px = (base_px * 4.6).min(avail * 0.70).min(area.w * 0.16);
     let show_logo = logo_px >= base_px * 1.2;
-    let logo_h = if show_logo { cache.metrics(logo_px).cell_h + 18.0 } else { 0.0 };
+    let logo_h = if show_logo { cache.metrics(logo_px).cell_h + 20.0 } else { 0.0 };
 
     // Stack the facts upward from a gap above the panel, never above the area.
-    let mut baseline = panel.y - 16.0 - (rows.len() as f32 - 1.0) * m.cell_h - (m.cell_h - m.ascent);
+    let mut baseline = panel.y - 18.0 - (rows.len() as f32 - 1.0) * (m.cell_h + 4.0) - (m.cell_h - m.ascent);
     baseline = baseline.max(area.y + 10.0 + logo_h + m.ascent);
     if show_logo {
         let lm = cache.metrics(logo_px);
         let w = measure_text(cache, "aiTerminal", logo_px);
         let x = area.x + ((area.w - w) * 0.5).max(0.0);
-        let ly = baseline - m.ascent - 18.0 - (lm.cell_h - lm.ascent);
+        let ly = baseline - m.ascent - 20.0 - (lm.cell_h - lm.ascent);
         // Depth first, then the two-tone word over it.
-        draw_text(surface, cache, "aiTerminal", logo_px, x + 4.0, ly + 4.0, theme.shadow(), area.x + area.w, true);
+        draw_text(surface, cache, "aiTerminal", logo_px, x + 5.0, ly + 5.0, theme.shadow(), area.x + area.w, true);
         let mid = draw_text(surface, cache, "ai", logo_px, x, ly, theme.accent, area.x + area.w, true);
         draw_text(surface, cache, "Terminal", logo_px, mid, ly, theme.fg, area.x + area.w, true);
     }
@@ -70,7 +70,7 @@ pub(crate) fn draw_welcome(surface: &mut Surface, cache: &mut GlyphCache, theme:
         let x = area.x + ((area.w - w) * 0.5).max(0.0);
         let color = if *bright { theme.accent } else { theme.muted };
         draw_text(surface, cache, text, base_px, x, baseline, color, area.x + area.w, *bright);
-        baseline += m.cell_h;
+        baseline += m.cell_h + 4.0;
     }
 
     // The tips, wrapped and centered below the panel.

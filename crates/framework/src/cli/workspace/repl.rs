@@ -48,7 +48,8 @@ pub(crate) struct Repl<T: crate::ai::Transport> {
     pub(crate) input: SharedInput,
     /// `None` until the first turn — the grounding is built then, once.
     transcript: Option<crate::ai::Transcript>,
-    readonly: bool,
+    /// The working mode — plan / build / auto. See [`super::screen::Mode`].
+    mode: super::screen::Mode,
     persona: Option<String>,
     prompts: Vec<crate::ai::defs::Prompt>,
     agents: Vec<String>,
@@ -75,6 +76,15 @@ pub(crate) struct Repl<T: crate::ai::Transport> {
     turns_taken: usize,
     /// The transcript as it stood before /undo (plus the prompt), for /redo.
     undone: Option<(crate::ai::Transcript, Option<String>)>,
+    /// Whether an approved plan's checklist is being worked — the meta row shows
+    /// its progress while this holds.
+    plan_active: bool,
+    /// Auto mode's switch, shared with the [`super::judge::Judged`] approver —
+    /// installed once, flipped here on every mode change.
+    auto: Arc<std::sync::atomic::AtomicBool>,
+    /// Whether a judge is actually installed — auto mode is refused without one,
+    /// so the mode's name can never promise what the sitting cannot do.
+    judge_armed: bool,
     /// How an inline `@…` run executes — see [`InlineExec`].
     inline_exec: Box<dyn InlineExec>,
 }
@@ -145,7 +155,7 @@ impl<T: crate::ai::Transport> Repl<T> {
             runner,
             input,
             transcript: None,
-            readonly: false,
+            mode: super::screen::Mode::default(),
             persona: None,
             prompts,
             agents,
@@ -161,6 +171,9 @@ impl<T: crate::ai::Transport> Repl<T> {
             show_reasoning,
             turns_taken: 0,
             undone: None,
+            plan_active: false,
+            auto: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            judge_armed: false,
             inline_exec: Box::new(InProcess),
         }
     }
@@ -178,11 +191,24 @@ impl<T: crate::ai::Transport> Repl<T> {
         self
     }
 
+    /// Arm auto mode's judge: the CURRENT approver (the human) becomes the
+    /// fallback, and the judge speaks first whenever the mode flag is on. Call
+    /// AFTER the surface's approver is installed — the decorator wraps whoever
+    /// is answering at that moment.
+    pub(crate) fn arm_judge<J: crate::ai::Transport + 'static>(&mut self, judge_client: crate::ai::Client<J>) {
+        let inner = self.runner.ctx.approver.clone();
+        let events = self.ui.as_ref().map(|ui| ui.events.clone());
+        let judged = super::judge::Judged::new(judge_client, self.auto.clone(), inner, events, self.ws.root.display().to_string());
+        self.runner.ctx.approver = Arc::new(judged);
+        self.judge_armed = true;
+    }
+
     /// Everything the status row states, freshly composed.
     fn status(&self) -> super::screen::Status {
         super::screen::Status {
             root: self.ws.root.file_name().and_then(|s| s.to_str()).unwrap_or("workspace").to_string(),
-            plan: self.readonly,
+            mode: self.mode,
+            tasks: self.plan_progress(),
             persona: self.persona.clone(),
             model: match self.served.is_empty() {
                 true => self.client.model().id.clone(),
@@ -339,7 +365,10 @@ impl<T: crate::ai::Transport> Repl<T> {
 
     fn prompt_row(&self) -> String {
         let name = self.ws.root.file_name().and_then(|s| s.to_str()).unwrap_or("workspace");
-        let mode = if self.readonly { " [plan]" } else { "" };
+        let mode = match self.mode {
+            super::screen::Mode::Build => String::new(),
+            m => format!(" [{}]", m.name()),
+        };
         let persona = self.persona.as_deref().map(|p| format!(" @{p}")).unwrap_or_default();
         format!("{}{name}{mode}{persona} \u{276f} {}", accent(), reset())
     }
@@ -351,16 +380,11 @@ impl<T: crate::ai::Transport> Repl<T> {
             Route::Clear => {
                 self.transcript = None;
                 self.pending.clear();
+                self.plan_active = false;
                 self.note("fresh conversation \u{2014} the folder's grounding is rebuilt on your next message");
             }
-            Route::Compact => self.compact(),
-            Route::Readonly => {
-                self.readonly = !self.readonly;
-                self.note(match self.readonly {
-                    true => "plan mode: read-only tools \u{2014} nothing is written or run",
-                    false => "build mode: the full toolset, under the guard as ever",
-                });
-            }
+            Route::Compact(keep) => self.compact(keep),
+            Route::Mode(pick) => self.switch_mode(pick),
             Route::Model(pick) => self.model(pick),
             Route::Agent(name) => self.pin(name),
             Route::Agents => self.list_agents(),
@@ -395,6 +419,11 @@ impl<T: crate::ai::Transport> Repl<T> {
                         self.say(&format!("{dim}{line}{r}"));
                     }
                     self.say(&format!("{dim}{}{r}", overlay_line_for(&self.ws, true)));
+                    if self.mode == super::screen::Mode::Auto {
+                        self.say(&format!(
+                            "{dim}auto mode: the AI judge answers confirm-tier questions \u{2014} deny is still deny, and you are asked whenever it declines{r}"
+                        ));
+                    }
                     self.note("a verdict without running anything:  /guard <command> \u{b7} /guard read <path> \u{b7} /guard write <path>");
                 }
                 Some(act) => {
@@ -435,16 +464,17 @@ impl<T: crate::ai::Transport> Repl<T> {
 
     // ── the conversation ──────────────────────────────────────────────────
 
-    /// The tools this sitting grants — plan mode narrows, MCP rides along, and the
-    /// guard judges every use either way.
+    /// The tools this sitting grants — plan mode narrows to the safe set, MCP rides
+    /// along in the writing modes, and the guard judges every use either way.
     fn toolset(&self) -> Vec<crate::ai::ToolSpec> {
-        let names: &[&str] = match self.readonly {
+        let planning = self.mode == super::screen::Mode::Plan;
+        let names: &[&str] = match planning {
             true => crate::ai::DEFAULT_SAFE_TOOLS,
             false => crate::ai::DEFAULT_CODER_TOOLS,
         };
         let mut tools: Vec<crate::ai::ToolSpec> =
             names.iter().map(|n| crate::ai::ToolSpec { name: n.to_string(), describe: crate::caps::describe(n).to_string() }).collect();
-        if !self.readonly {
+        if !planning {
             if let Some(hub) = &self.runner.mcp {
                 for (name, describe) in hub.lock().unwrap_or_else(|e| e.into_inner()).tools() {
                     tools.push(crate::ai::ToolSpec { name, describe });
@@ -454,9 +484,80 @@ impl<T: crate::ai::Transport> Repl<T> {
         tools
     }
 
-    /// The spec a plain turn runs under: the pinned persona's, or the lean
-    /// workspace default (the pi lesson — a small prompt, the folder as context).
+    /// Switch the working mode — the cycle (`None`) or a named jump. Auto needs a
+    /// configured model: its whole point is the judge, and the judge is a model call.
+    fn switch_mode(&mut self, pick: Option<super::screen::Mode>) {
+        use super::screen::Mode;
+        let mut target = pick.unwrap_or_else(|| self.mode.next());
+        if target == Mode::Auto && self.settings.resolve_key().is_none() {
+            return self.note(&format!("auto mode needs a model (the judge is a model call) \u{2014} {}", crate::ai::setup_hint(&self.settings)));
+        }
+        if target == Mode::Auto && !self.judge_armed {
+            // The cycle must never strand someone in a mode that cannot do what
+            // its name says: with no judge installed, auto skips to plan.
+            match pick {
+                Some(_) => return self.note("auto mode isn't available in this surface \u{2014} no judge is installed"),
+                None => target = target.next(),
+            }
+        }
+        self.mode = target;
+        self.auto.store(target == Mode::Auto, std::sync::atomic::Ordering::Relaxed);
+        self.note(match target {
+            Mode::Plan => "plan mode: read-only tools \u{2014} explore, then a plan with phases and tasks for your approval",
+            Mode::Build => "build mode: the full toolset; the guard's confirms ask you",
+            Mode::Auto => "auto mode: the AI judge answers the guard's confirms \u{2014} you, whenever it declines",
+        });
+        if let Some(ui) = &self.ui {
+            let _ = ui.events.send(super::ui::Event::Status(self.status()));
+        }
+    }
+
+    /// What the working row says a turn is doing: the plan's current task while
+    /// one is being worked — the person watches the plan advance — else the
+    /// plain thinking label the muse decorates.
+    fn working_label(&self) -> String {
+        let fallback = "thinking\u{2026}".to_string();
+        if !self.plan_active {
+            return fallback;
+        }
+        let Ok(corelib::wire::Json::Arr(items)) = crate::caps::run("todo.list", &[], &self.runner.ctx) else { return fallback };
+        let open = items.iter().find(|it| !it.get("done").and_then(|d| d.as_bool()).unwrap_or(false));
+        match open.and_then(|it| it.get("text")).and_then(|t| t.as_str()) {
+            Some(text) => format!("\u{25b6} {}", text.chars().take(48).collect::<String>()),
+            None => fallback,
+        }
+    }
+
+    /// The approved plan's checklist progress, while one is active — read from the
+    /// same `todo.*` store the model updates, so the chrome and the model can never
+    /// disagree about the count.
+    fn plan_progress(&self) -> Option<(usize, usize)> {
+        if !self.plan_active {
+            return None;
+        }
+        let Ok(corelib::wire::Json::Arr(items)) = crate::caps::run("todo.list", &[], &self.runner.ctx) else { return None };
+        if items.is_empty() {
+            return None;
+        }
+        let done = items.iter().filter(|i| i.get("done").and_then(|d| d.as_bool()).unwrap_or(false)).count();
+        Some((done, items.len()))
+    }
+
+    /// The spec a plain turn runs under: the planner's in plan mode (the mode is
+    /// the persona there), else the pinned persona's, else the lean workspace
+    /// default (the pi lesson — a small prompt, the folder as context).
     fn spec(&self) -> crate::ai::AgentSpec {
+        if self.mode == super::screen::Mode::Plan {
+            return crate::ai::AgentSpec {
+                system: super::plan::planner_system(&self.ws.root),
+                tools: self.toolset(),
+                max_steps: 24,
+                context_window: self.cfg.ai_context_window,
+                compact_at: self.cfg.ai_compact_at,
+                guard_brief: self.guard.briefing(),
+                scratch: crate::cli::runner::run_scratch(),
+            };
+        }
         let (system, max_steps) = match self.persona.as_deref().and_then(|name| {
             let dirs = (self.ws.agents_dirs(), self.ws.skills_dirs(), self.ws.prompts_dirs());
             crate::ai::defs::build_agent_in(&dirs.0, &dirs.1, &dirs.2, name)
@@ -616,11 +717,18 @@ impl<T: crate::ai::Transport> Repl<T> {
                 let grounding = self.guard.hide(&grounding);
                 self.transcript = Some(crate::ai::fresh_transcript(&spec, &message, &grounding));
             }
-            Some(t) => t.push(crate::ai::Turn::User(message.clone())),
+            Some(t) => {
+                // The sitting's CURRENT self: a mode or persona change between
+                // turns re-states the system prompt, so a build turn is never
+                // still being told it is the planner.
+                t.set_system(crate::ai::compose_system(&spec));
+                t.push(crate::ai::Turn::User(message.clone()));
+            }
         }
 
         let started = std::time::Instant::now();
-        let (view, mut obs) = self.open_stream("thinking\u{2026}");
+        let label = self.working_label();
+        let (view, mut obs) = self.open_stream(&label);
         self.runner.trace = Some(Arc::new(view));
         let mut transcript = self.transcript.take().expect("set above");
         let mut steer = PulseSteer(self.ui.as_ref().map(|ui| ui.pulse.clone()), self.guard.clone());
@@ -633,6 +741,88 @@ impl<T: crate::ai::Transport> Repl<T> {
         self.last_prompt = Some(prompt.clone());
         self.last_answer = Some(run.answer.clone());
         self.log_exchange(&prompt, &run.answer);
+        // A planning turn that ended in a plan puts it to the human — the gate
+        // between thinking and touching anything.
+        if self.mode == super::screen::Mode::Plan {
+            if let Some(plan) = super::plan::WorkPlan::parse(&run.answer) {
+                self.offer_plan(plan);
+            }
+        }
+    }
+
+    /// The approval gate: the plan is put to the human, and only their answer
+    /// changes the mode. Approval seeds the checklist, persists the plan, and —
+    /// on "build now" — starts working it immediately.
+    fn offer_plan(&mut self, plan: super::plan::WorkPlan) {
+        use super::plan::PlanChoice;
+        let tasks = plan.tasks();
+        let summary = format!(
+            "\u{201c}{}\u{201d} \u{2014} {} phase(s), {} task(s). The full plan is in the conversation.",
+            plan.title,
+            plan.phases.len(),
+            tasks.len()
+        );
+        match self.ask_plan_choice(&summary) {
+            PlanChoice::KeepPlanning => self.note("keeping the plan on the table \u{2014} refine it and propose again"),
+            choice => {
+                self.mode = super::screen::Mode::Build;
+                let md = plan.markdown();
+                self.persist_plan(&md);
+                let items = corelib::wire::Json::Arr(tasks.iter().cloned().map(corelib::wire::Json::Str).collect()).to_string();
+                match crate::caps::run("todo.set", &[("items".to_string(), items)], &self.runner.ctx) {
+                    Ok(_) => {
+                        self.plan_active = true;
+                        self.note(&format!("approved \u{2014} {} task(s) on the checklist, build mode", tasks.len()));
+                    }
+                    Err(e) => self.say(&self.guard.mask(&e)),
+                }
+                self.pending.push(format!(
+                    "## The approved plan\n{md}\nThe human approved this plan. Work through its phases in order; \
+                     mark each task with todo.done as you finish it, and say when a phase completes."
+                ));
+                if let Some(ui) = &self.ui {
+                    let _ = ui.events.send(super::ui::Event::Status(self.status()));
+                }
+                match choice {
+                    PlanChoice::BuildNow => self.turn("Proceed with the approved plan."),
+                    _ => self.note("the plan rides into your next message \u{2014} you drive"),
+                }
+            }
+        }
+    }
+
+    /// Put the plan to the human: the surface's three-way modal when there is a
+    /// chrome, the same question on this keyboard otherwise. Declining is always
+    /// the safe default — a dropped channel keeps planning.
+    fn ask_plan_choice(&self, summary: &str) -> super::plan::PlanChoice {
+        use super::plan::PlanChoice;
+        if let Some(ui) = &self.ui {
+            let (reply, answer) = std::sync::mpsc::channel();
+            if ui.events.send(super::ui::Event::Approve { plan: summary.to_string(), reply }).is_err() {
+                return PlanChoice::KeepPlanning;
+            }
+            return answer.recv().unwrap_or(PlanChoice::KeepPlanning);
+        }
+        let (warn, dim, r) = (crate::cli::style::warn(), muted(), reset());
+        eprintln!("\n{warn}\u{2726} a plan is proposed{r} {dim}\u{2014} {summary}{r}");
+        let mut input = self.input.lock().unwrap_or_else(|e| e.into_inner());
+        match input.read_line("  build now / hand off / keep planning [b/h/K] ", &[]) {
+            Some(line) => match line.trim() {
+                "b" | "B" => PlanChoice::BuildNow,
+                "h" | "H" => PlanChoice::Handoff,
+                _ => PlanChoice::KeepPlanning,
+            },
+            None => PlanChoice::KeepPlanning,
+        }
+    }
+
+    /// The approved plan on disk — redacted like everything at rest, beside the
+    /// chat log it belongs to.
+    fn persist_plan(&self, md: &str) {
+        let Some(dir) = self.session_dir.as_ref().map(|d| d.join("chat").join("plans")) else { return };
+        let _ = std::fs::create_dir_all(&dir);
+        let stamp = corelib::datetime::format(now_unix() as i64, "%Y%m%d-%H%M%S", 0);
+        let _ = std::fs::write(dir.join(format!("{stamp}.md")), self.guard.hide(md));
     }
 
     /// `!cmd` — one guarded shell command, output shown AND folded into the next turn.
@@ -717,13 +907,45 @@ impl<T: crate::ai::Transport> Repl<T> {
 
     // ── slash handlers ────────────────────────────────────────────────────
 
-    fn compact(&mut self) {
-        match &self.transcript {
-            None => self.note("nothing to compact yet"),
-            Some(t) => {
-                let turns = t.len();
-                self.note(&format!("{turns} turn(s) held; the ladder folds history automatically when the window needs it \u{2014} /clear starts over"));
-            }
+    /// `/compact [what to keep]` — fold the conversation's history down NOW. The
+    /// automatic ladder still acts under pressure mid-run; this is the human
+    /// asking early, with a say in what the summary must preserve.
+    fn compact(&mut self, keep: Option<String>) {
+        if self.transcript.is_none() {
+            return self.note("nothing to compact yet");
+        }
+        if !self.configured() {
+            return; // summarizing is a model call — the gate sits at the spending moment
+        }
+        let keep = keep.unwrap_or_default();
+        // A working moment like any turn: the spinner runs and Esc trips the cancel,
+        // which aborts the summary call (the transcript is left as it was).
+        if let Some(ui) = &self.ui {
+            self.cancel.reset();
+            let waiting = crate::cli::observe::SharedWaiting::new(crate::cli::observe::Motivated::label("compacting\u{2026}", &self.cfg));
+            ui.pulse.begin(self.cancel.clone(), waiting);
+            let _ = ui.events.send(super::ui::Event::Working { label: "compacting\u{2026}".into() });
+        }
+        let mut t = self.transcript.take().expect("checked above");
+        let (report, (tin, tout)) = crate::ai::agent::compact_now(
+            &self.client,
+            &mut t,
+            &keep,
+            self.cfg.ai_context_window,
+            self.cfg.ai_compact_at,
+            crate::cli::runner::run_scratch(),
+        );
+        self.transcript = Some(t);
+        self.spent.0 += tin as u64;
+        self.spent.1 += tout as u64;
+        self.spent.2 += self.client.model().cost(tin as u64, tout as u64);
+        if let Some(ui) = &self.ui {
+            ui.pulse.end();
+            let _ = ui.events.send(super::ui::Event::Status(self.status()));
+        }
+        match report.is_empty() {
+            true => self.note("nothing to fold \u{2014} the conversation is already compact"),
+            false => self.note(&report.summary()),
         }
     }
 
@@ -751,7 +973,7 @@ impl<T: crate::ai::Transport> Repl<T> {
             }
             Some(name) => match self.agents.iter().any(|a| a == &name) {
                 true => {
-                    self.note(&format!("plain turns now speak as @{name} (tools apply now; its prompt from your next /clear)"));
+                    self.note(&format!("plain turns now speak as @{name} \u{2014} from your next message"));
                     self.persona = Some(name);
                 }
                 false => self.note(&format!("no agent '{name}' \u{2014} /agents lists them")),
@@ -810,7 +1032,11 @@ impl<T: crate::ai::Transport> Repl<T> {
         let strategy = format!("{:?}", self.settings.pool.strategy).to_lowercase();
         let turns = self.transcript.as_ref().map(|t| t.len()).unwrap_or(0);
         let mcp = self.runner.mcp.as_ref().map(|h| h.lock().unwrap_or_else(|e| e.into_inner()).report().len()).unwrap_or(0);
-        let mode = if self.readonly { "plan (read-only tools)" } else { "build" };
+        let mode = match self.mode {
+            super::screen::Mode::Plan => "plan (read-only tools)",
+            super::screen::Mode::Build => "build",
+            super::screen::Mode::Auto => "auto (the judge answers confirms)",
+        };
         self.say(&format!("{a}\u{2726} {}{r}", self.ws.root.display()));
         self.say(&format!(
             "  {dim}{}{r}",
@@ -889,7 +1115,7 @@ impl<T: crate::ai::Transport> Repl<T> {
             ("enter", "send \u{b7} with the band open: run the highlighted command"),
             ("ctrl+j", "newline (the box grows; \u{2191}\u{2193} walk the rows)"),
             ("tab", "complete \u{b7} accept the selection"),
-            ("shift+tab", "toggle plan/build"),
+            ("shift+tab", "cycle plan \u{2192} build \u{2192} auto"),
             ("\u{2191} \u{2193}", "history \u{b7} band selection \u{b7} draft rows"),
             ("pgup/pgdn", "scroll the conversation \u{b7} anything new follows again"),
             ("esc", "close the band \u{b7} clear the line \u{b7} INTERRUPT a running turn"),

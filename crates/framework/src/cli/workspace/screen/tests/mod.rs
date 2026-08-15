@@ -5,6 +5,20 @@ fn editing(text: &str) -> PanelState {
 }
 
 #[test]
+fn the_mode_cycle_walks_plan_build_auto_and_each_has_a_name() {
+    assert_eq!(Mode::default(), Mode::Build, "a sitting opens building");
+    let mut m = Mode::Plan;
+    let walked: Vec<&str> = (0..4)
+        .map(|_| {
+            let name = m.name();
+            m = m.next();
+            name
+        })
+        .collect();
+    assert_eq!(walked, ["plan", "build", "auto", "plan"], "the cycle closes");
+}
+
+#[test]
 fn sanitize_makes_a_line_honest() {
     assert_eq!(sanitize("a\tb"), "a   b", "tabs land on 4-column stops");
     assert_eq!(sanitize("12345\tx"), "12345   x");

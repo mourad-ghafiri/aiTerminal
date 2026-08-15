@@ -126,7 +126,7 @@ impl crate::ai::ToolRunner for CliToolRunner {
             Ok(v) => call.done(&crate::cli::trace::took(ms), &crate::cli::trace::result(v)),
             Err(e) => {
                 let brief: String = e.lines().next().unwrap_or("").chars().take(80).collect();
-                call.done(&crate::cli::trace::took(ms), &format!("\u{2717} {brief}"))
+                call.failed(&crate::cli::trace::took(ms), &brief)
             }
         };
         match (&self.trace, announced) {
@@ -154,26 +154,59 @@ impl crate::ai::ToolRunner for CliToolRunner {
     }
 }
 
-/// The agent's checklist, one row per task: done ticked and dim, the first open
-/// task pointed at, the rest waiting — what a `todo.*` mutation just made true.
-fn checklist_rows(items: &[corelib::wire::Json]) -> Vec<String> {
-    let (a, dim, r) = (crate::cli::style::accent(), muted(), reset());
-    let mut first_open = true;
-    items
-        .iter()
-        .filter_map(|it| {
-            let text = it.get("text")?.as_str()?;
-            let done = it.get("done").and_then(|d| d.as_bool()).unwrap_or(false);
-            Some(match (done, first_open) {
-                (true, _) => format!("{dim}\u{2611} {text}{r}"),
-                (false, true) => {
-                    first_open = false;
-                    format!("{a}\u{25b8} {text}{r}")
-                }
-                (false, false) => format!("{dim}\u{2610} {text}{r}"),
-            })
-        })
-        .collect()
+/// The agent's checklist as a card (the crush pattern: ratio + current task on
+/// top, then the rows): done checked and dim, the ONE current task pointed at
+/// in accent, the rest waiting — what a `todo.*` mutation just made true.
+pub(crate) fn checklist_rows(items: &[corelib::wire::Json]) -> Vec<String> {
+    let (a, dim, ok, r) = (crate::cli::style::accent(), muted(), crate::cli::style::success(), reset());
+    let read = |it: &corelib::wire::Json| -> Option<(String, bool)> {
+        let text = it.get("text")?.as_str()?.to_string();
+        Some((text, it.get("done").and_then(|d| d.as_bool()).unwrap_or(false)))
+    };
+    let tasks: Vec<(String, bool)> = items.iter().filter_map(read).collect();
+    if tasks.is_empty() {
+        return Vec::new();
+    }
+    let done = tasks.iter().filter(|(_, d)| *d).count();
+    let current = tasks.iter().find(|(_, d)| !*d).map(|(t, _)| t.as_str());
+    let mut rows = vec![match current {
+        Some(t) => format!("{a}plan{r} {dim}{} {done}/{}{r} {dim}\u{b7}{r} {a}\u{25b6} {}{r}", plan_bar(done, tasks.len()), tasks.len(), clip(t, 56)),
+        None => format!("{a}plan{r} {dim}{} {done}/{} \u{b7} all done{r}", plan_bar(done, tasks.len()), tasks.len()),
+    }];
+    // The tick in the success hue, closed with default-foreground so the row's
+    // dim survives — and no stray escape when colors are gated off.
+    let tick = match ok.is_empty() {
+        true => "\u{2714}".to_string(),
+        false => format!("{ok}\u{2714}\x1b[39m"),
+    };
+    let mut pointed = false;
+    rows.extend(tasks.iter().map(|(text, is_done)| match (*is_done, pointed) {
+        (true, _) => format!("{dim}{tick} {text}{r}"),
+        (false, false) => {
+            pointed = true;
+            format!("{a}\u{25b6} {text}{r}")
+        }
+        (false, true) => format!("{dim}\u{25cb} {text}{r}"),
+    }));
+    rows
+}
+
+/// Five cells of `▰▱` — how far the plan has come, at a glance.
+fn plan_bar(done: usize, total: usize) -> String {
+    let filled = match total {
+        0 => 0,
+        t => (done * 5 + t / 2) / t,
+    }
+    .min(5);
+    (0..5).map(|i| if i < filled { '\u{25b0}' } else { '\u{25b1}' }).collect()
+}
+
+/// At most `max` characters, the tail elided.
+fn clip(s: &str, max: usize) -> String {
+    match s.chars().count() > max {
+        true => format!("{}\u{2026}", s.chars().take(max.saturating_sub(1)).collect::<String>()),
+        false => s.to_string(),
+    }
 }
 
 /// A failed call, sorted into the two things it can be.

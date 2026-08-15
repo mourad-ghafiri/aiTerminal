@@ -1,6 +1,6 @@
 # Testing
 
-aiTerminal has **1552 unit tests** and **336 scenarios**, and the whole suite runs in a
+aiTerminal has **1571 unit tests** and **341 scenarios**, and the whole suite runs in a
 few seconds with no network, no API key, no window, and no changes to your machine.
 
 ```sh
@@ -39,7 +39,7 @@ So the suite has both, and they are aimed at different targets.
 
 ## Unit tests
 
-1552 of them (1078 in `framework`, 337 in `corelib`, 137 in `platform`), beside the code
+1571 of them (1097 in `framework`, 337 in `corelib`, 137 in `platform`), beside the code
 they test. Named as sentences, so a failure reads as a statement about the product rather
 than a symbol that broke:
 
@@ -131,7 +131,7 @@ scenario must never pass silently.
 
 ### Coverage
 
-336 journeys across every feature. Each folder's test asserts a minimum count, so
+341 journeys across every feature. Each folder's test asserts a minimum count, so
 coverage cannot silently shrink.
 
 | Folder | # | What a journey drives |
@@ -150,7 +150,7 @@ coverage cannot silently shrink.
 | `shell/` | 10 | the init script sourced into your shell |
 | `keymap/` | 10 | chords, actions, and which binding wins |
 | `theme/` | 8 | tokens, round-trip, fallback |
-| `workspace/` | 17 | the folder as a conversation: the trust gate and what it names, a transcript that remembers, a confirm asked and answered both ways, the project overlay shadowing an agent, plan mode, `!` feeding the next turn, an inline `@flow` run feeding the next turn, prompt files as slash commands, /undo→/redo at the request level, the model's `ask.user` answered by a scripted human, a guarded /export, the learning loop (/learn, the sixth-turn nudge, the model searching its own past sittings) |
+| `workspace/` | 22 | the folder as a conversation: the trust gate and what it names, a transcript that remembers, a confirm asked and answered both ways, the project overlay shadowing an agent, plan mode narrowing the tools, the planner's plan approved (and kept on the table), auto mode's judge approving — and declining to the human, /compact folding history, `!` feeding the next turn, an inline `@flow` run feeding the next turn, prompt files as slash commands, /undo→/redo at the request level, the model's `ask.user` answered by a scripted human, a guarded /export, the learning loop (/learn, the sixth-turn nudge, the model searching its own past sittings) |
 | `memory/` | 8 | what an agent remembers, where, and what it forgets |
 
 The `cli/` folder is where a **command** is proved rather than the machinery behind it.

@@ -4,7 +4,7 @@ fn state() -> (UiState, std::sync::mpsc::Receiver<Out>) {
     let (tx, rx) = channel();
     let describe = vec![
         ("/help".to_string(), "list".to_string()),
-        ("/readonly".to_string(), "plan".to_string()),
+        ("/resume".to_string(), "reload".to_string()),
         ("@coder".to_string(), "the coder".to_string()),
     ];
     let ui = UiState::new(vec!["BANNER".into()], vec!["compact".into()], describe, None, Arc::new(Pulse::default()), tx);
@@ -87,28 +87,28 @@ fn the_dropdown_opens_on_slash_and_tab_accepts_the_selection() {
     match &ui.screen.panel {
         PanelState::Editing(view) => {
             let matches = view.dropdown.as_ref().expect("the band is open");
-            assert!(matches.iter().any(|(n, _)| n == "/readonly"), "{matches:?}");
+            assert!(matches.iter().any(|(n, _)| n == "/resume"), "{matches:?}");
         }
         _ => panic!(),
     }
     ui.update(Event::Key(Key::Tab));
     ui.update(Event::Key(Key::Enter));
     match rx.try_recv() {
-        Ok(Out::Line { text: line, .. }) => assert_eq!(line.trim(), "/readonly", "Tab completed, Enter sent"),
+        Ok(Out::Line { text: line, .. }) => assert_eq!(line.trim(), "/resume", "Tab completed, Enter sent"),
         _ => panic!("a line was expected"),
     }
 }
 
 #[test]
 fn rank_puts_prefixes_first_then_subsequences() {
-    let cands: Vec<(String, String)> = ["/readonly", "/resume", "/retry", "/help", "@coder"]
+    let cands: Vec<(String, String)> = ["/resume", "/retry", "/redo", "/help", "@coder"]
         .iter()
         .map(|n| (n.to_string(), "about".to_string()))
         .collect();
     let got: Vec<String> = rank("/re", &cands, &Default::default()).into_iter().map(|(n, _)| n).collect();
-    assert_eq!(got, ["/readonly", "/resume", "/retry"], "prefix matches, stable order");
-    let got: Vec<String> = rank("/ro", &cands, &Default::default()).into_iter().map(|(n, _)| n).collect();
-    assert_eq!(got, ["/readonly"], "subsequence finds what prefix cannot");
+    assert_eq!(got, ["/resume", "/retry", "/redo"], "prefix matches, stable order");
+    let got: Vec<String> = rank("/rd", &cands, &Default::default()).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(got, ["/redo"], "subsequence finds what prefix cannot");
     assert!(rank("/zzz", &cands, &Default::default()).is_empty());
 }
 
@@ -116,10 +116,10 @@ fn rank_puts_prefixes_first_then_subsequences() {
 fn enter_with_the_band_open_runs_the_highlighted_command() {
     let (mut ui, rx) = state();
     ui.update(Event::Idle);
-    type_text(&mut ui, "/rea");
+    type_text(&mut ui, "/res");
     ui.update(Event::Key(Key::Enter));
     match rx.try_recv() {
-        Ok(Out::Line { text: line, .. }) => assert_eq!(line, "/readonly", "partial typing + Enter selects"),
+        Ok(Out::Line { text: line, .. }) => assert_eq!(line, "/resume", "partial typing + Enter selects"),
         _ => panic!("a line was expected"),
     }
     // …and arguments after the token survive the selection.

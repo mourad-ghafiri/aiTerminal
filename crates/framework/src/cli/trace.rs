@@ -55,14 +55,22 @@ pub(crate) struct Call {
 }
 
 impl Call {
-    /// `⋯ sys.run     cargo test --workspace` — still going.
+    /// `⋯ sys.run     cargo test --workspace` — still going. Accent-tinted:
+    /// the eye finds the live call the way it finds the working row.
     pub(crate) fn running(&self) -> String {
-        self.head('\u{22ef}')
+        self.head('\u{22ef}', crate::cli::style::accent())
     }
 
-    /// `⚙ sys.run     cargo test --workspace · 2.1s · 48 lines` — and what came back.
+    /// `⚙ sys.run     cargo test --workspace · 2.1s · 48 lines` — and what came back,
+    /// the glyph in the success hue.
     pub(crate) fn done(&self, took: &str, result: &str) -> String {
-        format!("{} \u{b7} {took} \u{b7} {result}", self.head(self.glyph()))
+        format!("{} \u{b7} {took} \u{b7} {result}", self.head(self.glyph(), crate::cli::style::success()))
+    }
+
+    /// `⚙ sys.run     rm-ish thing · 3ms · ✗ refused` — the glyph in the warn hue,
+    /// so a failed call is findable in a stream of successes at a glance.
+    pub(crate) fn failed(&self, took: &str, brief: &str) -> String {
+        format!("{} \u{b7} {took} \u{b7} \u{2717} {brief}", self.head(self.glyph(), crate::cli::style::warn()))
     }
 
     /// The glyph that says what KIND of thing acted — read at a glance, the way the
@@ -87,7 +95,13 @@ impl Call {
         }
     }
 
-    fn head(&self, glyph: char) -> String {
+    fn head(&self, glyph: char, hue: String) -> String {
+        // Color only, closed with default-foreground — never a full reset, so the
+        // dim the surrounding chrome may have applied to the line survives the glyph.
+        let glyph = match hue.is_empty() {
+            true => glyph.to_string(),
+            false => format!("{hue}{glyph}\x1b[39m"),
+        };
         let name = format!("{:<NAME_W$}", self.name);
         match self.subject.is_empty() {
             true => format!("{glyph} {}", name.trim_end()),

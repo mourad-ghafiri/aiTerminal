@@ -19,6 +19,7 @@ use crate::cli::workspace::screen::PanelState;
 use crate::cli::workspace::ui::{Event as ChatEvent, Out, Pulse, UiHandle, UiState};
 use crate::mdedit::key::Key as ChatKey;
 
+pub(crate) mod header;
 pub(crate) mod panel;
 pub(crate) mod welcome;
 
@@ -26,12 +27,17 @@ pub(crate) mod welcome;
 const TAIL_ROWS: u16 = 12;
 /// The surface's outer padding, in pixels.
 const PAD: f32 = 10.0;
+/// How much larger the centered welcome input draws than the anchored one —
+/// a constant, so the layout stays a pure function of area + font + rows.
+const WELCOME_SCALE: f32 = 1.18;
 
 /// The surface's rectangles — pure, testable geometry. Band and tail are NOT
 /// here: they are floating overlays anchored to the panel, with zero say over
 /// the layout — that absence is the determinism guarantee.
 #[derive(Debug, PartialEq)]
 pub(crate) struct ChatRects {
+    /// The sticky header — the sitting's facts, above everything, always.
+    pub header: Rect,
     pub content: Rect,
     pub panel: Rect,
 }
@@ -44,20 +50,26 @@ pub(crate) struct ChatRects {
 /// move a rect.
 pub(crate) fn layout(area: Rect, cell_h: f32, input_rows: usize, welcome: bool) -> ChatRects {
     let pad = PAD;
+    // The sticky header rides the top of the surface, welcome included; the
+    // rest of the layout owns only what is BELOW it.
+    let header = Rect::new(area.x, area.y, area.w, header::header_height(cell_h));
+    let area = Rect::new(area.x, area.y + header.h, area.w, (area.h - header.h).max(cell_h));
     // The panel grows with the draft, to a third of the area.
     let max_rows = ((area.h / 3.0 / cell_h.max(1.0)).floor() as usize).max(3);
-    let ph = panel::panel_height(cell_h, input_rows.clamp(1, max_rows));
     if welcome {
-        // The home: the panel centered (a dialog's width), the mark above it.
-        let pw = (area.w - 2.0 * pad).min(760.0).max(320.0_f32.min(area.w));
+        // The home: the panel centered (a dialog's width), the mark above it —
+        // drawn a step larger than the anchored one, welcome-scale font included.
+        let ph = panel::panel_height(cell_h * WELCOME_SCALE, input_rows.clamp(1, max_rows));
+        let pw = (area.w - 2.0 * pad).min(880.0).max(320.0_f32.min(area.w));
         let px = (area.x + (area.w - pw) * 0.5).round();
         let py = (area.y + (area.h - ph) * 0.60).round();
         let content = Rect::new(area.x + pad, area.y + pad, area.w - 2.0 * pad, cell_h);
-        ChatRects { content, panel: Rect::new(px, py, pw, ph) }
+        ChatRects { header, content, panel: Rect::new(px, py, pw, ph) }
     } else {
+        let ph = panel::panel_height(cell_h, input_rows.clamp(1, max_rows));
         let panel = Rect::new(area.x + pad, area.y + area.h - pad - ph, area.w - 2.0 * pad, ph);
         let content = Rect::new(area.x + pad, area.y + pad, area.w - 2.0 * pad, (panel.y - 8.0 - area.y - pad).max(cell_h));
-        ChatRects { content, panel }
+        ChatRects { header, content, panel }
     }
 }
 
@@ -128,6 +140,8 @@ pub(crate) struct ChatSurface {
     cell: (f32, f32),
     /// Last press, for double-click word selection.
     last_click: Option<Instant>,
+    /// When the panel entered Working — feeds the header's and panel's clock.
+    working_since: Option<Instant>,
 }
 
 impl ChatSurface {
@@ -151,6 +165,7 @@ impl ChatSurface {
             content_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             cell: (8.0, 16.0),
             last_click: None,
+            working_since: None,
         }
     }
 
@@ -248,23 +263,33 @@ impl ChatSurface {
         let drained: Vec<ChatEvent> = std::mem::take(&mut *self.inbox.lock().unwrap_or_else(|e| e.into_inner()));
         moved |= !drained.is_empty();
         for ev in drained {
-            // The trust gate never enters the conversation's state machine here —
-            // it becomes a real modal above the surface (the confirm pattern).
+            // The trust gate and the plan approval never enter the conversation's
+            // state machine here — each becomes a real modal above the surface
+            // (the confirm pattern).
             if let ChatEvent::Gate { question, reply } = ev {
                 self.gate.open(&question, reply);
                 continue;
             }
+            if let ChatEvent::Approve { plan, reply } = ev {
+                self.gate.open_plan(&plan, reply);
+                continue;
+            }
             state.update(ev);
         }
-        // The working row breathes: tick + fresh muse label.
+        // The working row breathes: tick + fresh muse label + the clock's zero.
         if matches!(state.screen.panel, PanelState::Working { .. }) {
             self.tick = self.tick.wrapping_add(1);
+            if self.working_since.is_none() {
+                self.working_since = Some(Instant::now());
+            }
             if let Some(label) = self.pulse.as_ref().and_then(|p| p.label_now()) {
                 if let PanelState::Working { label: l, .. } = &mut state.screen.panel {
                     *l = label;
                 }
             }
             moved = true;
+        } else {
+            self.working_since = None;
         }
         // New committed lines flow into the conversation term.
         while self.fed < state.screen.log.len() {
@@ -448,11 +473,14 @@ impl ChatSurface {
         let m = cache.metrics(base_px);
         let welcome = state.screen.splash.is_some();
         let r = layout(area, m.cell_h, panel::input_rows(&state.screen.panel), welcome);
+        let elapsed = self.working_since.map(|t| t.elapsed());
 
+        // Everything below the sticky header is the surface's body.
+        let body = Rect::new(area.x, area.y + r.header.h, area.w, (area.h - r.header.h).max(m.cell_h));
         match welcome {
             true => {
                 if let Some(facts) = &self.facts {
-                    welcome::draw_welcome(surface, cache, theme, base_px, area, r.panel, facts);
+                    welcome::draw_welcome(surface, cache, theme, base_px, body, r.panel, facts);
                 }
             }
             false => {
@@ -480,7 +508,9 @@ impl ChatSurface {
             }
         }
 
-        panel::draw_panel(surface, cache, theme, base_px, r.panel, &state.screen.panel, &state.screen.status, self.tick);
+        let panel_px = if welcome { base_px * WELCOME_SCALE } else { base_px };
+        panel::draw_panel(surface, cache, theme, panel_px, r.panel, &state.screen.panel, &state.screen.status, self.tick, elapsed);
+        header::draw_header(surface, cache, theme, base_px, r.header, &state.screen.status, elapsed);
 
         // The completion band: a floating popup above the panel, windowed so the
         // selection is always visible — it overlays, it never reflows.
@@ -536,6 +566,39 @@ fn draw_band(surface: &mut Surface, cache: &mut GlyphCache, theme: &Theme, base_
     }
 }
 
+/// Headless proof of the workspace HOME — the sticky header over the big
+/// wordmark, the facts, and the centered (welcome-scaled) input.
+pub fn render_home_proof(out_path: &str) -> std::io::Result<()> {
+    let theme = corelib::theme::midnight();
+    let mut cache = GlyphCache::new(platform::os::text_shaper());
+    let (w, h) = (1100u32, 720u32);
+    let mut surface = Surface::new(w, h);
+    let (lines_tx, _kept) = std::sync::mpsc::channel();
+    let pulse = Arc::new(Pulse::default());
+    let mut state = UiState::new(vec!["banner".into()], Vec::new(), Vec::new(), None, pulse.clone(), lines_tx);
+    state.update(ChatEvent::Idle);
+    state.update(ChatEvent::Status(crate::cli::workspace::screen::Status {
+        root: "~/project".into(),
+        model: "claude-sonnet".into(),
+        overlay_on: true,
+        ..Default::default()
+    }));
+    let mut chat = ChatSurface::new();
+    chat.open = true;
+    chat.state = Some(state);
+    chat.pulse = Some(pulse);
+    chat.facts = Some(crate::cli::workspace::banner::Facts {
+        root: "~/project".into(),
+        overlay: "project overlay ON \u{2014} 2 agent(s) \u{b7} 1 skill(s) \u{b7} 1 prompt(s) \u{b7} 0 flow(s) \u{b7} 1 mcp".into(),
+        instructions: Some("aiTerminal.md"),
+        pool: Some("2 model(s) \u{b7} strategy weighted".into()),
+    });
+    chat.draw(&mut surface, &mut cache, &theme, 24.0, Rect::new(0.0, 0.0, w as f32, h as f32), super::render::CursorStyle::Block);
+    crate::render::write_ppm(out_path, surface.pixels(), w, h)?;
+    println!("rendered workspace home \u{2192} {w}\u{00d7}{h}px \u{2192} {out_path}");
+    Ok(())
+}
+
 /// Headless proof of the workspace surface — a real conversation in the content
 /// term, the completion band open over the bar — no GUI session needed.
 pub fn render_chat_proof(out_path: &str) -> std::io::Result<()> {
@@ -559,16 +622,26 @@ pub fn render_chat_proof(out_path: &str) -> std::io::Result<()> {
         let mut inbox = chat.inbox.lock().unwrap_or_else(|e| e.into_inner());
         inbox.push(ChatEvent::Append("\u{2500}\u{2500}".into()));
         inbox.push(ChatEvent::Append("\x1b[36m\u{276f}\x1b[0m what does the guard confirm?".into()));
+        // Tool dots, exactly as the trace vocabulary emits them.
+        inbox.push(ChatEvent::Append("  \x1b[32m\u{2699}\x1b[39m fs.read      crates/framework/src/guard/mod.rs \u{b7} 4ms \u{b7} 120 lines".into()));
+        inbox.push(ChatEvent::Append("  \x1b[33m\u{2699}\x1b[39m sys.run      touch-the-config \u{b7} 2ms \u{b7} \u{2717} the guard refused it".into()));
         inbox.push(ChatEvent::Append("A \x1b[33mconfirm\x1b[0m-tier rule pauses the stream and asks you, once, for that act.".into()));
         // A native mermaid placement, exactly as an answer emits it.
         let diagram = "flowchart LR\n  Guard[the guard] --> Ask{confirm?}\n  Ask -->|yes| Run[the tool runs]\n  Ask -->|no| Stop[refused]";
         inbox.push(ChatEvent::Append(format!("\x1b]1338;7;{}\x07", corelib::codec::base64_encode(diagram.as_bytes()))));
+        // The plan checklist card, as a todo mutation re-renders it.
+        inbox.push(ChatEvent::Append("  \x1b[36mplan\x1b[0m \x1b[2m\u{25b0}\u{25b0}\u{25b1}\u{25b1}\u{25b1} 1/3\x1b[0m \x1b[2m\u{b7}\x1b[0m \x1b[36m\u{25b6} 2.1 build \u{b7} wire the export\x1b[0m".into()));
+        inbox.push(ChatEvent::Append("  \x1b[2m\x1b[32m\u{2714}\x1b[39m 1.1 read \u{b7} map the writer\x1b[0m".into()));
+        inbox.push(ChatEvent::Append("  \x1b[36m\u{25b6} 2.1 build \u{b7} wire the export\x1b[0m".into()));
+        inbox.push(ChatEvent::Append("  \x1b[2m\u{25cb} 2.2 build \u{b7} prove it in a scenario\x1b[0m".into()));
         inbox.push(ChatEvent::Status(crate::cli::workspace::screen::Status {
             root: "~/project".into(),
+            mode: crate::cli::workspace::screen::Mode::Auto,
             model: "claude-sonnet".into(),
-            tokens: (1200, 340),
+            tokens: (12_400, 3_400),
             cost: 0.012,
             overlay_on: true,
+            tasks: Some((1, 3)),
             ..Default::default()
         }));
     }

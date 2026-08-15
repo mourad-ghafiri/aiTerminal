@@ -1,0 +1,31 @@
+name = "a plan proposed in plan mode is approved and worked"
+tags = ["workspace", "plan"]
+
+# Plan mode's whole arc, headless: the planner ends its answer with the fenced
+# plan block; the approval question reaches the person through the same input
+# seam as every ask; "b" (build now) approves — the mode flips to build, the
+# checklist is seeded, and the follow-up turn opens with the approved plan.
+
+[setup]
+home = "ws-plan-approve"
+
+[[step]]
+model_says_in_turn = ["I looked around; here is the approach.\n\n```plan\n{\"title\": \"wire the export\", \"phases\": [{\"name\": \"read the seams\", \"tasks\": [\"map the writer\", \"pin the format\"]}, {\"name\": \"build\", \"tasks\": [\"add the command\"]}]}\n```", "Starting phase one."]
+
+# The first line switches the mode, the second asks, the third answers the
+# approval question — build now.
+[[step]]
+type = ["/plan", "add an export command to this project", "b"]
+
+[[step]]
+open = "now"
+
+# The build turn carries the approved plan and the standing instruction.
+[[step]]
+turn = 2
+expect_request_contains = ["Proceed with the approved plan", "The approved plan", "wire the export", "map the writer", "todo.done"]
+
+# And it runs under the planner no more: the plan-mode system is gone.
+[[step]]
+turn = 2
+expect_request_excludes = ["do NOT emit a plan"]

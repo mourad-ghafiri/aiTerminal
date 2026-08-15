@@ -74,6 +74,12 @@ impl Transcript {
         &self.system
     }
 
+    /// Replace the system prompt — a persistent conversation whose mode or
+    /// persona changed must not keep being told who it used to be.
+    pub fn set_system(&mut self, system: impl Into<String>) {
+        self.system = system.into();
+    }
+
     pub fn turns(&self) -> &[Turn] {
         &self.turns
     }

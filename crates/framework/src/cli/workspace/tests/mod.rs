@@ -44,22 +44,22 @@ fn the_line_buffer_edits_the_way_a_shell_line_does() {
 
 #[test]
 fn tab_completes_the_typed_vocabularies_and_nothing_else() {
-    let all: Vec<String> = ["/help", "/readonly", "/resume", "@flow", "@coder"].iter().map(|s| s.to_string()).collect();
+    let all: Vec<String> = ["/help", "/redo", "/resume", "@flow", "@coder"].iter().map(|s| s.to_string()).collect();
     let mut b = LineBuffer::default();
     typed(&mut b, "/hel");
     assert!(b.complete(&all));
     assert_eq!(b.text(), "/help ");
 
-    // Ambiguity grows only to the common prefix — "/readonly" and "/resume" share
+    // Ambiguity grows only to the common prefix — "/redo" and "/resume" share
     // nothing past "/re", so nothing is added and NEITHER is picked arbitrarily.
     let mut b = LineBuffer::default();
     typed(&mut b, "/re");
     assert!(!b.complete(&all));
     assert_eq!(b.text(), "/re");
     // With one letter more the tie is broken and completion finishes the word.
-    b.apply(&Key::Char('a'));
+    b.apply(&Key::Char('d'));
     assert!(b.complete(&all));
-    assert_eq!(b.text(), "/readonly ");
+    assert_eq!(b.text(), "/redo ");
 
     let mut b = LineBuffer::default();
     typed(&mut b, "@fl");

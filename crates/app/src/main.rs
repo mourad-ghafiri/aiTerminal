@@ -29,6 +29,7 @@ struct Args {
     render_switcher: bool,
     render_confirm: bool,
     render_chat: bool,
+    render_home: bool,
     render_gate: bool,
     render_chrome: Option<String>,
     render_icon: Option<String>,
@@ -48,6 +49,7 @@ fn parse_args() -> Args {
         render_switcher: false,
         render_confirm: false,
         render_chat: false,
+        render_home: false,
         render_gate: false,
         render_chrome: None,
         render_icon: None,
@@ -66,6 +68,7 @@ fn parse_args() -> Args {
             "--render-switcher" => a.render_switcher = true,
             "--render-confirm" => a.render_confirm = true,
             "--render-chat" => a.render_chat = true,
+            "--render-home" => a.render_home = true,
             "--render-gate" => a.render_gate = true,
             "--render-chrome" => a.render_chrome = it.next(),
             "--render-icon" => a.render_icon = it.next(),
@@ -149,6 +152,13 @@ fn main() {
     if args.render_chat {
         let out = args.render_ppm.clone().unwrap_or_else(|| "/tmp/chat.ppm".into());
         guard(framework::gui::render_chat_proof(&out), "workspace render failed");
+        return;
+    }
+
+    // `--render-home [--render-ppm <out>]` renders the workspace home screen.
+    if args.render_home {
+        let out = args.render_ppm.clone().unwrap_or_else(|| "/tmp/home.ppm".into());
+        guard(framework::gui::render_home_proof(&out), "home render failed");
         return;
     }
 

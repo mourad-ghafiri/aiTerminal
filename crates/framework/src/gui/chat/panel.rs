@@ -3,7 +3,7 @@
 //!
 //! The look is the settled harnesses' input, drawn with our engine: a heavy left
 //! accent bar whose color states the mode (accent = build, warn = plan and the
-//! guard's ask), an elevated surface, the input rows drawn as real lines with a
+//! guard's ask, success = auto), an elevated surface, the input rows drawn as real lines with a
 //! true `(row, col)` caret, and a meta row INSIDE the panel's bottom — mode ·
 //! persona · model on the left, tokens · cost · overlay on the right. There is
 //! no separate status strip: the app's own footer keeps its job, this panel
@@ -40,10 +40,22 @@ pub(crate) fn input_rows(panel: &PanelState) -> usize {
 
 /// A meta segment's color, resolved against the theme at draw time.
 enum Tone {
-    Fg,
     Muted,
     Accent,
     Warn,
+    /// Auto mode's color — the sitting is flowing on the judge's approvals.
+    Success,
+}
+
+/// The mode's tone — ONE mapping, so the bar and the meta word can never
+/// disagree about what mode the sitting is in.
+fn mode_tone(mode: crate::cli::workspace::screen::Mode) -> Tone {
+    use crate::cli::workspace::screen::Mode;
+    match mode {
+        Mode::Plan => Tone::Warn,
+        Mode::Build => Tone::Accent,
+        Mode::Auto => Tone::Success,
+    }
 }
 
 /// What the panel draws for the current state — the single mapping from the
@@ -59,25 +71,23 @@ struct PanelView {
     meta_left: Vec<(String, Tone)>,
 }
 
-fn view_for(panel: &PanelState, status: &Status, tick: usize) -> PanelView {
+fn view_for(panel: &PanelState, status: &Status, tick: usize, elapsed: Option<std::time::Duration>) -> PanelView {
+    use crate::cli::workspace::screen::Mode;
     match panel {
         PanelState::Editing(view) => {
-            let mut left = vec![
-                (status.root.clone(), Tone::Fg),
-                (if status.plan { "plan" } else { "build" }.to_string(), if status.plan { Tone::Warn } else { Tone::Accent }),
-            ];
-            if let Some(p) = &status.persona {
-                left.push((format!("@{p}"), Tone::Fg));
-            }
-            if !status.model.is_empty() {
-                left.push((status.model.clone(), Tone::Muted));
-            }
+            // The sitting's facts live in the sticky header now; the panel's meta
+            // row says what THIS mode means, here, where the typing happens.
+            let hint = match status.mode {
+                Mode::Plan => "planning \u{2014} the finished plan will ask your approval",
+                Mode::Build => "@ files \u{b7} / commands \u{b7} ! shell \u{b7} shift+tab mode",
+                Mode::Auto => "\u{26a1} auto \u{2014} the judge answers confirms; you when it declines",
+            };
             PanelView {
-                bar: if status.plan { Tone::Warn } else { Tone::Accent },
+                bar: mode_tone(status.mode),
                 rows: view.rows.clone(),
                 cursor: Some(view.cursor),
                 placeholder: view.rows.iter().all(|r| r.is_empty()),
-                meta_left: left,
+                meta_left: vec![(hint.to_string(), Tone::Muted)],
             }
         }
         PanelState::Working { label, draft, steering } => {
@@ -86,16 +96,12 @@ fn view_for(panel: &PanelState, status: &Status, tick: usize) -> PanelView {
                 None => draft.clone(),
             };
             let caret = steering.is_none().then(|| (0, row.chars().count()));
-            PanelView {
-                bar: Tone::Accent,
-                cursor: caret,
-                placeholder: false,
-                rows: vec![row],
-                meta_left: vec![
-                    (format!("{} {label}", FRAMES[tick % FRAMES.len()]), Tone::Accent),
-                    ("esc interrupts \u{b7} enter steers".into(), Tone::Muted),
-                ],
+            let mut meta = vec![(format!("{} {label}", FRAMES[tick % FRAMES.len()]), Tone::Accent)];
+            if let Some(e) = elapsed {
+                meta.push((super::header::clock(e), Tone::Accent));
             }
+            meta.push(("esc interrupts \u{b7} enter steers".into(), Tone::Muted));
+            PanelView { bar: Tone::Accent, cursor: caret, placeholder: false, rows: vec![row], meta_left: meta }
         }
         PanelState::Question { text, view } => {
             let mut q: String = text.chars().take(64).collect();
@@ -122,6 +128,7 @@ fn view_for(panel: &PanelState, status: &Status, tick: usize) -> PanelView {
 }
 
 /// Draw the panel into `rect` (sized by [`panel_height`] for [`input_rows`]).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_panel(
     surface: &mut Surface,
     cache: &mut GlyphCache,
@@ -131,15 +138,16 @@ pub(crate) fn draw_panel(
     panel: &PanelState,
     status: &Status,
     tick: usize,
+    elapsed: Option<std::time::Duration>,
 ) {
     use corelib::gfx::text::{draw_text, measure_text};
     let m = cache.metrics(base_px);
-    let v = view_for(panel, status, tick);
+    let v = view_for(panel, status, tick, elapsed);
     let tone = |t: &Tone| match t {
-        Tone::Fg => theme.fg,
         Tone::Muted => theme.muted,
         Tone::Accent => theme.accent,
         Tone::Warn => theme.warn,
+        Tone::Success => theme.success,
     };
 
     surface.fill_rounded_rect(rect, 8.0, theme.surface);
@@ -163,7 +171,7 @@ pub(crate) fn draw_panel(
             draw_text(
                 surface,
                 cache,
-                "ask anything \u{b7} / commands \u{b7} @ agents & flows \u{b7} ! shell",
+                "ask anything about this folder\u{2026}",
                 base_px,
                 x0 + caret_w + 6.0,
                 baseline,
@@ -184,7 +192,8 @@ pub(crate) fn draw_panel(
         surface.fill_rect(Rect::new(cx, cy, caret_w, m.cell_h), tone(&v.bar));
     }
 
-    // The meta row: the sitting's facts, INSIDE the panel.
+    // The meta row: the state's own hints, INSIDE the panel. The sitting's
+    // facts (mode, model, spend, overlay) live in the sticky header.
     let meta_baseline = rect.y + rect.h - PAD_Y - m.cell_h + m.ascent;
     let mut x = left;
     let mut first = true;
@@ -195,14 +204,6 @@ pub(crate) fn draw_panel(
         first = false;
         x = draw_text(surface, cache, text, base_px, x, meta_baseline, tone(t), right, false);
     }
-    let mut meta_right = String::new();
-    if status.tokens.0 + status.tokens.1 > 0 {
-        meta_right.push_str(&format!("{} in / {} out \u{b7} ${:.3} \u{b7} ", status.tokens.0, status.tokens.1, status.cost));
-    }
-    meta_right.push_str(if status.overlay_on { "\u{25cf} overlay" } else { "\u{25cb} global" });
-    let w = measure_text(cache, &meta_right, base_px);
-    let rx = (right - w).max(x + 16.0);
-    draw_text(surface, cache, &meta_right, base_px, rx, meta_baseline, theme.muted, right, false);
 }
 
 #[cfg(test)]

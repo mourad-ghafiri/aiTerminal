@@ -20,6 +20,8 @@
 pub(crate) mod banner;
 pub(crate) mod init;
 pub(crate) mod input;
+pub(crate) mod judge;
+pub(crate) mod plan;
 pub(crate) mod repl;
 pub(crate) mod screen;
 pub(crate) mod slash;
@@ -84,7 +86,11 @@ pub(crate) fn run_core(root: std::path::PathBuf, handle: Arc<ui::UiHandle>) {
     // ONE hub for the sitting — chat turns and inline runs share its servers.
     let hub = crate::cli::runner::launch_hub_in(&ws.mcp_dirs());
     let runner = crate::cli::runner::build_runner(&cfg, &settings, Some(root.clone()), guard.clone(), hub);
-    let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default());
+    // ONE transport too: the conversation's client and auto mode's judge share
+    // it, so a scripted transport scripts them both as one ordered stream.
+    let transport = Arc::new(crate::ai::CurlTransport::default());
+    let client = crate::ai::Client::new(settings.clone(), transport.clone());
+    let judge_client = crate::ai::Client::new(settings.clone(), transport);
 
     let input: repl::SharedInput = Arc::new(Mutex::new(Box::new(ui::UiLines(handle.clone()))));
     let asker = Arc::new(ui::UiAsk(handle.clone()));
@@ -99,6 +105,9 @@ pub(crate) fn run_core(root: std::path::PathBuf, handle: Arc<ui::UiHandle>) {
     // surface's answer box.
     repl.runner.ctx.approver = asker;
     repl.runner.ctx.asker = questions;
+    // Auto mode's judge wraps that human — installed once, live only while the
+    // mode flag says auto, and the human is always its fallback.
+    repl.arm_judge(judge_client);
     repl.drive();
 }
 

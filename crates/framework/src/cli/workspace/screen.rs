@@ -10,16 +10,54 @@
 //! [`wrap_styled`] are the door: whatever arrives, the model only ever contains
 //! lines that render the same way everywhere they are drawn.
 
+/// The sitting's working mode — which tools serve a turn and who answers the
+/// guard's `Confirm`. The trio every settled harness converged on (cline's
+/// plan/act, goose's approve/smart-approve, Claude Code's plan/auto), on our
+/// guard: the mode never changes what the guard DECIDES, only who is asked.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum Mode {
+    /// Read-only tools; plain turns speak as the planner and end in a plan.
+    Plan,
+    /// The full toolset; a confirm-tier act asks the human. The default.
+    #[default]
+    Build,
+    /// The full toolset; the AI judge answers the confirm first — the human
+    /// only when it declines. Nothing the guard denies ever runs.
+    Auto,
+}
+
+impl Mode {
+    /// The word every surface prints for this mode.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Mode::Plan => "plan",
+            Mode::Build => "build",
+            Mode::Auto => "auto",
+        }
+    }
+
+    /// The cycle Shift+Tab walks: plan → build → auto → plan.
+    pub(crate) fn next(self) -> Mode {
+        match self {
+            Mode::Plan => Mode::Build,
+            Mode::Build => Mode::Auto,
+            Mode::Auto => Mode::Plan,
+        }
+    }
+}
+
 /// The status line's facts — composed by the REPL, rendered here.
 #[derive(Clone, Default)]
 pub(crate) struct Status {
     pub root: String,
-    pub plan: bool,
+    pub mode: Mode,
     pub persona: Option<String>,
     pub model: String,
     pub tokens: (u64, u64),
     pub cost: f64,
     pub overlay_on: bool,
+    /// `(done, total)` of the approved plan's checklist, while one is active.
+    pub tasks: Option<(usize, usize)>,
 }
 
 /// The editing snapshot — the loop's editor state, rendered.

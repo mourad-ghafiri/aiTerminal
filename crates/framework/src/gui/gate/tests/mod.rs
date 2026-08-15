@@ -61,8 +61,8 @@ fn a_click_hits_the_button_under_it_and_the_backdrop_declines() {
     // The renderer records the rects; fake them so the hit-testing is what is tested.
     let s = g.state_mut().unwrap();
     s.button_rects = vec![
-        (Button::Cancel, Rect::new(100.0, 100.0, 80.0, 30.0)),
-        (Button::Confirm, Rect::new(200.0, 100.0, 80.0, 30.0)),
+        (0, Rect::new(100.0, 100.0, 80.0, 30.0)),
+        (1, Rect::new(200.0, 100.0, 80.0, 30.0)),
     ];
     assert!(g.click_at(Point::new(240.0, 110.0)), "on the open button");
     assert_eq!(answer.recv(), Ok(true));
@@ -70,4 +70,31 @@ fn a_click_hits_the_button_under_it_and_the_backdrop_declines() {
     let (mut g, answer) = open();
     assert!(g.click_at(Point::new(10.0, 10.0)), "the backdrop decides too");
     assert_eq!(answer.recv(), Ok(false), "…and it decides safely");
+}
+
+#[test]
+fn the_plan_modal_offers_three_answers_and_esc_keeps_planning() {
+    use crate::cli::workspace::plan::PlanChoice;
+    let open_plan = || {
+        let (reply, answer) = channel();
+        let mut g = Gate::new();
+        g.open_plan("\u{201c}wire the export\u{201d} \u{2014} 2 phase(s), 3 task(s).", reply);
+        (g, answer)
+    };
+    // The primary holds focus: approving a plan is the flow, not the hazard —
+    // the hazardous acts inside it still meet the guard one by one.
+    let (mut g, answer) = open_plan();
+    assert!(g.answer_focused());
+    assert_eq!(answer.recv(), Ok(PlanChoice::BuildNow));
+
+    let (mut g, answer) = open_plan();
+    assert!(g.decline());
+    assert_eq!(answer.recv(), Ok(PlanChoice::KeepPlanning), "Esc keeps planning");
+
+    // The row wraps: build now → keep planning → hand off.
+    let (mut g, answer) = open_plan();
+    g.move_focus();
+    g.move_focus();
+    assert!(g.answer_focused());
+    assert_eq!(answer.recv(), Ok(PlanChoice::Handoff));
 }

@@ -26,6 +26,13 @@ open_button = "Ouvrir avec la config du projet"
 decline_button = "Config globale seulement"
 hint = "échap garde la config globale · ←→ déplacer · ↵ choisir · /trust redemande"
 
+[plan]
+title = "Un plan est proposé"
+build_now = "Construire maintenant"
+handoff = "Approuver — je pilote"
+keep = "Continuer à planifier"
+hint = "échap continue la planification · ←→ déplacer · ↵ choisir"
+
 [profile]
 list_header = "profils dans {0} ({1}) :"
 switch_hint = "changer :  @profile <id>   ·  réglages :  @profile edit   (une fenêtre ouverte suit en direct)"

@@ -1,8 +1,8 @@
 name = "plan mode withdraws the writing tools"
 tags = ["workspace", "guard"]
 
-# /readonly is the plan-mode analogue: the toolset narrows to the safe set, and a
-# write the model attempts anyway comes back inert — "not available", not run.
+# /plan narrows the toolset to the safe set, and a write the model attempts
+# anyway comes back inert — "not available", not run.
 
 [setup]
 home = "ws-plan"
@@ -11,7 +11,7 @@ home = "ws-plan"
 model_says_in_turn = ["@tool fs.write {\"path\":\"x.txt\",\"content\":\"hi\"}", "I could not write — plan mode."]
 
 [[step]]
-type = ["/readonly", "note down hi into x.txt"]
+type = ["/plan", "note down hi into x.txt"]
 
 [[step]]
 open = "now"

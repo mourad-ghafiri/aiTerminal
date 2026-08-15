@@ -10,7 +10,7 @@ use crate::ai::stream::Usage;
 use std::path::PathBuf;
 
 use crate::ai::budget::{ContextBudget, HeuristicEstimator, TokenEstimator, DEFAULT_COMPACT_AT};
-use crate::ai::compact::{CompactCtx, CompactionReport, Ladder, Summarizer};
+use crate::ai::compact::{CompactCtx, CompactionReport, CompactionStage, Ladder, OffloadToolResults, SummarizeOldest, Summarizer};
 use crate::ai::transcript::{Transcript, Turn};
 use crate::ai::Client;
 use platform::transport::Transport;
@@ -300,6 +300,40 @@ impl<T: Transport> Summarizer for ClientSummarizer<'_, T> {
     }
 }
 
+/// The human's `/compact` — fold the conversation's history NOW, below the
+/// threshold or not, which is the point of having asked. The automatic ladder
+/// only acts under pressure; this runs both rungs unconditionally (offload is
+/// free, and [`SummarizeOldest`] always folds at least two turns when there is
+/// history worth a call). Returns the report plus what the summary call cost,
+/// so the sitting's totals stay honest.
+pub(crate) fn compact_now<T: Transport>(
+    client: &Client<T>,
+    transcript: &mut Transcript,
+    keep: &str,
+    context_window: u32,
+    compact_at: f32,
+    scratch: PathBuf,
+) -> (CompactionReport, (u32, u32)) {
+    let est = HeuristicEstimator;
+    let model = client.model().clone();
+    let budget = ContextBudget::for_model(&model, context_window, compact_at);
+    let mut summarizer = ClientSummarizer { client, model: &model, input_tokens: 0, output_tokens: 0 };
+    let mut report = CompactionReport { tokens_before: transcript.tokens(&est), ..Default::default() };
+    {
+        let mut cctx = CompactCtx { scratch, keep, summarizer: Some(&mut summarizer) };
+        let offload = OffloadToolResults::default();
+        let fold = SummarizeOldest::default();
+        let stages: [&dyn CompactionStage; 2] = [&offload, &fold];
+        for stage in stages {
+            if stage.apply(transcript, &est, &budget, &mut cctx, &mut report) {
+                report.stages.push(stage.name());
+            }
+        }
+    }
+    report.tokens_after = transcript.tokens(&est);
+    (report, (summarizer.input_tokens, summarizer.output_tokens))
+}
+
 /// The context-management tools, answered by the loop itself.
 ///
 /// These are the harness's own, not capabilities: `caps` families are pure functions
@@ -397,10 +431,22 @@ pub fn run_agent<T: Transport>(
 /// protocol + the guard's rules as system material, and the grounded task as the
 /// first user turn.
 pub fn fresh_transcript(agent: &AgentSpec, user_prompt: &str, context: &str) -> Transcript {
+    // The grounding context (terminal state, recalled memory) is the first user
+    // turn, because it is information about the world rather than instruction.
+    let task = match context.trim().is_empty() {
+        true => user_prompt.to_string(),
+        false => format!("{}\n\n{user_prompt}", context.trim()),
+    };
+    Transcript::new(compose_system(agent), task)
+}
+
+/// The system material a spec composes: the agent's instructions + the tool
+/// protocol + the guard's rules. ONE composition, used both to open a fresh
+/// transcript and to REFRESH a persistent one — a sitting whose mode or persona
+/// changes mid-conversation must not keep being told who it used to be.
+pub fn compose_system(agent: &AgentSpec) -> String {
     // The agent's instructions and the tool protocol are BOTH system material — the
-    // model is being told who it is and how to act, not being conversed with. The
-    // grounding context (terminal state, recalled memory) is the first user turn,
-    // because it is information about the world rather than instruction.
+    // model is being told who it is and how to act, not being conversed with.
     let mut system = String::new();
     if !agent.system.trim().is_empty() {
         system.push_str(agent.system.trim());
@@ -414,12 +460,7 @@ pub fn fresh_transcript(agent: &AgentSpec, user_prompt: &str, context: &str) -> 
         system.push_str("\n\n");
         system.push_str(agent.guard_brief.trim());
     }
-
-    let task = match context.trim().is_empty() {
-        true => user_prompt.to_string(),
-        false => format!("{}\n\n{user_prompt}", context.trim()),
-    };
-    Transcript::new(system, task)
+    system
 }
 
 /// The agentic loop over a conversation the CALLER owns — the workspace REPL's whole

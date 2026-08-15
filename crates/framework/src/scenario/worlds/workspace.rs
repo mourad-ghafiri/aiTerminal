@@ -99,7 +99,11 @@ impl WorkspaceWorld {
         // No MCP hub in a scenario: nothing may spawn. The mcp declarations still
         // COUNT for the trust prompt, which is exactly the boundary under test.
         let runner = crate::cli::runner::build_runner(&cfg, &settings(self.configured), Some(self.root.clone()), guard.clone(), None);
-        let client = ai::Client::new(settings(self.configured), ScriptedTransport::new(self.turns.clone()));
+        // ONE scripted transport, shared by the conversation's client and auto
+        // mode's judge — exactly the production wiring, so a judge verdict is
+        // simply the next `model_says_in_turn` entry (and counts as a request).
+        let transport = std::sync::Arc::new(ScriptedTransport::new(self.turns.clone()));
+        let client = ai::Client::new(settings(self.configured), transport.clone());
         let input: crate::cli::workspace::repl::SharedInput =
             std::sync::Arc::new(std::sync::Mutex::new(Box::new(ScriptedLines::new(self.lines.clone()))));
         let mut repl = Repl::new(ws, cfg, settings(self.configured), client, guard, runner, input, Some(self.session_dir.clone()));
@@ -112,11 +116,12 @@ impl WorkspaceWorld {
             }
             repl.runner.ctx.asker = std::sync::Arc::new(Scripted(answer));
         }
+        repl.arm_judge(ai::Client::new(settings(self.configured), transport.clone()));
         let code = repl.drive();
         if code != 0 {
             return Err(format!("the sitting exited {code}"));
         }
-        self.sent = repl.client.transport().sent();
+        self.sent = transport.sent();
         Ok(())
     }
 

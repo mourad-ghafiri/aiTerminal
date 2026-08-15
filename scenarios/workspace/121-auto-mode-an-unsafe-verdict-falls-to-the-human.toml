@@ -1,0 +1,32 @@
+name = "auto mode: the judge's unsafe verdict falls through to the human"
+tags = ["workspace", "guard", "auto"]
+
+# The judge can only remove an interruption, never add a permission: an unsafe
+# verdict means the question reaches the person exactly as in build mode, and
+# their "n" refuses in the guard's own sentence.
+
+[setup]
+home = "ws-auto-unsafe"
+
+[[step]]
+project_file = ".aiTerminal/config.toml"
+body = """
+[[guard.command]]
+pattern = "^echo confirmed-hello"
+rule = "confirm"
+"""
+
+[[step]]
+model_says_in_turn = ["@tool sys.run {\"cmd\":\"echo confirmed-hello\"}", "{\"safe\": false, \"reason\": \"it should be seen by a person\"}", "Understood, it was refused."]
+
+# "/auto" switches, the message asks, and the LAST line answers the guard's
+# question the judge declined to answer.
+[[step]]
+type = ["/auto", "run the confirmed echo for me", "n"]
+
+[[step]]
+open = "now"
+
+[[step]]
+turn = 3
+expect_request_contains = ['refused running \"echo confirmed-hello\"']

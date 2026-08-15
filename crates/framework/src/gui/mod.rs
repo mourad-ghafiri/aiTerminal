@@ -28,7 +28,7 @@ mod workspace;
 pub(crate) use boot::{build_keymap, start_status_worker};
 pub use confirm::render_confirm_proof;
 use confirm::{draw_confirm, CloseIntent, Confirm};
-pub use chat::render_chat_proof;
+pub use chat::{render_chat_proof, render_home_proof};
 pub use gate::render_gate_proof;
 pub use switcher::render_switcher_proof;
 use switcher::{draw_switcher, SwitcherEntry, TabSwitcher};

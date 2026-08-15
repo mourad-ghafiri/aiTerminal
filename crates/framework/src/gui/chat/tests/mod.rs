@@ -29,8 +29,9 @@ fn content_text(s: &ChatSurface) -> Vec<String> {
 fn layout_pins_the_panel_to_the_bottom_and_content_fills_the_rest() {
     let area = Rect::new(0.0, 0.0, 800.0, 600.0);
     let r = layout(area, 16.0, 1, false);
+    assert_eq!(r.header, Rect::new(0.0, 0.0, 800.0, 16.0 + 12.0), "the sticky header rides the very top, full width");
     assert_eq!(r.panel.y + r.panel.h, 600.0 - 10.0, "the panel hugs the area's bottom pad");
-    assert_eq!(r.content.y, 10.0);
+    assert_eq!(r.content.y, r.header.y + r.header.h + 10.0, "content starts below the header");
     assert_eq!(r.content.y + r.content.h + 8.0, r.panel.y, "clear air between content and the panel");
     for rect in [&r.content, &r.panel] {
         assert_eq!(rect.x, 10.0);
@@ -60,7 +61,8 @@ fn the_content_rect_is_a_function_of_the_input_rows_and_nothing_else() {
 fn the_welcome_centers_the_panel_like_a_home_screen() {
     let area = Rect::new(0.0, 40.0, 1200.0, 700.0);
     let r = layout(area, 16.0, 1, true);
-    assert!(r.panel.w <= 760.0, "a dialog's width, not a banner's");
+    assert!(r.panel.w <= 880.0, "a dialog's width, not a banner's");
+    assert!(r.panel.y > r.header.y + r.header.h, "the home floats below the sticky header");
     let mid = area.x + area.w * 0.5;
     assert!((r.panel.x + r.panel.w * 0.5 - mid).abs() < 1.0, "horizontally centered");
     assert!(r.panel.y > area.y + 100.0 && r.panel.y + r.panel.h < area.y + area.h - 100.0, "vertically floating");

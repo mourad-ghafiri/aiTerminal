@@ -15,7 +15,12 @@ fn the_router_reads_every_surface_in_its_stated_order() {
     let a = agents();
     assert_eq!(route("/help", &p, &a), Route::Help);
     assert_eq!(route("/exit", &p, &a), Route::Exit);
-    assert_eq!(route("/readonly", &p, &a), Route::Readonly);
+    assert_eq!(route("/mode", &p, &a), Route::Mode(None));
+    assert_eq!(route("/plan", &p, &a), Route::Mode(Some(crate::cli::workspace::screen::Mode::Plan)));
+    assert_eq!(route("/build", &p, &a), Route::Mode(Some(crate::cli::workspace::screen::Mode::Build)));
+    assert_eq!(route("/auto", &p, &a), Route::Mode(Some(crate::cli::workspace::screen::Mode::Auto)));
+    assert_eq!(route("/compact", &p, &a), Route::Compact(None));
+    assert_eq!(route("/compact keep the API decisions", &p, &a), Route::Compact(Some("keep the API decisions".into())));
     assert_eq!(route("/model", &p, &a), Route::Model(None));
     assert_eq!(route("/model gpt-x", &p, &a), Route::Model(Some("gpt-x".into())));
     assert_eq!(route("/agent coder", &p, &a), Route::Agent(Some("coder".into())));

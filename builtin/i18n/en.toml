@@ -38,6 +38,15 @@ open_button = "Open with project setup"
 decline_button = "Global only"
 hint = "esc keeps global config · ←→ move · ↵ choose · /trust asks again"
 
+[plan]
+# The plan approval modal. The plan's own summary is worded by the workspace
+# (cli/workspace/repl.rs); only the title, the buttons and the key hint live here.
+title = "A plan is proposed"
+build_now = "Build it now"
+handoff = "Approve — I'll drive"
+keep = "Keep planning"
+hint = "esc keeps planning · ←→ move · ↵ choose"
+
 [profile]
 list_header = "profiles in {0} ({1}):"
 switch_hint = "switch:  @profile <id>   ·  settings:  @profile edit   (a running window follows live)"

@@ -78,6 +78,15 @@ impl Transport for Box<dyn Transport> {
     }
 }
 
+/// A shared transport is itself a [`Transport`] — so two clients (a conversation and
+/// its judge, say) can ride ONE transport, and a scripted transport's turn queue
+/// stays a single ordered stream across both.
+impl<T: Transport + ?Sized> Transport for std::sync::Arc<T> {
+    fn stream(&self, url: &str, headers: &[(String, String)], body: &str, cancel: &CancelToken) -> StreamHandle {
+        (**self).stream(url, headers, body, cancel)
+    }
+}
+
 /// Incremental SSE parser. Feed it one newline-stripped line at a time; it returns
 /// `Some(payload)` when a blank line dispatches the buffered `data:` field(s).
 /// Generic: it does not parse the payload, only de-frames it.

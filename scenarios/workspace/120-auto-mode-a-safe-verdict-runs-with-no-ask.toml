@@ -1,0 +1,36 @@
+name = "auto mode: the judge's safe verdict runs the act with nobody asked"
+tags = ["workspace", "guard", "auto"]
+
+# The confirm-tier act that scenario 020 needed a typed "y" for. In auto mode the
+# judge answers instead: the second scripted turn IS the verdict (one shared
+# transport — a judge call is simply the next request). No approval line is
+# scripted at all, which is the proof: had anyone been asked, the unanswerable
+# question would have refused the act, and turn 3 would carry the refusal.
+
+[setup]
+home = "ws-auto-safe"
+
+[[step]]
+project_file = ".aiTerminal/config.toml"
+body = """
+[[guard.command]]
+pattern = "^echo confirmed-hello"
+rule = "confirm"
+"""
+
+[[step]]
+model_says_in_turn = ["@tool sys.run {\"cmd\":\"echo confirmed-hello\"}", "{\"safe\": true, \"reason\": \"a local echo inside the root\"}", "It printed."]
+
+[[step]]
+type = ["/auto", "run the confirmed echo for me"]
+
+[[step]]
+open = "now"
+
+[[step]]
+turn = 3
+expect_request_contains = ["confirmed-hello"]
+
+[[step]]
+turn = 3
+expect_request_excludes = ['refused running \"echo confirmed-hello\"']

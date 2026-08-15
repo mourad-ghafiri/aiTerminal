@@ -1,0 +1,20 @@
+name = "keeping the plan on the table changes nothing"
+tags = ["workspace", "plan"]
+
+# The other answer at the approval gate: "keep planning" leaves the sitting in
+# plan mode, seeds nothing, starts nothing — exactly one request was ever posted.
+
+[setup]
+home = "ws-plan-keep"
+
+[[step]]
+model_says_in_turn = ["Here it is.\n\n```plan\n{\"title\": \"wire the export\", \"phases\": [{\"name\": \"build\", \"tasks\": [\"add the command\"]}]}\n```"]
+
+[[step]]
+type = ["/plan", "add an export command", "k"]
+
+[[step]]
+open = "now"
+
+[[step]]
+expect_requests = 1

@@ -210,6 +210,25 @@ fn the_tool_families_an_agent_declares_actually_work() {
 }
 
 #[test]
+fn the_checklist_renders_as_a_card_with_one_current_task() {
+    use corelib::wire::Json;
+    let item = |text: &str, done: bool| Json::Obj(vec![("text".into(), Json::Str(text.into())), ("done".into(), Json::Bool(done))]);
+    let rows = crate::cli::runner::checklist_rows(&[item("map the code", true), item("make the edit", false), item("run the tests", false)]);
+    assert_eq!(rows.len(), 4, "a header, then one row per task");
+    assert!(rows[0].contains("plan") && rows[0].contains("1/3") && rows[0].contains("make the edit"), "{}", rows[0]);
+    assert!(rows[0].contains('\u{25b0}') && rows[0].contains('\u{25b1}'), "the bar shows partial progress: {}", rows[0]);
+    let pointers = rows.iter().filter(|r| r.contains('\u{25b6}')).count();
+    assert_eq!(pointers, 2, "the header names the current task and exactly ONE row points at it");
+    assert!(rows[1].contains('\u{2714}'), "done is ticked: {}", rows[1]);
+    assert!(rows[3].contains('\u{25cb}'), "the rest wait: {}", rows[3]);
+
+    let done = crate::cli::runner::checklist_rows(&[item("a", true)]);
+    assert!(done[0].contains("all done"), "{}", done[0]);
+    assert!(!done.iter().any(|r| r.contains('\u{25b6}')), "nothing points when nothing is open");
+    assert!(crate::cli::runner::checklist_rows(&[]).is_empty(), "an empty list draws no card");
+}
+
+#[test]
 fn every_bundled_agent_is_valid() {
     // An agent is a file somebody edits. A misspelled tool used to reach the model
     // with a plausible generic description and fail three minutes into a run; a

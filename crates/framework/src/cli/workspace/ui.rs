@@ -34,6 +34,10 @@ pub(crate) enum Event {
     /// The trust gate's question, whole. The native surface raises it as a real
     /// modal; a renderer without one falls back to the ask panel.
     Gate { question: String, reply: Sender<bool> },
+    /// The planner's proposal, put to the human. The native surface raises the
+    /// three-way modal (build now / hand off / keep planning); a renderer
+    /// without one falls back to the ask panel, where yes means hand off.
+    Approve { plan: String, reply: Sender<super::plan::PlanChoice> },
     /// Clipboard text, CRLF-normalized here: typed into the editor (newlines
     /// make rows) or folded into a running turn's draft.
     Paste(String),
@@ -220,6 +224,8 @@ pub(crate) struct UiState {
     lines: Sender<Out>,
     ask_reply: Option<Sender<bool>>,
     ask_prev: Option<PanelState>,
+    /// The plan approval waiting on the fallback ask panel (GUI intercepts first).
+    plan_reply: Option<Sender<super::plan::PlanChoice>>,
     /// A model question in flight: the reply channel, the panel it interrupted,
     /// and the editor text it displaced.
     q_reply: Option<Sender<Option<String>>>,
@@ -239,6 +245,7 @@ impl UiState {
             lines,
             ask_reply: None,
             ask_prev: None,
+            plan_reply: None,
             q_reply: None,
             q_prev: None,
             pasted: Vec::new(),
@@ -355,6 +362,15 @@ impl UiState {
                 self.screen.panel = PanelState::Ask { act: "opening this folder's project overlay".into(), reason: question };
                 true
             }
+            // The GUI intercepts Approve into the three-way modal; anywhere else
+            // it degrades honestly to the ask: yes approves and hands off (never
+            // auto-runs), no keeps planning.
+            Event::Approve { plan, reply } => {
+                self.ask_prev = Some(self.screen.panel.clone());
+                self.plan_reply = Some(reply);
+                self.screen.panel = PanelState::Ask { act: "approving the plan".into(), reason: plan };
+                true
+            }
             Event::Question { text, reply } => {
                 // The question joins the conversation whole; the editor becomes
                 // the answer box, its draft stashed until the answer is sent.
@@ -424,6 +440,10 @@ impl UiState {
                 if let Some(yes) = answer {
                     if let Some(reply) = self.ask_reply.take() {
                         let _ = reply.send(yes);
+                    }
+                    if let Some(reply) = self.plan_reply.take() {
+                        use crate::cli::workspace::plan::PlanChoice;
+                        let _ = reply.send(if yes { PlanChoice::Handoff } else { PlanChoice::KeepPlanning });
                     }
                     self.screen.panel = self.ask_prev.take().unwrap_or(PanelState::Hidden);
                 }
@@ -496,7 +516,7 @@ impl UiState {
                 if !text.trim().is_empty() {
                     ed.prefill = Some(text);
                 }
-                return self.submit("/readonly".into());
+                return self.submit("/mode".into());
             }
             Key::PageUp => {
                 self.screen.scroll = (self.screen.scroll + 10).min(self.screen.log.len().saturating_sub(1));
