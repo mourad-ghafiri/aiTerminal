@@ -186,23 +186,40 @@ impl GuiApp {
         }
     }
 
-    /// ⌘J: a focused workspace pane closes (the toggle feel); anywhere else, a
-    /// workspace pane opens as a SPLIT beside the focused pane, over its folder —
-    /// the conversation next to the shell. Tabs, splits and closes then treat it
-    /// as any pane, so workspaces compose freely (a tab of its own, several at
-    /// once) and no chord is ever stolen.
+    /// ⌘J: the workspace IN THIS PANE. On a terminal pane the shell PARKS and
+    /// the conversation takes its place, over its folder; on a workspace pane
+    /// the parked shell returns exactly as it was (a pane with none behind it
+    /// closes instead). Splits and tabs compose as ever — split first, ⌘J in
+    /// the new pane — and no chord is stolen.
     pub(in crate::gui) fn toggle_workspace(&mut self) {
         if self.tabs.active().focused_content().and_then(Pane::chat).is_some() {
-            self.close_workspace_pane();
+            self.leave_workspace_pane();
             return;
         }
-        self.open_workspace_split(self.focused_folder());
+        self.wrap_focused_in_workspace(self.focused_folder());
     }
 
-    /// Close the focused workspace pane without a question — the transcript is
-    /// already on disk. A lone split closes its tab; the last pane of the last
-    /// tab yields to a fresh shell instead of refusing, so ⌘J always answers.
-    fn close_workspace_pane(&mut self) {
+    /// The workspace over `root`, in the focused pane's place — the shell parks.
+    pub(in crate::gui) fn wrap_focused_in_workspace(&mut self, root: std::path::PathBuf) {
+        let chat = chat::ChatSurface::open(root, self.dirty.clone());
+        if let Some(pane) = self.tabs.active_mut().focused_content_mut() {
+            pane.wrap_workspace(chat);
+        }
+        self.notify_focus_changed();
+        self.relayout();
+        self.dirty.set();
+    }
+
+    /// Leave the focused workspace: the parked shell returns; with none behind
+    /// it the pane closes (a lone split closes its tab; the last pane of the
+    /// last tab yields to a fresh shell) — ⌘J always answers.
+    pub(in crate::gui) fn leave_workspace_pane(&mut self) {
+        if self.tabs.active_mut().focused_content_mut().is_some_and(Pane::unwrap_terminal) {
+            self.notify_focus_changed();
+            self.relayout();
+            self.dirty.set();
+            return;
+        }
         if self.tabs.active_mut().close_focused().is_none() {
             if self.tabs.len() > 1 {
                 let _ = self.tabs.close_tab();
@@ -212,16 +229,6 @@ impl GuiApp {
                 }
             }
         }
-        self.notify_focus_changed();
-        self.relayout();
-        self.dirty.set();
-    }
-
-    /// Open a workspace sitting over `root` as a split of the focused pane.
-    pub(in crate::gui) fn open_workspace_split(&mut self, root: std::path::PathBuf) {
-        let chat = chat::ChatSurface::open(root, self.dirty.clone());
-        let pane = Pane::workspace(chat, self.default_zoom);
-        self.tabs.active_mut().split(Axis::Horizontal, pane);
         self.notify_focus_changed();
         self.relayout();
         self.dirty.set();

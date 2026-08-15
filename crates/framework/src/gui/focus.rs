@@ -128,10 +128,28 @@ impl GuiApp {
     /// its tab (or split) instead of leaving a frozen pane. Reaps one per frame — the rest
     /// follow on later frames — so simultaneous exits resolve without iterating-while-mutating.
     pub(in crate::gui) fn reap_exited_terminals(&mut self) {
+        // An ended workspace sitting (/exit, Ctrl+D, a worker panic) with a shell
+        // parked behind it UNWRAPS — leaving the conversation returns the terminal
+        // exactly as it was, on any tab, without yanking focus.
+        let mut unwrapped = false;
+        for tree in self.tabs.iter_mut() {
+            for id in tree.pane_ids() {
+                if let Some(p) = tree.get_mut(id) {
+                    if p.chat().is_some_and(chat::ChatSurface::ended) && p.unwrap_terminal() {
+                        unwrapped = true;
+                    }
+                }
+            }
+        }
+        if unwrapped {
+            // The shell may have been parked through a resize — size it to its rect.
+            self.relayout();
+            self.dirty.set();
+        }
         let target = self.tabs.iter().enumerate().find_map(|(ti, tree)| {
             tree.pane_ids().into_iter().find_map(|id| match tree.get(id) {
-                // A shell that exited, or a workspace whose sitting ended (/exit,
-                // Ctrl+D, a worker panic) — both close their pane the same way.
+                // A shell that exited, or a parked-less workspace whose sitting
+                // ended — both close their pane the same way.
                 Some(p) if p.session().is_some_and(Session::exited) || p.chat().is_some_and(chat::ChatSurface::ended) => Some((ti, id)),
                 _ => None,
             })

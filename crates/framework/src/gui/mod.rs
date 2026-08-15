@@ -417,7 +417,11 @@ enum ScrollCmd {
 /// focus, zoom and close all treat it as just another pane.
 pub(crate) enum PaneContent {
     Terminal(Session),
-    Workspace(Box<chat::ChatSurface>),
+    /// A workspace sitting, shown IN PLACE of the pane's shell: the session is
+    /// parked, not killed — its PTY keeps feeding its own term underneath, and
+    /// ⌘J (or the sitting ending) restores it exactly as it was. `parked` is
+    /// `None` for a pane restored from disk without a shell behind it.
+    Workspace { chat: Box<chat::ChatSurface>, parked: Option<Session> },
 }
 
 /// A pane: a font-zoom level plus what it holds.
@@ -431,31 +435,62 @@ impl Pane {
         Pane { zoom, content: PaneContent::Terminal(s) }
     }
     fn workspace(chat: chat::ChatSurface, zoom: f32) -> Pane {
-        Pane { zoom, content: PaneContent::Workspace(Box::new(chat)) }
+        Pane { zoom, content: PaneContent::Workspace { chat: Box::new(chat), parked: None } }
     }
-    /// The terminal session, when this pane is one.
+    /// Show a workspace IN THIS PANE: the current shell parks behind it.
+    fn wrap_workspace(&mut self, chat: chat::ChatSurface) {
+        let old = std::mem::replace(&mut self.content, PaneContent::Workspace { chat: Box::new(chat), parked: None });
+        match old {
+            PaneContent::Terminal(session) => {
+                if let PaneContent::Workspace { parked, .. } = &mut self.content {
+                    *parked = Some(session);
+                }
+            }
+            // Never called on a workspace pane — keep what was there.
+            other @ PaneContent::Workspace { .. } => self.content = other,
+        }
+    }
+    /// Bring the parked shell back, exactly as it was. `false` when there is
+    /// nothing parked — the caller closes the pane instead.
+    fn unwrap_terminal(&mut self) -> bool {
+        if let PaneContent::Workspace { parked: parked @ Some(_), .. } = &mut self.content {
+            let session = parked.take().expect("matched Some");
+            self.content = PaneContent::Terminal(session);
+            return true;
+        }
+        false
+    }
+    /// The terminal session, when this pane SHOWS one (a parked shell is
+    /// invisible to the terminal machinery until it returns).
     pub(crate) fn session(&self) -> Option<&Session> {
         match &self.content {
             PaneContent::Terminal(s) => Some(s),
-            PaneContent::Workspace(_) => None,
+            PaneContent::Workspace { .. } => None,
         }
     }
     pub(crate) fn session_mut(&mut self) -> Option<&mut Session> {
         match &mut self.content {
             PaneContent::Terminal(s) => Some(s),
-            PaneContent::Workspace(_) => None,
+            PaneContent::Workspace { .. } => None,
+        }
+    }
+    /// The shell parked behind a workspace — persistence saves it whole.
+    pub(crate) fn parked(&self) -> Option<&Session> {
+        match &self.content {
+            PaneContent::Workspace { parked, .. } => parked.as_ref(),
+            PaneContent::Terminal(_) => None,
         }
     }
     /// The workspace surface, when this pane is one.
     pub(crate) fn chat(&self) -> Option<&chat::ChatSurface> {
         match &self.content {
-            PaneContent::Workspace(c) => Some(c),
+            PaneContent::Workspace { chat, .. } => Some(chat),
             PaneContent::Terminal(_) => None,
         }
     }
     pub(crate) fn chat_mut(&mut self) -> Option<&mut chat::ChatSurface> {
         match &mut self.content {
-            PaneContent::Workspace(c) => Some(c),
+            PaneContent::Workspace { chat, .. } => Some(chat),
             PaneContent::Terminal(_) => None,
         }
     }
@@ -464,8 +499,8 @@ impl Pane {
     fn title(&self) -> String {
         match &self.content {
             PaneContent::Terminal(s) => s.title(),
-            PaneContent::Workspace(c) => {
-                let name = c.root().file_name().and_then(|s| s.to_str()).unwrap_or("workspace");
+            PaneContent::Workspace { chat, .. } => {
+                let name = chat.root().file_name().and_then(|s| s.to_str()).unwrap_or("workspace");
                 format!("\u{2726} {name}")
             }
         }

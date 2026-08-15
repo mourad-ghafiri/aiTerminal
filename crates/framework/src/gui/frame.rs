@@ -53,12 +53,13 @@ impl GuiApp {
                 platform::os::clipboard_write(&text);
             }
             // `@workspace` typed in this pane staged its request the same way
-            // (OSC 7788) — the host answers by opening a workspace SPLIT beside it.
+            // (OSC 7788) — the host answers by wrapping THIS pane: the shell
+            // parks and the conversation takes its place.
             open_workspace = s.term.lock().unwrap_or_else(|e| e.into_inner()).take_workspace_request();
         }
         if open_workspace {
             let root = self.focused_folder();
-            self.open_workspace_split(root);
+            self.wrap_focused_in_workspace(root);
         }
         if !self.dirty.take() {
             return;

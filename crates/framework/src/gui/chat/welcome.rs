@@ -20,10 +20,11 @@ pub(crate) fn draw_welcome(surface: &mut Surface, cache: &mut GlyphCache, theme:
     let maxw = panel.w;
 
     // The rows above the panel: the tagline, the folder, its facts — wrapped to
-    // the panel's width, so nothing can spill off the area. The LOGO is drawn
-    // separately, big, above them.
+    // the panel's width, so nothing can spill off the area. Ordered most vital
+    // first: when the space above the centered panel runs short, the TAIL sheds
+    // — the mark never does.
     let facts_rows = |cache: &mut GlyphCache| {
-        let mut rows: Vec<(String, bool)> = vec![(String::new(), false), ("the folder as a conversation".into(), false)];
+        let mut rows: Vec<(String, bool)> = vec![("the folder as a conversation".into(), false)];
         for r in wrap_to(cache, &facts.root, base_px, maxw) {
             rows.push((r, true));
         }
@@ -34,7 +35,7 @@ pub(crate) fn draw_welcome(surface: &mut Surface, cache: &mut GlyphCache, theme:
             rows.push((format!("instructions: {name}"), false));
         }
         let pool = match &facts.pool {
-            Some(pool) => format!("{pool} \u{b7} answers render as Markdown, diagrams included"),
+            Some(pool) => pool.clone(),
             None => "no model configured yet \u{2014} the workspace opens anyway; a prompt will say how to add one".into(),
         };
         for r in wrap_to(cache, &pool, base_px, maxw) {
@@ -42,35 +43,39 @@ pub(crate) fn draw_welcome(surface: &mut Surface, cache: &mut GlyphCache, theme:
         }
         rows
     };
-    let rows = facts_rows(cache);
+    let mut rows = facts_rows(cache);
 
-    // The LOGO: real typography, big — `ai` in accent, `Terminal` in fg, bold,
-    // over a soft shadow layer for depth. It scales down (and finally hides)
-    // rather than ever clipping or crowding the facts.
-    let avail = panel.y - area.y - 24.0 - rows.len() as f32 * (m.cell_h + 4.0);
-    let logo_px = (base_px * 4.6).min(avail * 0.70).min(area.w * 0.16);
-    let show_logo = logo_px >= base_px * 1.2;
+    // The banner is a centered ENSEMBLE — logo, then facts — in the space
+    // above the panel. The LOGO comes first: real typography, big, `ai` in
+    // accent over a soft shadow. Facts get what remains and shed from the end;
+    // the mark scales, and only truly cramped panes hide it.
+    let rh = m.cell_h + 4.0;
+    let space = (panel.y - area.y - 28.0).max(0.0);
+    let logo_px = (base_px * 4.6).min(area.w * 0.16).min(space * 0.45);
+    let show_logo = logo_px >= base_px * 1.3;
     let logo_h = if show_logo { cache.metrics(logo_px).cell_h + 20.0 } else { 0.0 };
+    let fit = (((space - logo_h) / rh).floor().max(0.0)) as usize;
+    rows.truncate(fit);
+    let total = logo_h + rows.len() as f32 * rh;
+    let top = area.y + ((panel.y - area.y - total) * 0.5).max(10.0);
 
-    // Stack the facts upward from a gap above the panel, never above the area.
-    let mut baseline = panel.y - 18.0 - (rows.len() as f32 - 1.0) * (m.cell_h + 4.0) - (m.cell_h - m.ascent);
-    baseline = baseline.max(area.y + 10.0 + logo_h + m.ascent);
     if show_logo {
         let lm = cache.metrics(logo_px);
         let w = measure_text(cache, "aiTerminal", logo_px);
         let x = area.x + ((area.w - w) * 0.5).max(0.0);
-        let ly = baseline - m.ascent - 20.0 - (lm.cell_h - lm.ascent);
+        let ly = top + lm.ascent; // draw_text takes the baseline
         // Depth first, then the two-tone word over it.
         draw_text(surface, cache, "aiTerminal", logo_px, x + 5.0, ly + 5.0, theme.shadow(), area.x + area.w, true);
         let mid = draw_text(surface, cache, "ai", logo_px, x, ly, theme.accent, area.x + area.w, true);
         draw_text(surface, cache, "Terminal", logo_px, mid, ly, theme.fg, area.x + area.w, true);
     }
+    let mut baseline = top + logo_h + m.ascent;
     for (text, bright) in &rows {
         let w = measure_text(cache, text, base_px);
         let x = area.x + ((area.w - w) * 0.5).max(0.0);
         let color = if *bright { theme.accent } else { theme.muted };
         draw_text(surface, cache, text, base_px, x, baseline, color, area.x + area.w, *bright);
-        baseline += m.cell_h + 4.0;
+        baseline += rh;
     }
 
     // The tips, wrapped and centered below the panel.

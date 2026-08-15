@@ -28,9 +28,9 @@ fn content_text(s: &ChatSurface) -> Vec<String> {
 fn layout_pins_the_panel_to_the_bottom_and_content_fills_the_rest() {
     let area = Rect::new(0.0, 0.0, 800.0, 600.0);
     let r = layout(area, 16.0, 1, false);
-    assert_eq!(r.header, Rect::new(0.0, 0.0, 800.0, 16.0 + 12.0), "the sticky header rides the very top, full width");
-    assert_eq!(r.panel.y + r.panel.h, 600.0 - 10.0, "the panel hugs the area's bottom pad");
-    assert_eq!(r.content.y, r.header.y + r.header.h + 10.0, "content starts below the header");
+    assert_eq!(r.footer, Rect::new(0.0, 600.0 - 24.0, 800.0, 16.0 + 8.0), "the facts row pins to the very bottom, full width");
+    assert_eq!(r.panel.y + r.panel.h, r.footer.y - 10.0, "the panel sits just above the facts row");
+    assert_eq!(r.content.y, 10.0, "content starts at the area's top");
     assert_eq!(r.content.y + r.content.h + 8.0, r.panel.y, "clear air between content and the panel");
     for rect in [&r.content, &r.panel] {
         assert_eq!(rect.x, 10.0);
@@ -60,11 +60,14 @@ fn the_content_rect_is_a_function_of_the_input_rows_and_nothing_else() {
 fn the_welcome_centers_the_panel_like_a_home_screen() {
     let area = Rect::new(0.0, 40.0, 1200.0, 700.0);
     let r = layout(area, 16.0, 1, true);
-    assert!(r.panel.w <= 880.0, "a dialog's width, not a banner's");
-    assert!(r.panel.y > r.header.y + r.header.h, "the home floats below the sticky header");
+    assert_eq!(r.panel.w, 1200.0 * 0.75, "the home input is WIDE — three quarters of the surface");
+    assert!(r.panel.y + r.panel.h < r.footer.y, "the home floats above the facts row");
     let mid = area.x + area.w * 0.5;
     assert!((r.panel.x + r.panel.w * 0.5 - mid).abs() < 1.0, "horizontally centered");
-    assert!(r.panel.y > area.y + 100.0 && r.panel.y + r.panel.h < area.y + area.h - 100.0, "vertically floating");
+    // Centered: the panel's middle sits at the body's middle (footer excluded).
+    let body_h = area.h - r.footer.h;
+    let center = area.y + (body_h - r.panel.h) * 0.50 + r.panel.h * 0.5;
+    assert!((r.panel.y + r.panel.h * 0.5 - center).abs() < 1.0, "vertically centered in the body");
 }
 
 #[test]
@@ -149,10 +152,14 @@ fn typing_reaches_the_editor_and_every_consumed_event_moves_the_stamp() {
 fn a_workspace_is_a_pane_that_titles_its_folder() {
     let mut s = surface();
     s.root = std::path::PathBuf::from("/tmp/proj");
-    let p = crate::gui::Pane { zoom: 1.0, content: crate::gui::PaneContent::Workspace(Box::new(s)) };
+    let p = crate::gui::Pane { zoom: 1.0, content: crate::gui::PaneContent::Workspace { chat: Box::new(s), parked: None } };
     assert_eq!(p.title(), "\u{2726} proj", "the tab strip and switcher name the sitting");
-    assert!(p.session().is_none(), "no PTY hides behind a conversation");
+    assert!(p.session().is_none(), "the parked shell is invisible while the conversation shows");
     assert!(p.chat().is_some());
+    // Nothing parked → unwrapping refuses, and the caller closes the pane instead.
+    let mut p = p;
+    assert!(!p.unwrap_terminal(), "a bare workspace pane has no shell to return to");
+    assert!(p.chat().is_some(), "…and stays what it was");
 }
 
 #[test]

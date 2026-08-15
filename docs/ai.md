@@ -750,18 +750,18 @@ With **no model configured**, `@job` still reads `in 5m`, `at 17:30`, `every hou
 
 The workspace is a **pane of the app itself** — drawn by the same engine that
 draws every terminal, living in the same split tree and tab list. Press **⌘J**
-(action `workspace`, rebindable), or type `@workspace` in any pane: a workspace
-pane opens as a **split beside you**, over that pane's folder, on its home
-screen — the mark, the folder, what the overlay adds — with the input panel
-centered beneath. Because it is a pane, everything composes: **Cmd+T, splits,
-tab chords, the switcher and every app shortcut keep working**, several
-workspaces can run at once (a tab of their own, side by side, different
-folders), Cmd+W closes one like any split, and ⌘J on a focused workspace closes
-it (the last pane of the last tab yields to a fresh shell). Quitting persists
-workspace panes by their folder and reopening restores them as fresh sittings.
-A model is NOT required to open: browsing, `/help`, `!` and `/mcp` all work;
-only a prompt answers with the setup hint. (Outside aiTerminal, `ai workspace`
-says where the feature lives and exits clean.)
+(action `workspace`, rebindable), or type `@workspace` in any pane: the
+conversation opens **in that pane, over its folder**, and your shell PARKS
+behind it — still running — until ⌘J (or `/exit`) brings it back exactly as it
+was, scrollback and processes included. Because it is a pane, everything
+composes: **Cmd+T, splits, tab chords, the switcher and every app shortcut
+keep working**; split first and ⌘J in the new pane for a conversation beside
+your shell; several workspaces can run at once (different folders, different
+tabs); Cmd+W closes one like any split. Quitting persists a workspace pane by
+its folder — parked shell included — and reopening restores both. A model is
+NOT required to open: browsing, `/help`, `!` and `/mcp` all work; only a
+prompt answers with the setup hint. (Outside aiTerminal, `ai workspace` says
+where the feature lives and exits clean.)
 
 Ask, follow up, and the conversation remembers — one transcript carries the whole sitting, compacted
 automatically when the window demands it. Every answer renders live as Markdown with
@@ -830,18 +830,18 @@ you asking early.
 
 ### The chrome
 
-A **sticky header** rides the top of the surface, always — home screen included:
+A **facts row** rides beneath the input, always — home screen included:
 `✦ root` and the **mode pill** (amber plan · accent build · green auto) on the
 left with the pinned persona; the approved plan's progress (`▰▰▱▱▱ 3/9`), the
 serving model, tokens · cost, the overlay dot and — while a turn runs — a live
 `0:42` clock on the right (the least vital facts shed first when the window
 narrows; identity never does). The facts you glance at never scroll away and
-never hide behind the input.
+never sit in the conversation's way.
 
-A fresh open is a **home screen**: the wordmark drawn big, the folder and what
-its overlay adds, centered, with the **input panel** floating beneath at a
-step-larger scale — your first message anchors the conversation and pins the
-panel to the bottom for the sitting.
+A fresh open is a **home screen**, centered: the wordmark drawn big, the
+folder and what its overlay adds, with the **input panel** floating wide
+beneath at a step-larger scale — your first message anchors the conversation
+and pins the panel to the bottom for the sitting.
 
 The panel is ONE shape for every state: a left bar in the mode's color, an
 elevated surface, your draft as real lines with a true caret (it grows with
@@ -895,9 +895,9 @@ rebuilds from its model. Underneath,
 one state machine folds every key and every streamed line from one queue into one
 model (the single-model discipline opencode's Bubble Tea foundation uses) — and
 because the app owns every pixel, there is no second painter left to race.
-`/exit` (or Ctrl+D, or Ctrl+C twice on an empty line) ends the sitting and its
-pane closes with it — exactly as an exited shell closes its split; the next ⌘J
-opens a fresh one.
+`/exit` (or Ctrl+D, or Ctrl+C twice on an empty line) ends the sitting — the
+parked shell returns in its place (a pane with none behind it closes like an
+exited shell); the next ⌘J opens a fresh one.
 
 ### The project overlay
 

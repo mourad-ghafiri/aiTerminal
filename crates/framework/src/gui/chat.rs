@@ -19,7 +19,7 @@ use crate::cli::workspace::screen::PanelState;
 use crate::cli::workspace::ui::{Event as ChatEvent, Out, Pulse, UiHandle, UiState};
 use crate::mdedit::key::Key as ChatKey;
 
-pub(crate) mod header;
+pub(crate) mod footer;
 pub(crate) mod panel;
 pub(crate) mod welcome;
 
@@ -36,10 +36,10 @@ const WELCOME_SCALE: f32 = 1.18;
 /// the layout — that absence is the determinism guarantee.
 #[derive(Debug, PartialEq)]
 pub(crate) struct ChatRects {
-    /// The sticky header — the sitting's facts, above everything, always.
-    pub header: Rect,
     pub content: Rect,
     pub panel: Rect,
+    /// The facts row — the statusline pinned under everything.
+    pub footer: Rect,
 }
 
 /// Lay the surface out INSIDE `area` (the panes region — the app's own chrome
@@ -50,26 +50,27 @@ pub(crate) struct ChatRects {
 /// move a rect.
 pub(crate) fn layout(area: Rect, cell_h: f32, input_rows: usize, welcome: bool) -> ChatRects {
     let pad = PAD;
-    // The sticky header rides the top of the surface, welcome included; the
-    // rest of the layout owns only what is BELOW it.
-    let header = Rect::new(area.x, area.y, area.w, header::header_height(cell_h));
-    let area = Rect::new(area.x, area.y + header.h, area.w, (area.h - header.h).max(cell_h));
+    // The facts row is the statusline pinned to the pane's BOTTOM, welcome
+    // included; the rest of the layout owns only what is ABOVE it.
+    let fh = footer::footer_height(cell_h);
+    let footer = Rect::new(area.x, area.y + area.h - fh, area.w, fh);
+    let area = Rect::new(area.x, area.y, area.w, (area.h - fh).max(cell_h));
     // The panel grows with the draft, to a third of the area.
     let max_rows = ((area.h / 3.0 / cell_h.max(1.0)).floor() as usize).max(3);
     if welcome {
-        // The home: the panel centered (a dialog's width), the mark above it —
-        // drawn a step larger than the anchored one, welcome-scale font included.
+        // The home: the panel WIDE and centered, the mark above it — drawn a
+        // step larger than the anchored one, welcome-scale font included.
         let ph = panel::panel_height(cell_h * WELCOME_SCALE, input_rows.clamp(1, max_rows));
-        let pw = (area.w - 2.0 * pad).min(880.0).max(320.0_f32.min(area.w));
+        let pw = (area.w * 0.75).min(1080.0).min(area.w - 2.0 * pad).max(320.0_f32.min(area.w));
         let px = (area.x + (area.w - pw) * 0.5).round();
-        let py = (area.y + (area.h - ph) * 0.60).round();
+        let py = (area.y + (area.h - ph) * 0.50).round();
         let content = Rect::new(area.x + pad, area.y + pad, area.w - 2.0 * pad, cell_h);
-        ChatRects { header, content, panel: Rect::new(px, py, pw, ph) }
+        ChatRects { content, panel: Rect::new(px, py, pw, ph), footer }
     } else {
         let ph = panel::panel_height(cell_h, input_rows.clamp(1, max_rows));
         let panel = Rect::new(area.x + pad, area.y + area.h - pad - ph, area.w - 2.0 * pad, ph);
         let content = Rect::new(area.x + pad, area.y + pad, area.w - 2.0 * pad, (panel.y - 8.0 - area.y - pad).max(cell_h));
-        ChatRects { header, content, panel }
+        ChatRects { content, panel, footer }
     }
 }
 
@@ -495,8 +496,8 @@ impl ChatSurface {
         let r = layout(area, m.cell_h, panel::input_rows(&state.screen.panel), welcome);
         let elapsed = self.working_since.map(|t| t.elapsed());
 
-        // Everything below the sticky header is the surface's body.
-        let body = Rect::new(area.x, area.y + r.header.h, area.w, (area.h - r.header.h).max(m.cell_h));
+        // Everything above the facts row is the surface's body.
+        let body = Rect::new(area.x, area.y, area.w, (area.h - r.footer.h).max(m.cell_h));
         match welcome {
             true => {
                 if let Some(facts) = &self.facts {
@@ -530,7 +531,7 @@ impl ChatSurface {
 
         let panel_px = if welcome { base_px * WELCOME_SCALE } else { base_px };
         panel::draw_panel(surface, cache, theme, panel_px, r.panel, &state.screen.panel, &state.screen.status, self.tick, elapsed);
-        header::draw_header(surface, cache, theme, base_px, r.header, &state.screen.status, elapsed);
+        footer::draw_footer(surface, cache, theme, base_px, r.footer, &state.screen.status, elapsed);
 
         // The completion band: a floating popup above the panel, windowed so the
         // selection is always visible — it overlays, it never reflows.

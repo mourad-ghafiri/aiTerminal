@@ -1,10 +1,10 @@
-//! The workspace's sticky header — the sitting's facts, always on screen.
+//! The workspace's facts row — the statusline UNDER the input.
 //!
-//! The market's lesson (codex's status row, crush's sidebar, every statusline):
-//! the facts people glance at — where am I, which mode, how far along, what is
-//! it costing, how long has it been running — must never scroll away and never
-//! hide behind the input. One strip at the top of the surface, welcome screen
-//! included, fed entirely by the [`Status`] the REPL already composes.
+//! The facts people glance at — where am I, which mode, how far along, what is
+//! it costing, how long has it been running — must never scroll away. One row
+//! pinned beneath the input panel, welcome screen included, drawn straight on
+//! the pane's ground (no strip, no box), fed entirely by the [`Status`] the
+//! REPL already composes.
 //!
 //! The composition is a pure function ([`segments`]) so the vocabulary — the
 //! mode pill, the `▰▱` progress arithmetic, the k-formatting, what gets dropped
@@ -99,15 +99,15 @@ pub(crate) fn segments(status: &Status, elapsed: Option<std::time::Duration>) ->
     (left, right)
 }
 
-/// The strip's height for a font size — layout's input.
-pub(crate) fn header_height(cell_h: f32) -> f32 {
-    cell_h + 12.0
+/// The row's height for a font size — layout's input.
+pub(crate) fn footer_height(cell_h: f32) -> f32 {
+    cell_h + 8.0
 }
 
-/// Draw the header into `rect`: surface ground, hairline below, the left
+/// Draw the facts row into `rect`, straight on the pane's ground: the left
 /// cluster from the left, the right cluster right-aligned — shedding its
 /// lowest-`keep` segments until it fits beside the left one.
-pub(crate) fn draw_header(
+pub(crate) fn draw_footer(
     surface: &mut Surface,
     cache: &mut GlyphCache,
     theme: &Theme,
@@ -118,8 +118,6 @@ pub(crate) fn draw_header(
 ) {
     use corelib::gfx::text::{draw_text, measure_text};
     let m = cache.metrics(base_px);
-    surface.fill_rect(rect, theme.surface);
-    surface.fill_rect(Rect::new(rect.x, rect.y + rect.h - 1.0, rect.w, 1.0), theme.border());
 
     let (left, mut right) = segments(status, elapsed);
     let baseline = rect.y + (rect.h - m.cell_h) * 0.5 + m.ascent;

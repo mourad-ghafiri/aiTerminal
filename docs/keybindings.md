@@ -13,7 +13,7 @@ your `~/.aiTerminal/keymaps/*.toml` files → `[[keybinding]]` tables in
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | next / previous tab |
 | `Cmd+1..9` | jump to tab N |
 | `Cmd+P` / `Cmd+K` | tab quick-switcher |
-| `Cmd+J` | a workspace pane, split beside you, over the focused pane's folder (on a focused workspace: closes it) |
+| `Cmd+J` | the workspace, in this pane, over its folder — the shell parks behind it; the same key brings the shell back |
 | `Cmd+D` / `Cmd+Shift+D` | split right / split down |
 | `Cmd+Shift+W` | close pane |
 | `Cmd+Alt+←/→/↑/↓` | focus pane in direction |

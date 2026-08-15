@@ -11,7 +11,7 @@ use corelib::wire::Toml;
 
 use super::setup::PaneFactory;
 use super::panes::Tabs;
-use super::Pane;
+use super::{Pane, Session};
 
 /// The active profile's `(emoji, name)` for the status-bar chip (falls back to a neutral
 /// glyph + the id when metadata is missing).
@@ -46,23 +46,35 @@ const CONTENT_SAVE_LINES: usize = 1000;
 /// buffer content WITH styling (ANSI escapes), so the reopened pane silently
 /// shows exactly the session you left, colors included.
 fn snapshot_pane(p: &Pane, sel_band: (u8, u8, u8)) -> Toml {
-    // A workspace pane persists as its root: a live sitting can't be resurrected,
-    // but the folder can be re-opened as a fresh one (its chat log is on disk).
+    // A workspace pane persists as its root (a live sitting can't be resurrected;
+    // its chat log is on disk) — plus the PARKED shell behind it, whole, so the
+    // restored pane still has your terminal to come back to.
     if let Some(chat) = p.chat() {
-        return Toml::Table(vec![
+        let mut kvs = vec![
             ("kind".into(), Toml::Str("workspace".into())),
             ("zoom".into(), Toml::Float(p.zoom as f64)),
             ("root".into(), Toml::Str(chat.root().display().to_string())),
-        ]);
+        ];
+        if let Some(shell) = p.parked() {
+            kvs.push(("shell".into(), snapshot_terminal(shell, sel_band)));
+        }
+        return Toml::Table(kvs);
     }
     let Some(session) = p.session() else { return Toml::Table(vec![("kind".into(), Toml::Str("terminal".into()))]) };
+    let Toml::Table(mut kvs) = snapshot_terminal(session, sel_band) else { unreachable!("snapshot_terminal returns a table") };
+    kvs.insert(1, ("zoom".into(), Toml::Float(p.zoom as f64)));
+    Toml::Table(kvs)
+}
+
+/// ONE terminal → TOML — the shape a plain terminal pane saves, and the shape a
+/// workspace pane nests for its parked shell.
+fn snapshot_terminal(session: &Session, sel_band: (u8, u8, u8)) -> Toml {
     // The grid size at save time — the restore rebuilds the terminal at exactly these
     // dims so the replayed content reproduces its physical rows (same width → same
     // wrapping); without it, a wider saved line re-wraps and the restore looks scrambled.
     let (cols, rows) = session.grid_size();
     let mut kvs = vec![
         ("kind".into(), Toml::Str("terminal".into())),
-        ("zoom".into(), Toml::Float(p.zoom as f64)),
         ("cols".into(), Toml::Int(cols as i64)),
         ("rows".into(), Toml::Int(rows as i64)),
     ];
@@ -81,10 +93,18 @@ fn snapshot_pane(p: &Pane, sel_band: (u8, u8, u8)) -> Toml {
 /// TOML → one pane, rebuilt through the factory: a terminal relaunches in its saved
 /// cwd with the saved buffer content replayed above the fresh prompt.
 fn restore_pane(factory: &PaneFactory, t: &Toml) -> Option<Pane> {
-    // A saved workspace pane re-opens a fresh sitting over its root.
+    // A saved workspace pane re-opens a fresh sitting over its root — with its
+    // parked shell rebuilt behind it when one was saved.
     if t.get("kind").and_then(|v| v.as_str()) == Some("workspace") {
         let root = t.get("root").and_then(|v| v.as_str()).map(expand_tilde)?;
-        let mut pane = factory.workspace_pane(std::path::PathBuf::from(root));
+        let mut pane = match t.get("shell").and_then(|shell| restore_pane(factory, shell)) {
+            Some(mut shell_pane) => {
+                let chat = crate::gui::chat::ChatSurface::open(std::path::PathBuf::from(&root), factory.dirty());
+                shell_pane.wrap_workspace(chat);
+                shell_pane
+            }
+            None => factory.workspace_pane(std::path::PathBuf::from(root)),
+        };
         if let Some(z) = t.get("zoom").and_then(|v| v.as_num()) {
             pane.zoom = z as f32;
         }

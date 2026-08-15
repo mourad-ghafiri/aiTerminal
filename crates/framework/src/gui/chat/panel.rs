@@ -75,11 +75,11 @@ fn view_for(panel: &PanelState, status: &Status, tick: usize, elapsed: Option<st
     use crate::cli::workspace::screen::Mode;
     match panel {
         PanelState::Editing(view) => {
-            // The sitting's facts live in the sticky header now; the panel's meta
+            // The sitting's facts live in the footer row below; the panel's meta
             // row says what THIS mode means, here, where the typing happens.
             let hint = match status.mode {
                 Mode::Plan => "planning \u{2014} the finished plan will ask your approval",
-                Mode::Build => "@ files \u{b7} / commands \u{b7} ! shell \u{b7} shift+tab mode",
+                Mode::Build => "@ files \u{b7} / commands \u{b7} ! shell",
                 Mode::Auto => "\u{26a1} auto \u{2014} the judge answers confirms; you when it declines",
             };
             PanelView {
@@ -98,7 +98,7 @@ fn view_for(panel: &PanelState, status: &Status, tick: usize, elapsed: Option<st
             let caret = steering.is_none().then(|| (0, row.chars().count()));
             let mut meta = vec![(format!("{} {label}", FRAMES[tick % FRAMES.len()]), Tone::Accent)];
             if let Some(e) = elapsed {
-                meta.push((super::header::clock(e), Tone::Accent));
+                meta.push((super::footer::clock(e), Tone::Accent));
             }
             meta.push(("esc interrupts \u{b7} enter steers".into(), Tone::Muted));
             PanelView { bar: Tone::Accent, cursor: caret, placeholder: false, rows: vec![row], meta_left: meta }
@@ -193,7 +193,7 @@ pub(crate) fn draw_panel(
     }
 
     // The meta row: the state's own hints, INSIDE the panel. The sitting's
-    // facts (mode, model, spend, overlay) live in the sticky header.
+    // facts (mode, model, spend, overlay) live in the footer row below.
     let meta_baseline = rect.y + rect.h - PAD_Y - m.cell_h + m.ascent;
     let mut x = left;
     let mut first = true;
