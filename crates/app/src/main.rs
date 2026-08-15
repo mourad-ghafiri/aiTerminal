@@ -29,6 +29,7 @@ struct Args {
     render_switcher: bool,
     render_confirm: bool,
     render_chat: bool,
+    render_gate: bool,
     render_chrome: Option<String>,
     render_icon: Option<String>,
     gen_themes: Option<String>,
@@ -47,6 +48,7 @@ fn parse_args() -> Args {
         render_switcher: false,
         render_confirm: false,
         render_chat: false,
+        render_gate: false,
         render_chrome: None,
         render_icon: None,
         gen_themes: None,
@@ -64,6 +66,7 @@ fn parse_args() -> Args {
             "--render-switcher" => a.render_switcher = true,
             "--render-confirm" => a.render_confirm = true,
             "--render-chat" => a.render_chat = true,
+            "--render-gate" => a.render_gate = true,
             "--render-chrome" => a.render_chrome = it.next(),
             "--render-icon" => a.render_icon = it.next(),
             "--gen-themes" => a.gen_themes = it.next(),
@@ -146,6 +149,13 @@ fn main() {
     if args.render_chat {
         let out = args.render_ppm.clone().unwrap_or_else(|| "/tmp/chat.ppm".into());
         guard(framework::gui::render_chat_proof(&out), "workspace render failed");
+        return;
+    }
+
+    // `--render-gate [--render-ppm <out>]` renders the workspace trust-gate modal.
+    if args.render_gate {
+        let out = args.render_ppm.clone().unwrap_or_else(|| "/tmp/gate.ppm".into());
+        guard(framework::gui::render_gate_proof(&out), "gate render failed");
         return;
     }
 

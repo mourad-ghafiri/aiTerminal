@@ -162,3 +162,21 @@ fn page_keys_scroll_and_new_content_snaps_back() {
     ui.update(Event::Append("fresh".into()));
     assert_eq!(ui.screen.scroll, 0, "new content follows the bottom");
 }
+
+#[test]
+fn a_gate_without_a_modal_renderer_falls_back_to_the_ask_panel() {
+    // The GUI intercepts Gate and raises a real modal; any renderer without one
+    // still owes the person an answerable question — the amber ask.
+    let (mut ui, _out) = state();
+    let (reply, answer) = channel();
+    ui.update(Event::Gate { question: "open ~/p in workspace mode?".into(), reply });
+    match &ui.screen.panel {
+        PanelState::Ask { act, reason } => {
+            assert!(act.contains("project overlay"));
+            assert!(reason.contains("workspace mode"));
+        }
+        _ => panic!("the gate must land as the ask panel"),
+    }
+    ui.update(Event::Key(Key::Char('y')));
+    assert_eq!(answer.recv(), Ok(true));
+}

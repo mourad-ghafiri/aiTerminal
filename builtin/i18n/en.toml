@@ -30,6 +30,14 @@ stake_tab = "{0} in this tab will close"
 stake_pane = "the shell running in it will end"
 hint = "esc cancel · ←→ move · ↵ choose"
 
+[trust]
+# The workspace trust gate modal. The QUESTION itself is worded by the trust gate
+# (cli/workspace/trust.rs) and pinned by its scenarios; only the buttons and the
+# key hint live here. The safe button says what declining leaves you with.
+open_button = "Open with project setup"
+decline_button = "Global only"
+hint = "esc keeps global config · ←→ move · ↵ choose · /trust asks again"
+
 [profile]
 list_header = "profiles in {0} ({1}):"
 switch_hint = "switch:  @profile <id>   ·  settings:  @profile edit   (a running window follows live)"

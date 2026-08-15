@@ -10,6 +10,7 @@ pub(crate) mod action;
 mod boot;
 mod chat;
 mod confirm;
+mod gate;
 mod focus;
 mod frame;
 mod handlers;
@@ -28,6 +29,7 @@ pub(crate) use boot::{build_keymap, start_status_worker};
 pub use confirm::render_confirm_proof;
 use confirm::{draw_confirm, CloseIntent, Confirm};
 pub use chat::render_chat_proof;
+pub use gate::render_gate_proof;
 pub use switcher::render_switcher_proof;
 use switcher::{draw_switcher, SwitcherEntry, TabSwitcher};
 

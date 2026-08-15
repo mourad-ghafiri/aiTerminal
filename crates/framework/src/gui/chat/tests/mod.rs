@@ -123,6 +123,22 @@ fn typing_reaches_the_editor_and_esc_on_an_empty_idle_editor_closes() {
 }
 
 #[test]
+fn the_trust_gate_becomes_a_modal_above_the_surface_not_an_ask_row() {
+    let mut s = surface();
+    let (reply, answer) = std::sync::mpsc::channel();
+    inject(&s, ChatEvent::Gate { question: "open ~/p in workspace mode?\n  this project would add: 1 MCP server(s)".into(), reply });
+    assert!(s.pump(420.0, 10.0));
+    assert!(s.gate_open(), "the question is a modal");
+    // The conversation never saw it — the editor stands untouched underneath.
+    assert!(matches!(s.state.as_ref().unwrap().screen.panel, PanelState::Editing(_)));
+    // Focus starts safe; one flip and Enter grants trust.
+    s.gate_move();
+    s.gate_answer();
+    assert_eq!(answer.recv(), Ok(true));
+    assert!(!s.gate_open());
+}
+
+#[test]
 fn a_scroll_event_moves_the_conversations_view_into_scrollback() {
     let mut s = surface();
     s.content.resize(40, 5);

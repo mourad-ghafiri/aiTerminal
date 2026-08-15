@@ -113,6 +113,40 @@ impl EventHandler for GuiApp {
         // are the conversation's. Its own chord (⌘J) closes it; window-level
         // events keep their meaning.
         if self.chat.is_open() {
+            // The trust gate rides above the surface — a question the person has
+            // to answer (or safely decline) before the conversation can proceed,
+            // so even the workspace chord waits behind it.
+            if self.chat.gate_open() {
+                match &ev {
+                    Event::KeyDown { code: KeyCode::Escape, .. } => {
+                        self.chat.gate_decline();
+                        self.dirty.set();
+                    }
+                    Event::KeyDown { code: KeyCode::Enter, .. } => {
+                        self.chat.gate_answer();
+                        self.dirty.set();
+                    }
+                    // ←/→/Tab all flip between the two buttons.
+                    Event::KeyDown { code: KeyCode::Left | KeyCode::Right | KeyCode::Tab, .. } => {
+                        self.chat.gate_move();
+                        self.dirty.set();
+                    }
+                    Event::MouseDown { button: MouseButton::Left, pos, .. } => {
+                        let s = self.scale as f32;
+                        self.chat.gate_click(Point::new(pos.x * s, pos.y * s));
+                        self.dirty.set();
+                    }
+                    Event::RedrawRequested => self.render(gpu),
+                    Event::Resized { width_px, height_px, scale } => {
+                        self.ensure_cache(*scale);
+                        self.win_px = (*width_px, *height_px);
+                        self.relayout();
+                    }
+                    Event::CloseRequested => self.request_close(CloseIntent::Quit),
+                    _ => {}
+                }
+                return;
+            }
             match &ev {
                 Event::KeyDown { code, mods, .. } => {
                     if matches!(self.keymap.lookup(&Chord::new(*code, *mods)), Some(Action::Workspace)) {

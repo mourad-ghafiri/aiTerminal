@@ -57,10 +57,14 @@ pub(crate) fn run_core(root: std::path::PathBuf, handle: Arc<ui::UiHandle>) {
 
     let granted = match session_dir.as_deref() {
         Some(dir) => {
-            let asker = ui::UiAsk(handle.clone());
+            // The question travels whole: the surface raises it as a real modal
+            // (the confirm pattern) and the worker blocks here on the answer.
             let mut ask = |question: &str| {
-                use crate::guard::Approver;
-                asker.approve("opening this folder's project overlay", question)
+                let (reply, answer) = std::sync::mpsc::channel();
+                if handle.events.send(ui::Event::Gate { question: question.to_string(), reply }).is_err() {
+                    return false;
+                }
+                answer.recv().unwrap_or(false)
             };
             trust::establish(&root, dir, &mut ask) == trust::Trust::Granted
         }

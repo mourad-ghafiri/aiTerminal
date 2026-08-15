@@ -93,6 +93,8 @@ pub(crate) struct ChatSurface {
     open: bool,
     /// The folder this sitting is over (set on first open).
     root: std::path::PathBuf,
+    /// The trust gate, raised as a real modal above the surface while open.
+    gate: super::gate::Gate,
     state: Option<UiState>,
     /// Events from the worker, queued by the waking forwarder.
     inbox: Arc<Mutex<Vec<ChatEvent>>>,
@@ -113,6 +115,7 @@ impl ChatSurface {
         ChatSurface {
             open: false,
             root: std::path::PathBuf::new(),
+            gate: super::gate::Gate::new(),
             state: None,
             inbox: Arc::new(Mutex::new(Vec::new())),
             pulse: None,
@@ -206,6 +209,12 @@ impl ChatSurface {
         let drained: Vec<ChatEvent> = std::mem::take(&mut *self.inbox.lock().unwrap_or_else(|e| e.into_inner()));
         let mut moved = !drained.is_empty();
         for ev in drained {
+            // The trust gate never enters the conversation's state machine here —
+            // it becomes a real modal above the surface (the confirm pattern).
+            if let ChatEvent::Gate { question, reply } = ev {
+                self.gate.open(&question, reply);
+                continue;
+            }
             state.update(ev);
         }
         // An inline run's Suspend waited for the ANSI loop to stop painting; the
@@ -245,6 +254,27 @@ impl ChatSurface {
             moved = true;
         }
         moved
+    }
+
+    /// Whether the trust gate modal is up — the input layer routes to it first.
+    pub(crate) fn gate_open(&self) -> bool {
+        self.gate.is_open()
+    }
+
+    pub(crate) fn gate_move(&mut self) {
+        self.gate.move_focus();
+    }
+
+    pub(crate) fn gate_answer(&mut self) {
+        self.gate.answer_focused();
+    }
+
+    pub(crate) fn gate_decline(&mut self) {
+        self.gate.decline();
+    }
+
+    pub(crate) fn gate_click(&mut self, p: Point) {
+        self.gate.click_at(p);
     }
 
     /// A GUI event while the surface is open. Returns whether it was consumed.
@@ -378,6 +408,11 @@ impl ChatSurface {
         line.push_str(if s.overlay_on { " \u{b7} \u{25cf} overlay" } else { " \u{b7} \u{25cb} global" });
         line.push_str(" \u{b7} shift+tab plan \u{b7} /help \u{b7} esc closes");
         draw_text(surface, cache, &line, base_px, r.status.x + 4.0, baseline, theme.muted, r.status.x + r.status.w, false);
+
+        // The trust gate rides above everything the surface draws.
+        if let Some(gs) = self.gate.state_mut() {
+            super::gate::draw_gate(surface, cache, theme, base_px, w, h, gs);
+        }
     }
 }
 

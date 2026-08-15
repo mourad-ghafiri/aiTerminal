@@ -21,6 +21,11 @@ stake_tab = "{0} de cet onglet seront fermées"
 stake_pane = "le shell qui s'y exécute sera arrêté"
 hint = "échap annuler · ←→ déplacer · ↵ choisir"
 
+[trust]
+open_button = "Ouvrir avec la config du projet"
+decline_button = "Config globale seulement"
+hint = "échap garde la config globale · ←→ déplacer · ↵ choisir · /trust redemande"
+
 [profile]
 list_header = "profils dans {0} ({1}) :"
 switch_hint = "changer :  @profile <id>   ·  réglages :  @profile edit   (une fenêtre ouverte suit en direct)"

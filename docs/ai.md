@@ -833,11 +833,14 @@ First-per-name wins: a project `coder.md` shadows the global coder for this fold
 
 ### Trust, and the guard
 
-The FIRST open of a folder asks — showing exactly what the project would inject
-(agents, skills, prompts, flows, **MCP servers — these run code as you**, config) —
-and remembers the answer per folder. It asks again only when the parts that execute
-change (a `git pull` that adds an MCP server re-opens the question). Declining opens
-the workspace on global config alone; `/trust` re-opens the question.
+The FIRST open of a folder asks — as a **native modal**, the same pattern as the
+close confirmation: the question and exactly what the project would inject
+(agents, skills, prompts, flows, **MCP servers — these run code as you**, config),
+two buttons with the safe one — *Global only* — holding focus, ←/→/Tab to move,
+Enter to choose, Esc (or a click on the backdrop) declining safely. The answer is
+remembered per folder; it is asked again only when the parts that execute change
+(a `git pull` that adds an MCP server re-opens the question). Declining opens the
+workspace on global config alone; `/trust` re-opens the question.
 
 The guard owns the boundary end to end. Every model action goes through the same
 tool pipeline as every agent run — deny is deny, everywhere. What workspace mode

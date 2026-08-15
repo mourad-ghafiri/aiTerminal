@@ -31,6 +31,9 @@ pub(crate) enum Event {
     Status(Status),
     /// The guard's confirm — answered on `reply` from the keyboard.
     Ask { act: String, reason: String, reply: Sender<bool> },
+    /// The trust gate's question, whole. The native surface raises it as a real
+    /// modal; a renderer without one falls back to the ask panel.
+    Gate { question: String, reply: Sender<bool> },
     /// An inline run is about to start: the renderer acks when it is ready for
     /// the run's framing (the native surface never stops, so it acks at once).
     Suspend(Sender<()>),
@@ -250,6 +253,14 @@ impl UiState {
                 self.ask_prev = Some(self.screen.panel.clone());
                 self.ask_reply = Some(reply);
                 self.screen.panel = PanelState::Ask { act, reason };
+                true
+            }
+            // The GUI intercepts Gate before it reaches this machine; anywhere
+            // else the question still deserves an answer — as the amber ask.
+            Event::Gate { question, reply } => {
+                self.ask_prev = Some(self.screen.panel.clone());
+                self.ask_reply = Some(reply);
+                self.screen.panel = PanelState::Ask { act: "opening this folder's project overlay".into(), reason: question };
                 true
             }
             Event::Suspend(ack) => {
