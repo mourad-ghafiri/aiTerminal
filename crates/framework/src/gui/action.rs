@@ -42,6 +42,8 @@ pub enum Action {
     CycleTabBar,
     /// Reload `~/.aiTerminal/config.toml` and reapply preferences live.
     ReloadConfig,
+    /// Toggle the native workspace surface over the focused pane's folder.
+    Workspace,
 }
 
 impl Action {
@@ -89,6 +91,7 @@ impl Action {
             "reset_zoom" => ResetZoom,
             "cycle_tab_bar" => CycleTabBar,
             "reload_config" => ReloadConfig,
+            "workspace" => Workspace,
             _ => return None,
         })
     }

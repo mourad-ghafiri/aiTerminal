@@ -119,6 +119,9 @@ pub struct Term {
     /// drains it with [`take_clipboard`] and performs the real OS write (the
     /// emulator itself never touches the clipboard; testable, no side effects).
     pending_clipboard: Option<String>,
+    /// Set by `OSC 7788;workspace` — a program inside this pane asking the host to
+    /// open workspace mode here. Drained once by the host, like the clipboard.
+    pending_workspace: bool,
     /// Inline diagram placements (`OSC 1338`) the renderer draws over the grid.
     placements: Vec<Placement>,
     /// Alternate-screen diagram placements (positioned by cell; rebuilt per app repaint).

@@ -60,7 +60,7 @@ pub fn ai(args: &[String]) -> i32 {
         eprintln!("       aiTerminal ai agent [<name>]                 # the installed agents");
         eprintln!("       aiTerminal ai job [clear]");
         eprintln!("       aiTerminal ai mcp                          # the declared MCP servers, connected");
-        eprintln!("       aiTerminal ai workspace [--continue]       # the folder as a conversation (@workspace)");
+        eprintln!("       aiTerminal ai workspace                    # the folder as a conversation (@workspace, in the app)");
         return 2;
     }
 

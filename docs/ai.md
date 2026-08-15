@@ -748,12 +748,17 @@ With **no model configured**, `@job` still reads `in 5m`, `at 17:30`, `every hou
 
 ## `@workspace` — the folder as a conversation
 
-Type `@workspace` and the terminal becomes the workspace: the **whole screen**
-(alt screen — your shell is restored exactly as it was on exit) opens on a banner —
-the aiTerminal mark, the folder, what the overlay adds, the pool and its strategy —
-with the input box **centered** under it. Your first message anchors the panel to
-the bottom for the rest of the sitting. A model is NOT required to open: browsing,
-`/help`, `!` and `/mcp` all work; only a prompt answers with the setup hint.
+The workspace is a **native surface of the app itself** — drawn by the same
+engine that draws every pane, not an ANSI TUI fighting the terminal from inside
+one. Press **⌘J** (action `workspace`, rebindable), or type `@workspace` in any
+pane: the CLI stages a private OSC the host answers by opening the surface over
+that pane's folder. It opens on a banner — the aiTerminal mark, the folder, what
+the overlay adds, the pool and its strategy — with the input bar at the bottom.
+⌘J (or `Esc` on an empty idle bar) puts your terminal back exactly as it was; the
+sitting keeps running, and the same key returns to the conversation where it
+stood. A model is NOT required to open: browsing, `/help`, `!` and `/mcp` all
+work; only a prompt answers with the setup hint. (Outside aiTerminal,
+`ai workspace` says where the feature lives and exits clean.)
 
 Ask, follow up, and the conversation remembers — one transcript carries the whole sitting, compacted
 automatically when the window demands it. Every answer renders live as Markdown with
@@ -766,47 +771,51 @@ and the product's whole `@` language works mid-conversation.
 | --- | --- |
 | `/command` | a slash command (below) — plus every prompt file as `/<name>` |
 | `!cmd` | ONE shell command, judged by the guard, its output shown and folded into the next turn |
-| `@flow …` / `@job …` / `@loop …` / `@agent` / `@mcp` | the real command, inline — the board paints right here, and the outcome feeds the conversation |
+| `@flow …` / `@job …` / `@loop …` / `@agent` / `@mcp` | the real command, run inline — framed by dim rules, its exit folded into the conversation and into the model's context |
 | `@<agent> task` | one run of that agent (project overlay first), its answer folded in |
 | `@<path>` | attach a file, exactly as everywhere else |
 | anything else | a conversation turn |
 
 Slash surface: `/help` `/init` `/clear` `/compact` `/model` `/agent` `/agents` `/mcp`
-`/memory` `/cost` `/readonly` `/trust` `/resume` `/exit`. `/readonly` is plan mode:
-the toolset narrows to the safe (read-only) set. `@workspace --continue` folds the
-folder's last conversation back in.
+`/memory` `/cost` `/readonly` `/status` `/retry` `/save` `/files` `/skills` `/keys`
+`/trust` `/resume` `/exit`. A partly-typed command with the band open submits the
+**highlighted** match — Enter selects, so `/st⏎` is `/status`. `/readonly` is plan
+mode: the toolset narrows to the safe (read-only) set. `/resume` folds the folder's
+last conversation back in.
 
 ### The chrome
 
-A bordered **input box** anchors the bottom of the pane, the conversation scrolls
-above it, and one dim status row states the sitting: root · build/plan · persona ·
-serving model · tokens and cost · overlay dot. The border's color states the mode —
-accent for build, amber for plan. Typing `/` or `@` opens an **autocomplete
-dropdown** (↑/↓ select, Tab accepts); while a turn runs the box becomes a working
-row — spinner, elapsed, the muse's aside, `esc interrupts` — and anything you type
-meanwhile becomes the **draft** of your next message, waiting in the box when the
-answer lands. A guard `confirm` arrives as an amber ask-block answered with y/N. Completions
-open in a fixed-height band BELOW the box, so filtering never moves what you are
-typing. Tool moments are marked by kind, flow-style: `⚙` native · `⌁` MCP ·
-`✧` delegate · `◆` memory — and inline `@flow`/`@job`/`@loop` runs are framed by
-dim rules, their own live boards embedded in the conversation.
+A rounded **input bar** anchors the bottom of the surface, the conversation
+scrolls above it, and one dim status row states the sitting: root · build/plan ·
+persona · serving model · tokens and cost · overlay dot. The bar's top rule states
+the mode — accent for build, amber for plan. Typing `/` or `@` opens the
+**completion band** above the bar (fuzzy-ranked: prefix matches first, then
+subsequences, ↑/↓ select, Tab accepts, Enter runs the highlighted match); while a
+turn runs the bar becomes a working row — spinner, the muse's aside,
+`esc interrupts` — and anything you type meanwhile becomes the **draft** of your
+next message, waiting in the bar when the answer lands. A guard `confirm` arrives
+as an amber ask-block answered with y/N. Tool moments are marked by kind,
+flow-style: `⚙` native · `⌁` MCP · `✧` delegate · `◆` memory — and inline
+`@flow`/`@job`/`@loop` runs are framed by dim rules in the conversation.
 
 | Key | Does |
 | --- | --- |
-| `Enter` | send · `Ctrl+J` newline (the box grows, ↑/↓ walk the rows) |
+| `Enter` | send · `Ctrl+J` / `Shift+Enter` newline (↑/↓ walk the rows) |
 | `Tab` | complete `/` and `@` · accept the dropdown selection |
 | `Shift+Tab` | toggle plan/build |
 | `↑` / `↓` | history (or dropdown / draft rows) |
-| `Esc` | close the dropdown · clear the line · **interrupt a running turn** |
+| `Esc` | close the band · clear the line · **interrupt a running turn** · on an empty idle bar, close the surface |
 | `Enter` mid-run | **steer**: your note joins the run at its next step, and the MODEL decides — pivot now, or finish the current step first |
 | `Ctrl+A/E/B/F/W/U/K` | emacs-style line editing |
 | `Ctrl+C` | clear; twice on an empty line leaves · `Ctrl+D` on empty leaves |
 
-The screen is drawn by a **compositor**: one loop owns the terminal, every key
-and every streamed line arrives as an event in one queue, and each change becomes
-one complete frame — every row painted, the panel always the last rows. That is
-the stability guarantee: whatever interleaves, the next frame is whole (the same
-single-model rendering opencode's Bubble Tea foundation uses).
+The surface is drawn by **the app's own engine** — the same pixel surface, glyph
+cache and VT engine that draw every pane. The conversation lives in a headless
+terminal of its own, so Markdown, colors and native diagrams render exactly as
+they do in a pane, with real scrollback (wheel and PageUp/PageDown). Underneath,
+one state machine folds every key and every streamed line from one queue into one
+model (the single-model discipline opencode's Bubble Tea foundation uses) — and
+because the app owns every pixel, there is no second painter left to race.
 
 ### The project overlay
 

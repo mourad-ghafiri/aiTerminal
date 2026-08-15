@@ -109,6 +109,36 @@ impl EventHandler for GuiApp {
             }
             return;
         }
+        // The workspace surface is modal over the panes: keys, text and the wheel
+        // are the conversation's. Its own chord (⌘J) closes it; window-level
+        // events keep their meaning.
+        if self.chat.is_open() {
+            match &ev {
+                Event::KeyDown { code, mods, .. } => {
+                    if matches!(self.keymap.lookup(&Chord::new(*code, *mods)), Some(Action::Workspace)) {
+                        self.toggle_workspace();
+                        return;
+                    }
+                    if self.chat.on_event(&ev) {
+                        self.dirty.set();
+                    }
+                }
+                Event::TextInput { .. } | Event::Scroll { .. } => {
+                    if self.chat.on_event(&ev) {
+                        self.dirty.set();
+                    }
+                }
+                Event::RedrawRequested => self.render(gpu),
+                Event::Resized { width_px, height_px, scale } => {
+                    self.ensure_cache(*scale);
+                    self.win_px = (*width_px, *height_px);
+                    self.relayout();
+                }
+                Event::CloseRequested => self.request_close(CloseIntent::Quit),
+                _ => {}
+            }
+            return;
+        }
         match ev {
             Event::Resized { width_px, height_px, scale } => {
                 self.ensure_cache(scale);

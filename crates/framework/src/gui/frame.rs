@@ -51,6 +51,14 @@ impl GuiApp {
             if let Some(text) = staged {
                 platform::os::clipboard_write(&text);
             }
+            // `@workspace` typed in this pane staged its request the same way
+            // (OSC 7788) — the host answers by opening the surface over its cwd.
+            let asked = s.term.lock().unwrap_or_else(|e| e.into_inner()).take_workspace_request();
+            if asked && !self.chat.is_open() {
+                let root = self.focused_folder();
+                self.chat.open(root, self.dirty.clone());
+                self.dirty.set();
+            }
         }
         if !self.dirty.take() {
             return;
@@ -84,6 +92,12 @@ impl GuiApp {
             fresh_surface = true;
         }
         let base_px = self.base_px();
+        // The workspace surface sizes its model to this frame, folds its worker's
+        // queued events, and feeds its terms — all BEFORE anything draws.
+        if self.chat.is_open() {
+            let cell_w = self.cache.as_mut().unwrap().metrics(base_px).cell_w;
+            self.chat.pump(w as f32, cell_w);
+        }
         let active_i = self.tabs.active_index();
         let infos: Vec<TabInfo> = self
             .tabs
@@ -114,7 +128,9 @@ impl GuiApp {
         // Everything the NON-pane pixels depend on. A moved stamp (or an active
         // overlay/drag, whose visuals change sub-frame) → the plain full redraw.
         let chrome_stamp = {
-            let mut s = format!("{w}x{h}:{base_px}:{active_i}:{}:{:?}", self.tab_bar.name(), self.theme.name);
+            // The workspace surface's openness is chrome: closing it must trigger
+            // the full repaint that brings the panes back from under it.
+            let mut s = format!("{w}x{h}:{base_px}:{active_i}:{}:{:?}:{}", self.tab_bar.name(), self.theme.name, self.chat.is_open());
             s.push_str(&format!("{:?}{:?}{:?}{:?}", self.theme.bg, self.theme.accent, self.theme.muted, self.theme.fg));
             for i in &infos {
                 s.push_str(&format!("|{}:{}:{}", i.index, i.title, i.active));
@@ -130,6 +146,7 @@ impl GuiApp {
         let full = fresh_surface
             || self.switcher.state_mut().is_some()
             || self.confirm.state_mut().is_some()
+            || self.chat.is_open()
             || self.tab_drag.is_some()
             || chrome_stamp != self.frame_chrome;
 
@@ -210,6 +227,11 @@ impl GuiApp {
                     }
                 }
             }
+        }
+        // The workspace surface draws over the panes; the switcher and the close
+        // confirmation stay above it — they are questions, it is a place.
+        if self.chat.is_open() {
+            self.chat.draw(surface, cache, theme, base_px, w, h, cursor_style);
         }
         // The switcher overlay draws above the panes (open switcher → full frame).
         if let Some(s) = self.switcher.state_mut() {

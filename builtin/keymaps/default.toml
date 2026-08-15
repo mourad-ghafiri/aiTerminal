@@ -71,6 +71,11 @@ action = "tab_switcher"
 key    = "cmd+k"
 action = "tab_switcher"
 
+# The workspace: the focused pane's folder as a conversation (same key closes it).
+[[keybinding]]
+key    = "cmd+j"
+action = "workspace"
+
 # ── Splits / panes ──────────────────────────────────────────────────────────
 [[keybinding]]
 key    = "cmd+d"

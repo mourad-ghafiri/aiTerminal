@@ -128,6 +128,7 @@ impl GuiApp {
             config,
             default_zoom,
             guard,
+            chat: chat::ChatSurface::new(),
             switcher: TabSwitcher::new(),
             confirm: Confirm::new(),
             session_ctx: String::new(),

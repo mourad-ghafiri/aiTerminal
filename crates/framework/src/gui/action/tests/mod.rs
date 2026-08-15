@@ -34,7 +34,7 @@ fn defaults_have_core_bindings() {
     assert_eq!(k.lookup(&Chord::parse("cmd+9").unwrap()), Some(&Action::GoToTab(8))); // single-digit jumps to 9
     assert_eq!(k.lookup(&Chord::parse("cmd+p").unwrap()), Some(&Action::TabSwitcher));
     assert_eq!(k.lookup(&Chord::parse("cmd+k").unwrap()), Some(&Action::TabSwitcher));
-    assert_eq!(k.lookup(&Chord::parse("cmd+j").unwrap()), None); // unbound falls through
+    assert_eq!(k.lookup(&Chord::parse("cmd+j").unwrap()), Some(&Action::Workspace));
     // Shift-family scroll chords (terminal scrollback + app document).
     assert_eq!(k.lookup(&Chord::parse("shift+pageup").unwrap()), Some(&Action::ScrollPageUp));
     assert_eq!(k.lookup(&Chord::parse("shift+up").unwrap()), Some(&Action::ScrollLineUp));

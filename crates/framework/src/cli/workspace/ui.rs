@@ -1,23 +1,21 @@
-//! The loop: every event in one queue, every frame from one hand.
+//! The state machine: every event in one queue, one model out.
 //!
-//! This file is the ONLY writer the workspace terminal has. Keys, ticks, streamed
-//! content, state changes, the guard's question, an inline run borrowing the
-//! screen — all of it arrives as an [`Event`] on one channel, is folded into the
-//! [`Screen`] model by [`UiState::update`], and becomes at most one whole
-//! [`frame`](super::screen::frame) per batch. Order of events IS order on screen;
-//! there is nothing left to race.
+//! Keys, streamed content, state changes, the guard's question, an inline run's
+//! framing — all of it arrives as an [`Event`] and is folded into the [`Screen`]
+//! model by [`UiState::update`]. Order of events IS order on screen; there is
+//! nothing left to race.
 //!
-//! The pure core ([`UiState`]) is separated from the thread shell ([`start`]) so
-//! tests drive the exact update rules — the storm test included — with no thread,
-//! no terminal, no timing.
+//! The core is PURE — no thread, no terminal, no timing — which is why the same
+//! rules serve the headless scenario worlds and the native surface (`gui::chat`,
+//! the only renderer) unchanged, and why the storm test can drive them raw.
 
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::input::{Edit, LineBuffer, LineSource};
-use super::screen::{frame, EditView, PanelState, Screen, Status};
-use crate::mdedit::key::{parse_key, Key};
+use super::screen::{EditView, PanelState, Screen, Status};
+use crate::mdedit::key::Key;
 
 /// Everything that can happen to the UI.
 pub(crate) enum Event {
@@ -33,7 +31,8 @@ pub(crate) enum Event {
     Status(Status),
     /// The guard's confirm — answered on `reply` from the keyboard.
     Ask { act: String, reason: String, reply: Sender<bool> },
-    /// An inline run wants the terminal: painting stops, the ack says "yours".
+    /// An inline run is about to start: the renderer acks when it is ready for
+    /// the run's framing (the native surface never stops, so it acks at once).
     Suspend(Sender<()>),
     Resume,
 }
@@ -76,6 +75,11 @@ impl Pulse {
             c.cancel();
         }
     }
+    /// The composed waiting label right now (base + muse aside), if a turn runs.
+    pub(crate) fn label_now(&self) -> Option<String> {
+        self.label()
+    }
+
     fn label(&self) -> Option<String> {
         use crate::cli::observe::Waiting;
         let started = (*self.started.lock().unwrap_or_else(|e| e.into_inner()))?;
@@ -146,14 +150,13 @@ impl Editor {
         if token.is_empty() || !(token.starts_with('/') || token.starts_with('@')) || text.contains(' ') {
             return None;
         }
-        Some(self.describe.iter().filter(|(name, _)| name.starts_with(token) && name != &token).cloned().collect())
+        Some(rank(token, &self.describe))
     }
 
     fn view(&self) -> EditView {
         let dropdown = self.dropdown();
         let selected = self.selected.min(dropdown.as_ref().map(|m| m.len().saturating_sub(1)).unwrap_or(0));
-        let (row, col) = self.buf.row_col();
-        EditView { rows: self.buf.rows(), cursor: (row, col), dropdown, selected }
+        EditView { rows: self.buf.rows(), dropdown, selected }
     }
 
     fn completions(&self) -> Vec<String> {
@@ -169,12 +172,11 @@ pub(crate) struct UiState {
     lines: Sender<Out>,
     ask_reply: Option<Sender<bool>>,
     ask_prev: Option<PanelState>,
-    /// A suspend waiting for the writer to clear the screen before acking.
+    /// A Suspend's ack, waiting for the renderer to say it is ready.
     pending_ack: Option<Sender<()>>,
     /// The two-line banner the anchored era opens with.
     compact: Vec<String>,
     pub(crate) suspended: bool,
-    pub(crate) tick: usize,
 }
 
 impl UiState {
@@ -189,7 +191,6 @@ impl UiState {
             pending_ack: None,
             compact,
             suspended: false,
-            tick: 0,
         }
     }
 
@@ -348,6 +349,14 @@ impl UiState {
                 }
                 return self.submit("/readonly".into());
             }
+            Key::PageUp => {
+                self.screen.scroll = (self.screen.scroll + 10).min(self.screen.log.len().saturating_sub(1));
+                return true;
+            }
+            Key::PageDown => {
+                self.screen.scroll = self.screen.scroll.saturating_sub(10);
+                return true;
+            }
             Key::Esc => match ed.dropdown().is_some() {
                 true => ed.suppressed = true,
                 false => {
@@ -357,7 +366,19 @@ impl UiState {
             },
             key => match ed.buf.apply(&key) {
                 Edit::Accept => {
-                    let line = ed.buf.text();
+                    let mut line = ed.buf.text();
+                    // A partly-typed command with the band open submits the
+                    // HIGHLIGHTED match — Enter selects, the opencode/Claude
+                    // gesture — with any arguments after the token kept.
+                    if let Some((name, _)) = ed.dropdown().and_then(|m| m.get(ed.selected).cloned()) {
+                        let mut parts = line.splitn(2, char::is_whitespace);
+                        let _token = parts.next().unwrap_or("");
+                        let rest = parts.next().unwrap_or("").trim().to_string();
+                        line = match rest.is_empty() {
+                            true => name,
+                            false => format!("{name} {rest}"),
+                        };
+                    }
                     ed.buf = LineBuffer::default();
                     if !line.trim().is_empty() {
                         ed.remember(&line);
@@ -457,12 +478,53 @@ impl crate::cli::observe::TailSink for TailEvents {
     }
 }
 
+/// Rank `candidates` for `token`: exact-prefix matches first, then subsequence
+/// matches (`/ro` finds `/readonly`), both in their given (stable) order — so a
+/// partly-typed command is one Enter away.
+pub(crate) fn rank(token: &str, candidates: &[(String, String)]) -> Vec<(String, String)> {
+    let mut prefix = Vec::new();
+    let mut fuzzy = Vec::new();
+    for (name, about) in candidates {
+        if name == token {
+            continue;
+        }
+        if name.starts_with(token) {
+            prefix.push((name.clone(), about.clone()));
+        } else if is_subsequence(token, name) {
+            fuzzy.push((name.clone(), about.clone()));
+        }
+    }
+    prefix.extend(fuzzy);
+    prefix
+}
+
+fn is_subsequence(needle: &str, hay: &str) -> bool {
+    let mut hay = hay.chars();
+    'outer: for n in needle.chars() {
+        for h in hay.by_ref() {
+            if h == n {
+                continue 'outer;
+            }
+        }
+        return false;
+    }
+    true
+}
+
 /// The sitting's handle: senders for everyone, the pulse, and the line stream the
 /// REPL reads as its [`LineSource`].
 pub(crate) struct UiHandle {
     pub(crate) events: Sender<Event>,
     pub(crate) pulse: Arc<Pulse>,
     lines: Mutex<Receiver<Out>>,
+}
+
+impl UiHandle {
+    /// Assemble a handle from its parts — the GUI builds the channels and keeps
+    /// the consuming ends; the Repl worker gets this producer-side handle.
+    pub(crate) fn assemble(events: Sender<Event>, pulse: Arc<Pulse>, lines: Receiver<Out>) -> UiHandle {
+        UiHandle { events, pulse, lines: Mutex::new(lines) }
+    }
 }
 
 /// The REPL's input: ask the loop for the editor, wait for a line.
@@ -490,83 +552,6 @@ impl crate::guard::Approver for UiAsk {
         }
         answer.recv().unwrap_or(false)
     }
-}
-
-/// Start the loop: the reader thread (keys), the writer thread (frames), the one
-/// terminal owner. Production only — tests drive [`UiState`] directly.
-pub(crate) fn start(splash: Vec<String>, compact: Vec<String>, describe: Vec<(String, String)>, hist_file: Option<std::path::PathBuf>) -> Arc<UiHandle> {
-    let (events, inbox) = channel::<Event>();
-    let (lines_tx, lines_rx) = channel::<Out>();
-    let pulse = Arc::new(Pulse::default());
-    let handle = Arc::new(UiHandle { events: events.clone(), pulse: pulse.clone(), lines: Mutex::new(lines_rx) });
-
-    // Keys → events.
-    {
-        let events = events.clone();
-        std::thread::spawn(move || {
-            use std::io::Read;
-            let mut pending: Vec<u8> = Vec::new();
-            let mut buf = [0u8; 64];
-            loop {
-                let n = match std::io::stdin().read(&mut buf) {
-                    Ok(0) | Err(_) => return,
-                    Ok(n) => n,
-                };
-                pending.extend_from_slice(&buf[..n]);
-                while let Some((key, used)) = parse_key(&pending) {
-                    pending.drain(..used);
-                    if events.send(Event::Key(key)).is_err() {
-                        return;
-                    }
-                }
-            }
-        });
-    }
-
-    // The loop: fold events, refresh the working label, paint whole frames.
-    {
-        let pulse = pulse.clone();
-        std::thread::spawn(move || {
-            use std::io::Write;
-            let mut state = UiState::new(splash, compact, describe, hist_file, pulse.clone(), lines_tx);
-            let mut err = std::io::stderr();
-            let mut dirty = true;
-            loop {
-                match inbox.recv_timeout(Duration::from_millis(90)) {
-                    Ok(event) => {
-                        dirty |= state.update(event);
-                        // Drain the burst so a fast stream costs one frame, not many.
-                        while let Ok(more) = inbox.try_recv() {
-                            dirty |= state.update(more);
-                        }
-                    }
-                    Err(RecvTimeoutError::Timeout) => {
-                        state.tick += 1;
-                        if let PanelState::Working { label, .. } = &mut state.screen.panel {
-                            if let Some(fresh) = pulse.label() {
-                                *label = fresh;
-                            }
-                            dirty = true;
-                        }
-                    }
-                    Err(RecvTimeoutError::Disconnected) => return,
-                }
-                if let Some(ack) = state.take_pending_ack() {
-                    // Hand the terminal over clean, ONCE; Resume repaints it whole.
-                    let _ = err.write_all(b"\x1b[2J\x1b[H");
-                    let _ = err.flush();
-                    let _ = ack.send(());
-                }
-                if dirty && !state.suspended {
-                    let (cols, rows) = (crate::cli::style::term_cols(), crate::cli::style::term_rows());
-                    let _ = err.write_all(frame(&state.screen, cols, rows.max(10), state.tick).as_bytes());
-                    let _ = err.flush();
-                    dirty = false;
-                }
-            }
-        });
-    }
-    handle
 }
 
 #[cfg(test)]

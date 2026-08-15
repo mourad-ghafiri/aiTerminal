@@ -1,0 +1,17 @@
+name = "workspace outside the app points home and exits clean"
+tags = ["cli", "workspace"]
+
+# `@workspace` is the app's own native surface now. Typed outside aiTerminal there
+# is no host to open it — the command says where the feature lives and exits
+# clean; typed inside the app it stages a private OSC the host answers by opening
+# the surface. Either way it must never hang waiting on input. (The conversation
+# itself is proved in scenarios/workspace/.)
+
+[setup]
+home = "workspace-no-host"
+
+[[step]]
+run = "@workspace"
+
+[[step]]
+expect_exit = 0

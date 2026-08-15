@@ -169,6 +169,12 @@ impl Perform for Term {
                     }
                 }
             }
+            // `OSC 7788 ; workspace` — a program inside this pane (the `@workspace`
+            // CLI, when it finds itself inside aiTerminal) asks the host to open
+            // workspace mode here. Staged like the clipboard; the host drains it.
+            "7788" if fields.len() >= 2 && fields[1] == b"workspace" => {
+                self.pending_workspace = true;
+            }
             // `OSC 1338 ; <rows> ; <base64 source> [ ; <cols> ]` — draw an inline diagram
             // natively. On the primary screen it reserves `rows` grid rows at the cursor (see
             // [`Placement`]); on the alternate screen it's positioned at the cursor cell and

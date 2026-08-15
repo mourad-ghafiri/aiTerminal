@@ -1,15 +1,21 @@
-//! `@workspace` — the folder becomes a conversation.
+//! `@workspace` — the folder becomes a conversation, drawn by the app's own engine.
 //!
-//! A Claude-Code-style chat over the current project: `/commands`, the product's
-//! whole `@` language inline (flows, jobs, loops, agents), answers always rendered
-//! as Markdown with native diagrams, and a project-local `aiTerminal.md` +
-//! `.aiTerminal/` overlaying the global AI config — behind a trust gate, because a
-//! repo's config can execute code.
+//! The conversation CORE lives here, headless: the router, the persistent
+//! transcript, the guard with its interactive approver, the steer seam, the
+//! trust-gated project overlay, every `/command`. It talks to the world through
+//! two seams — a line source in, a [`ui::UiHandle`] event stream out — and is
+//! proven entirely through them (the scenario world drives whole sittings with no
+//! window and no terminal).
+//!
+//! The FACE is native: `gui::chat` renders this core with the same pixel surface,
+//! glyph cache and VT engine that draw every pane. There is no in-pane ANSI TUI;
+//! `ai workspace` typed inside aiTerminal reaches the host through a private OSC
+//! (the inline-diagram pattern) and the host opens the surface.
 //!
 //! The guard owns the boundary end to end: every model action goes through the one
 //! existing tool pipeline, a `Confirm` rule finally reaches the human sitting here,
 //! `!` commands are judged like any other, and a project's guard rules can only
-//! tighten. The REPL adds an input surface, never an execution surface.
+//! tighten. The workspace adds an input surface, never an execution surface.
 
 pub(crate) mod banner;
 pub(crate) mod init;
@@ -22,47 +28,44 @@ pub(crate) mod ui;
 
 use std::sync::{Arc, Mutex};
 
-use crate::cli::style::{accent, muted, reset};
-
-/// `ai workspace [--continue]` — the interactive entry.
-pub(crate) fn ai_workspace_cmd(args: &[String]) -> i32 {
-    use std::io::IsTerminal;
-    crate::config::Config::ensure_default();
-    crate::i18n::install(crate::config::Config::load().i18n_catalog());
-    if !std::io::stdin().is_terminal() {
-        eprintln!("aiTerminal: workspace mode is a conversation — it needs a terminal (stdin is not one)");
-        return 2;
+/// `ai workspace` — the shell-side entry. Inside aiTerminal the host is asked to
+/// open the native surface (a private OSC, exactly how inline diagrams travel);
+/// anywhere else the answer says where the feature lives.
+pub(crate) fn ai_workspace_cmd(_args: &[String]) -> i32 {
+    if crate::cli::media::is_native_terminal() {
+        // The pane's Term stages this; the app opens the workspace over this pane's cwd.
+        print!("\x1b]7788;workspace\x07");
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        return 0;
     }
-    let resume = args.iter().any(|a| a == "--continue" || a == "--resume");
-    let cwd = match std::env::current_dir() {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("aiTerminal: cannot read the current directory: {e}");
-            return 2;
-        }
-    };
-    let root = crate::ai::session::resolve_root(&cwd);
+    eprintln!(
+        "aiTerminal: workspace mode is the app's own surface \u{2014} type `@workspace` inside {} (or press its workspace key)",
+        corelib::brand::NAME
+    );
+    0
+}
+
+/// One sitting's Repl core, against a [`ui::UiHandle`] — the GUI surface's worker
+/// thread runs this and nothing else does. The trust gate asks through the same
+/// event stream (the amber ask block), so the person answers in the surface.
+pub(crate) fn run_core(root: std::path::PathBuf, handle: Arc<ui::UiHandle>) {
+    crate::config::Config::ensure_default();
+    let root = crate::ai::session::resolve_root(&root);
     let session = crate::ai::Session::at(&root, &crate::config::Config::sessions_dir());
     let session_dir = session.memory_dir().parent().map(|p| p.to_path_buf());
 
-    // The trust gate, in plain cooked mode BEFORE any chrome exists — a y/N on a
-    // question is not a TUI's job, and raw mode must not start until it is answered.
-    let mut ask = |question: &str| {
-        eprintln!("{}{question}{}", accent(), reset());
-        eprint!("  open it? [y/N] ");
-        let _ = std::io::Write::flush(&mut std::io::stderr());
-        let mut line = String::new();
-        let _ = std::io::stdin().read_line(&mut line);
-        matches!(line.trim(), "y" | "Y" | "yes" | "Yes")
+    let granted = match session_dir.as_deref() {
+        Some(dir) => {
+            let asker = ui::UiAsk(handle.clone());
+            let mut ask = |question: &str| {
+                use crate::guard::Approver;
+                asker.approve("opening this folder's project overlay", question)
+            };
+            trust::establish(&root, dir, &mut ask) == trust::Trust::Granted
+        }
+        None => false,
     };
-    let trusted = match session_dir.as_deref() {
-        Some(dir) => trust::establish(&root, dir, &mut ask),
-        None => trust::Trust::Declined,
-    };
-    let granted = trusted == trust::Trust::Granted;
-    if !granted {
-        eprintln!("{}opening without the project overlay \u{2014} global config only{}", muted(), reset());
-    }
 
     let ws = crate::config::overlay::Workspace::open(&root, granted);
     let base = crate::config::Config::load();
@@ -79,16 +82,25 @@ pub(crate) fn ai_workspace_cmd(args: &[String]) -> i32 {
     let runner = crate::cli::runner::build_runner(&cfg, &settings, Some(root.clone()), guard.clone(), hub);
     let client = crate::ai::Client::new(settings.clone(), crate::ai::CurlTransport::default());
 
-    // The whole terminal becomes the workspace: alt screen in, restored on every
-    // exit path — then ONE loop owns it: keys in, whole frames out, everything
-    // else (this REPL included) only sends events. That single ownership is the
-    // stability the panel era could not give.
-    let _screen = AltScreen::enter();
-    let describe = describe_for_dropdown(&ws);
-    let hist = session_dir.as_ref().map(|d| d.join("chat").join("history"));
-    let facts = banner::Facts {
+    let input: repl::SharedInput = Arc::new(Mutex::new(Box::new(ui::UiLines(handle.clone()))));
+    let asker = Arc::new(ui::UiAsk(handle.clone()));
+    let mut repl = repl::Repl::new(ws, cfg, settings, client, guard, runner, input, session_dir).with_ui(handle);
+    // The loop's approver: the guard's confirm renders as the amber ask-block and
+    // is answered from the keyboard. Same rule, same words, one keyboard owner.
+    repl.runner.ctx.approver = asker;
+    repl.drive();
+}
+
+/// The banner's facts for a root — what the native surface opens on. Read-only:
+/// counts and names come off disk; nothing project-declared executes here (the
+/// trust gate in [`run_core`] guards everything that could).
+pub(crate) fn banner_facts(root: &std::path::Path) -> banner::Facts {
+    let root = crate::ai::session::resolve_root(root);
+    let ws = crate::config::overlay::Workspace::open(&root, true);
+    let settings = crate::config::Config::load().ai_settings();
+    banner::Facts {
         root: root.display().to_string(),
-        overlay: repl::overlay_line_for(&ws, granted),
+        overlay: repl::overlay_line_for(&ws, true),
         instructions: ws.project_instructions().map(|(name, _)| name),
         pool: settings.resolve_key().is_some().then(|| {
             format!(
@@ -97,49 +109,22 @@ pub(crate) fn ai_workspace_cmd(args: &[String]) -> i32 {
                 format!("{:?}", settings.pool.strategy).to_lowercase()
             )
         }),
-    };
-    let cols = crate::cli::style::term_cols();
-    let sitting = ui::start(banner::render(&facts, cols), banner::compact(&facts), describe, hist);
-    let input: repl::SharedInput = Arc::new(Mutex::new(Box::new(ui::UiLines(sitting.clone()))));
-    let asker = Arc::new(ui::UiAsk(sitting.clone()));
-
-    let mut repl = repl::Repl::new(ws, cfg, settings, client, guard, runner, input, session_dir).with_ui(sitting);
-    // The loop's approver: the guard's confirm renders as the amber ask-block and
-    // is answered from the keyboard. Same rule, same words, one keyboard owner.
-    repl.runner.ctx.approver = asker;
-    if resume {
-        repl.resume_last();
-    }
-    repl.drive()
-}
-
-/// The sitting's screen: alt screen + hidden cursor on enter (the panel draws its
-/// own caret), everything restored on drop — a panic or a `?` still hands the
-/// person their terminal back exactly as it was.
-struct AltScreen;
-
-impl AltScreen {
-    fn enter() -> AltScreen {
-        use std::io::Write;
-        let mut err = std::io::stderr();
-        let _ = err.write_all(b"\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H");
-        let _ = err.flush();
-        AltScreen
     }
 }
 
-impl Drop for AltScreen {
-    fn drop(&mut self) {
-        use std::io::Write;
-        let mut err = std::io::stderr();
-        let _ = err.write_all(b"\x1b[?25h\x1b[?1049l");
-        let _ = err.flush();
-    }
+/// Where a root's sitting persists its input history (arrow-up across sittings).
+pub(crate) fn history_file(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    let root = crate::ai::session::resolve_root(root);
+    let session = crate::ai::Session::at(&root, &crate::config::Config::sessions_dir());
+    session.memory_dir().parent().map(|d| d.join("chat").join("history"))
 }
 
-/// Everything the dropdown can explain: built-ins with their about text, the
-/// overlay's prompt commands, the `@` verbs, and the installed agents.
-fn describe_for_dropdown(ws: &crate::config::overlay::Workspace) -> Vec<(String, String)> {
+/// Everything the completion band can explain, for a root: built-ins with their
+/// about text, the overlay's prompt commands, the `@` verbs, the installed
+/// agents. Names only — same read-only stance as [`banner_facts`].
+pub(crate) fn describe_for(root: &std::path::Path) -> Vec<(String, String)> {
+    let root = crate::ai::session::resolve_root(root);
+    let ws = crate::config::overlay::Workspace::open(&root, true);
     let mut out: Vec<(String, String)> = slash::BUILTINS.iter().map(|c| (c.name.to_string(), c.about.to_string())).collect();
     for p in crate::ai::defs::load_prompts_in(&ws.prompts_dirs()) {
         out.push((format!("/{}", p.name), "your prompt command".into()));

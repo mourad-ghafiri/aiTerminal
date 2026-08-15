@@ -111,3 +111,54 @@ fn the_dropdown_opens_on_slash_and_tab_accepts_the_selection() {
         _ => panic!("a line was expected"),
     }
 }
+
+#[test]
+fn rank_puts_prefixes_first_then_subsequences() {
+    let cands: Vec<(String, String)> = ["/readonly", "/resume", "/retry", "/help", "@coder"]
+        .iter()
+        .map(|n| (n.to_string(), "about".to_string()))
+        .collect();
+    let got: Vec<String> = rank("/re", &cands).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(got, ["/readonly", "/resume", "/retry"], "prefix matches, stable order");
+    let got: Vec<String> = rank("/ro", &cands).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(got, ["/readonly"], "subsequence finds what prefix cannot");
+    assert!(rank("/zzz", &cands).is_empty());
+}
+
+#[test]
+fn enter_with_the_band_open_runs_the_highlighted_command() {
+    let (mut ui, rx) = state();
+    ui.update(Event::Idle);
+    type_text(&mut ui, "/rea");
+    ui.update(Event::Key(Key::Enter));
+    match rx.try_recv() {
+        Ok(Out::Line(line)) => assert_eq!(line, "/readonly", "partial typing + Enter selects"),
+        _ => panic!("a line was expected"),
+    }
+    // …and arguments after the token survive the selection.
+    ui.update(Event::Idle);
+    type_text(&mut ui, "@cod fix the tests");
+    // (a space after the token closes the band, so this submits literally — the
+    //  selection applies while the band is OPEN, i.e. mid-token)
+    ui.update(Event::Key(Key::Enter));
+    match rx.try_recv() {
+        Ok(Out::Line(line)) => assert_eq!(line, "@cod fix the tests"),
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn page_keys_scroll_and_new_content_snaps_back() {
+    let (mut ui, _rx) = state();
+    ui.update(Event::Idle);
+    for i in 0..40 {
+        ui.screen.log.push(format!("line{i}"));
+    }
+    ui.update(Event::Key(Key::PageUp));
+    assert_eq!(ui.screen.scroll, 10);
+    ui.update(Event::Key(Key::PageDown));
+    assert_eq!(ui.screen.scroll, 0);
+    ui.update(Event::Key(Key::PageUp));
+    ui.update(Event::Append("fresh".into()));
+    assert_eq!(ui.screen.scroll, 0, "new content follows the bottom");
+}

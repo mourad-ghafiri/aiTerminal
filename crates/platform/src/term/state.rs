@@ -28,6 +28,7 @@ impl Term {
             cursor_visible: true,
             last_feed: None,
             pending_clipboard: None,
+            pending_workspace: false,
             placements: Vec::new(),
             alt_placements: Vec::new(),
             mouse_track: 0,
@@ -101,6 +102,12 @@ impl Term {
     /// Drain text staged by `OSC 52` (a program writing the system clipboard).
     pub fn take_clipboard(&mut self) -> Option<String> {
         self.pending_clipboard.take()
+    }
+
+    /// Drain a program's request (`OSC 7788;workspace`) to open workspace mode in
+    /// this pane — `@workspace` typed inside aiTerminal reaches the host this way.
+    pub fn take_workspace_request(&mut self) -> bool {
+        std::mem::take(&mut self.pending_workspace)
     }
 
     /// The shell-reported working directory + host (`(host, path)`), from OSC 7 /

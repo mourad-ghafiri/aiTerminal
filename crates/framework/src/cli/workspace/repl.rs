@@ -66,6 +66,9 @@ pub(crate) struct Repl<T: crate::ai::Transport> {
     cancel: crate::ai::CancelToken,
     /// The model that actually served the last turn, for the status row.
     served: String,
+    /// The last prompt and answer, for /retry and /save.
+    last_prompt: Option<String>,
+    last_answer: Option<String>,
 }
 
 /// How a handled line leaves the loop.
@@ -117,6 +120,8 @@ impl<T: crate::ai::Transport> Repl<T> {
             ui: None,
             cancel,
             served: String::new(),
+            last_prompt: None,
+            last_answer: None,
         }
     }
 
@@ -229,6 +234,15 @@ impl<T: crate::ai::Transport> Repl<T> {
             Route::Mcp => self.mcp(),
             Route::Memory(note) => self.memory(note),
             Route::Cost => self.cost(),
+            Route::StatusCard => self.status_card(),
+            Route::Retry => match self.last_prompt.clone() {
+                Some(prompt) => self.turn(&prompt),
+                None => self.note("nothing to retry yet \u{2014} say something first"),
+            },
+            Route::Save(path) => self.save(path),
+            Route::Files(glob) => self.files(glob),
+            Route::Skills => self.skills(),
+            Route::Keys => self.keys(),
             Route::Trust => {
                 if let Some(dir) = &self.session_dir {
                     super::trust::reset(dir);
@@ -425,6 +439,8 @@ impl<T: crate::ai::Transport> Repl<T> {
         self.transcript = Some(transcript);
         finish_streamed(&mut obs, &run.answer);
         self.close_stream(&run, started);
+        self.last_prompt = Some(prompt.clone());
+        self.last_answer = Some(run.answer.clone());
         self.log_exchange(&prompt, &run.answer);
     }
 
@@ -449,8 +465,8 @@ impl<T: crate::ai::Transport> Repl<T> {
         // so the conversation reads as one document with the run embedded.
         let (dim, r) = (muted(), reset());
         self.say(&format!("{dim}\u{2500}\u{2500} @{} {}\u{2500}\u{2500}{r}", argv.join(" "), "\u{2500}".repeat(8)));
-        // The run owns the terminal: the loop clears and stops painting (the ack
-        // says the screen is really free), and Resume repaints the whole frame.
+        // Suspend/Resume frame the run for the renderer (the native surface acks
+        // at once and keeps drawing; the run's footer lands as ordinary appends).
         if let Some(ui) = &self.ui {
             let (ack, freed) = std::sync::mpsc::channel();
             let _ = ui.events.send(super::ui::Event::Suspend(ack));
@@ -592,6 +608,103 @@ impl<T: crate::ai::Transport> Repl<T> {
     fn cost(&self) {
         let (input, output, cost) = self.spent;
         self.note(&format!("this sitting: {input} in / {output} out \u{b7} ${cost:.4}"));
+    }
+
+    /// `/status` — the sitting on one card.
+    fn status_card(&self) {
+        let (a, dim, r) = (accent(), muted(), reset());
+        let strategy = format!("{:?}", self.settings.pool.strategy).to_lowercase();
+        let turns = self.transcript.as_ref().map(|t| t.len()).unwrap_or(0);
+        let mcp = self.runner.mcp.as_ref().map(|h| h.lock().unwrap_or_else(|e| e.into_inner()).report().len()).unwrap_or(0);
+        let mode = if self.readonly { "plan (read-only tools)" } else { "build" };
+        self.say(&format!("{a}\u{2726} {}{r}", self.ws.root.display()));
+        self.say(&format!(
+            "  {dim}{}{r}",
+            match self.ws.overlaid() {
+                true => overlay_line_for(&self.ws, true),
+                false => "project overlay off \u{2014} global config serves (/trust re-opens the question)".to_string(),
+            }
+        ));
+        self.say(&format!("  {dim}mode {mode} \u{b7} persona {}{r}", self.persona.as_deref().unwrap_or("(default)")));
+        match self.settings.resolve_key().is_some() {
+            true => self.say(&format!(
+                "  {dim}{} model(s) \u{b7} strategy {strategy} \u{b7} serving {}{r}",
+                self.settings.pool.entries.len(),
+                if self.served.is_empty() { self.client.model().id.clone() } else { self.served.clone() }
+            )),
+            false => self.say(&format!("  {dim}no model configured \u{2014} a prompt says how to add one{r}")),
+        }
+        self.say(&format!(
+            "  {dim}{} in / {} out \u{b7} ${:.4} \u{b7} {turns} transcript turn(s) \u{b7} {mcp} mcp server(s){r}",
+            self.spent.0, self.spent.1, self.spent.2
+        ));
+    }
+
+    /// `/save [path]` — the last answer to a file, through the guarded write.
+    fn save(&mut self, path: Option<String>) {
+        let Some(answer) = self.last_answer.clone() else {
+            return self.note("nothing to save yet \u{2014} there is no answer");
+        };
+        let path = path.unwrap_or_else(|| format!("answer-{}.md", corelib::datetime::format(now_unix() as i64, "%Y%m%d-%H%M%S", 0)));
+        let pairs = vec![("path".to_string(), path.clone()), ("content".to_string(), answer)];
+        match crate::caps::run("fs.write", &pairs, &self.runner.ctx) {
+            Ok(_) => self.note(&format!("saved \u{2014} {path}")),
+            Err(e) => self.say(&self.guard.mask(&e)),
+        }
+    }
+
+    /// `/files [glob]` — what the project holds, bounded.
+    fn files(&mut self, glob: Option<String>) {
+        let pattern = glob.unwrap_or_else(|| "**/*".to_string());
+        let pairs = vec![("pattern".to_string(), pattern.clone())];
+        match crate::caps::run("fs.glob", &pairs, &self.runner.ctx) {
+            Ok(v) => {
+                let text = crate::cli::run::json_text(&v);
+                let lines: Vec<&str> = text.lines().take(40).collect();
+                let total = text.lines().count();
+                for line in &lines {
+                    self.say(&format!("  {line}"));
+                }
+                if total > lines.len() {
+                    self.note(&format!("\u{2026}and {} more \u{2014} narrow the glob", total - lines.len()));
+                }
+            }
+            Err(e) => self.say(&self.guard.mask(&e)),
+        }
+    }
+
+    /// `/skills` — what the overlay serves, project-first.
+    fn skills(&self) {
+        let (a, dim, r) = (accent(), muted(), reset());
+        let skills = crate::ai::defs::load_skills_in(&self.ws.skills_dirs());
+        match skills.is_empty() {
+            true => self.note("no skills installed \u{2014} drop one in ai/skills/ (or this project's .aiTerminal/skills/)"),
+            false => {
+                for sk in skills {
+                    let first = sk.body.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim_start_matches('#').trim();
+                    self.say(&format!("  {a}{}{r} {dim}\u{2014} {}{r}", sk.name, first.chars().take(70).collect::<String>()));
+                }
+            }
+        }
+    }
+
+    /// `/keys` — the table, in-sitting.
+    fn keys(&self) {
+        let (dim, r) = (muted(), reset());
+        for (key, does) in [
+            ("enter", "send \u{b7} with the band open: run the highlighted command"),
+            ("ctrl+j", "newline (the box grows; \u{2191}\u{2193} walk the rows)"),
+            ("tab", "complete \u{b7} accept the selection"),
+            ("shift+tab", "toggle plan/build"),
+            ("\u{2191} \u{2193}", "history \u{b7} band selection \u{b7} draft rows"),
+            ("pgup/pgdn", "scroll the conversation \u{b7} anything new follows again"),
+            ("esc", "close the band \u{b7} clear the line \u{b7} INTERRUPT a running turn"),
+            ("enter mid-run", "send a note into the run \u{2014} the model decides"),
+            ("ctrl+a/e/b/f/w/u/k", "emacs-style editing"),
+            ("ctrl+c ctrl+c / ctrl+d", "leave"),
+        ] {
+            self.say(&format!("  {dim}{key:<22} {does}{r}"));
+        }
     }
 
     /// Append one exchange to the conversation log — redacted, like everything at rest.

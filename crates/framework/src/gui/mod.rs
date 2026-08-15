@@ -8,6 +8,7 @@
 // helper fns are `pub(crate)`.
 pub(crate) mod action;
 mod boot;
+mod chat;
 mod confirm;
 mod focus;
 mod frame;
@@ -26,6 +27,7 @@ mod workspace;
 pub(crate) use boot::{build_keymap, start_status_worker};
 pub use confirm::render_confirm_proof;
 use confirm::{draw_confirm, CloseIntent, Confirm};
+pub use chat::render_chat_proof;
 pub use switcher::render_switcher_proof;
 use switcher::{draw_switcher, SwitcherEntry, TabSwitcher};
 
@@ -488,6 +490,9 @@ pub struct GuiApp {
     default_zoom: f32,
     /// The security policy (command guard + redaction), from config + plugins.
     guard: Arc<crate::guard::Guard>,
+    /// The native workspace surface (Cmd+J / `@workspace` via its OSC), drawn over
+    /// the panes while open; its Repl worker survives a close and re-open.
+    chat: chat::ChatSurface,
     /// The tab quick-switcher overlay (Cmd+P / Cmd+K), if open.
     switcher: TabSwitcher,
     /// The close confirmation, if open. Above the switcher in every sense: it takes

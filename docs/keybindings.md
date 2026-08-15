@@ -13,6 +13,7 @@ your `~/.aiTerminal/keymaps/*.toml` files → `[[keybinding]]` tables in
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | next / previous tab |
 | `Cmd+1..9` | jump to tab N |
 | `Cmd+P` / `Cmd+K` | tab quick-switcher |
+| `Cmd+J` | the workspace — the focused pane's folder as a conversation (same key closes) |
 | `Cmd+D` / `Cmd+Shift+D` | split right / split down |
 | `Cmd+Shift+W` | close pane |
 | `Cmd+Alt+←/→/↑/↓` | focus pane in direction |
@@ -91,7 +92,7 @@ For custom bindings (`snake_case`, case/sep-insensitive):
 `focus_right` `focus_up` `focus_down` `focus_next` `zoom_pane` `zoom_in_pane`
 `zoom_out_pane` `reset_zoom` `cycle_tab_bar` `copy` `paste` `scroll_line_up`
 `scroll_line_down` `scroll_page_up` `scroll_page_down` `scroll_top`
-`scroll_bottom` `reload_config`
+`scroll_bottom` `reload_config` `workspace`
 
 ## Customizing
 

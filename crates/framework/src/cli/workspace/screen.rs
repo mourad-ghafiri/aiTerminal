@@ -1,25 +1,14 @@
-//! The screen: one model, one complete frame.
+//! The screen model, and the hygiene at its door.
 //!
-//! This is the stability guarantee, made structural. There is no erase count, no
-//! cursor climb, no handoff between painters — [`frame`] composes the ENTIRE
-//! terminal from the [`Screen`] model, every row absolutely, every row
-//! clear-to-EOL'd and width-clipped, inside one synchronized bracket. Whatever
-//! happened before a frame, the frame is right; a resize is simply the next one.
-//! (The architecture the settled harnesses share — opencode's Bubble Tea renders a
-//! complete `View()` from a single model the same way.)
+//! One [`Screen`] holds everything a sitting shows — the committed log, the
+//! streaming tail, the panel, the status facts. [`UiState`](super::ui::UiState)
+//! folds events into it; the native surface (`gui::chat`) reads it out. (The
+//! single-model architecture the settled harnesses share — opencode's Bubble Tea
+//! renders from one model the same way; here the app's own engine draws it.)
 //!
-//! Everything in this file is pure: model in, rows out. The one place that WRITES
-//! a frame is the [`super::ui`] loop, and it is the only holder of the terminal.
-
-use crate::cli::live::clip_styled;
-use crate::cli::style::{accent, muted, reset, warn};
-
-/// The input box never grows past this many content rows; the draft scrolls inside.
-const BOX_ROWS: usize = 8;
-/// The completion band's constant height while open.
-const DROP_ROWS: usize = 6;
-/// The working spinner's frames — the product's one braille spinner.
-const FRAMES: [char; 10] = ['\u{280b}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283c}', '\u{2834}', '\u{2826}', '\u{2827}', '\u{2807}', '\u{280f}'];
+//! Everything here is pure data and pure functions. [`sanitize`] and
+//! [`wrap_styled`] are the door: whatever arrives, the model only ever contains
+//! lines that render the same way everywhere they are drawn.
 
 /// The status line's facts — composed by the REPL, rendered here.
 #[derive(Clone, Default)]
@@ -37,7 +26,6 @@ pub(crate) struct Status {
 #[derive(Clone, Default)]
 pub(crate) struct EditView {
     pub rows: Vec<String>,
-    pub cursor: (usize, usize),
     /// `None` = closed. `Some(matches)` = the band is open at constant height, so
     /// the box never moves while matches filter.
     pub dropdown: Option<Vec<(String, String)>>,
@@ -66,6 +54,9 @@ pub(crate) struct Screen {
     pub splash: Option<Vec<String>>,
     /// Rows scrolled UP from the bottom; 0 follows the newest content.
     pub scroll: usize,
+    /// The width content is wrapped at — the shell refreshes it every frame, so
+    /// appends wrap at the width the frame will actually have.
+    pub cols: usize,
 }
 
 impl Screen {
@@ -77,163 +68,106 @@ impl Screen {
             status: Status::default(),
             splash: Some(splash),
             scroll: 0,
+            cols: 100,
         }
     }
 
-    /// Append committed content (split on newlines; a trailing newline adds no
-    /// phantom blank).
+    /// Append committed content: split on newlines, NORMALIZED at the door —
+    /// tabs expanded, carriage-return overwrites resolved, non-styling control
+    /// bytes dropped — then wrapped by display width, so no row can ever lie about
+    /// its width or silently lose its end. New content snaps the view back to
+    /// following the bottom.
     pub(crate) fn append(&mut self, text: &str) {
         let text = text.strip_suffix('\n').unwrap_or(text);
-        self.log.extend(text.split('\n').map(|l| l.trim_end_matches('\r').to_string()));
+        for raw in text.split('\n') {
+            let clean = sanitize(raw);
+            self.log.extend(wrap_styled(&clean, self.cols.max(20)));
+        }
         self.scroll = 0;
     }
 }
 
-/// The complete frame: position home, paint every row, clear what remains.
-pub(crate) fn frame(s: &Screen, cols: usize, rows: usize, tick: usize) -> String {
-    let cols = cols.max(20);
-    let rows = rows.max(6);
-    let body = match &s.splash {
-        Some(banner) => splash_rows(banner, s, cols, rows, tick),
-        None => anchored_rows(s, cols, rows, tick),
-    };
-    let mut out = String::from("\x1b[?2026h\x1b[H");
-    for (i, row) in body.iter().take(rows).enumerate() {
-        if i > 0 {
-            out.push_str("\r\n");
-        }
-        out.push_str(&clip_styled(row, cols));
-        out.push_str("\x1b[K");
-    }
-    out.push_str("\x1b[0J\x1b[?2026l");
-    out
-}
-
-/// The conversation layout: content window on top, the panel pinned at the bottom.
-fn anchored_rows(s: &Screen, cols: usize, rows: usize, tick: usize) -> Vec<String> {
-    let panel = panel_rows(&s.panel, &s.status, cols, tick);
-    let area = rows.saturating_sub(panel.len()).max(1);
-    let content: Vec<&String> = s.log.iter().chain(s.tail.iter()).collect();
-    // The visible window: follow the bottom, minus any deliberate scroll-back.
-    let below = s.scroll.min(content.len().saturating_sub(1));
-    let end = content.len().saturating_sub(below);
-    let start = end.saturating_sub(area);
-    let mut body: Vec<String> = content[start..end].iter().map(|l| (*l).clone()).collect();
-    while body.len() < area {
-        body.push(String::new());
-    }
-    body.extend(panel);
-    body
-}
-
-/// The opening screen: banner high, the box mid-screen, everything centered.
-fn splash_rows(banner: &[String], s: &Screen, cols: usize, rows: usize, tick: usize) -> Vec<String> {
-    let panel = panel_rows(&s.panel, &s.status, cols.min(88), tick);
-    let used = banner.len() + 2 + panel.len();
-    let top = rows.saturating_sub(used) / 3;
-    let mut body = vec![String::new(); top];
-    body.extend(super::banner::centered(banner.to_vec(), cols));
-    body.push(String::new());
-    body.push(String::new());
-    body.extend(super::banner::centered(panel, cols));
-    body
-}
-
-/// The panel's rows for one frame — the same states v3 drew, minus every cursor.
-pub(crate) fn panel_rows(state: &PanelState, status: &Status, cols: usize, tick: usize) -> Vec<String> {
-    let (dim, r) = (muted(), reset());
-    let mut out: Vec<String> = Vec::new();
-    match state {
-        PanelState::Hidden => {}
-        PanelState::Editing(edit) => {
-            let ink = if status.plan { warn() } else { accent() };
-            let inner = cols.saturating_sub(2);
-            out.push(format!("{ink}\u{256d}{}\u{256e}{r}", "\u{2500}".repeat(inner)));
-            let empty = edit.rows.iter().all(|row| row.is_empty());
-            if empty {
-                out.push(format!(
-                    "{ink}\u{2502}{r} \u{276f} \u{1b}[7m \u{1b}[27m {dim}ask \u{b7} / commands \u{b7} @ agents & flows \u{b7} ! shell \u{b7} ctrl+j newline{r}"
-                ));
-            } else {
-                let (crow, ccol) = edit.cursor;
-                let from = match crow >= BOX_ROWS {
-                    true => crow + 1 - BOX_ROWS,
-                    false => 0,
-                };
-                for (i, row) in edit.rows.iter().enumerate().skip(from).take(BOX_ROWS) {
-                    let glyph = if i == 0 { "\u{276f} " } else { "  " };
-                    let text = match i == crow {
-                        true => caret(row, ccol),
-                        false => row.clone(),
-                    };
-                    out.push(format!("{ink}\u{2502}{r} {glyph}{text}"));
+/// One line, made honest: tabs become spaces (4-column stops), an interior `\r`
+/// keeps only what the terminal would have shown last, and control characters are
+/// dropped — except the escape sequences that only STYLE (`ESC[…m` and friends),
+/// which pass through whole.
+pub(crate) fn sanitize(line: &str) -> String {
+    // A carriage return overwrites the line so far; the last segment wins. (This is
+    // what a progress bar leaves behind.)
+    let line = line.rsplit('\r').next().unwrap_or(line);
+    let mut out = String::new();
+    let mut col = 0usize;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\u{1b}' => {
+                // Copy a CSI sequence whole; drop any other escape flavour.
+                if chars.peek() == Some(&'[') {
+                    out.push(c);
+                    for c in chars.by_ref() {
+                        out.push(c);
+                        if c.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                } else if chars.peek() == Some(&']') {
+                    // An OSC (title, hyperlink …) runs to BEL or ST — swallow it whole.
+                    let mut last = ' ';
+                    for c in chars.by_ref() {
+                        if c == '\u{7}' || (last == '\u{1b}' && c == '\\') {
+                            break;
+                        }
+                        last = c;
+                    }
+                } else {
+                    // Any other escape flavour: drop the introducer and one payload char.
+                    let _ = chars.next();
                 }
             }
-            out.push(format!("{ink}\u{2570}{}\u{256f}{r}", "\u{2500}".repeat(inner)));
-            // The completion band, BELOW the box, at constant height while open.
-            if let Some(matches) = &edit.dropdown {
-                for i in 0..DROP_ROWS {
-                    out.push(match matches.get(i) {
-                        Some((name, about)) if i == edit.selected => format!("  {ink}\u{25b8} {name:<12}{r} {about}"),
-                        Some((name, about)) => format!("    {dim}{name:<12} {about}{r}"),
-                        None => String::new(),
-                    });
-                }
+            '\t' => {
+                let spaces = 4 - (col % 4);
+                out.extend(std::iter::repeat(' ').take(spaces));
+                col += spaces;
             }
-            out.push(status_row(status));
-        }
-        PanelState::Working { label, draft, steering } => {
-            let spin = FRAMES[tick % FRAMES.len()];
-            out.push(format!("{}{spin}{r} {label} {dim}\u{b7} esc interrupts \u{b7} enter sends a mid-run note{r}", accent()));
-            if let Some(msg) = steering {
-                out.push(format!("{}\u{21b3} steering: {msg} {dim}(the model decides at its next step){r}", warn()));
+            c if c.is_control() => {}
+            c => {
+                out.push(c);
+                col += corelib::unicode::char_width(c) as usize;
             }
-            if !draft.trim().is_empty() {
-                out.push(format!("{dim}\u{21b3} draft: {draft}{r}"));
-            }
-            out.push(status_row(status));
-        }
-        PanelState::Ask { act, reason } => {
-            let w = warn();
-            out.push(format!("{w}\u{26a0} the guard asks before {act}{r}"));
-            out.push(format!("  {dim}{reason}{r}"));
-            out.push(format!("{w}  allow this once? [y/N]{r}"));
         }
     }
     out
 }
 
-/// The caret as reverse video — the terminal's own cursor stays hidden.
-fn caret(row: &str, col: usize) -> String {
-    let chars: Vec<char> = row.chars().collect();
-    let before: String = chars.iter().take(col).collect();
-    let under: String = chars.get(col).map(|c| c.to_string()).unwrap_or_else(|| " ".into());
-    let after: String = chars.iter().skip(col + 1).collect();
-    format!("{before}\u{1b}[7m{under}\u{1b}[27m{after}")
-}
-
-fn status_row(s: &Status) -> String {
-    let (dim, r) = (muted(), reset());
-    let mut parts = vec![s.root.clone()];
-    parts.push(match s.plan {
-        true => format!("{}plan{}{dim}", warn(), reset()),
-        false => "build".into(),
-    });
-    if let Some(p) = &s.persona {
-        parts.push(format!("@{p}"));
+/// Wrap one (sanitized) line into rows of at most `max` display columns, escapes
+/// uncounted and carried across the break — the walker `clip_styled` uses, taught
+/// to continue instead of cut.
+pub(crate) fn wrap_styled(line: &str, max: usize) -> Vec<String> {
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    let mut used = 0usize;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            row.push(c);
+            for c in chars.by_ref() {
+                row.push(c);
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+        let w = corelib::unicode::char_width(c) as usize;
+        if used + w > max && used > 0 {
+            rows.push(std::mem::take(&mut row));
+            used = 0;
+        }
+        row.push(c);
+        used += w;
     }
-    if !s.model.is_empty() {
-        parts.push(s.model.clone());
-    }
-    if s.tokens.0 + s.tokens.1 > 0 {
-        parts.push(format!("{} in / {} out \u{b7} ${:.3}", s.tokens.0, s.tokens.1, s.cost));
-    }
-    parts.push(match s.overlay_on {
-        true => "\u{25cf} overlay".into(),
-        false => "\u{25cb} global".into(),
-    });
-    parts.push("shift+tab plan \u{b7} /help".into());
-    format!("  {dim}{}{r}", parts.join(" \u{b7} "))
+    rows.push(row);
+    rows
 }
 
 #[cfg(test)]

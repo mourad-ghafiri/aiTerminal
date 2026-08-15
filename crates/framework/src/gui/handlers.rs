@@ -105,6 +105,7 @@ impl GuiApp {
                 self.switcher.open(self.switcher_entries());
                 self.dirty.set();
             }
+            Action::Workspace => self.toggle_workspace(),
             Action::SplitRight | Action::SplitDown => {
                 let axis = if matches!(action, Action::SplitRight) { Axis::Horizontal } else { Axis::Vertical };
                 if let Some(p) = self.open_terminal_pane() {
@@ -172,5 +173,25 @@ impl GuiApp {
             Action::ScrollTop => self.scroll_focused(ScrollCmd::Top),
             Action::ScrollBottom => self.scroll_focused(ScrollCmd::Bottom),
         }
+    }
+
+    /// Toggle the workspace surface over the focused pane's folder (OSC-7 cwd,
+    /// home when the shell never reported one). Closing keeps the sitting's
+    /// worker alive — the same key re-opens the conversation where it stood.
+    pub(in crate::gui) fn toggle_workspace(&mut self) {
+        let root = self.focused_folder();
+        self.chat.toggle(root, self.dirty.clone());
+        self.dirty.set();
+    }
+
+    /// The folder the focused pane is in, for the workspace and its banner.
+    pub(in crate::gui) fn focused_folder(&self) -> std::path::PathBuf {
+        self.tabs
+            .active()
+            .focused_content()
+            .and_then(|p| p.session.cwd())
+            .map(|(_host, path)| std::path::PathBuf::from(path))
+            .or_else(platform::os::home_dir)
+            .unwrap_or_else(|| std::path::PathBuf::from("/"))
     }
 }

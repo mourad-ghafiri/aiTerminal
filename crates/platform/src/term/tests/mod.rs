@@ -698,3 +698,15 @@ fn content_ansi_round_trips_styles_through_a_fresh_term() {
     // The cap keeps the LAST lines.
     assert_eq!(t.content_ansi(1, None).len(), 1);
 }
+
+#[test]
+fn osc_7788_stages_a_workspace_request_drained_once() {
+    let mut t = Term::new(80, 24);
+    assert!(!t.take_workspace_request(), "nothing pending on a fresh term");
+    t.feed(b"\x1b]7788;workspace\x07");
+    assert!(t.take_workspace_request(), "the request is staged for the host");
+    assert!(!t.take_workspace_request(), "…and drained exactly once");
+    // Any other payload is not the request.
+    t.feed(b"\x1b]7788;something-else\x07");
+    assert!(!t.take_workspace_request());
+}

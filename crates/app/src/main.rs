@@ -28,6 +28,7 @@ struct Args {
     render_ppm: Option<String>,
     render_switcher: bool,
     render_confirm: bool,
+    render_chat: bool,
     render_chrome: Option<String>,
     render_icon: Option<String>,
     gen_themes: Option<String>,
@@ -45,6 +46,7 @@ fn parse_args() -> Args {
         render_ppm: None,
         render_switcher: false,
         render_confirm: false,
+        render_chat: false,
         render_chrome: None,
         render_icon: None,
         gen_themes: None,
@@ -61,6 +63,7 @@ fn parse_args() -> Args {
             "--render-ppm" => a.render_ppm = it.next(),
             "--render-switcher" => a.render_switcher = true,
             "--render-confirm" => a.render_confirm = true,
+            "--render-chat" => a.render_chat = true,
             "--render-chrome" => a.render_chrome = it.next(),
             "--render-icon" => a.render_icon = it.next(),
             "--gen-themes" => a.gen_themes = it.next(),
@@ -136,6 +139,13 @@ fn main() {
     if args.render_switcher {
         let out = args.render_ppm.clone().unwrap_or_else(|| "/tmp/switcher.ppm".into());
         guard(framework::gui::render_switcher_proof(&out), "switcher render failed");
+        return;
+    }
+
+    // `--render-chat [--render-ppm <out>]` renders the native workspace surface.
+    if args.render_chat {
+        let out = args.render_ppm.clone().unwrap_or_else(|| "/tmp/chat.ppm".into());
+        guard(framework::gui::render_chat_proof(&out), "workspace render failed");
         return;
     }
 
