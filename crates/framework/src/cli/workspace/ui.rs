@@ -34,11 +34,18 @@ pub(crate) enum Event {
     /// The trust gate's question, whole. The native surface raises it as a real
     /// modal; a renderer without one falls back to the ask panel.
     Gate { question: String, reply: Sender<bool> },
+    /// Clipboard text, CRLF-normalized here: typed into the editor (newlines
+    /// make rows) or folded into a running turn's draft.
+    Paste(String),
+    /// A clipboard image: attached to the NEXT message, anchored by a visible
+    /// `<#image_N>` token the person can move or delete.
+    PasteImage(crate::ai::ImageData),
 }
 
-/// What the loop hands outward: accepted input lines, or the end of the sitting.
+/// What the loop hands outward: accepted input (with any images its tokens
+/// kept), or the end of the sitting.
 pub(crate) enum Out {
-    Line(String),
+    Line { text: String, images: Vec<crate::ai::ImageData> },
     End,
 }
 
@@ -171,6 +178,8 @@ pub(crate) struct UiState {
     lines: Sender<Out>,
     ask_reply: Option<Sender<bool>>,
     ask_prev: Option<PanelState>,
+    /// Images pasted for the NEXT message, in token order (`<#image_1>` …).
+    pasted: Vec<crate::ai::ImageData>,
     /// The two-line banner the anchored era opens with.
     compact: Vec<String>,
 }
@@ -184,6 +193,7 @@ impl UiState {
             lines,
             ask_reply: None,
             ask_prev: None,
+            pasted: Vec::new(),
             compact,
         }
     }
@@ -252,6 +262,38 @@ impl UiState {
                 self.ask_prev = Some(self.screen.panel.clone());
                 self.ask_reply = Some(reply);
                 self.screen.panel = PanelState::Ask { act: "opening this folder's project overlay".into(), reason: question };
+                true
+            }
+            Event::Paste(text) => {
+                let text = text.replace("\r\n", "\n").replace('\r', "\n");
+                match &mut self.screen.panel {
+                    PanelState::Working { draft, .. } => {
+                        draft.push_str(&text.replace('\n', " "));
+                        true
+                    }
+                    PanelState::Editing(_) => {
+                        for c in text.chars() {
+                            self.editor.buf.apply(&Key::Char(c));
+                        }
+                        self.editor.suppressed = false;
+                        self.show_editor();
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            Event::PasteImage(data) => {
+                // Only the editor takes attachments, and count-capped like every
+                // attachment path.
+                if !matches!(self.screen.panel, PanelState::Editing(_)) || self.pasted.len() >= crate::cli::agentloop::MAX_ATTACHMENTS {
+                    return false;
+                }
+                self.pasted.push(data);
+                for c in format!("<#image_{}>", self.pasted.len()).chars() {
+                    self.editor.buf.apply(&Key::Char(c));
+                }
+                self.editor.suppressed = false;
+                self.show_editor();
                 true
             }
             Event::Key(key) => self.on_key(key),
@@ -353,6 +395,7 @@ impl UiState {
                 false => {
                     ed.buf = LineBuffer::default();
                     ed.hist_at = ed.history.len();
+                    self.pasted.clear();
                 }
             },
             key => match ed.buf.apply(&key) {
@@ -387,6 +430,7 @@ impl UiState {
                     }
                     ed.buf = LineBuffer::default();
                     ed.hist_at = ed.history.len();
+                    self.pasted.clear();
                 }
                 Edit::End => {
                     let _ = self.lines.send(Out::End);
@@ -412,7 +456,15 @@ impl UiState {
         let (a, dim, r) = (crate::cli::style::accent(), crate::cli::style::muted(), crate::cli::style::reset());
         self.screen.append(&format!("{dim}\u{2500}\u{2500}{r}"));
         self.screen.append(&format!("{a}\u{276f}{r} {line}"));
-        let _ = self.lines.send(Out::Line(line));
+        // An image rides only while its token is still in the message — deleting
+        // `<#image_2>` from the text drops image 2, exactly as it reads.
+        let images = std::mem::take(&mut self.pasted)
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| line.contains(&format!("<#image_{}>", i + 1)))
+            .map(|(_, d)| d)
+            .collect();
+        let _ = self.lines.send(Out::Line { text: line, images });
         self.show_editor();
         true
     }
@@ -503,13 +555,21 @@ pub(crate) struct UiHandle {
     pub(crate) events: Sender<Event>,
     pub(crate) pulse: Arc<Pulse>,
     lines: Mutex<Receiver<Out>>,
+    /// The last accepted line's images, parked here by [`UiLines`] for the turn
+    /// to collect — the generic [`LineSource`] trait stays a text seam.
+    media: Mutex<Vec<crate::ai::ImageData>>,
 }
 
 impl UiHandle {
     /// Assemble a handle from its parts — the GUI builds the channels and keeps
     /// the consuming ends; the Repl worker gets this producer-side handle.
     pub(crate) fn assemble(events: Sender<Event>, pulse: Arc<Pulse>, lines: Receiver<Out>) -> UiHandle {
-        UiHandle { events, pulse, lines: Mutex::new(lines) }
+        UiHandle { events, pulse, lines: Mutex::new(lines), media: Mutex::new(Vec::new()) }
+    }
+
+    /// The images the last accepted line carried — drained once, by the turn.
+    pub(crate) fn take_media(&self) -> Vec<crate::ai::ImageData> {
+        std::mem::take(&mut *self.media.lock().unwrap_or_else(|e| e.into_inner()))
     }
 }
 
@@ -521,7 +581,12 @@ impl LineSource for UiLines {
         let _ = self.0.events.send(Event::Idle);
         let lines = self.0.lines.lock().unwrap_or_else(|e| e.into_inner());
         match lines.recv() {
-            Ok(Out::Line(line)) => Some(line),
+            Ok(Out::Line { text, images }) => {
+                if !images.is_empty() {
+                    *self.0.media.lock().unwrap_or_else(|e| e.into_inner()) = images;
+                }
+                Some(text)
+            }
             Ok(Out::End) | Err(_) => None,
         }
     }

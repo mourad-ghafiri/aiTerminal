@@ -76,6 +76,13 @@ impl<T: Transport> Client<T> {
         self
     }
 
+    /// Replace the attached media in place — the seam a long-lived sitting uses
+    /// to give EACH turn its own attachments (set before a run, cleared after),
+    /// where the builder above serves the one-shot CLI paths.
+    pub fn set_images(&mut self, images: Vec<crate::ai::request::ImageData>) {
+        self.images = images;
+    }
+
     /// Whether the host requested cancellation — `run_agent` checks this between turns.
     pub fn is_cancelled(&self) -> bool {
         self.cancel.is_cancelled()

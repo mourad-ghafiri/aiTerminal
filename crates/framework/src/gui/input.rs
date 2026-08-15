@@ -149,9 +149,25 @@ impl EventHandler for GuiApp {
             }
             match &ev {
                 Event::KeyDown { code, mods, .. } => {
-                    if matches!(self.keymap.lookup(&Chord::new(*code, *mods)), Some(Action::Workspace)) {
-                        self.toggle_workspace();
-                        return;
+                    // The app-level chords the surface honors: its own toggle,
+                    // and the clipboard pair — copy the selection, paste text or
+                    // an image (a `<#image_N>` token anchors an attachment).
+                    match self.keymap.lookup(&Chord::new(*code, *mods)) {
+                        Some(Action::Workspace) => {
+                            self.toggle_workspace();
+                            return;
+                        }
+                        Some(Action::Copy) => {
+                            self.chat.copy_selection();
+                            self.dirty.set();
+                            return;
+                        }
+                        Some(Action::Paste) => {
+                            self.chat.paste();
+                            self.dirty.set();
+                            return;
+                        }
+                        _ => {}
                     }
                     if self.chat.on_event(&ev) {
                         self.dirty.set();
@@ -162,6 +178,18 @@ impl EventHandler for GuiApp {
                         self.dirty.set();
                     }
                 }
+                Event::MouseDown { button: MouseButton::Left, pos, .. } => {
+                    let s = self.scale as f32;
+                    self.chat.mouse_down(Point::new(pos.x * s, pos.y * s));
+                    self.dirty.set();
+                }
+                Event::MouseMove { pos, .. } => {
+                    let s = self.scale as f32;
+                    if self.chat.mouse_drag(Point::new(pos.x * s, pos.y * s)) {
+                        self.dirty.set();
+                    }
+                }
+                Event::MouseUp { .. } => self.chat.mouse_up(),
                 Event::RedrawRequested => self.render(gpu),
                 Event::Resized { width_px, height_px, scale } => {
                     self.ensure_cache(*scale);

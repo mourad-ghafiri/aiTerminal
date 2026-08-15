@@ -240,6 +240,18 @@ pub fn open_external(target: &str) -> Result<(), String> {
     cmd.arg(target).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Read an image from the system clipboard as PNG bytes (`None` = no image).
+pub fn clipboard_read_image() -> Option<Vec<u8>> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::clipboard::read_image()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
 /// Read UTF-8 text from the system clipboard.
 pub fn clipboard_read() -> Option<String> {
     #[cfg(target_os = "macos")]

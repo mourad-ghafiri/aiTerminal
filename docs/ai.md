@@ -773,7 +773,7 @@ and the product's whole `@` language works mid-conversation.
 | `!cmd` | ONE shell command, judged by the guard, its output shown and folded into the next turn |
 | `@flow …` / `@job …` / `@loop …` / `@agent` / `@mcp` | the real command, run inline — its output streams into the conversation between dim rules, Esc stops it, and its exit feeds the model's next turn |
 | `@<agent> task` | one run of that agent (project overlay first), its answer folded in |
-| `@<path>` | attach a file, exactly as everywhere else |
+| `@<path>` | attach a file — images and PDFs ride the turn as real media |
 | anything else | a conversation turn |
 
 Slash surface: `/help` `/init` `/clear` `/compact` `/model` `/agent` `/agents` `/mcp`
@@ -820,6 +820,7 @@ it).
 | `Esc` | close the band · clear the line · **interrupt a running turn** · on an empty idle bar, close the surface |
 | `Enter` mid-run | **steer**: your note joins the run at its next step, and the MODEL decides — pivot now, or finish the current step first |
 | `Ctrl+A/E/B/F/W/U/K` | emacs-style line editing |
+| `⌘C` / `⌘V` | copy the mouse selection out of the conversation · paste text — or a clipboard **image**, attached as a `<#image_N>` token you can move or delete |
 | `Ctrl+C` | clear; twice on an empty line leaves · `Ctrl+D` on empty leaves |
 
 The surface is drawn by **the app's own engine** — the same pixel surface, glyph

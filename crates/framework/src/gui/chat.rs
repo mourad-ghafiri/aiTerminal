@@ -51,7 +51,7 @@ pub(crate) fn layout(area: Rect, cell_h: f32, input_rows: usize, welcome: bool) 
         // The home: the panel centered (a dialog's width), the mark above it.
         let pw = (area.w - 2.0 * pad).min(760.0).max(320.0_f32.min(area.w));
         let px = (area.x + (area.w - pw) * 0.5).round();
-        let py = (area.y + (area.h - ph) * 0.55).round();
+        let py = (area.y + (area.h - ph) * 0.60).round();
         let content = Rect::new(area.x + pad, area.y + pad, area.w - 2.0 * pad, cell_h);
         ChatRects { content, panel: Rect::new(px, py, pw, ph) }
     } else {
@@ -119,6 +119,15 @@ pub(crate) struct ChatSurface {
     last_tail: Vec<String>,
     worker: Option<thread::JoinHandle<()>>,
     tick: usize,
+    /// Text selection over the conversation (display coords, scroll-aware).
+    selection: Option<platform::term::selection::Selection>,
+    /// A selection drag in flight.
+    selecting: bool,
+    /// The content rect + cell metrics of the last draw — the mouse's map.
+    content_rect: Rect,
+    cell: (f32, f32),
+    /// Last press, for double-click word selection.
+    last_click: Option<Instant>,
 }
 
 impl ChatSurface {
@@ -137,6 +146,11 @@ impl ChatSurface {
             last_tail: Vec::new(),
             worker: None,
             tick: 0,
+            selection: None,
+            selecting: false,
+            content_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
+            cell: (8.0, 16.0),
+            last_click: None,
         }
     }
 
@@ -271,6 +285,86 @@ impl ChatSurface {
         moved
     }
 
+    /// The display cell under a (scaled) point, clamped to the grid.
+    fn cell_at(&self, p: Point) -> platform::term::selection::Pos {
+        let (cw, ch) = self.cell;
+        let col = (((p.x - self.content_rect.x) / cw.max(1.0)).floor() as i32).max(0) as u16;
+        let row = (((p.y - self.content_rect.y) / ch.max(1.0)).floor() as i32).max(0) as u16;
+        platform::term::selection::Pos::new(col.min(self.content.cols().saturating_sub(1)), row.min(self.content.rows().saturating_sub(1)))
+    }
+
+    /// A press in the conversation starts (or double-click word-expands) a
+    /// selection; anywhere else it clears one.
+    pub(crate) fn mouse_down(&mut self, p: Point) {
+        use platform::term::selection::{expanded, Selection, SelectionMode};
+        if !self.content_rect.contains(p) {
+            self.selection = None;
+            self.selecting = false;
+            return;
+        }
+        let pos = self.cell_at(p);
+        let double = self.last_click.take().is_some_and(|t| t.elapsed() < Duration::from_millis(400));
+        self.last_click = Some(Instant::now());
+        self.selection = Some(match double {
+            true => expanded(&self.content, pos, SelectionMode::Word),
+            false => Selection::new(pos, SelectionMode::Char),
+        });
+        self.selecting = !double;
+    }
+
+    /// Extend the drag. Returns whether the selection moved (a repaint's worth).
+    pub(crate) fn mouse_drag(&mut self, p: Point) -> bool {
+        if !self.selecting {
+            return false;
+        }
+        let pos = self.cell_at(p);
+        if let Some(sel) = &mut self.selection {
+            sel.extend(pos);
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn mouse_up(&mut self) {
+        self.selecting = false;
+    }
+
+    /// ⌘C: the selection to the OS clipboard, scroll-aware — exactly what is on
+    /// screen. Returns whether something was copied.
+    pub(crate) fn copy_selection(&self) -> bool {
+        let Some(sel) = &self.selection else { return false };
+        if sel.is_empty() {
+            return false;
+        }
+        let text = platform::term::selection::text(&self.content, sel);
+        if text.is_empty() {
+            return false;
+        }
+        platform::os::clipboard_write(&text);
+        true
+    }
+
+    /// ⌘V: an image on the clipboard attaches (a `<#image_N>` token anchors it);
+    /// text types itself into the editor or a running turn's draft.
+    pub(crate) fn paste(&mut self) {
+        let Some(state) = self.state.as_mut() else { return };
+        if let Some(png) = platform::os::clipboard_read_image() {
+            if png.len() as u64 > crate::cli::attach::MEDIA_ATTACH_MAX {
+                state.update(ChatEvent::Append(format!(
+                    "(clipboard image over {} MB \u{2014} not attached)",
+                    crate::cli::attach::MEDIA_ATTACH_MAX / (1024 * 1024)
+                )));
+                return;
+            }
+            let data = crate::ai::ImageData { media_type: "image/png".into(), b64: corelib::codec::base64_encode(&png) };
+            state.update(ChatEvent::PasteImage(data));
+            return;
+        }
+        if let Some(text) = platform::os::clipboard_read() {
+            state.update(ChatEvent::Paste(text));
+        }
+    }
+
     /// Whether the trust gate modal is up — the input layer routes to it first.
     pub(crate) fn gate_open(&self) -> bool {
         self.gate.is_open()
@@ -307,6 +401,8 @@ impl ChatSurface {
                     }
                 }
                 if let Some(key) = translate(*code, *mods) {
+                    // Typing is intent to write, not to keep a highlight.
+                    self.selection = None;
                     state.update(ChatEvent::Key(key));
                     return true;
                 }
@@ -325,6 +421,9 @@ impl ChatSurface {
                     ScrollDelta::Lines { y, .. } => *y as i32,
                     ScrollDelta::Pixels { y, .. } => (*y / 16.0) as i32,
                 };
+                // A selection is made against a view; the view moving retires it
+                // rather than letting it silently mean different text.
+                self.selection = None;
                 self.content.scroll_view(rows);
                 true
             }
@@ -355,7 +454,9 @@ impl ChatSurface {
                     let cols = self.content.cols();
                     self.content.resize(cols, rows);
                 }
-                render_grid(surface, &self.content, theme, cache, base_px, r.content.x, r.content.y, false, cursor_style, None, None);
+                self.content_rect = r.content;
+                self.cell = (m.cell_w, m.cell_h);
+                render_grid(surface, &self.content, theme, cache, base_px, r.content.x, r.content.y, false, cursor_style, self.selection.as_ref(), None);
                 // The streaming tail: a floating card above the panel — an answer
                 // being written — with zero say over the layout.
                 let shown = self.last_tail.len().min(TAIL_ROWS as usize);

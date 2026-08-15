@@ -3,7 +3,7 @@
 /// Raw-size cap for an attached image/PDF (base64 grows it ~4/3 on the wire).
 use crate::cli::agentloop::MAX_ATTACHMENTS;
 
-const MEDIA_ATTACH_MAX: u64 = 4 * 1024 * 1024;
+pub(crate) const MEDIA_ATTACH_MAX: u64 = 4 * 1024 * 1024;
 /// Inline cap for an attached text file.
 pub(crate) const TEXT_ATTACH_MAX: usize = 48 * 1024;
 

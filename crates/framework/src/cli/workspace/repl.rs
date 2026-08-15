@@ -441,7 +441,13 @@ impl<T: crate::ai::Transport> Repl<T> {
         if !self.configured() {
             return;
         }
-        let (prompt, _media, file_ctx) = crate::cli::attach::collect_attachments(text);
+        // The turn's media: `@path` attachments from the line itself, plus any
+        // pasted images the accepted line carried (the `<#image_N>` tokens).
+        let (prompt, mut media, file_ctx) = crate::cli::attach::collect_attachments(text);
+        if let Some(ui) = &self.ui {
+            media.extend(ui.take_media());
+        }
+        self.client.set_images(media);
         let mut message = self.guard.hide(&prompt);
         if !file_ctx.trim().is_empty() {
             message.push_str(&format!("\n\n{}", self.guard.hide(&file_ctx)));
@@ -465,6 +471,8 @@ impl<T: crate::ai::Transport> Repl<T> {
         let mut transcript = self.transcript.take().expect("set above");
         let mut steer = PulseSteer(self.ui.as_ref().map(|ui| ui.pulse.clone()), self.guard.clone());
         let run = crate::ai::run_agent_over(&self.client, &spec, &mut transcript, &mut self.runner, &mut obs, &mut steer);
+        // Media is per-turn: the next turn attaches its own or none.
+        self.client.set_images(Vec::new());
         self.transcript = Some(transcript);
         finish_streamed(&mut obs, &run.answer);
         self.close_stream(&run, started);

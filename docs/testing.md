@@ -1,6 +1,6 @@
 # Testing
 
-aiTerminal has **1532 unit tests** and **329 scenarios**, and the whole suite runs in a
+aiTerminal has **1538 unit tests** and **329 scenarios**, and the whole suite runs in a
 few seconds with no network, no API key, no window, and no changes to your machine.
 
 ```sh
@@ -39,7 +39,7 @@ So the suite has both, and they are aimed at different targets.
 
 ## Unit tests
 
-1532 of them (1059 in `framework`, 337 in `corelib`, 136 in `platform`), beside the code
+1538 of them (1064 in `framework`, 337 in `corelib`, 137 in `platform`), beside the code
 they test. Named as sentences, so a failure reads as a statement about the product rather
 than a symbol that broke:
 

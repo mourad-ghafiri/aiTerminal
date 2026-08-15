@@ -195,3 +195,54 @@ fn a_scroll_event_moves_the_conversations_view_into_scrollback() {
     assert!(s.on_event(&up));
     assert!(!s.content.at_bottom());
 }
+
+#[test]
+fn a_full_sitting_streams_through_the_seam_and_the_surface_stays_true() {
+    // The stability claim, exercised: a turn starts, forty tail deltas and
+    // twenty commits interleave with a draft being typed, the turn settles —
+    // and every invariant holds. No renderer, no thread, no timing.
+    let mut s = surface();
+    inject(&s, ChatEvent::Working { label: "thinking".into() });
+    s.pump(420.0, 10.0);
+    for ch in "later".chars() {
+        assert!(s.on_event(&corelib::types::Event::TextInput { text: ch.to_string() }));
+    }
+    for i in 0..40 {
+        inject(&s, ChatEvent::Tail(vec![format!("tail {i}"), "\u{258c}".into()]));
+        if i % 2 == 0 {
+            inject(&s, ChatEvent::Append(format!("commit {i}")));
+        }
+        s.pump(420.0, 10.0);
+    }
+    inject(&s, ChatEvent::Idle);
+    s.pump(420.0, 10.0);
+    let state = s.state.as_ref().unwrap();
+    // Commits landed whole and in order.
+    let log = &state.screen.log;
+    let idx = |n: &str| log.iter().position(|l| l.contains(n)).unwrap_or_else(|| panic!("{n} missing from the log"));
+    assert!(idx("commit 0") < idx("commit 20") && idx("commit 20") < idx("commit 38"));
+    assert!(content_text(&s).join("\n").contains("commit 38"), "the term shows the newest commit");
+    // The streaming block is gone; the draft carried into the editor.
+    assert!(s.last_tail.is_empty(), "Idle clears the tail");
+    match &state.screen.panel {
+        PanelState::Editing(v) => assert_eq!(v.rows.join(""), "later", "the draft survived the turn"),
+        _ => panic!("expected the editor after Idle"),
+    }
+}
+
+#[test]
+fn a_drag_selects_exactly_the_cells_under_it_and_a_click_outside_clears() {
+    let mut s = surface();
+    inject(&s, ChatEvent::Append("hello world".into()));
+    s.pump(420.0, 10.0);
+    s.content_rect = Rect::new(10.0, 10.0, 400.0, 300.0);
+    s.cell = (10.0, 16.0);
+    s.mouse_down(Point::new(10.0, 10.0));
+    assert!(s.mouse_drag(Point::new(10.0 + 4.0 * 10.0, 10.0)), "the drag extends the selection");
+    s.mouse_up();
+    let sel = s.selection.expect("a selection exists");
+    assert_eq!(platform::term::selection::text(&s.content, &sel), "hello");
+    // Outside the conversation, a press clears rather than selects.
+    s.mouse_down(Point::new(500.0, 500.0));
+    assert!(s.selection.is_none());
+}
