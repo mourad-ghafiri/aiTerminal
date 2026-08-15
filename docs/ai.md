@@ -813,12 +813,16 @@ do, and Esc kills the run rather than orphaning it).
 | `Ctrl+C` | clear; twice on an empty line leaves · `Ctrl+D` on empty leaves |
 
 The surface is drawn by **the app's own engine** — the same pixel surface, glyph
-cache and VT engine that draw every pane. The conversation lives in a headless
+cache and VT engine that draw every pane. It occupies the panes area only: the
+app's own bottom bar (folder · cpu · memory) and the tab strip stay visible
+around it, even under the trust modal. The conversation lives in a headless
 terminal of its own, so Markdown, colors and native diagrams render exactly as
 they do in a pane, with real scrollback (wheel and PageUp/PageDown). Underneath,
 one state machine folds every key and every streamed line from one queue into one
 model (the single-model discipline opencode's Bubble Tea foundation uses) — and
 because the app owns every pixel, there is no second painter left to race.
+`/exit` (or Ctrl+D, or Ctrl+C twice on an empty line) ends the sitting and the
+surface closes with it; the next ⌘J opens a fresh one.
 
 ### The project overlay
 

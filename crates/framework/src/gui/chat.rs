@@ -36,19 +36,22 @@ pub(crate) struct ChatRects {
     pub status: Rect,
 }
 
-/// Lay the surface out: status at the bottom, the input bar above it, the band
-/// above that (when open), the streaming tail above that, content fills the rest.
-pub(crate) fn layout(w: f32, h: f32, cell_h: f32, band_rows: usize, tail_rows: usize) -> ChatRects {
+/// Lay the surface out INSIDE `area` — the panes region, so the app's own
+/// chrome (status bar, tab strip) stays visible around it: the workspace status
+/// strip at the area's bottom, the input bar above it, the band above that
+/// (when open), the streaming tail above that, content fills the rest.
+pub(crate) fn layout(area: Rect, cell_h: f32, band_rows: usize, tail_rows: usize) -> ChatRects {
     let pad = PAD;
     let status_h = cell_h + 8.0;
     let bar_h = cell_h + 16.0;
     let band_h = band_rows as f32 * (cell_h + 4.0);
     let tail_h = tail_rows as f32 * cell_h;
-    let status = Rect::new(pad, h - pad - status_h, w - 2.0 * pad, status_h);
-    let bar = Rect::new(pad, status.y - 4.0 - bar_h, w - 2.0 * pad, bar_h);
-    let band = Rect::new(pad, bar.y - band_h, w - 2.0 * pad, band_h);
-    let tail = Rect::new(pad, band.y - tail_h, w - 2.0 * pad, tail_h);
-    let content = Rect::new(pad, pad, w - 2.0 * pad, (tail.y - 2.0 * pad).max(cell_h));
+    let (left, inner_w) = (area.x + pad, area.w - 2.0 * pad);
+    let status = Rect::new(left, area.y + area.h - pad - status_h, inner_w, status_h);
+    let bar = Rect::new(left, status.y - 4.0 - bar_h, inner_w, bar_h);
+    let band = Rect::new(left, bar.y - band_h, inner_w, band_h);
+    let tail = Rect::new(left, band.y - tail_h, inner_w, tail_h);
+    let content = Rect::new(left, area.y + pad, inner_w, (tail.y - area.y - 2.0 * pad).max(cell_h));
     ChatRects { content, tail, bar, band, status }
 }
 
@@ -141,6 +144,11 @@ impl ChatSurface {
 
     /// Open (and on first open, start the Repl worker for `root`).
     pub(crate) fn open(&mut self, root: std::path::PathBuf, dirty: DirtyFlag) {
+        // A finished sitting (an earlier /exit, Ctrl+D, or a crash) resets first,
+        // so this open starts a FRESH sitting instead of showing a dead one.
+        if self.worker.as_ref().is_some_and(|w| w.is_finished()) {
+            *self = ChatSurface::new();
+        }
         self.open = true;
         if self.worker.is_some() {
             return;
@@ -198,9 +206,16 @@ impl ChatSurface {
     /// frame BEFORE drawing — content wraps at the width it will show at (the
     /// Term clips a width-shrink instead of rewrapping, so the model must never
     /// hand it a line wider than the rect). Returns whether anything moved.
-    pub(crate) fn pump(&mut self, wf: f32, cell_w: f32) -> bool {
+    pub(crate) fn pump(&mut self, area_w: f32, cell_w: f32) -> bool {
+        // The surface's liveness follows the worker's: /exit, Ctrl+D or a panic
+        // end the sitting, and the surface closes with it — the same frame brings
+        // the panes back, and the next ⌘J starts fresh.
+        if self.worker.as_ref().is_some_and(|w| w.is_finished()) {
+            *self = ChatSurface::new();
+            return true;
+        }
         let Some(state) = self.state.as_mut() else { return false };
-        let cols = (((wf - 2.0 * PAD) / cell_w.max(1.0)).floor() as u16).max(20);
+        let cols = (((area_w - 2.0 * PAD) / cell_w.max(1.0)).floor() as u16).max(20);
         if self.content.cols() != cols {
             self.content.resize(cols, self.content.rows());
             self.tail.resize(cols, TAIL_ROWS);
@@ -310,15 +325,15 @@ impl ChatSurface {
         }
     }
 
-    /// Draw the whole surface. The app calls this after the panes, like the switcher.
-    pub(crate) fn draw(&mut self, surface: &mut Surface, cache: &mut GlyphCache, theme: &Theme, base_px: f32, w: u32, h: u32, cursor_style: CursorStyle) {
+    /// Draw the whole surface INSIDE `area` (the panes region) — the app's own
+    /// status bar and tab strip stay visible around it. Called after the panes.
+    pub(crate) fn draw(&mut self, surface: &mut Surface, cache: &mut GlyphCache, theme: &Theme, base_px: f32, area: Rect, cursor_style: CursorStyle) {
         use corelib::gfx::text::draw_text;
         let Some(state) = self.state.as_ref() else { return };
-        let (wf, hf) = (w as f32, h as f32);
-        surface.fill_rect(Rect::new(0.0, 0.0, wf, hf), theme.bg);
+        surface.fill_rect(area, theme.bg);
         let m = cache.metrics(base_px);
         let (band_rows, tail_rows) = (band_len(&state.screen), self.last_tail.len().min(TAIL_ROWS as usize));
-        let r = layout(wf, hf, m.cell_h, band_rows, tail_rows);
+        let r = layout(area, m.cell_h, band_rows, tail_rows);
 
         // The conversation's height follows the rect (the width was already set by
         // pump, BEFORE content wrapped and fed) — then the pane renderer draws it.
@@ -339,13 +354,20 @@ impl ChatSurface {
                 surface.fill_rect(Rect::new(r.bar.x, r.bar.y, r.bar.w, 2.0), ink);
                 let baseline = r.bar.y + (r.bar.h - m.cell_h) * 0.5 + m.ascent;
                 let x = draw_text(surface, cache, "\u{276f} ", base_px, r.bar.x + 12.0, baseline, ink, r.bar.x + r.bar.w - 12.0, true);
-                let text = view.rows.join("  \u{23ce}  ");
-                let shown = if text.is_empty() { "ask \u{b7} / commands \u{b7} @ agents & flows \u{b7} ! shell".to_string() } else { text };
-                let color = if view.rows.iter().all(|t| t.is_empty()) { theme.muted } else { theme.fg };
-                let after = draw_text(surface, cache, &shown, base_px, x, baseline, color, r.bar.x + r.bar.w - 12.0, false);
-                // The caret: a block at the end (the buffer's own cursor is drawn
-                // simply in v1 — end-of-text — the row/col caret is a follow-up).
-                surface.fill_rect(Rect::new(after + 1.0, baseline - m.ascent, m.cell_w.max(4.0), m.cell_h), ink);
+                let right = r.bar.x + r.bar.w - 12.0;
+                let caret_w = m.cell_w.max(4.0);
+                // The caret sits where typing BEGINS: right after the chevron on an
+                // empty line (the placeholder rides behind it), after the text
+                // otherwise (end-of-text in v1 — the row/col caret is a follow-up).
+                let caret_x = match view.rows.iter().all(|t| t.is_empty()) {
+                    true => {
+                        let hint = "ask \u{b7} / commands \u{b7} @ agents & flows \u{b7} ! shell";
+                        draw_text(surface, cache, hint, base_px, x + caret_w + 6.0, baseline, theme.muted, right, false);
+                        x
+                    }
+                    false => draw_text(surface, cache, &view.rows.join("  \u{23ce}  "), base_px, x, baseline, theme.fg, right, false) + 1.0,
+                };
+                surface.fill_rect(Rect::new(caret_x, baseline - m.ascent, caret_w, m.cell_h), ink);
                 // The completion band, constant height while open.
                 if let Some(matches) = &view.dropdown {
                     for i in 0..band_rows {
@@ -364,15 +386,16 @@ impl ChatSurface {
             }
             PanelState::Working { label, draft, steering } => {
                 let baseline = r.bar.y + (r.bar.h - m.cell_h) * 0.5 + m.ascent;
+                let right = r.bar.x + r.bar.w - 12.0;
                 let spin = FRAMES[self.tick % FRAMES.len()].to_string();
-                let x = draw_text(surface, cache, &spin, base_px, r.bar.x + 12.0, baseline, theme.accent, wf, true);
+                let x = draw_text(surface, cache, &spin, base_px, r.bar.x + 12.0, baseline, theme.accent, right, true);
                 let mut line = format!(" {label} \u{b7} esc interrupts \u{b7} enter sends a note");
                 if let Some(s) = steering {
                     line.push_str(&format!("  \u{21b3} steering: {s}"));
                 } else if !draft.trim().is_empty() {
                     line.push_str(&format!("  \u{21b3} {draft}"));
                 }
-                draw_text(surface, cache, &line, base_px, x, baseline, theme.muted, wf - 12.0, false);
+                draw_text(surface, cache, &line, base_px, x, baseline, theme.muted, right, false);
             }
             PanelState::Ask { act, reason } => {
                 surface.fill_rounded_rect(r.bar, 8.0, theme.surface);
@@ -404,7 +427,7 @@ impl ChatSurface {
 
         // The trust gate rides above everything the surface draws.
         if let Some(gs) = self.gate.state_mut() {
-            super::gate::draw_gate(surface, cache, theme, base_px, w, h, gs);
+            super::gate::draw_gate(surface, cache, theme, base_px, area, gs);
         }
     }
 }
@@ -456,7 +479,7 @@ pub fn render_chat_proof(out_path: &str) -> std::io::Result<()> {
         s.update(ChatEvent::Key(ChatKey::Char('/')));
         s.update(ChatEvent::Key(ChatKey::Char('s')));
     }
-    chat.draw(&mut surface, &mut cache, &theme, 24.0, w, h, super::render::CursorStyle::Block);
+    chat.draw(&mut surface, &mut cache, &theme, 24.0, Rect::new(0.0, 0.0, w as f32, h as f32), super::render::CursorStyle::Block);
     crate::render::write_ppm(out_path, surface.pixels(), w, h)?;
     println!("rendered workspace surface \u{2192} {w}\u{00d7}{h}px \u{2192} {out_path}");
     Ok(())

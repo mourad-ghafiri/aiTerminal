@@ -105,22 +105,21 @@ impl Gate {
     }
 }
 
-/// Draw the gate over the workspace surface: a dimmed scrim and a centered panel
-/// with the question, its inject list, two buttons and the keys that drive them.
-/// The top rule is amber — this is the guard's flavour of question. Records the
-/// button rects into `s`.
+/// Draw the gate over the workspace surface, confined to `area` (the panes
+/// region — the app's own chrome stays visible even under the modal): a dimmed
+/// scrim and a centered panel with the question, its inject list, two buttons
+/// and the keys that drive them. The top rule is amber — this is the guard's
+/// flavour of question. Records the button rects into `s`.
 pub(crate) fn draw_gate(
     surface: &mut Surface,
     cache: &mut GlyphCache,
     theme: &Theme,
     base_px: f32,
-    w: u32,
-    h: u32,
+    area: Rect,
     s: &mut GateState,
 ) {
     use corelib::gfx::text::{draw_text, measure_text};
-    let (wf, hf) = (w as f32, h as f32);
-    surface.fill_rect(Rect::new(0.0, 0.0, wf, hf), corelib::types::Rgba8::new(0, 0, 0, 0xC8));
+    surface.fill_rect(area, corelib::types::Rgba8::new(0, 0, 0, 0xC8));
 
     let m = cache.metrics(base_px);
     let pad = 22.0;
@@ -140,11 +139,11 @@ pub(crate) fn draw_gate(
         content_w = content_w.max(measure_text(cache, line, base_px));
     }
     // A dialog, not a banner: capped so a long inject list wraps instead of
-    // stretching the panel window-wide — but never narrower than its own button
+    // stretching the panel area-wide — but never narrower than its own button
     // row (a translated label must not be the thing that gets clipped).
-    let cap = (wf - 40.0).min(720.0);
+    let cap = (area.w - 40.0).min(720.0);
     let need_buttons = decline_w + gap + open_w + 40.0 + 2.0 * pad;
-    let pw = (content_w + 2.0 * pad).min(cap).max(need_buttons.min((wf - 40.0).max(320.0))).max(320.0);
+    let pw = (content_w + 2.0 * pad).min(cap).max(need_buttons.min((area.w - 40.0).max(320.0))).max(320.0);
     let inner = pw - 2.0 * pad;
 
     // Nothing may be clipped in a question about running code: every long line —
@@ -156,8 +155,8 @@ pub(crate) fn draw_gate(
     let rows_h = |n: usize| n as f32 * m.cell_h + n.saturating_sub(1) as f32 * 4.0;
     let detail_block = if detail_rows.is_empty() { 0.0 } else { 10.0 + rows_h(detail_rows.len()) };
     let ph = pad + rows_h(title_rows.len()) + detail_block + 18.0 + btn_h + 14.0 + rows_h(hint_rows.len()) + pad;
-    let px = ((wf - pw) * 0.5).round();
-    let py = ((hf - ph) * 0.5).round();
+    let px = (area.x + (area.w - pw) * 0.5).round();
+    let py = (area.y + (area.h - ph) * 0.5).round();
 
     surface.fill_rounded_rect(Rect::new(px, py, pw, ph), 12.0, theme.surface);
     surface.fill_rect(Rect::new(px, py, pw, 2.0), theme.warn); // the guard's rule
@@ -245,7 +244,7 @@ pub fn render_gate_proof(out_path: &str) -> std::io::Result<()> {
     let mut gate = Gate::new();
     gate.open(question, reply);
     let s = gate.state_mut().unwrap();
-    draw_gate(&mut surface, &mut cache, &theme, 26.0, w, h, s);
+    draw_gate(&mut surface, &mut cache, &theme, 26.0, Rect::new(0.0, 0.0, w as f32, h as f32), s);
     crate::render::write_ppm(out_path, surface.pixels(), w, h)?;
     println!("rendered workspace trust gate \u{2192} {w}\u{00d7}{h}px \u{2192} {out_path}");
     Ok(())

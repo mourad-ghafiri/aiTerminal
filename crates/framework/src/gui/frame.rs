@@ -96,7 +96,7 @@ impl GuiApp {
         // queued events, and feeds its terms — all BEFORE anything draws.
         if self.chat.is_open() {
             let cell_w = self.cache.as_mut().unwrap().metrics(base_px).cell_w;
-            self.chat.pump(w as f32, cell_w);
+            self.chat.pump(self.panes_area.w, cell_w);
         }
         let active_i = self.tabs.active_index();
         let infos: Vec<TabInfo> = self
@@ -228,10 +228,12 @@ impl GuiApp {
                 }
             }
         }
-        // The workspace surface draws over the panes; the switcher and the close
-        // confirmation stay above it — they are questions, it is a place.
+        // The workspace surface draws over the panes — confined to their area, so
+        // the app's own status bar and tab strip stay visible around it. The
+        // switcher and the close confirmation stay above it — they are questions,
+        // it is a place.
         if self.chat.is_open() {
-            self.chat.draw(surface, cache, theme, base_px, w, h, cursor_style);
+            self.chat.draw(surface, cache, theme, base_px, self.panes_area, cursor_style);
         }
         // The switcher overlay draws above the panes (open switcher → full frame).
         if let Some(s) = self.switcher.state_mut() {

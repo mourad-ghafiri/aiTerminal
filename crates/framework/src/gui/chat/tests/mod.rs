@@ -27,7 +27,7 @@ fn content_text(s: &ChatSurface) -> Vec<String> {
 
 #[test]
 fn layout_stacks_status_bar_band_tail_bottom_up_and_content_fills_the_rest() {
-    let r = layout(800.0, 600.0, 16.0, 3, 5);
+    let r = layout(Rect::new(0.0, 0.0, 800.0, 600.0), 16.0, 3, 5);
     // Bottom-up: status hugs the bottom pad, the bar sits above it, the band
     // above the bar, the tail above the band, content owns the top.
     assert_eq!(r.status.y + r.status.h, 600.0 - 10.0);
@@ -45,7 +45,7 @@ fn layout_stacks_status_bar_band_tail_bottom_up_and_content_fills_the_rest() {
 
 #[test]
 fn layout_with_no_band_and_no_tail_gives_them_zero_height() {
-    let r = layout(800.0, 600.0, 16.0, 0, 0);
+    let r = layout(Rect::new(0.0, 0.0, 800.0, 600.0), 16.0, 0, 0);
     assert_eq!(r.band.h, 0.0);
     assert_eq!(r.tail.h, 0.0);
     assert_eq!(r.tail.y + r.tail.h, r.bar.y);
@@ -53,8 +53,23 @@ fn layout_with_no_band_and_no_tail_gives_them_zero_height() {
 
 #[test]
 fn layout_never_collapses_content_below_one_cell() {
-    let r = layout(300.0, 120.0, 16.0, 6, 12);
+    let r = layout(Rect::new(0.0, 0.0, 300.0, 120.0), 16.0, 6, 12);
     assert!(r.content.h >= 16.0);
+}
+
+#[test]
+fn layout_respects_an_offset_area_so_the_apps_chrome_survives() {
+    // The panes area starts below a top tab strip and ends above the status bar;
+    // every rect must stay inside it — nothing may paint over the chrome.
+    let area = Rect::new(0.0, 40.0, 800.0, 500.0);
+    let r = layout(area, 16.0, 2, 3);
+    for rect in [&r.content, &r.tail, &r.band, &r.bar, &r.status] {
+        assert!(rect.y >= area.y, "a rect rose above the area: {rect:?}");
+        assert!(rect.y + rect.h <= area.y + area.h + 0.01, "a rect sank below the area: {rect:?}");
+        assert_eq!(rect.x, area.x + 10.0);
+    }
+    assert_eq!(r.status.y + r.status.h, area.y + area.h - 10.0, "the strip hugs the AREA's bottom, not the window's");
+    assert_eq!(r.content.y, area.y + 10.0);
 }
 
 #[test]
@@ -120,6 +135,22 @@ fn typing_reaches_the_editor_and_esc_on_an_empty_idle_editor_closes() {
     let s2 = &mut surface();
     assert!(s2.on_event(&esc));
     assert!(!s2.open);
+}
+
+#[test]
+fn a_finished_sitting_closes_the_surface_and_the_next_open_is_fresh() {
+    // /exit (or Ctrl+D, or a crash) ends the worker; the surface must follow —
+    // close now, and let the next open start a NEW sitting instead of showing a
+    // dead one whose channels answer nobody.
+    let mut s = surface();
+    s.worker = Some(std::thread::spawn(|| {}));
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !s.worker.as_ref().unwrap().is_finished() && std::time::Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    assert!(s.pump(420.0, 10.0), "the closing frame repaints the panes");
+    assert!(!s.open, "the surface closed with its sitting");
+    assert!(s.state.is_none() && s.worker.is_none(), "…and is fresh for the next open");
 }
 
 #[test]
