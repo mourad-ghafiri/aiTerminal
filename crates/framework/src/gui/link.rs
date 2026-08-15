@@ -48,7 +48,7 @@ impl GuiApp {
     /// Resolve the link under a terminal cell to its column span `(col0, col1)` + the
     /// [`OpenAction`] it would trigger. Shared by ⌘-click (executes) and ⌘-hover (underlines).
     fn link_at_cell(&self, id: PaneId, cell: Pos) -> Option<(u16, u16, OpenAction)> {
-        let s = &self.tabs.active().get(id)?.session;
+        let s = self.tabs.active().get(id)?.session()?;
         // Read the cwd FIRST — `Session::cwd` locks the term mutex internally, so it
         // must not run while we hold a lock guard (the std mutex is non-reentrant; a
         // re-lock would deadlock the whole app). Only then take the lock for the row.

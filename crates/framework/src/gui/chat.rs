@@ -110,8 +110,12 @@ pub(crate) fn translate(code: KeyCode, mods: Modifiers) -> Option<ChatKey> {
 }
 
 /// The native workspace surface: the state machine, its two terms, its worker.
+/// One instance per workspace PANE — it lives in the split tree beside the
+/// terminals, and several can run at once.
 pub(crate) struct ChatSurface {
-    open: bool,
+    /// Bumped by every mutation — with the tick, the pane's content stamp, so
+    /// the incremental frame path can skip a quiet workspace like a quiet shell.
+    revision: u64,
     /// The folder this sitting is over (set on first open).
     root: std::path::PathBuf,
     /// The trust gate, raised as a real modal above the surface while open.
@@ -144,10 +148,21 @@ pub(crate) struct ChatSurface {
     working_since: Option<Instant>,
 }
 
+impl Drop for ChatSurface {
+    fn drop(&mut self) {
+        // Closing the pane ends the sitting: cancel anything in flight; dropping
+        // the UiState (and with it the lines sender) unblocks the worker's next
+        // read, which returns None, and the Repl leaves cleanly.
+        if let Some(p) = &self.pulse {
+            p.cancel_now();
+        }
+    }
+}
+
 impl ChatSurface {
-    pub(crate) fn new() -> ChatSurface {
+    fn new() -> ChatSurface {
         ChatSurface {
-            open: false,
+            revision: 0,
             root: std::path::PathBuf::new(),
             gate: super::gate::Gate::new(),
             facts: None,
@@ -169,43 +184,47 @@ impl ChatSurface {
         }
     }
 
-    pub(crate) fn is_open(&self) -> bool {
-        self.open
+    /// The sitting's root — what the pane's title names.
+    pub(crate) fn root(&self) -> &std::path::Path {
+        &self.root
     }
 
-    pub(crate) fn toggle(&mut self, root: std::path::PathBuf, dirty: DirtyFlag) {
-        match self.open {
-            true => self.open = false,
-            false => self.open(root, dirty),
-        }
+    /// Whether the sitting ended (`/exit`, Ctrl+D, a worker panic) — the frame
+    /// loop closes the pane exactly as it reaps an exited shell.
+    pub(crate) fn ended(&self) -> bool {
+        self.worker.as_ref().is_some_and(|w| w.is_finished())
     }
 
-    /// Open (and on first open, start the Repl worker for `root`).
-    pub(crate) fn open(&mut self, root: std::path::PathBuf, dirty: DirtyFlag) {
-        // A finished sitting (an earlier /exit, Ctrl+D, or a crash) resets first,
-        // so this open starts a FRESH sitting instead of showing a dead one.
-        if self.worker.as_ref().is_some_and(|w| w.is_finished()) {
-            *self = ChatSurface::new();
-        }
-        self.open = true;
-        if self.worker.is_some() {
-            return;
-        }
-        self.root = root.clone();
+    /// The pane's content stamp: unmoved means nothing about these pixels can
+    /// have changed. Every mutation bumps the revision; the tick carries the
+    /// working spinner's animation.
+    pub(crate) fn stamp(&self) -> u64 {
+        (self.revision << 16) ^ self.tick as u64
+    }
+
+    fn touch(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// A workspace sitting over `root`: the surface, its worker, its forwarder —
+    /// alive until the pane closes or the sitting ends.
+    pub(crate) fn open(root: std::path::PathBuf, dirty: DirtyFlag) -> ChatSurface {
+        let mut this = ChatSurface::new();
+        this.root = root.clone();
         let (events_tx, events_rx) = std::sync::mpsc::channel::<ChatEvent>();
         let (lines_tx, lines_rx) = std::sync::mpsc::channel::<Out>();
         let pulse = Arc::new(Pulse::default());
         let handle = Arc::new(UiHandle::assemble(events_tx, pulse.clone(), lines_rx));
         let describe = crate::cli::workspace::describe_for(&root);
         let hist = crate::cli::workspace::history_file(&root);
-        self.state = Some(UiState::new(Vec::new(), Vec::new(), describe, hist, pulse.clone(), lines_tx));
-        self.pulse = Some(pulse.clone());
+        this.state = Some(UiState::new(Vec::new(), Vec::new(), describe, hist, pulse.clone(), lines_tx));
+        this.pulse = Some(pulse.clone());
 
         // The forwarder: every worker event lands in the inbox AND wakes the OS
         // loop; while a turn runs it also beats the spinner (~8 fps). An idle
         // surface schedules no frames — the damage tracking stays honest.
         {
-            let inbox = self.inbox.clone();
+            let inbox = this.inbox.clone();
             let dirty = dirty.clone();
             thread::spawn(move || loop {
                 match events_rx.recv_timeout(Duration::from_millis(120)) {
@@ -224,12 +243,13 @@ impl ChatSurface {
         }
         // The opening screen is drawn natively (gui::chat::welcome) while the
         // splash holds; the first real conversation line anchors it away.
-        self.facts = Some(crate::cli::workspace::banner_facts(&self.root));
+        this.facts = Some(crate::cli::workspace::banner_facts(&this.root));
         // The Repl core, exactly as the headless world drives it.
         let worker_handle = handle.clone();
-        self.worker = Some(thread::spawn(move || {
+        this.worker = Some(thread::spawn(move || {
             crate::cli::workspace::run_core(root, worker_handle);
         }));
+        this
     }
 
     /// Size the terms and the model to the frame, drain worker events into the
@@ -238,12 +258,10 @@ impl ChatSurface {
     /// Term clips a width-shrink instead of rewrapping, so the model must never
     /// hand it a line wider than the rect). Returns whether anything moved.
     pub(crate) fn pump(&mut self, area_w: f32, cell_w: f32) -> bool {
-        // The surface's liveness follows the worker's: /exit, Ctrl+D or a panic
-        // end the sitting, and the surface closes with it — the same frame brings
-        // the panes back, and the next ⌘J starts fresh.
-        if self.worker.as_ref().is_some_and(|w| w.is_finished()) {
-            *self = ChatSurface::new();
-            return true;
+        // The sitting may have ended (/exit, Ctrl+D, a panic) — the frame loop
+        // reads `ended()` and closes the pane; nothing to feed here.
+        if self.ended() {
+            return false;
         }
         let Some(state) = self.state.as_mut() else { return false };
         let cols = (((area_w - 2.0 * PAD) / cell_w.max(1.0)).floor() as u16).max(20);
@@ -316,6 +334,9 @@ impl ChatSurface {
             }
             moved = true;
         }
+        if moved {
+            self.revision = self.revision.wrapping_add(1);
+        }
         moved
     }
 
@@ -344,6 +365,7 @@ impl ChatSurface {
             false => Selection::new(pos, SelectionMode::Char),
         });
         self.selecting = !double;
+        self.touch();
     }
 
     /// Extend the drag. Returns whether the selection moved (a repaint's worth).
@@ -354,6 +376,7 @@ impl ChatSurface {
         let pos = self.cell_at(p);
         if let Some(sel) = &mut self.selection {
             sel.extend(pos);
+            self.touch();
             return true;
         }
         false
@@ -381,6 +404,7 @@ impl ChatSurface {
     /// ⌘V: an image on the clipboard attaches (a `<#image_N>` token anchors it);
     /// text types itself into the editor or a running turn's draft.
     pub(crate) fn paste(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
         let Some(state) = self.state.as_mut() else { return };
         if let Some(png) = platform::os::clipboard_read_image() {
             if png.len() as u64 > crate::cli::attach::MEDIA_ATTACH_MAX {
@@ -406,34 +430,30 @@ impl ChatSurface {
 
     pub(crate) fn gate_move(&mut self) {
         self.gate.move_focus();
+        self.touch();
     }
 
     pub(crate) fn gate_answer(&mut self) {
         self.gate.answer_focused();
+        self.touch();
     }
 
     pub(crate) fn gate_decline(&mut self) {
         self.gate.decline();
+        self.touch();
     }
 
     pub(crate) fn gate_click(&mut self, p: Point) {
         self.gate.click_at(p);
+        self.touch();
     }
 
-    /// A GUI event while the surface is open. Returns whether it was consumed.
+    /// A GUI event on this pane's surface. Returns whether it was consumed.
     pub(crate) fn on_event(&mut self, ev: &corelib::types::Event) -> bool {
         let Some(state) = self.state.as_mut() else { return false };
+        self.revision = self.revision.wrapping_add(1);
         match ev {
             corelib::types::Event::KeyDown { code, mods, .. } => {
-                // Esc on an idle, empty editor closes the surface.
-                if *code == KeyCode::Escape {
-                    if let PanelState::Editing(view) = &state.screen.panel {
-                        if view.rows.iter().all(|r| r.is_empty()) && view.dropdown.is_none() {
-                            self.open = false;
-                            return true;
-                        }
-                    }
-                }
                 if let Some(key) = translate(*code, *mods) {
                     // Typing is intent to write, not to keep a highlight.
                     self.selection = None;
@@ -584,7 +604,6 @@ pub fn render_home_proof(out_path: &str) -> std::io::Result<()> {
         ..Default::default()
     }));
     let mut chat = ChatSurface::new();
-    chat.open = true;
     chat.state = Some(state);
     chat.pulse = Some(pulse);
     chat.facts = Some(crate::cli::workspace::banner::Facts {
@@ -615,7 +634,6 @@ pub fn render_chat_proof(out_path: &str) -> std::io::Result<()> {
     let mut state = UiState::new(Vec::new(), Vec::new(), describe, None, pulse.clone(), lines_tx);
     state.update(ChatEvent::Idle);
     let mut chat = ChatSurface::new();
-    chat.open = true;
     chat.state = Some(state);
     chat.pulse = Some(pulse);
     {

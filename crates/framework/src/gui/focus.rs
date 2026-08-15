@@ -82,7 +82,7 @@ impl GuiApp {
             let (cw, ch) = (m.cell_w.max(1.0), m.cell_h.max(1.0));
             let cols = (((rect.w - 2.0 * PAD) / cw).floor() as i32).clamp(1, u16::MAX as i32) as u16;
             let rows = (((rect.h - 2.0 * PAD) / ch).floor() as i32).clamp(1, u16::MAX as i32) as u16;
-            if let Some(Pane { session: s, .. }) = self.tabs.active_mut().get_mut(id) {
+            if let Some(s) = self.tabs.active_mut().get_mut(id).and_then(Pane::session_mut) {
                 s.resize(cols, rows);
             }
         }
@@ -100,8 +100,8 @@ impl GuiApp {
     /// Snapshot the focused pane's pid + OSC-7 cwd into the shared focus state and wake the
     /// status worker, so the top bar reflects the new tab/pane (path + user@host) at once.
     pub(in crate::gui) fn notify_focus_changed(&self) {
-        let (pid, cwd) = match self.tabs.active().focused_content() {
-            Some(Pane { session: s, .. }) => (s.pty.pid().unwrap_or(0), s.cwd()),
+        let (pid, cwd) = match self.tabs.active().focused_content().and_then(Pane::session) {
+            Some(s) => (s.pty.pid().unwrap_or(0), s.cwd()),
             _ => (0, None),
         };
         let (lock, cvar) = &*self.focus;
@@ -117,10 +117,7 @@ impl GuiApp {
     /// per frame, and wake the status worker so the path updates immediately — not on the
     /// next poll. A no-op unless the focused session's `cwd_seq` moved.
     pub(in crate::gui) fn poll_focus_cwd(&mut self) {
-        let seq = match self.tabs.active().focused_content() {
-            Some(Pane { session: s, .. }) => s.cwd_seq(),
-            _ => return,
-        };
+        let Some(seq) = self.tabs.active().focused_content().and_then(Pane::session).map(Session::cwd_seq) else { return };
         if seq != self.last_cwd_seq {
             self.last_cwd_seq = seq;
             self.notify_focus_changed();
@@ -133,7 +130,9 @@ impl GuiApp {
     pub(in crate::gui) fn reap_exited_terminals(&mut self) {
         let target = self.tabs.iter().enumerate().find_map(|(ti, tree)| {
             tree.pane_ids().into_iter().find_map(|id| match tree.get(id) {
-                Some(Pane { session: s, .. }) if s.exited() => Some((ti, id)),
+                // A shell that exited, or a workspace whose sitting ended (/exit,
+                // Ctrl+D, a worker panic) — both close their pane the same way.
+                Some(p) if p.session().is_some_and(Session::exited) || p.chat().is_some_and(chat::ChatSurface::ended) => Some((ti, id)),
                 _ => None,
             })
         });
@@ -186,12 +185,13 @@ impl GuiApp {
             .enumerate()
             .map(|(i, tree)| {
                 let (title, detail) = match tree.focused_content() {
-                    Some(Pane { session: s, .. }) => {
-                        let detail = s
-                            .cwd()
+                    Some(pane) => {
+                        let detail = pane
+                            .session()
+                            .and_then(Session::cwd)
                             .map(|(h, p)| if is_local(&h) { short(p) } else { format!("{} @ {h}", short(p)) })
                             .unwrap_or_default();
-                        (s.title(), detail)
+                        (pane.title(), detail)
                     }
                     None => (String::new(), String::new()),
                 };
@@ -212,13 +212,13 @@ impl GuiApp {
     }
 
     pub(in crate::gui) fn write_focused(&self, bytes: &[u8]) {
-        if let Some(Pane { session: s, .. }) = self.tabs.active().focused_content() {
+        if let Some(s) = self.tabs.active().focused_content().and_then(Pane::session) {
             s.write(bytes);
         }
     }
 
     pub(in crate::gui) fn copy_selection(&self) {
-        if let Some(Pane { session: s, .. }) = self.tabs.active().focused_content() {
+        if let Some(s) = self.tabs.active().focused_content().and_then(Pane::session) {
             if let Some(sel) = &s.selection {
                 let t = s.term.lock().unwrap_or_else(|e| e.into_inner());
                 let text = platform::term::selection::text(&t, sel);
@@ -261,7 +261,7 @@ impl GuiApp {
     /// toward the bottom (content down).
     pub(in crate::gui) fn scroll_focused(&mut self, cmd: ScrollCmd) {
         let fid = self.tabs.active().focused();
-        if let Some(Pane { session: s, .. }) = self.tabs.active_mut().get_mut(fid) {
+        if let Some(s) = self.tabs.active_mut().get_mut(fid).and_then(Pane::session_mut) {
             let mut t = s.term.lock().unwrap_or_else(|e| e.into_inner());
             let page = (t.rows().saturating_sub(2)).max(1) as i32;
             match cmd {
@@ -279,7 +279,7 @@ impl GuiApp {
     /// ([`update_session_context`](Self::update_session_context)). `None` when there
     /// is no terminal pane. Pure grid read: NEVER spawns a process.
     pub(in crate::gui) fn focused_terminal_lines(&self) -> Option<Vec<String>> {
-        let s = &self.context_pane()?.session;
+        let s = self.context_pane()?.session()?;
         let t = s.term.lock().unwrap_or_else(|e| e.into_inner());
         Some(t.screen_text())
     }
@@ -287,7 +287,7 @@ impl GuiApp {
     /// The pane the session context is sourced from — the active tab's first
     /// laid-out terminal pane (the same selection `focused_terminal_lines` reads).
     fn context_pane(&self) -> Option<&Pane> {
-        self.layout.iter().find_map(|(id, _)| self.tabs.active().get(*id))
+        self.layout.iter().find_map(|(id, _)| self.tabs.active().get(*id).filter(|p| p.session().is_some()))
     }
 
     /// Refresh the focused terminal's recent session (redacted) into the per-process
@@ -307,7 +307,7 @@ impl GuiApp {
         // The cheap gate FIRST: nothing is built (no grid scan, no redaction regex)
         // unless the focused terminal's content generation moved, and at most ~2×/s
         // even under a flood — this used to run in full on every frame.
-        let Some(generation) = self.context_pane().map(|p| p.session.generation()) else { return };
+        let Some(generation) = self.context_pane().and_then(Pane::session).map(Session::generation) else { return };
         if !session_ctx_due(generation, self.session_ctx_gen, self.session_ctx_at.elapsed()) {
             return;
         }

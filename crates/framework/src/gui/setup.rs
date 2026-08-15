@@ -22,6 +22,12 @@ impl PaneFactory {
         PaneFactory { config, default_zoom, dirty, guard }
     }
 
+    /// A workspace pane over `root` — a sitting beside the shells, restored or
+    /// freshly opened.
+    pub fn workspace_pane(&self, root: std::path::PathBuf) -> Pane {
+        Pane::workspace(chat::ChatSurface::open(root, self.dirty.clone()), self.default_zoom)
+    }
+
     /// The pane shown at startup — a fresh shell; a spawn failure is fatal (the
     /// window would be empty).
     pub fn initial_pane(&self) -> Pane {
@@ -128,7 +134,6 @@ impl GuiApp {
             config,
             default_zoom,
             guard,
-            chat: chat::ChatSurface::new(),
             switcher: TabSwitcher::new(),
             confirm: Confirm::new(),
             session_ctx: String::new(),
@@ -314,12 +319,10 @@ impl GuiApp {
         let mut stamp: u64 = 0;
         for tree in self.tabs.iter() {
             for id in tree.pane_ids() {
-                if let Some(pane) = tree.get(id) {
-                    stamp = stamp
-                        .wrapping_add(pane.session.generation())
-                        .wrapping_add(pane.session.cwd_seq())
-                        .wrapping_add(1);
+                if let Some(s) = tree.get(id).and_then(Pane::session) {
+                    stamp = stamp.wrapping_add(s.generation()).wrapping_add(s.cwd_seq());
                 }
+                stamp = stamp.wrapping_add(1);
             }
         }
         stamp

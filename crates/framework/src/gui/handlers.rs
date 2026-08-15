@@ -151,16 +151,27 @@ impl GuiApp {
                 self.apply_config(new);
             }
             Action::Copy => {
+                // A focused workspace copies its own conversation selection.
+                if let Some(chat) = self.tabs.active().focused_content().and_then(Pane::chat) {
+                    chat.copy_selection();
+                    self.dirty.set();
+                    return;
+                }
                 // ⌘C copies the mouse selection when there is one; otherwise it is
                 // forwarded to the shell (CSI-u ⌘c), where the lineedit plugin
                 // copies the KEYBOARD selection (zsh's region) back via OSC 52.
-                if self.tabs.active().focused_content().is_some_and(|p| p.session.selection.is_some()) {
+                if self.tabs.active().focused_content().and_then(Pane::session).is_some_and(|s| s.selection.is_some()) {
                     self.copy_selection();
                 } else {
                     self.write_focused(b"\x1b[99;9u");
                 }
             }
             Action::Paste => {
+                if let Some(chat) = self.tabs.active_mut().focused_content_mut().and_then(Pane::chat_mut) {
+                    chat.paste();
+                    self.dirty.set();
+                    return;
+                }
                 if let Some(t) = platform::os::clipboard_read() {
                     self.write_focused(t.as_bytes());
                 }
@@ -175,22 +186,60 @@ impl GuiApp {
         }
     }
 
-    /// Toggle the workspace surface over the focused pane's folder (OSC-7 cwd,
-    /// home when the shell never reported one). Closing keeps the sitting's
-    /// worker alive — the same key re-opens the conversation where it stood.
+    /// ⌘J: a focused workspace pane closes (the toggle feel); anywhere else, a
+    /// workspace pane opens as a SPLIT beside the focused pane, over its folder —
+    /// the conversation next to the shell. Tabs, splits and closes then treat it
+    /// as any pane, so workspaces compose freely (a tab of its own, several at
+    /// once) and no chord is ever stolen.
     pub(in crate::gui) fn toggle_workspace(&mut self) {
-        let root = self.focused_folder();
-        self.chat.toggle(root, self.dirty.clone());
+        if self.tabs.active().focused_content().and_then(Pane::chat).is_some() {
+            self.close_workspace_pane();
+            return;
+        }
+        self.open_workspace_split(self.focused_folder());
+    }
+
+    /// Close the focused workspace pane without a question — the transcript is
+    /// already on disk. A lone split closes its tab; the last pane of the last
+    /// tab yields to a fresh shell instead of refusing, so ⌘J always answers.
+    fn close_workspace_pane(&mut self) {
+        if self.tabs.active_mut().close_focused().is_none() {
+            if self.tabs.len() > 1 {
+                let _ = self.tabs.close_tab();
+            } else if let Some(p) = self.open_terminal_pane() {
+                if let Some(slot) = self.tabs.active_mut().focused_content_mut() {
+                    *slot = p;
+                }
+            }
+        }
+        self.notify_focus_changed();
+        self.relayout();
         self.dirty.set();
     }
 
-    /// The folder the focused pane is in, for the workspace and its banner.
+    /// Open a workspace sitting over `root` as a split of the focused pane.
+    pub(in crate::gui) fn open_workspace_split(&mut self, root: std::path::PathBuf) {
+        let chat = chat::ChatSurface::open(root, self.dirty.clone());
+        let pane = Pane::workspace(chat, self.default_zoom);
+        self.tabs.active_mut().split(Axis::Horizontal, pane);
+        self.notify_focus_changed();
+        self.relayout();
+        self.dirty.set();
+    }
+
+    /// The folder the focused pane is in — a terminal's OSC-7 cwd, a workspace's
+    /// own root, home when nothing reported one.
     pub(in crate::gui) fn focused_folder(&self) -> std::path::PathBuf {
-        self.tabs
-            .active()
-            .focused_content()
-            .and_then(|p| p.session.cwd())
-            .map(|(_host, path)| std::path::PathBuf::from(path))
+        let focused = self.tabs.active().focused_content();
+        focused
+            .and_then(Pane::chat)
+            .map(|c| c.root().to_path_buf())
+            .or_else(|| {
+                focused
+                    .and_then(Pane::session)
+                    .and_then(Session::cwd)
+                    .map(|(_host, path)| std::path::PathBuf::from(path))
+            })
             .or_else(platform::os::home_dir)
             .unwrap_or_else(|| std::path::PathBuf::from("/"))
     }

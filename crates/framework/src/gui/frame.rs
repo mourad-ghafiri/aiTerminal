@@ -46,19 +46,19 @@ impl GuiApp {
         self.maybe_autosave_workspace();
         // A program (or the lineedit plugin answering ⌘C) staged clipboard text
         // via OSC 52 — perform the real OS write here, outside the emulator.
-        if let Some(Pane { session: s, .. }) = self.tabs.active().focused_content() {
+        let mut open_workspace = false;
+        if let Some(s) = self.tabs.active().focused_content().and_then(Pane::session) {
             let staged = s.term.lock().unwrap_or_else(|e| e.into_inner()).take_clipboard();
             if let Some(text) = staged {
                 platform::os::clipboard_write(&text);
             }
             // `@workspace` typed in this pane staged its request the same way
-            // (OSC 7788) — the host answers by opening the surface over its cwd.
-            let asked = s.term.lock().unwrap_or_else(|e| e.into_inner()).take_workspace_request();
-            if asked && !self.chat.is_open() {
-                let root = self.focused_folder();
-                self.chat.open(root, self.dirty.clone());
-                self.dirty.set();
-            }
+            // (OSC 7788) — the host answers by opening a workspace SPLIT beside it.
+            open_workspace = s.term.lock().unwrap_or_else(|e| e.into_inner()).take_workspace_request();
+        }
+        if open_workspace {
+            let root = self.focused_folder();
+            self.open_workspace_split(root);
         }
         if !self.dirty.take() {
             return;
@@ -74,7 +74,8 @@ impl GuiApp {
                 .tabs
                 .active()
                 .focused_content()
-                .map(|p| p.session.term.lock().unwrap_or_else(|e| e.into_inner()).fed_within_ms(2))
+                .and_then(Pane::session)
+                .map(|s| s.term.lock().unwrap_or_else(|e| e.into_inner()).fed_within_ms(2))
                 .unwrap_or(false);
             if !busy {
                 break;
@@ -92,11 +93,29 @@ impl GuiApp {
             fresh_surface = true;
         }
         let base_px = self.base_px();
-        // The workspace surface sizes its model to this frame, folds its worker's
-        // queued events, and feeds its terms — all BEFORE anything draws.
-        if self.chat.is_open() {
-            let cell_w = self.cache.as_mut().unwrap().metrics(base_px).cell_w;
-            self.chat.pump(self.panes_area.w, cell_w);
+        // Every workspace sitting folds its worker's queued events into its model
+        // BEFORE anything draws. Visible panes size to their own rect (× zoom);
+        // background tabs drain model-only at the area's width — cheap, and their
+        // term re-wraps the moment their tab shows.
+        {
+            let active_i = self.tabs.active_index();
+            let layout = self.layout.clone();
+            let area_w = self.panes_area.w;
+            let cache = self.cache.as_mut().unwrap();
+            for (ti, tree) in self.tabs.iter_mut().enumerate() {
+                for id in tree.pane_ids() {
+                    let Some(pane) = tree.get_mut(id) else { continue };
+                    let zoom = pane.zoom;
+                    if let Some(chat) = pane.chat_mut() {
+                        let w = match ti == active_i {
+                            true => layout.iter().find(|(pid, _)| *pid == id).map(|(_, r)| r.w).unwrap_or(area_w),
+                            false => area_w,
+                        };
+                        let cell_w = cache.metrics(base_px * zoom).cell_w;
+                        chat.pump(w, cell_w);
+                    }
+                }
+            }
         }
         let active_i = self.tabs.active_index();
         let infos: Vec<TabInfo> = self
@@ -128,9 +147,7 @@ impl GuiApp {
         // Everything the NON-pane pixels depend on. A moved stamp (or an active
         // overlay/drag, whose visuals change sub-frame) → the plain full redraw.
         let chrome_stamp = {
-            // The workspace surface's openness is chrome: closing it must trigger
-            // the full repaint that brings the panes back from under it.
-            let mut s = format!("{w}x{h}:{base_px}:{active_i}:{}:{:?}:{}", self.tab_bar.name(), self.theme.name, self.chat.is_open());
+            let mut s = format!("{w}x{h}:{base_px}:{active_i}:{}:{:?}", self.tab_bar.name(), self.theme.name);
             s.push_str(&format!("{:?}{:?}{:?}{:?}", self.theme.bg, self.theme.accent, self.theme.muted, self.theme.fg));
             for i in &infos {
                 s.push_str(&format!("|{}:{}:{}", i.index, i.title, i.active));
@@ -146,7 +163,6 @@ impl GuiApp {
         let full = fresh_surface
             || self.switcher.state_mut().is_some()
             || self.confirm.state_mut().is_some()
-            || self.chat.is_open()
             || self.tab_drag.is_some()
             || chrome_stamp != self.frame_chrome;
 
@@ -196,7 +212,9 @@ impl GuiApp {
             let px = base_px * self.tabs.active().get(*id).map(|p| p.zoom).unwrap_or(1.0);
             // The ⌘-hover underline applies only to the pane it was computed over.
             let link = link_hover.filter(|(pid, ..)| pid == id).map(|(_, row, c0, c1)| (row, c0, c1));
-            if let Some(Pane { session: s, .. }) = self.tabs.active_mut().get_mut(*id) {
+            let Some(pane) = self.tabs.active_mut().get_mut(*id) else { continue };
+            let mut painted = false;
+            if let Some(s) = pane.session_mut() {
                 let t = s.term.lock().unwrap_or_else(|e| e.into_inner());
                 let stamp = fnv(&format!(
                     // `active_i` disambiguates the per-tab `PaneId` (which restarts at 0 in
@@ -215,25 +233,30 @@ impl GuiApp {
                     render_pane(surface, &t, theme, cache, px, *rect, *id == focused, cursor_style, s.selection.as_ref(), link);
                     drop(t);
                     self.pane_stamps.insert(*id, stamp);
-                    drew = true;
-                    // Elegant pane frames: a soft hairline around each split, brightened
-                    // to the accent on the focused one. A single full-bleed pane is bare.
-                    if layout.len() > 1 {
-                        if *id == focused {
-                            draw_frame(surface, *rect, theme.accent, 1.6);
-                        } else {
-                            draw_frame(surface, *rect, theme.muted, 1.0);
-                        }
+                    painted = true;
+                }
+            } else if let Some(chat) = pane.chat_mut() {
+                // A workspace pane rides the SAME incremental path: an unmoved
+                // stamp skips it exactly like a quiet shell.
+                let stamp = fnv(&format!("ws:{active_i}:{}:{}:{px}", chat.stamp(), *id == focused));
+                if full || self.pane_stamps.get(id) != Some(&stamp) {
+                    chat.draw(surface, cache, theme, px, *rect, cursor_style);
+                    self.pane_stamps.insert(*id, stamp);
+                    painted = true;
+                }
+            }
+            if painted {
+                drew = true;
+                // Elegant pane frames: a soft hairline around each split, brightened
+                // to the accent on the focused one. A single full-bleed pane is bare.
+                if layout.len() > 1 {
+                    if *id == focused {
+                        draw_frame(surface, *rect, theme.accent, 1.6);
+                    } else {
+                        draw_frame(surface, *rect, theme.muted, 1.0);
                     }
                 }
             }
-        }
-        // The workspace surface draws over the panes — confined to their area, so
-        // the app's own status bar and tab strip stay visible around it. The
-        // switcher and the close confirmation stay above it — they are questions,
-        // it is a place.
-        if self.chat.is_open() {
-            self.chat.draw(surface, cache, theme, base_px, self.panes_area, cursor_style);
         }
         // The switcher overlay draws above the panes (open switcher → full frame).
         if let Some(s) = self.switcher.state_mut() {

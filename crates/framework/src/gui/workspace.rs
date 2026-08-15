@@ -46,22 +46,32 @@ const CONTENT_SAVE_LINES: usize = 1000;
 /// buffer content WITH styling (ANSI escapes), so the reopened pane silently
 /// shows exactly the session you left, colors included.
 fn snapshot_pane(p: &Pane, sel_band: (u8, u8, u8)) -> Toml {
+    // A workspace pane persists as its root: a live sitting can't be resurrected,
+    // but the folder can be re-opened as a fresh one (its chat log is on disk).
+    if let Some(chat) = p.chat() {
+        return Toml::Table(vec![
+            ("kind".into(), Toml::Str("workspace".into())),
+            ("zoom".into(), Toml::Float(p.zoom as f64)),
+            ("root".into(), Toml::Str(chat.root().display().to_string())),
+        ]);
+    }
+    let Some(session) = p.session() else { return Toml::Table(vec![("kind".into(), Toml::Str("terminal".into()))]) };
     // The grid size at save time — the restore rebuilds the terminal at exactly these
     // dims so the replayed content reproduces its physical rows (same width → same
     // wrapping); without it, a wider saved line re-wraps and the restore looks scrambled.
-    let (cols, rows) = p.session.grid_size();
+    let (cols, rows) = session.grid_size();
     let mut kvs = vec![
         ("kind".into(), Toml::Str("terminal".into())),
         ("zoom".into(), Toml::Float(p.zoom as f64)),
         ("cols".into(), Toml::Int(cols as i64)),
         ("rows".into(), Toml::Int(rows as i64)),
     ];
-    if let Some((_, path)) = p.session.cwd() {
+    if let Some((_, path)) = session.cwd() {
         kvs.push(("cwd".into(), Toml::Str(path)));
     }
     // The selection band is transient UI, not content — scrub it, or a live
     // shift-selection at save time is restored as an un-dismissable highlight.
-    let content = p.session.content_ansi(CONTENT_SAVE_LINES, Some(sel_band)).join("\n");
+    let content = session.content_ansi(CONTENT_SAVE_LINES, Some(sel_band)).join("\n");
     if !content.trim().is_empty() {
         kvs.push(("content".into(), Toml::Str(content)));
     }
@@ -71,6 +81,15 @@ fn snapshot_pane(p: &Pane, sel_band: (u8, u8, u8)) -> Toml {
 /// TOML → one pane, rebuilt through the factory: a terminal relaunches in its saved
 /// cwd with the saved buffer content replayed above the fresh prompt.
 fn restore_pane(factory: &PaneFactory, t: &Toml) -> Option<Pane> {
+    // A saved workspace pane re-opens a fresh sitting over its root.
+    if t.get("kind").and_then(|v| v.as_str()) == Some("workspace") {
+        let root = t.get("root").and_then(|v| v.as_str()).map(expand_tilde)?;
+        let mut pane = factory.workspace_pane(std::path::PathBuf::from(root));
+        if let Some(z) = t.get("zoom").and_then(|v| v.as_num()) {
+            pane.zoom = z as f32;
+        }
+        return Some(pane);
+    }
     if t.get("kind").and_then(|v| v.as_str()) != Some("terminal") {
         return None;
     }

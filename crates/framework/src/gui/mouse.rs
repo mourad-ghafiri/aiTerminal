@@ -22,6 +22,24 @@ impl GuiApp {
             }
         }
         let Some((id, rect)) = self.pane_at(pos) else { return };
+        // A workspace pane: focus it and hand the click to the conversation — its
+        // modal (trust gate / plan approval) takes the click first when open.
+        if self.tabs.active().get(id).and_then(Pane::chat).is_some() {
+            self.tabs.active_mut().focus(id);
+            self.notify_focus_changed();
+            let scale = self.scale as f32;
+            let p = Point::new(pos.x * scale, pos.y * scale);
+            if let Some(chat) = self.tabs.active_mut().get_mut(id).and_then(Pane::chat_mut) {
+                if chat.gate_open() {
+                    chat.gate_click(p);
+                } else if button == MouseButton::Left {
+                    chat.mouse_down(p);
+                    self.dragging = Some(id);
+                }
+            }
+            self.dirty.set();
+            return;
+        }
         // A mouse-tracking program (@md edit, vim, less) receives the raw click — unless Shift
         // (bypass to local selection) or ⌘ (open-link) is held, matching xterm convention.
         if !mods.contains(Modifiers::SHIFT) && !mods.contains(Modifiers::SUPER) && self.pane_wants_mouse(id) {
@@ -88,8 +106,14 @@ impl GuiApp {
             self.dirty.set();
             return;
         }
-        // A text drag ended — copy the selection on release.
-        if self.dragging.take().is_some() {
+        // A drag ended: a workspace pane settles its own selection; a terminal
+        // copies on release.
+        if let Some(id) = self.dragging.take() {
+            if let Some(chat) = self.tabs.active_mut().get_mut(id).and_then(Pane::chat_mut) {
+                chat.mouse_up();
+                self.dirty.set();
+                return;
+            }
             self.copy_selection();
         }
     }
@@ -129,14 +153,15 @@ impl GuiApp {
         self.tabs
             .active()
             .get(id)
-            .map(|Pane { session: s, .. }| s.term.lock().unwrap_or_else(|e| e.into_inner()).wants_mouse())
+            .and_then(Pane::session)
+            .map(|s| s.term.lock().unwrap_or_else(|e| e.into_inner()).wants_mouse())
             .unwrap_or(false)
     }
 
     /// Write bytes to a specific pane's PTY (mouse reports go to the pane under the pointer, which
     /// may differ from the keyboard-focused pane).
     pub(in crate::gui) fn write_to_pane(&self, id: PaneId, bytes: &[u8]) {
-        if let Some(Pane { session: s, .. }) = self.tabs.active().get(id) {
+        if let Some(s) = self.tabs.active().get(id).and_then(Pane::session) {
             s.write(bytes);
         }
     }
@@ -174,11 +199,11 @@ impl GuiApp {
             1 => SelectionMode::Word,
             _ => SelectionMode::Line,
         };
-        let sel = self.tabs.active().get(id).map(|Pane { session: s, .. }| {
+        let sel = self.tabs.active().get(id).and_then(Pane::session).map(|s| {
             let t = s.term.lock().unwrap_or_else(|e| e.into_inner());
             platform::term::selection::expanded(&t, cell, mode)
         });
-        if let (Some(sel), Some(Pane { session: s, .. })) = (sel, self.tabs.active_mut().get_mut(id)) {
+        if let (Some(sel), Some(s)) = (sel, self.tabs.active_mut().get_mut(id).and_then(Pane::session_mut)) {
             s.selection = Some(sel);
         }
         self.dragging = Some(id);
@@ -196,8 +221,8 @@ impl GuiApp {
         };
         let cx = (((pos.x * scale - rect.x - PAD) / m.cell_w).floor() as i32).max(0) as u16;
         let cy = (((pos.y * scale - rect.y - PAD) / m.cell_h).floor() as i32).max(0) as u16;
-        let (mc, mr) = match self.tabs.active().get(id) {
-            Some(Pane { session: s, .. }) => (s.cols, s.rows),
+        let (mc, mr) = match self.tabs.active().get(id).and_then(Pane::session) {
+            Some(s) => (s.cols, s.rows),
             _ => (80, 24),
         };
         Pos::new(cx.min(mc.saturating_sub(1)), cy.min(mr.saturating_sub(1)))

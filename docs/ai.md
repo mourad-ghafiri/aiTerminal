@@ -748,17 +748,20 @@ With **no model configured**, `@job` still reads `in 5m`, `at 17:30`, `every hou
 
 ## `@workspace` — the folder as a conversation
 
-The workspace is a **native surface of the app itself** — drawn by the same
-engine that draws every pane, not an ANSI TUI fighting the terminal from inside
-one. Press **⌘J** (action `workspace`, rebindable), or type `@workspace` in any
-pane: the CLI stages a private OSC the host answers by opening the surface over
-that pane's folder. It opens on its home screen — the mark, the folder, what the
-overlay adds, the pool and its strategy — with the input panel centered beneath.
-⌘J (or `Esc` on an empty idle panel) puts your terminal back exactly as it was; the
-sitting keeps running, and the same key returns to the conversation where it
-stood. A model is NOT required to open: browsing, `/help`, `!` and `/mcp` all
-work; only a prompt answers with the setup hint. (Outside aiTerminal,
-`ai workspace` says where the feature lives and exits clean.)
+The workspace is a **pane of the app itself** — drawn by the same engine that
+draws every terminal, living in the same split tree and tab list. Press **⌘J**
+(action `workspace`, rebindable), or type `@workspace` in any pane: a workspace
+pane opens as a **split beside you**, over that pane's folder, on its home
+screen — the mark, the folder, what the overlay adds — with the input panel
+centered beneath. Because it is a pane, everything composes: **Cmd+T, splits,
+tab chords, the switcher and every app shortcut keep working**, several
+workspaces can run at once (a tab of their own, side by side, different
+folders), Cmd+W closes one like any split, and ⌘J on a focused workspace closes
+it (the last pane of the last tab yields to a fresh shell). Quitting persists
+workspace panes by their folder and reopening restores them as fresh sittings.
+A model is NOT required to open: browsing, `/help`, `!` and `/mcp` all work;
+only a prompt answers with the setup hint. (Outside aiTerminal, `ai workspace`
+says where the feature lives and exits clean.)
 
 Ask, follow up, and the conversation remembers — one transcript carries the whole sitting, compacted
 automatically when the window demands it. Every answer renders live as Markdown with
@@ -872,16 +875,17 @@ it).
 | `Tab` | complete `/` and `@` · accept the dropdown selection |
 | `Shift+Tab` | cycle plan → build → auto |
 | `↑` / `↓` | history (or dropdown / draft rows) |
-| `Esc` | close the band · clear the line · **interrupt a running turn** · on an empty idle bar, close the surface |
+| `Esc` | close the band · clear the line · **interrupt a running turn** |
 | `Enter` mid-run | **steer**: your note joins the run at its next step, and the MODEL decides — pivot now, or finish the current step first |
 | `Ctrl+A/E/B/F/W/U/K` | emacs-style line editing |
 | `⌘C` / `⌘V` | copy the mouse selection out of the conversation · paste text — or a clipboard **image**, attached as a `<#image_N>` token you can move or delete |
 | `Ctrl+C` | clear; twice on an empty line leaves · `Ctrl+D` on empty leaves |
 
 The surface is drawn by **the app's own engine** — the same pixel surface, glyph
-cache and VT engine that draw every pane. It occupies the panes area only: the
-app's own bottom bar (folder · cpu · memory) and the tab strip stay visible
-around it, even under the trust modal. The conversation lives in a headless
+cache and VT engine that draw every pane, and it renders on the same
+incremental path: a quiet conversation repaints nothing, and two streaming
+workspaces repaint only their own rects. The app's own bottom bar (folder · cpu
+· memory) and the tab strip stay visible around it, even under the trust modal. The conversation lives in a headless
 terminal of its own with real scrollback (wheel and PageUp/PageDown), and every
 answer goes through the product's one markdown engine, laid out at the surface's
 REAL width — with **mermaid diagrams and images composited natively** (the
@@ -891,8 +895,9 @@ rebuilds from its model. Underneath,
 one state machine folds every key and every streamed line from one queue into one
 model (the single-model discipline opencode's Bubble Tea foundation uses) — and
 because the app owns every pixel, there is no second painter left to race.
-`/exit` (or Ctrl+D, or Ctrl+C twice on an empty line) ends the sitting and the
-surface closes with it; the next ⌘J opens a fresh one.
+`/exit` (or Ctrl+D, or Ctrl+C twice on an empty line) ends the sitting and its
+pane closes with it — exactly as an exited shell closes its split; the next ⌘J
+opens a fresh one.
 
 ### The project overlay
 

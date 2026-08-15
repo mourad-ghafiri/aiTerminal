@@ -412,20 +412,63 @@ enum ScrollCmd {
     Bottom,
 }
 
-/// A pane: a font-zoom level plus its terminal session.
+/// What a pane holds: a terminal session, or a workspace sitting — the
+/// conversation lives in the split tree beside the shells, so tabs, splits,
+/// focus, zoom and close all treat it as just another pane.
+pub(crate) enum PaneContent {
+    Terminal(Session),
+    Workspace(Box<chat::ChatSurface>),
+}
+
+/// A pane: a font-zoom level plus what it holds.
 pub(crate) struct Pane {
     zoom: f32,
-    session: Session,
+    content: PaneContent,
 }
 
 impl Pane {
     fn terminal(s: Session, zoom: f32) -> Pane {
-        Pane { zoom, session: s }
+        Pane { zoom, content: PaneContent::Terminal(s) }
     }
-    /// The pane NAME only (no icon): a program's own title, else `<folder> [<shell>]`.
-    /// The renderer composes `index - icon name`.
+    fn workspace(chat: chat::ChatSurface, zoom: f32) -> Pane {
+        Pane { zoom, content: PaneContent::Workspace(Box::new(chat)) }
+    }
+    /// The terminal session, when this pane is one.
+    pub(crate) fn session(&self) -> Option<&Session> {
+        match &self.content {
+            PaneContent::Terminal(s) => Some(s),
+            PaneContent::Workspace(_) => None,
+        }
+    }
+    pub(crate) fn session_mut(&mut self) -> Option<&mut Session> {
+        match &mut self.content {
+            PaneContent::Terminal(s) => Some(s),
+            PaneContent::Workspace(_) => None,
+        }
+    }
+    /// The workspace surface, when this pane is one.
+    pub(crate) fn chat(&self) -> Option<&chat::ChatSurface> {
+        match &self.content {
+            PaneContent::Workspace(c) => Some(c),
+            PaneContent::Terminal(_) => None,
+        }
+    }
+    pub(crate) fn chat_mut(&mut self) -> Option<&mut chat::ChatSurface> {
+        match &mut self.content {
+            PaneContent::Workspace(c) => Some(c),
+            PaneContent::Terminal(_) => None,
+        }
+    }
+    /// The pane NAME only (no icon): a program's own title, else `<folder> [<shell>]`;
+    /// a workspace names its folder. The renderer composes `index - icon name`.
     fn title(&self) -> String {
-        self.session.title()
+        match &self.content {
+            PaneContent::Terminal(s) => s.title(),
+            PaneContent::Workspace(c) => {
+                let name = c.root().file_name().and_then(|s| s.to_str()).unwrap_or("workspace");
+                format!("\u{2726} {name}")
+            }
+        }
     }
 }
 
@@ -492,9 +535,6 @@ pub struct GuiApp {
     default_zoom: f32,
     /// The security policy (command guard + redaction), from config + plugins.
     guard: Arc<crate::guard::Guard>,
-    /// The native workspace surface (Cmd+J / `@workspace` via its OSC), drawn over
-    /// the panes while open; its Repl worker survives a close and re-open.
-    chat: chat::ChatSurface,
     /// The tab quick-switcher overlay (Cmd+P / Cmd+K), if open.
     switcher: TabSwitcher,
     /// The close confirmation, if open. Above the switcher in every sense: it takes

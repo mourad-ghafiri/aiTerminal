@@ -13,7 +13,6 @@ fn surface() -> ChatSurface {
     state.update(ChatEvent::Idle);
     s.state = Some(state);
     s.pulse = Some(pulse);
-    s.open = true;
     s
 }
 
@@ -128,8 +127,9 @@ fn the_tail_is_replaced_wholesale_not_appended() {
 }
 
 #[test]
-fn typing_reaches_the_editor_and_esc_on_an_empty_idle_editor_closes() {
+fn typing_reaches_the_editor_and_every_consumed_event_moves_the_stamp() {
     let mut s = surface();
+    let before = s.stamp();
     let typed = corelib::types::Event::TextInput { text: "hi".into() };
     assert!(s.on_event(&typed));
     let state = s.state.as_ref().unwrap();
@@ -137,30 +137,37 @@ fn typing_reaches_the_editor_and_esc_on_an_empty_idle_editor_closes() {
         PanelState::Editing(view) => assert_eq!(view.rows.join(""), "hi"),
         _ => panic!("expected the editor"),
     }
-    // Esc with text just clears/handles inside the editor — the surface stays open.
+    // The pane's stamp moved — the incremental frame path repaints exactly this
+    // pane and nothing else. Esc is a pane-local key now (clear the line), never
+    // a close: the pane closes like any pane (⌘J, Cmd+W, /exit).
+    assert_ne!(s.stamp(), before, "a mutation is a repaint");
     let esc = corelib::types::Event::KeyDown { code: KeyCode::Escape, mods: Modifiers::empty(), repeat: false };
-    s.on_event(&esc);
-    assert!(s.open);
-    // Empty the editor, Esc again: the surface closes.
-    let s2 = &mut surface();
-    assert!(s2.on_event(&esc));
-    assert!(!s2.open);
+    assert!(s.on_event(&esc), "Esc stays inside the conversation");
 }
 
 #[test]
-fn a_finished_sitting_closes_the_surface_and_the_next_open_is_fresh() {
-    // /exit (or Ctrl+D, or a crash) ends the worker; the surface must follow —
-    // close now, and let the next open start a NEW sitting instead of showing a
-    // dead one whose channels answer nobody.
+fn a_workspace_is_a_pane_that_titles_its_folder() {
     let mut s = surface();
+    s.root = std::path::PathBuf::from("/tmp/proj");
+    let p = crate::gui::Pane { zoom: 1.0, content: crate::gui::PaneContent::Workspace(Box::new(s)) };
+    assert_eq!(p.title(), "\u{2726} proj", "the tab strip and switcher name the sitting");
+    assert!(p.session().is_none(), "no PTY hides behind a conversation");
+    assert!(p.chat().is_some());
+}
+
+#[test]
+fn a_finished_sitting_reports_ended_so_the_frame_reaps_the_pane() {
+    // /exit (or Ctrl+D, or a crash) ends the worker; the pane must follow — the
+    // frame loop reads `ended()` and closes it exactly like an exited shell.
+    let mut s = surface();
+    assert!(!s.ended(), "a live sitting is not reaped");
     s.worker = Some(std::thread::spawn(|| {}));
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     while !s.worker.as_ref().unwrap().is_finished() && std::time::Instant::now() < deadline {
         std::thread::yield_now();
     }
-    assert!(s.pump(420.0, 10.0), "the closing frame repaints the panes");
-    assert!(!s.open, "the surface closed with its sitting");
-    assert!(s.state.is_none() && s.worker.is_none(), "…and is fresh for the next open");
+    assert!(s.ended(), "the sitting's end is visible to the reaper");
+    assert!(!s.pump(420.0, 10.0), "a dead sitting feeds nothing");
 }
 
 #[test]

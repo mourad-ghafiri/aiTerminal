@@ -435,6 +435,10 @@ impl<T> Tabs<T> {
         self.tabs.iter()
     }
 
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut PaneTree<T>> {
+        self.tabs.iter_mut()
+    }
+
     pub fn new_tab(&mut self, content: T) {
         self.tabs.push(PaneTree::new(content));
         self.active = self.tabs.len() - 1;

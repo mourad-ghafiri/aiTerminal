@@ -99,7 +99,8 @@ impl Pulse {
     pub(crate) fn take_steer(&self) -> Option<String> {
         self.steer.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
-    fn cancel_now(&self) {
+    /// Trip the current turn's cancel — Esc, and the surface's own teardown.
+    pub(crate) fn cancel_now(&self) {
         if let Some(c) = self.cancel.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             c.cancel();
         }

@@ -109,97 +109,47 @@ impl EventHandler for GuiApp {
             }
             return;
         }
-        // The workspace surface is modal over the panes: keys, text and the wheel
-        // are the conversation's. Its own chord (⌘J) closes it; window-level
-        // events keep their meaning.
-        if self.chat.is_open() {
-            // The trust gate rides above the surface — a question the person has
-            // to answer (or safely decline) before the conversation can proceed,
-            // so even the workspace chord waits behind it.
-            if self.chat.gate_open() {
-                match &ev {
-                    Event::KeyDown { code: KeyCode::Escape, .. } => {
-                        self.chat.gate_decline();
-                        self.dirty.set();
-                    }
-                    Event::KeyDown { code: KeyCode::Enter, .. } => {
-                        self.chat.gate_answer();
-                        self.dirty.set();
-                    }
-                    // ←/→/Tab all flip between the two buttons.
-                    Event::KeyDown { code: KeyCode::Left | KeyCode::Right | KeyCode::Tab, .. } => {
-                        self.chat.gate_move();
-                        self.dirty.set();
-                    }
-                    Event::MouseDown { button: MouseButton::Left, pos, .. } => {
-                        let s = self.scale as f32;
-                        self.chat.gate_click(Point::new(pos.x * s, pos.y * s));
-                        self.dirty.set();
-                    }
-                    Event::RedrawRequested => self.render(gpu),
-                    Event::Resized { width_px, height_px, scale } => {
-                        self.ensure_cache(*scale);
-                        self.win_px = (*width_px, *height_px);
-                        self.relayout();
-                    }
-                    Event::CloseRequested => self.request_close(CloseIntent::Quit),
-                    _ => {}
-                }
-                return;
-            }
+        // A focused WORKSPACE pane owns unbound keys and typed text — after the
+        // keymap, which always wins: Cmd+T, splits, tab chords and the switcher
+        // work over a conversation exactly as over a shell. The pane's own modal
+        // (trust gate / plan approval) answers first with keys no chord uses.
+        if self.tabs.active().focused_content().and_then(Pane::chat).is_some() {
             match &ev {
                 Event::KeyDown { code, mods, .. } => {
-                    // The app-level chords the surface honors: its own toggle,
-                    // and the clipboard pair — copy the selection, paste text or
-                    // an image (a `<#image_N>` token anchors an attachment).
-                    match self.keymap.lookup(&Chord::new(*code, *mods)) {
-                        Some(Action::Workspace) => {
-                            self.toggle_workspace();
-                            return;
+                    if let Some(action) = self.keymap.lookup(&Chord::new(*code, *mods)).cloned() {
+                        self.do_action(action);
+                        return;
+                    }
+                    let Some(chat) = self.tabs.active_mut().focused_content_mut().and_then(Pane::chat_mut) else { return };
+                    if chat.gate_open() {
+                        match code {
+                            KeyCode::Escape => chat.gate_decline(),
+                            KeyCode::Enter => chat.gate_answer(),
+                            KeyCode::Left | KeyCode::Right | KeyCode::Tab => chat.gate_move(),
+                            _ => {}
                         }
-                        Some(Action::Copy) => {
-                            self.chat.copy_selection();
+                        self.dirty.set();
+                        return;
+                    }
+                    if chat.on_event(&ev) {
+                        self.dirty.set();
+                    }
+                    return;
+                }
+                Event::TextInput { .. } => {
+                    if let Some(chat) = self.tabs.active_mut().focused_content_mut().and_then(Pane::chat_mut) {
+                        if chat.gate_open() {
+                            return; // the modal is a question, not a text field
+                        }
+                        if chat.on_event(&ev) {
                             self.dirty.set();
-                            return;
                         }
-                        Some(Action::Paste) => {
-                            self.chat.paste();
-                            self.dirty.set();
-                            return;
-                        }
-                        _ => {}
                     }
-                    if self.chat.on_event(&ev) {
-                        self.dirty.set();
-                    }
+                    return;
                 }
-                Event::TextInput { .. } | Event::Scroll { .. } => {
-                    if self.chat.on_event(&ev) {
-                        self.dirty.set();
-                    }
-                }
-                Event::MouseDown { button: MouseButton::Left, pos, .. } => {
-                    let s = self.scale as f32;
-                    self.chat.mouse_down(Point::new(pos.x * s, pos.y * s));
-                    self.dirty.set();
-                }
-                Event::MouseMove { pos, .. } => {
-                    let s = self.scale as f32;
-                    if self.chat.mouse_drag(Point::new(pos.x * s, pos.y * s)) {
-                        self.dirty.set();
-                    }
-                }
-                Event::MouseUp { .. } => self.chat.mouse_up(),
-                Event::RedrawRequested => self.render(gpu),
-                Event::Resized { width_px, height_px, scale } => {
-                    self.ensure_cache(*scale);
-                    self.win_px = (*width_px, *height_px);
-                    self.relayout();
-                }
-                Event::CloseRequested => self.request_close(CloseIntent::Quit),
+                // Mouse, wheel, resize, redraw and close share the one path below.
                 _ => {}
             }
-            return;
         }
         match ev {
             Event::Resized { width_px, height_px, scale } => {
@@ -218,17 +168,17 @@ impl EventHandler for GuiApp {
                 // text, not to execute. The highlight clears; Enter again runs.
                 if code == KeyCode::Enter
                     && mods.is_empty()
-                    && self.tabs.active().focused_content().is_some_and(|p| p.session.selection.is_some())
+                    && self.tabs.active().focused_content().and_then(Pane::session).is_some_and(|s| s.selection.is_some())
                 {
                     self.copy_selection();
-                    if let Some(Pane { session: s, .. }) = self.tabs.active_mut().focused_content_mut() {
+                    if let Some(s) = self.tabs.active_mut().focused_content_mut().and_then(Pane::session_mut) {
                         s.selection = None;
                     }
                     self.dirty.set();
                     return;
                 }
                 // unbound keys go to the focused PTY
-                if let Some(Pane { session: s, .. }) = self.tabs.active_mut().focused_content_mut() {
+                if let Some(s) = self.tabs.active_mut().focused_content_mut().and_then(Pane::session_mut) {
                     s.selection = None;
                     s.term.lock().unwrap_or_else(|e| e.into_inner()).scroll_to_bottom(); // typing returns to live
                     if let Some(seq) = encode_key(code, mods) {
@@ -237,7 +187,7 @@ impl EventHandler for GuiApp {
                 }
             }
             Event::TextInput { text } => {
-                if let Some(Pane { session: s, .. }) = self.tabs.active_mut().focused_content_mut() {
+                if let Some(s) = self.tabs.active_mut().focused_content_mut().and_then(Pane::session_mut) {
                     s.selection = None;
                     s.term.lock().unwrap_or_else(|e| e.into_inner()).scroll_to_bottom(); // typing returns to live
                     s.write(text.as_bytes());
@@ -273,8 +223,14 @@ impl EventHandler for GuiApp {
                 if let Some(pane) = self.dragging {
                     if let Some((p, rect)) = self.pane_at(pos) {
                         if p == pane {
+                            let scale = self.scale as f32;
+                            let cursor = Point::new(pos.x * scale, pos.y * scale);
                             let cell = self.cell_at(pane, rect, pos); // before borrowing tabs
-                            if let Some(Pane { session: s, .. }) = self.tabs.active_mut().get_mut(pane) {
+                            if let Some(chat) = self.tabs.active_mut().get_mut(pane).and_then(Pane::chat_mut) {
+                                if chat.mouse_drag(cursor) {
+                                    self.dirty.set();
+                                }
+                            } else if let Some(s) = self.tabs.active_mut().get_mut(pane).and_then(Pane::session_mut) {
                                 if let Some(sel) = &mut s.selection {
                                     sel.extend(cell);
                                     self.dirty.set();
@@ -285,8 +241,15 @@ impl EventHandler for GuiApp {
                 }
             }
             Event::MouseUp { button, pos, mods } => self.on_mouse_up(button, pos, mods),
-            Event::Scroll { delta, pos, mods, .. } => {
+            Event::Scroll { delta, pos, mods, phase } => {
                 if let Some((id, rect)) = self.pane_at(pos) {
+                    // The wheel over a workspace pane scrolls the conversation.
+                    if let Some(chat) = self.tabs.active_mut().get_mut(id).and_then(Pane::chat_mut) {
+                        if chat.on_event(&Event::Scroll { delta, pos, mods, phase }) {
+                            self.dirty.set();
+                        }
+                        return;
+                    }
                     // A mouse-tracking program (@md edit, vim, less) gets wheel notches as SGR:
                     // vertical = buttons 64/65, Shift+wheel = horizontal 66/67. It never touches
                     // the emulator's own scrollback.
@@ -300,7 +263,7 @@ impl EventHandler for GuiApp {
                         ScrollDelta::Pixels { y, .. } => -y,
                     };
                     // Scroll the scrollback history by lines (wheel-up = into history).
-                    if let Some(Pane { session: s, .. }) = self.tabs.active_mut().get_mut(id) {
+                    if let Some(s) = self.tabs.active_mut().get_mut(id).and_then(Pane::session_mut) {
                         let lines = (-dy / base_px).round() as i32;
                         if lines != 0 {
                             s.term.lock().unwrap_or_else(|e| e.into_inner()).scroll_view(lines);
