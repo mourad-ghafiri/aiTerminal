@@ -172,3 +172,22 @@ fn forward_lines_turns_a_runs_output_into_appends_and_stops_when_nobody_listens(
     let (tx, _) = std::sync::mpsc::channel();
     super::forward_lines(std::io::Cursor::new("unheard\n".as_bytes().to_vec()), &tx);
 }
+
+// ── the repo map: bounded orientation for the turn's grounding ──────────────
+
+#[test]
+fn the_repo_map_groups_by_top_dir_and_stays_bounded() {
+    let dir = std::env::temp_dir().join(format!("tt-repo-map-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for f in ["src/main.rs", "src/lib.rs", "docs/guide.md", "README.md"] {
+        let p = dir.join(f);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, "x").unwrap();
+    }
+    let map = super::repo_map(&dir);
+    assert!(map.contains("src/") && map.contains("2 file(s)"), "{map}");
+    assert!(map.contains("docs/") && map.contains("README.md"), "{map}");
+    assert!(map.lines().count() <= 40, "the map is a summary, not a listing");
+    assert!(super::repo_map(&dir.join("empty-nowhere")).is_empty(), "an empty folder maps to nothing");
+    let _ = std::fs::remove_dir_all(&dir);
+}

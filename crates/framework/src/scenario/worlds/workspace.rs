@@ -48,6 +48,12 @@ pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let session = ai::Session::at(&root, &crate::config::Config::sessions_dir());
     let session_dir = session.memory_dir().parent().map(|p| p.to_path_buf()).ok_or("no session dir")?;
+    // An EARLIER sitting's log, seeded — what memory.sessions and /resume find.
+    if let Some(text) = world::text(setup, "session_log") {
+        let chat = session_dir.join("chat");
+        std::fs::create_dir_all(&chat).map_err(|e| e.to_string())?;
+        std::fs::write(chat.join("20260101-000000.md"), text).map_err(|e| e.to_string())?;
+    }
     Ok(Box::new(WorkspaceWorld {
         _home: guard,
         root,

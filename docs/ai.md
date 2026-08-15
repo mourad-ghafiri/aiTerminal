@@ -779,7 +779,10 @@ and the product's whole `@` language works mid-conversation.
 Slash surface: `/help` `/init` `/clear` `/compact` `/model` `/agent` `/agents` `/mcp`
 `/memory` `/cost` `/readonly` `/status` `/retry` `/save` `/files` `/skills` `/keys`
 `/trust` `/sessions` `/resume [n]` `/undo` `/redo` `/export [path]` `/thinking`
-`/exit`. `/sessions` lists this folder's conversations and `/resume <n>` folds the
+`/learn` `/changes` `/exit`. `/learn` asks the sitting to distill itself — a
+reusable method becomes a skill file under `.aiTerminal/skills/`, durable facts
+become memories (both through the guarded tools); `/changes` shows what the
+sitting changed (`git status` + `diff --stat`, judged like any `!` command). `/sessions` lists this folder's conversations and `/resume <n>` folds the
 one you pick into your next message; `/undo` takes the last exchange out of the
 conversation (one `/redo` restores it); `/export` writes the whole redacted
 conversation through the guarded write path; `/thinking` toggles reasoning
@@ -872,6 +875,12 @@ conversation and turns the panel into an answer box (Enter answers, Esc
 declines; headless runs refuse, exactly like an unanswered confirm) — and when
 it works through a multi-step plan with the `todo.*` tools, the checklist
 renders live in the conversation as it ticks.
+
+And the workspace **learns**: this folder's past conversations are searchable
+by the model itself (`memory.sessions`, bounded to the newest sittings), every
+first request carries a compact map of the project's shape, and once per
+sitting a nudge reminds the model to persist what proved durable — facts as
+memories, methods as skills. What one sitting learns, the next one has.
 
 The guard owns the boundary end to end. Every model action goes through the same
 tool pipeline as every agent run — deny is deny, everywhere. What workspace mode

@@ -206,6 +206,42 @@ pub(crate) fn banner_facts(root: &std::path::Path) -> banner::Facts {
     }
 }
 
+/// A compact map of the project for the turn's grounding — top-level directories
+/// with their file counts and a few representative files each, from the same
+/// bounded walker the completion band uses. Empty for an empty folder. ≤ ~40
+/// lines by construction, so it can ride every first request cheaply.
+pub(crate) fn repo_map(root: &std::path::Path) -> String {
+    let files = crate::caps::project_files(root, 1000);
+    if files.is_empty() {
+        return String::new();
+    }
+    // Group by first path segment, preserving walk order within each.
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for f in &files {
+        let top = match f.split_once('/') {
+            Some((dir, _)) => format!("{dir}/"),
+            None => String::new(), // root-level file
+        };
+        if !groups.contains_key(&top) {
+            order.push(top.clone());
+        }
+        groups.entry(top).or_default().push(f.clone());
+    }
+    let mut out = String::new();
+    for top in order.iter().take(24) {
+        let members = &groups[top];
+        match top.is_empty() {
+            true => out.push_str(&format!("./  \u{2014} {}\n", members.join(" \u{b7} "))),
+            false => {
+                let sample: Vec<&str> = members.iter().take(3).map(|m| m.rsplit('/').next().unwrap_or(m)).collect();
+                out.push_str(&format!("{top}  \u{2014} {} file(s): {}\u{2026}\n", members.len(), sample.join(" \u{b7} ")));
+            }
+        }
+    }
+    out
+}
+
 /// Where a root's sitting persists its input history (arrow-up across sittings).
 pub(crate) fn history_file(root: &std::path::Path) -> Option<std::path::PathBuf> {
     let root = crate::ai::session::resolve_root(root);

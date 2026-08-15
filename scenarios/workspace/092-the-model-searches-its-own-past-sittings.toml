@@ -1,0 +1,22 @@
+name = "the model searches its own past sittings and the hit grounds the next step"
+tags = ["workspace", "memory"]
+
+# Cross-session recall as a tool: an earlier conversation in this folder is
+# searchable, bounded, and its lines ride back as the tool's result.
+
+[setup]
+home = "ws-session-recall"
+session_log = "❯ what port does the dev server use?\nThe dev server listens on port 7788 in this project.\n"
+
+[[step]]
+model_says_in_turn = ["@tool memory.sessions {\"query\":\"port\"}", "It was port 7788, from our earlier conversation."]
+
+[[step]]
+type = ["did we settle the dev port before?"]
+
+[[step]]
+open = "now"
+
+[[step]]
+turn = 2
+expect_request_contains = ["7788"]

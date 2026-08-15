@@ -28,6 +28,7 @@ const SPECS: &[MethodSpec] = &[
     MethodSpec { method: "memory.link", describe: "Relate two memories (args: from, to)" },
     MethodSpec { method: "memory.consolidate", describe: "Merge + prune memories" },
     MethodSpec { method: "memory.stats", describe: "Memory store stats" },
+    MethodSpec { method: "memory.sessions", describe: "Search this folder's past conversations (args: query)" },
 ];
 
 impl NativeObject for MemoryObj {
@@ -55,6 +56,45 @@ impl NativeObject for MemoryObj {
             (!v.is_empty()).then_some(v)
         };
         match method {
+            // Cross-session recall: search the FOLDER's redacted conversation
+            // logs (the `chat/` dir beside the memory store) for a phrase — the
+            // agent's own past sittings, bounded and plain-text.
+            "memory.sessions" => {
+                let query = arg("query");
+                if query.trim().is_empty() {
+                    return Err("memory.sessions needs `query=`".into());
+                }
+                let Some(chat) = ctx.memory_dir.as_ref().and_then(|d| d.parent()).map(|d| d.join("chat")) else {
+                    return Err("no folder session here \u{2014} conversations are per-project".into());
+                };
+                let needle = query.to_lowercase();
+                let mut logs: Vec<std::path::PathBuf> = std::fs::read_dir(&chat)
+                    .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "md")).collect())
+                    .unwrap_or_default();
+                logs.sort();
+                let mut hits: Vec<Json> = Vec::new();
+                let mut lines_kept = 0usize;
+                // Newest sittings first; bounded files and bounded lines.
+                for path in logs.iter().rev().take(5) {
+                    let Ok(text) = std::fs::read_to_string(path) else { continue };
+                    let stamp = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?").to_string();
+                    let matched: Vec<Json> = text
+                        .lines()
+                        .filter(|l| l.to_lowercase().contains(&needle))
+                        .take(40 - lines_kept.min(40))
+                        .map(|l| Json::Str(l.chars().take(200).collect()))
+                        .collect();
+                    if matched.is_empty() {
+                        continue;
+                    }
+                    lines_kept += matched.len();
+                    hits.push(Json::Obj(vec![("session".into(), Json::Str(stamp)), ("lines".into(), Json::Arr(matched))]));
+                    if lines_kept >= 40 {
+                        break;
+                    }
+                }
+                return Ok(Json::Arr(hits));
+            }
             "memory.add" => {
                 let body = first_nonempty(args, &["text", "body", "note"]);
                 if body.trim().is_empty() {

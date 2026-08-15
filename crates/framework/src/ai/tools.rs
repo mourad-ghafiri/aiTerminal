@@ -9,7 +9,7 @@
 /// It is also the ceiling for delegated sub-agents (`task.run`).
 pub const DEFAULT_SAFE_TOOLS: &[&str] = &[
     "fs.read", "fs.list", "fs.stat", "fs.home", "fs.glob", "fs.search", "web.read", "guard.check", "ask.user",
-    "memory.search", "memory.get", "data.query", "data.get", "data.count", "queue.peek", "queue.size",
+    "memory.search", "memory.get", "memory.sessions", "data.query", "data.get", "data.count", "queue.peek", "queue.size",
     "time.now", "time.relative", "codec.json_parse", "codec.sha256",
 ];
 
@@ -19,7 +19,7 @@ pub const DEFAULT_SAFE_TOOLS: &[&str] = &[
 pub const DEFAULT_CODER_TOOLS: &[&str] = &[
     "fs.read", "fs.list", "fs.stat", "fs.glob", "fs.search", "fs.write", "fs.mkdir", "fs.edit", "fs.delete", "fs.copy",
     "fs.move", "fs.append", "sys.run", "web.read", "guard.check",
-    "memory.search", "memory.get", "memory.add", "memory.update", "memory.forget", "memory.link",
+    "memory.search", "memory.get", "memory.sessions", "memory.add", "memory.update", "memory.forget", "memory.link",
     "data.query", "data.get", "data.count", "data.insert", "data.update", "data.delete",
     "queue.push", "queue.pop", "http.get", "http.post", "time.now", "codec.json_parse",
     "todo.set", "todo.add", "todo.done", "todo.list", "task.run", "ask.user",

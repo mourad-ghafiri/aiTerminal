@@ -45,6 +45,8 @@ pub(crate) const BUILTINS: &[SlashCommand] = &[
     SlashCommand { name: "/redo", about: "restore what /undo took back" },
     SlashCommand { name: "/export", about: "write the whole conversation to a file (guarded)" },
     SlashCommand { name: "/thinking", about: "toggle showing the model's reasoning" },
+    SlashCommand { name: "/learn", about: "distill this sitting into a skill or memory" },
+    SlashCommand { name: "/changes", about: "what changed in the project this sitting (git)" },
     SlashCommand { name: "/exit", about: "leave workspace mode" },
 ];
 
@@ -78,6 +80,8 @@ pub(crate) enum Route {
     Redo,
     Export(Option<String>),
     Thinking,
+    Learn,
+    Changes,
     Exit,
     /// A custom prompt command: its body, with the rest of the line spliced in.
     Prompt(String),
@@ -136,6 +140,8 @@ pub(crate) fn route(line: &str, prompts: &[crate::ai::defs::Prompt], agents: &[S
             "/redo" => Route::Redo,
             "/export" => Route::Export((!rest.is_empty()).then(|| rest.to_string())),
             "/thinking" => Route::Thinking,
+            "/learn" => Route::Learn,
+            "/changes" => Route::Changes,
             "/exit" | "/quit" => Route::Exit,
             other => match prompts.iter().find(|p| format!("/{}", p.name) == other) {
                 Some(p) => Route::Prompt(splice(&p.body, rest)),

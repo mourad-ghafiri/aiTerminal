@@ -1,0 +1,21 @@
+name = "/learn sends the distillation turn — a skill or a memory, or an honest nothing"
+tags = ["workspace", "memory"]
+
+# The learning loop, human-triggered: the canned turn tells the model exactly
+# where a lesson may be persisted — a skill file or a memory — through the same
+# guarded tools as everything else.
+
+[setup]
+home = "ws-learn"
+
+[[step]]
+model_says_in_turn = ["Nothing here is worth keeping; I saved nothing."]
+
+[[step]]
+type = ["/learn"]
+
+[[step]]
+open = "now"
+
+[[step]]
+expect_request_contains = [".aiTerminal/skills/", "memory.add", "say so plainly"]

@@ -747,3 +747,29 @@ fn headless_contexts_still_refuse_a_confirm() {
     let err = ctx.allow(crate::guard::Act::Run("touch-the-config now")).unwrap_err();
     assert!(crate::guard::is_refusal(&err), "{err}");
 }
+
+#[test]
+fn memory_sessions_searches_the_folders_conversations_bounded() {
+    let dir = std::env::temp_dir().join(format!("tt-mem-sessions-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let chat = dir.join("chat");
+    std::fs::create_dir_all(&chat).unwrap();
+    std::fs::create_dir_all(dir.join("memory")).unwrap();
+    // Seven logs, so the newest-five bound is observable.
+    for i in 0..7 {
+        std::fs::write(chat.join(format!("2026010{i}-000000.md")), format!("session {i}\nthe dev port is 7788\n")).unwrap();
+    }
+    let mut ctx = ctx();
+    ctx.memory_dir = Some(dir.join("memory"));
+    let out = crate::caps::run("memory.sessions", &[("query".into(), "PORT".into())], &ctx).expect("searchable");
+    let corelib::wire::Json::Arr(hits) = out else { panic!("an array of sessions") };
+    assert_eq!(hits.len(), 5, "only the newest five sittings are searched");
+    let text = format!("{hits:?}");
+    assert!(text.contains("7788"), "case-insensitive hit lines ride back");
+    assert!(!text.contains("session 0") && !text.contains("session 1"), "the oldest two are beyond the bound");
+    // No query refuses; no session dir says why.
+    assert!(crate::caps::run("memory.sessions", &[], &ctx).is_err());
+    let bare = ctx_ws(&dir); // no memory_dir
+    assert!(crate::caps::run("memory.sessions", &[("query".into(), "x".into())], &bare).unwrap_err().contains("per-project"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

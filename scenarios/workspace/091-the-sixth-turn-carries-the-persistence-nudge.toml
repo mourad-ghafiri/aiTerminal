@@ -1,0 +1,25 @@
+name = "the sixth exchange carries the one persistence nudge"
+tags = ["workspace", "memory"]
+
+# By the sixth exchange a sitting usually knows something durable — the nudge
+# rides ONCE through the pending seam, and the model decides.
+
+[setup]
+home = "ws-nudge"
+
+[[step]]
+model_says_in_turn = ["one.", "two.", "three.", "four.", "five.", "six."]
+
+[[step]]
+type = ["q1", "q2", "q3", "q4", "q5", "q6"]
+
+[[step]]
+open = "now"
+
+[[step]]
+turn = 5
+expect_request_excludes = ["nudge: if this sitting has produced durable knowledge"]
+
+[[step]]
+turn = 6
+expect_request_contains = ["nudge: if this sitting has produced durable knowledge"]

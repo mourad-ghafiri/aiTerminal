@@ -71,6 +71,8 @@ pub(crate) struct Repl<T: crate::ai::Transport> {
     last_answer: Option<String>,
     /// Whether streamed reasoning is shown — /thinking flips it per sitting.
     show_reasoning: bool,
+    /// User turns taken — the 6th carries the one persistence nudge.
+    turns_taken: usize,
     /// The transcript as it stood before /undo (plus the prompt), for /redo.
     undone: Option<(crate::ai::Transcript, Option<String>)>,
     /// How an inline `@…` run executes — see [`InlineExec`].
@@ -95,6 +97,14 @@ impl InlineExec for InProcess {
         crate::cli::ai(argv)
     }
 }
+
+/// `/learn` — the sitting looks back at itself (the Hermes learning loop,
+/// human-triggered): a reusable METHOD becomes a skill file the overlay serves,
+/// durable FACTS become memories, and nothing worth keeping is said honestly.
+const LEARN_PROMPT: &str = "Look back over this conversation. If it produced a reusable lesson, persist it now: \
+a reusable METHOD or procedure becomes a skill \u{2014} write it with fs.write to .aiTerminal/skills/<short-name>.md \
+(a markdown file: a title line, then the steps); durable FACTS about this project become memories via memory.add. \
+Then say in one line what you saved. If nothing here is worth keeping, say so plainly and save nothing.";
 
 /// How a handled line leaves the loop.
 enum Flow {
@@ -149,6 +159,7 @@ impl<T: crate::ai::Transport> Repl<T> {
             last_prompt: None,
             last_answer: None,
             show_reasoning,
+            turns_taken: 0,
             undone: None,
             inline_exec: Box::new(InProcess),
         }
@@ -380,6 +391,8 @@ impl<T: crate::ai::Transport> Repl<T> {
             Route::Undo => self.undo(),
             Route::Redo => self.redo(),
             Route::Export(path) => self.export(path),
+            Route::Learn => self.turn(LEARN_PROMPT),
+            Route::Changes => self.bang("git status --short && git diff --stat"),
             Route::Thinking => {
                 self.show_reasoning = !self.show_reasoning;
                 let state = if self.show_reasoning { "shown" } else { "hidden" };
@@ -443,7 +456,9 @@ impl<T: crate::ai::Transport> Repl<T> {
                 format!(
                     "You are {} in workspace mode: a conversation about the folder {} and the work in it. \
                      Answer in Markdown; use mermaid fences for diagrams when a picture says it better. \
-                     Investigate with tools before asserting; keep answers grounded in this project.",
+                     Investigate with tools before asserting; keep answers grounded in this project. \
+                     This folder's past conversations are searchable with memory.sessions; durable lessons \
+                     belong in memory.add (facts) or a skill file under .aiTerminal/skills/ (methods).",
                     corelib::brand::NAME,
                     self.ws.root.display()
                 ),
@@ -472,6 +487,12 @@ impl<T: crate::ai::Transport> Repl<T> {
         }
         let memory = crate::cli::run::memory_preamble(&self.cfg, query, Some(&session.memory_dir()));
         ctx.push_str(&memory);
+        // Orientation: a compact map of the project, so the model starts knowing
+        // the shape of the place. Last-added, so context pressure drops it first.
+        let map = super::repo_map(&self.ws.root);
+        if !map.is_empty() {
+            ctx.push_str(&format!("## The project's shape\n{map}\n\n"));
+        }
         for note in self.pending.drain(..) {
             ctx.push_str(&note);
             ctx.push_str("\n\n");
@@ -546,6 +567,15 @@ impl<T: crate::ai::Transport> Repl<T> {
     fn turn(&mut self, text: &str) {
         if !self.configured() {
             return;
+        }
+        // The persistence nudge, once per sitting (the Hermes idea): by the 6th
+        // exchange there is usually something worth keeping — the model decides.
+        self.turns_taken += 1;
+        if self.turns_taken == 6 {
+            self.pending.push(
+                "[nudge: if this sitting has produced durable knowledge, persist it \u{2014} memory.add for facts, a skill file under .aiTerminal/skills/ for methods]"
+                    .to_string(),
+            );
         }
         // The turn's media: `@path` attachments from the line itself, plus any
         // pasted images the accepted line carried (the `<#image_N>` tokens).
