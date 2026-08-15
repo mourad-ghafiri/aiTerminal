@@ -1,0 +1,20 @@
+name = "/export writes the whole conversation into the project, guarded"
+tags = ["workspace"]
+
+# The sitting's redacted log, as a file the person names — through the same
+# guarded fs.write as every workspace write.
+
+[setup]
+home = "ws-export"
+
+[[step]]
+model_says_in_turn = ["A short answer worth keeping."]
+
+[[step]]
+type = ["say something worth keeping", "/export notes/conversation.md"]
+
+[[step]]
+open = "now"
+
+[[step]]
+expect_root_file = "notes/conversation.md"

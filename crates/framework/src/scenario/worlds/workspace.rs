@@ -29,6 +29,8 @@ pub struct WorkspaceWorld {
     trust_answer: bool,
     /// Whether a model is configured — `model = "none"` in setup opens without one.
     configured: bool,
+    /// A scripted human: what `ask.user` receives when the model asks.
+    user_answer: Option<String>,
     /// Every question the trust gate asked.
     asked: Vec<String>,
     /// Every request body the sitting posted, oldest first.
@@ -57,6 +59,7 @@ pub fn build(setup: &Toml) -> Result<Box<dyn World>, String> {
         sent: Vec::new(),
         overlaid: None,
         session_dir,
+        user_answer: world::text(setup, "user_answer"),
     }))
 }
 
@@ -94,6 +97,15 @@ impl WorkspaceWorld {
         let input: crate::cli::workspace::repl::SharedInput =
             std::sync::Arc::new(std::sync::Mutex::new(Box::new(ScriptedLines::new(self.lines.clone()))));
         let mut repl = Repl::new(ws, cfg, settings(self.configured), client, guard, runner, input, Some(self.session_dir.clone()));
+        if let Some(answer) = self.user_answer.clone() {
+            struct Scripted(String);
+            impl crate::caps::ask::Asker for Scripted {
+                fn ask(&self, _q: &str) -> Option<String> {
+                    Some(self.0.clone())
+                }
+            }
+            repl.runner.ctx.asker = std::sync::Arc::new(Scripted(answer));
+        }
         let code = repl.drive();
         if code != 0 {
             return Err(format!("the sitting exited {code}"));
@@ -155,6 +167,13 @@ impl World for WorkspaceWorld {
         }
         if let Some(n) = world::int(step, "expect_requests") {
             return world::expect_eq(&self.sent.len().to_string(), &n.to_string(), "how many requests the sitting posted");
+        }
+        if let Some(path) = world::text(step, "expect_root_file") {
+            let p = self.root.join(&path);
+            return match p.is_file() {
+                true => Ok(()),
+                false => Err(format!("expected the workspace file {path} to exist")),
+            };
         }
         if let Some(want) = world::list(step, "expect_chat_log_contains") {
             let dir = self.session_dir.join("chat");

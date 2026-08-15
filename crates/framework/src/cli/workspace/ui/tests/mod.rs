@@ -105,11 +105,11 @@ fn rank_puts_prefixes_first_then_subsequences() {
         .iter()
         .map(|n| (n.to_string(), "about".to_string()))
         .collect();
-    let got: Vec<String> = rank("/re", &cands).into_iter().map(|(n, _)| n).collect();
+    let got: Vec<String> = rank("/re", &cands, &Default::default()).into_iter().map(|(n, _)| n).collect();
     assert_eq!(got, ["/readonly", "/resume", "/retry"], "prefix matches, stable order");
-    let got: Vec<String> = rank("/ro", &cands).into_iter().map(|(n, _)| n).collect();
+    let got: Vec<String> = rank("/ro", &cands, &Default::default()).into_iter().map(|(n, _)| n).collect();
     assert_eq!(got, ["/readonly"], "subsequence finds what prefix cannot");
-    assert!(rank("/zzz", &cands).is_empty());
+    assert!(rank("/zzz", &cands, &Default::default()).is_empty());
 }
 
 #[test]
@@ -223,4 +223,60 @@ fn ui_lines_hands_the_text_back_and_parks_the_images_for_the_turn() {
     assert_eq!(src.read_line("", &[]), Some("what is this?".into()));
     assert_eq!(handle.take_media().len(), 1, "the turn collects the line's media");
     assert!(handle.take_media().is_empty(), "…exactly once");
+}
+
+#[test]
+fn a_model_question_borrows_the_editor_and_the_answer_rides_the_channel() {
+    let (mut ui, _out) = state();
+    ui.update(Event::Idle);
+    type_text(&mut ui, "my draft");
+    let (reply, answer) = channel();
+    ui.update(Event::Question { text: "which bucket?".into(), reply });
+    assert!(matches!(ui.screen.panel, PanelState::Question { .. }));
+    assert!(ui.screen.log.iter().any(|l| l.contains("which bucket?")), "the question joins the conversation");
+    type_text(&mut ui, "staging");
+    ui.update(Event::Key(Key::Enter));
+    assert_eq!(answer.recv().unwrap(), Some("staging".into()));
+    // The displaced draft is back in the editor, untouched.
+    match &ui.screen.panel {
+        PanelState::Editing(v) => assert_eq!(v.rows.join(""), "my draft"),
+        _ => panic!("the editor returns after the answer"),
+    }
+}
+
+#[test]
+fn esc_declines_a_question_and_puts_back_what_it_interrupted() {
+    let (mut ui, _out) = state();
+    ui.update(Event::Working { label: "t".into() });
+    let (reply, answer) = channel();
+    ui.update(Event::Question { text: "sure?".into(), reply });
+    ui.update(Event::Key(Key::Esc));
+    assert_eq!(answer.recv().unwrap(), None, "Esc is a decline, not an answer");
+    assert!(matches!(ui.screen.panel, PanelState::Working { .. }), "the run's working row returns");
+}
+
+#[test]
+fn frecency_lifts_what_this_folder_actually_uses() {
+    let cands: Vec<(String, String)> = ["/status", "/skills", "/save"].iter().map(|n| (n.to_string(), String::new())).collect();
+    let mut counts = std::collections::HashMap::new();
+    counts.insert("/save".to_string(), 5usize);
+    let got: Vec<String> = rank("/s", &cands, &counts).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(got[0], "/save", "the used command rises");
+    assert_eq!(&got[1..], ["/status", "/skills"], "the rest keep their stable order");
+}
+
+#[test]
+fn an_at_token_completes_mid_sentence_and_splices_in_place() {
+    assert_eq!(splice_completion("explain @src/ma", "@src/main.rs"), "explain @src/main.rs");
+    assert_eq!(splice_completion("/mod", "/model"), "/model");
+    let (mut ui, _out) = state();
+    ui.update(Event::Idle);
+    type_text(&mut ui, "explain @cod");
+    match &ui.screen.panel {
+        PanelState::Editing(v) => {
+            let m = v.dropdown.as_ref().expect("the band opens on a mid-sentence @token");
+            assert!(m.iter().any(|(n, _)| n == "@coder"), "{m:?}");
+        }
+        _ => panic!("expected the editor"),
+    }
 }

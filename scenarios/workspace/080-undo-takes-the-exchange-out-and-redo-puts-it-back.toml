@@ -1,0 +1,27 @@
+name = "/undo takes the last exchange out of the conversation, and /redo puts it back"
+tags = ["workspace"]
+
+# The conversation is the state: after /undo, the next turn's request must not
+# carry the undone exchange; after /redo it must again.
+
+[setup]
+home = "ws-undo-redo"
+
+[[step]]
+model_says_in_turn = ["ANSWER-ONE about the parrot.", "ANSWER-TWO stands alone.", "ANSWER-THREE remembers again."]
+
+[[step]]
+type = ["first question about the parrot", "/undo", "second question fresh", "/redo", "third question"]
+
+[[step]]
+open = "now"
+
+# Turn 2 (after /undo): the undone exchange is gone from the request.
+[[step]]
+turn = 2
+expect_request_excludes = ["ANSWER-ONE", "first question about the parrot"]
+
+# Turn 3 (after /redo): the restored exchange rides again.
+[[step]]
+turn = 3
+expect_request_contains = ["ANSWER-ONE", "first question about the parrot"]

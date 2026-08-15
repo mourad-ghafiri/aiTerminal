@@ -88,13 +88,17 @@ pub(crate) fn run_core(root: std::path::PathBuf, handle: Arc<ui::UiHandle>) {
 
     let input: repl::SharedInput = Arc::new(Mutex::new(Box::new(ui::UiLines(handle.clone()))));
     let asker = Arc::new(ui::UiAsk(handle.clone()));
+    let questions = Arc::new(ui::UiQuestion(handle.clone()));
     let inline = Box::new(ChildInline { root: root.clone(), events: handle.events.clone() });
     let mut repl = repl::Repl::new(ws, cfg, settings, client, guard, runner, input, session_dir)
         .with_ui(handle)
         .with_inline_exec(inline);
     // The loop's approver: the guard's confirm renders as the amber ask-block and
-    // is answered from the keyboard. Same rule, same words, one keyboard owner.
+    // is answered from the keyboard. Same rule, same words, one keyboard owner —
+    // and the model's `ask.user` questions reach that same person, in the
+    // surface's answer box.
     repl.runner.ctx.approver = asker;
+    repl.runner.ctx.asker = questions;
     repl.drive();
 }
 
@@ -230,6 +234,11 @@ pub(crate) fn describe_for(root: &std::path::Path) -> Vec<(String, String)> {
     }
     for a in crate::ai::defs::load_agents_in(&ws.agents_dirs()) {
         out.push((format!("@{}", a.name), a.description.chars().take(60).collect()));
+    }
+    // The project's files: `@src/ma` completes to `@src/main.rs`, and the
+    // attachment pass on submit does the rest. Bounded by the walker.
+    for f in crate::caps::project_files(&root, 400) {
+        out.push((format!("@{f}"), "file".into()));
     }
     out.sort();
     out.dedup_by(|a, b| a.0 == b.0);

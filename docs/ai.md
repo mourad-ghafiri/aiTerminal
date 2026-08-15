@@ -773,12 +773,17 @@ and the product's whole `@` language works mid-conversation.
 | `!cmd` | ONE shell command, judged by the guard, its output shown and folded into the next turn |
 | `@flow …` / `@job …` / `@loop …` / `@agent` / `@mcp` | the real command, run inline — its output streams into the conversation between dim rules, Esc stops it, and its exit feeds the model's next turn |
 | `@<agent> task` | one run of that agent (project overlay first), its answer folded in |
-| `@<path>` | attach a file — images and PDFs ride the turn as real media |
+| `@<path>` | attach a file — images and PDFs ride the turn as real media; the band completes project files (`explain @src/ma` → `@src/main.rs`), even mid-sentence |
 | anything else | a conversation turn |
 
 Slash surface: `/help` `/init` `/clear` `/compact` `/model` `/agent` `/agents` `/mcp`
 `/memory` `/cost` `/readonly` `/status` `/retry` `/save` `/files` `/skills` `/keys`
-`/trust` `/resume` `/exit`. A partly-typed command with the band open submits the
+`/trust` `/sessions` `/resume [n]` `/undo` `/redo` `/export [path]` `/thinking`
+`/exit`. `/sessions` lists this folder's conversations and `/resume <n>` folds the
+one you pick into your next message; `/undo` takes the last exchange out of the
+conversation (one `/redo` restores it); `/export` writes the whole redacted
+conversation through the guarded write path; `/thinking` toggles reasoning
+display for the sitting. A partly-typed command with the band open submits the
 **highlighted** match — Enter selects, so `/st⏎` is `/status`. `/readonly` is plan
 mode: the toolset narrows to the safe (read-only) set. `/resume` folds the folder's
 last conversation back in.
@@ -800,9 +805,11 @@ aside (`esc interrupts · enter steers`) and anything you type becomes the
 in place.
 
 Typing `/` or `@` opens the **completion popup** floating above the panel
-(fuzzy-ranked: prefix matches first, then subsequences; ↑/↓ select, Tab accepts,
-Enter runs the highlighted match), and a streaming answer's tail rides a
-floating card there too. Both are overlays: **the layout is deterministic** —
+(fuzzy-ranked: prefix matches first, then subsequences, and what this folder
+actually uses rises — frecency; ↑/↓ select, Tab accepts, Enter runs the
+highlighted match; an `@` token completes commands, agents AND project files,
+mid-sentence included), and a streaming answer's tail rides a floating card
+there too. Both are overlays: **the layout is deterministic** —
 nothing but a window resize or a growing draft can move the conversation. Tool
 moments are marked by kind, flow-style: `⚙` native · `⌁` MCP · `✧` delegate ·
 `◆` memory — and an inline `@flow`/`@job`/`@loop` run is embedded between dim
@@ -859,6 +866,12 @@ Enter to choose, Esc (or a click on the backdrop) declining safely. The answer i
 remembered per folder; it is asked again only when the parts that execute change
 (a `git pull` that adds an MCP server re-opens the question). Declining opens the
 workspace on global config alone; `/trust` re-opens the question.
+
+The model can also **ask you** — the `ask.user` tool puts its question in the
+conversation and turns the panel into an answer box (Enter answers, Esc
+declines; headless runs refuse, exactly like an unanswered confirm) — and when
+it works through a multi-step plan with the `todo.*` tools, the checklist
+renders live in the conversation as it ticks.
 
 The guard owns the boundary end to end. Every model action goes through the same
 tool pipeline as every agent run — deny is deny, everywhere. What workspace mode

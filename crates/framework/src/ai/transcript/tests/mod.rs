@@ -86,3 +86,16 @@ fn a_stale_span_is_ignored_rather_than_panicking() {
     assert_eq!(t.len(), before);
     assert_eq!(t.turns()[0], Turn::User("task".into()));
 }
+
+#[test]
+fn split_off_cuts_at_the_last_user_turn_and_out_of_range_cuts_nothing() {
+    let mut t = Transcript::new("sys", "first ask");
+    t.push(Turn::Assistant("first answer".into()));
+    t.push(Turn::User("second ask".into()));
+    t.push(Turn::Assistant("second answer".into()));
+    let tail = t.split_off(2);
+    assert_eq!(tail.len(), 2, "the last exchange came off");
+    assert_eq!(t.len(), 2, "the first exchange stands");
+    assert!(t.split_off(99).is_empty(), "out of range removes nothing");
+    assert_eq!(t.len(), 2);
+}

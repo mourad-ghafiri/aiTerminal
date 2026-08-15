@@ -33,7 +33,7 @@ pub(crate) fn panel_height(cell_h: f32, input_rows: usize) -> f32 {
 /// (Working shows the one draft row; the guard's ask shows its one question row.)
 pub(crate) fn input_rows(panel: &PanelState) -> usize {
     match panel {
-        PanelState::Editing(view) => view.rows.len().max(1),
+        PanelState::Editing(view) | PanelState::Question { view, .. } => view.rows.len().max(1),
         _ => 1,
     }
 }
@@ -95,6 +95,19 @@ fn view_for(panel: &PanelState, status: &Status, tick: usize) -> PanelView {
                     (format!("{} {label}", FRAMES[tick % FRAMES.len()]), Tone::Accent),
                     ("esc interrupts \u{b7} enter steers".into(), Tone::Muted),
                 ],
+            }
+        }
+        PanelState::Question { text, view } => {
+            let mut q: String = text.chars().take(64).collect();
+            if text.chars().count() > 64 {
+                q.push('\u{2026}');
+            }
+            PanelView {
+                bar: Tone::Accent,
+                rows: view.rows.clone(),
+                cursor: Some(view.cursor),
+                placeholder: false,
+                meta_left: vec![(format!("? {q}"), Tone::Accent), ("enter answers \u{b7} esc declines".into(), Tone::Muted)],
             }
         }
         PanelState::Ask { act, reason } => PanelView {

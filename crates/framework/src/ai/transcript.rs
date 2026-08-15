@@ -90,6 +90,16 @@ impl Transcript {
         self.turns.push(turn);
     }
 
+    /// Cut the conversation at `at` and hand back everything after it — how a
+    /// sitting's `/undo` removes its last exchange (and `/redo` re-pushes it).
+    /// An out-of-range index removes nothing, for [`replace_span`]'s reason.
+    pub fn split_off(&mut self, at: usize) -> Vec<Turn> {
+        if at >= self.turns.len() {
+            return Vec::new();
+        }
+        self.turns.split_off(at)
+    }
+
     /// Replace a span of turns with one turn — how compaction folds history down.
     /// Out-of-range spans are ignored rather than panicking: a compaction stage
     /// working from a stale measurement must never take down the run it was trying

@@ -135,11 +135,45 @@ impl crate::ai::ToolRunner for CliToolRunner {
             // No sink at all: a delegate sub-agent, whose parent is the one drawing.
             (None, _) => eprintln!("{}  {line}{}", muted(), reset()),
         }
+        // The plan, visible: a todo MUTATION re-renders the whole checklist through
+        // the same sink — the model keeps the list, the person watches it tick.
+        if result.is_ok() && name.starts_with("todo.") && name != "todo.list" {
+            if let Ok(corelib::wire::Json::Arr(items)) = crate::caps::run("todo.list", &[], &self.ctx) {
+                for row in checklist_rows(&items) {
+                    match &self.trace {
+                        Some(sink) => sink.tool(&row),
+                        None => eprintln!("  {row}"),
+                    }
+                }
+            }
+        }
         match result {
             Ok(j) => crate::ai::ToolOutcome::Done(hide(self, json_text(&j))),
             Err(e) => classify(hide(self, e)),
         }
     }
+}
+
+/// The agent's checklist, one row per task: done ticked and dim, the first open
+/// task pointed at, the rest waiting — what a `todo.*` mutation just made true.
+fn checklist_rows(items: &[corelib::wire::Json]) -> Vec<String> {
+    let (a, dim, r) = (crate::cli::style::accent(), muted(), reset());
+    let mut first_open = true;
+    items
+        .iter()
+        .filter_map(|it| {
+            let text = it.get("text")?.as_str()?;
+            let done = it.get("done").and_then(|d| d.as_bool()).unwrap_or(false);
+            Some(match (done, first_open) {
+                (true, _) => format!("{dim}\u{2611} {text}{r}"),
+                (false, true) => {
+                    first_open = false;
+                    format!("{a}\u{25b8} {text}{r}")
+                }
+                (false, false) => format!("{dim}\u{2610} {text}{r}"),
+            })
+        })
+        .collect()
 }
 
 /// A failed call, sorted into the two things it can be.
@@ -402,7 +436,7 @@ pub(crate) fn build_runner(cfg: &crate::config::Config, settings: &crate::ai::Ai
     // it shares the vault — a secret one node saw reads back the same in the next.
     let guard = std::sync::Arc::new(guard.at(workspace.clone()));
     CliToolRunner {
-        ctx: crate::caps::CapCtx { guard, app_data, remote_enabled: cfg.ai_network, origin: "terminal://ai/".into(), sandbox: workspace, memory_dir, approver: std::sync::Arc::new(crate::guard::NobodyToAsk) },
+        ctx: crate::caps::CapCtx { guard, app_data, remote_enabled: cfg.ai_network, origin: "terminal://ai/".into(), sandbox: workspace, memory_dir, approver: std::sync::Arc::new(crate::guard::NobodyToAsk), asker: std::sync::Arc::new(crate::caps::ask::NobodyToAnswer) },
         mcp,
         trace: None,
         sub: SubAgentCtx {

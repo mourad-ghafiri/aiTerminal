@@ -11,6 +11,7 @@ use std::sync::Arc;
 use corelib::wire::Json;
 
 mod backends;
+pub mod ask;
 mod clip;
 mod codec;
 mod data;
@@ -43,6 +44,9 @@ pub struct CapCtx {
     pub remote_enabled: bool,
     /// The calling origin (e.g. `terminal://ai/`), for attribution.
     pub origin: String,
+    /// Who answers a model's `ask.user` question — a real person in the
+    /// workspace, [`ask::NobodyToAnswer`] everywhere headless.
+    pub asker: Arc<dyn ask::Asker>,
     /// The sandbox root — the directory the run was invoked from. `fs` WRITES are
     /// confined to it (outside / `None` = denied); read-only `fs` browsing is
     /// unaffected.
@@ -88,6 +92,7 @@ pub fn standard_registry() -> ObjectRegistry {
         Box::new(task::TaskObj),
         Box::new(http::HttpObj),
         Box::new(clip::ClipObj),
+        Box::new(ask::AskObj),
     ])
 }
 
@@ -104,6 +109,12 @@ pub fn run(method: &str, args: &[(String, String)], ctx: &CapCtx) -> Result<Json
 }
 
 /// A human description of a method (shown in the agent tool catalog).
+/// The project's files, bounded, for completion surfaces — the same walker and
+/// bounds `fs.glob` uses.
+pub(crate) fn project_files(root: &std::path::Path, cap: usize) -> Vec<String> {
+    backends::files::project_files(root, cap)
+}
+
 pub fn describe(method: &str) -> &'static str {
     registry().describe(method)
 }

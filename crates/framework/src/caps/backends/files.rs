@@ -390,6 +390,17 @@ fn fs_glob(args: &[(String, String)], ctx: &CapCtx) -> Result<Json, String> {
 }
 
 
+/// The project's files as `root`-relative paths, bounded — a completion band's
+/// source, sharing the glob walker's own depth/count bounds and hidden-dir skip.
+pub(crate) fn project_files(root: &std::path::Path, cap: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    glob_walk(root, root, "**", &mut out, 0);
+    out.into_iter()
+        .filter_map(|p| std::path::Path::new(&p).strip_prefix(root).ok().map(|r| r.to_string_lossy().into_owned()))
+        .take(cap)
+        .collect()
+}
+
 /// Walk `dir` collecting files whose path RELATIVE to `root` matches the glob
 /// `pattern` (`*` = within a segment, `**` = across segments, `?` = one char). Bounded
 /// in depth and total matches so a hostile pattern can't fan out.

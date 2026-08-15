@@ -40,6 +40,9 @@ pub(crate) enum Event {
     /// A clipboard image: attached to the NEXT message, anchored by a visible
     /// `<#image_N>` token the person can move or delete.
     PasteImage(crate::ai::ImageData),
+    /// The model asked the human (`ask.user`) — the editor becomes the answer
+    /// box; `None` on the reply means declined.
+    Question { text: String, reply: Sender<Option<String>> },
 }
 
 /// What the loop hands outward: accepted input (with any images its tokens
@@ -106,6 +109,8 @@ struct Editor {
     hist_file: Option<std::path::PathBuf>,
     prefill: Option<String>,
     last_ctrl_c: Option<Instant>,
+    /// How often each leading token was used here — the band's frecency.
+    counts: std::collections::HashMap<String, usize>,
 }
 
 impl Editor {
@@ -116,6 +121,14 @@ impl Editor {
             .map(|t| t.lines().map(str::to_string).filter(|l| !l.is_empty()).collect())
             .unwrap_or_default();
         let hist_at = history.len();
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for line in &history {
+            if let Some(tok) = line.split_whitespace().next() {
+                if tok.starts_with('/') || tok.starts_with('@') {
+                    *counts.entry(tok.to_string()).or_default() += 1;
+                }
+            }
+        }
         Editor {
             buf: LineBuffer::default(),
             history,
@@ -127,6 +140,7 @@ impl Editor {
             hist_file,
             prefill: None,
             last_ctrl_c: None,
+            counts,
         }
     }
 
@@ -136,6 +150,11 @@ impl Editor {
         }
         self.history.push(line.to_string());
         self.hist_at = self.history.len();
+        if let Some(tok) = line.split_whitespace().next() {
+            if tok.starts_with('/') || tok.starts_with('@') {
+                *self.counts.entry(tok.to_string()).or_default() += 1;
+            }
+        }
         if let Some(p) = &self.hist_file {
             if let Some(parent) = p.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -152,11 +171,18 @@ impl Editor {
             return None;
         }
         let text = self.buf.text();
-        let token = text.split_whitespace().next().unwrap_or("");
-        if token.is_empty() || !(token.starts_with('/') || token.starts_with('@')) || text.contains(' ') {
-            return None;
+        // A leading `/` completes commands while the line is still one token…
+        let first = text.split_whitespace().next().unwrap_or("");
+        if first.starts_with('/') && !text.contains(' ') {
+            return Some(rank(first, &self.describe, &self.counts)).filter(|m| !m.is_empty());
         }
-        Some(rank(token, &self.describe))
+        // …and an `@` token completes ANYWHERE in the line — verbs, agents, and
+        // the project's files ("explain @src/ma" offers @src/main.rs).
+        let last = text.rsplit(char::is_whitespace).next().unwrap_or("");
+        if last.starts_with('@') {
+            return Some(rank(last, &self.describe, &self.counts)).filter(|m| !m.is_empty());
+        }
+        None
     }
 
     fn view(&self) -> EditView {
@@ -178,6 +204,10 @@ pub(crate) struct UiState {
     lines: Sender<Out>,
     ask_reply: Option<Sender<bool>>,
     ask_prev: Option<PanelState>,
+    /// A model question in flight: the reply channel, the panel it interrupted,
+    /// and the editor text it displaced.
+    q_reply: Option<Sender<Option<String>>>,
+    q_prev: Option<(PanelState, String)>,
     /// Images pasted for the NEXT message, in token order (`<#image_1>` …).
     pasted: Vec<crate::ai::ImageData>,
     /// The two-line banner the anchored era opens with.
@@ -193,6 +223,8 @@ impl UiState {
             lines,
             ask_reply: None,
             ask_prev: None,
+            q_reply: None,
+            q_prev: None,
             pasted: Vec::new(),
             compact,
         }
@@ -209,6 +241,49 @@ impl UiState {
 
     fn show_editor(&mut self) {
         self.screen.panel = PanelState::Editing(self.editor.view());
+    }
+
+    /// Re-render the answer box after an edit, keeping the question.
+    fn refresh_question(&mut self) {
+        if let PanelState::Question { text, .. } = &self.screen.panel {
+            self.screen.panel = PanelState::Question { text: text.clone(), view: self.editor.view() };
+        }
+    }
+
+    /// Enter answers, Esc/Ctrl+C declines, anything else edits the answer box.
+    fn on_question_key(&mut self, key: Key) -> bool {
+        match key {
+            Key::Esc | Key::Ctrl('c') => self.answer_question(None),
+            Key::Enter => {
+                let answer = self.editor.buf.text();
+                self.answer_question(Some(answer));
+            }
+            key => {
+                self.editor.buf.apply(&key);
+                self.refresh_question();
+            }
+        }
+        true
+    }
+
+    /// Send the answer (or the decline), echo it, and put back whatever the
+    /// question interrupted — the working row and the displaced draft included.
+    fn answer_question(&mut self, answer: Option<String>) {
+        if let Some(reply) = self.q_reply.take() {
+            let (dim, r) = (crate::cli::style::muted(), crate::cli::style::reset());
+            match &answer {
+                Some(text) => self.screen.append(&format!("{dim}\u{21b3} {text}{r}")),
+                None => self.screen.append(&format!("{dim}\u{21b3} (declined){r}")),
+            }
+            let _ = reply.send(answer);
+        }
+        let (panel, draft) = self.q_prev.take().unwrap_or((PanelState::Hidden, String::new()));
+        self.editor.buf = LineBuffer::default();
+        self.editor.buf.set(&draft);
+        match panel {
+            PanelState::Editing(_) => self.show_editor(),
+            other => self.screen.panel = other,
+        }
     }
 
     /// One event, folded in. Returns whether the frame changed.
@@ -264,11 +339,30 @@ impl UiState {
                 self.screen.panel = PanelState::Ask { act: "opening this folder's project overlay".into(), reason: question };
                 true
             }
+            Event::Question { text, reply } => {
+                // The question joins the conversation whole; the editor becomes
+                // the answer box, its draft stashed until the answer is sent.
+                self.anchor();
+                let (a, r) = (crate::cli::style::accent(), crate::cli::style::reset());
+                self.screen.append(&format!("{a}? {text}{r}"));
+                self.q_prev = Some((self.screen.panel.clone(), self.editor.buf.text()));
+                self.q_reply = Some(reply);
+                self.editor.buf = LineBuffer::default();
+                self.screen.panel = PanelState::Question { text, view: self.editor.view() };
+                true
+            }
             Event::Paste(text) => {
                 let text = text.replace("\r\n", "\n").replace('\r', "\n");
                 match &mut self.screen.panel {
                     PanelState::Working { draft, .. } => {
                         draft.push_str(&text.replace('\n', " "));
+                        true
+                    }
+                    PanelState::Question { .. } => {
+                        for c in text.chars() {
+                            self.editor.buf.apply(&Key::Char(c));
+                        }
+                        self.refresh_question();
                         true
                     }
                     PanelState::Editing(_) => {
@@ -301,6 +395,9 @@ impl UiState {
     }
 
     fn on_key(&mut self, key: Key) -> bool {
+        if matches!(self.screen.panel, PanelState::Question { .. }) {
+            return self.on_question_key(key);
+        }
         match &mut self.screen.panel {
             PanelState::Ask { .. } => {
                 let answer = match key {
@@ -337,6 +434,8 @@ impl UiState {
                 true
             }
             PanelState::Editing(_) => self.on_editor_key(key),
+            // Intercepted above — the answer box has its own key rules.
+            PanelState::Question { .. } => unreachable!("question keys are handled before this match"),
             PanelState::Hidden => false,
         }
     }
@@ -367,7 +466,8 @@ impl UiState {
             }
             Key::Tab => match ed.dropdown().and_then(|m| m.get(ed.selected).cloned()) {
                 Some((name, _)) => {
-                    ed.buf.set(&format!("{name} "));
+                    let text = ed.buf.text();
+                    ed.buf.set(&format!("{} ", splice_completion(&text, &name)));
                     ed.suppressed = true;
                 }
                 None => {
@@ -401,17 +501,11 @@ impl UiState {
             key => match ed.buf.apply(&key) {
                 Edit::Accept => {
                     let mut line = ed.buf.text();
-                    // A partly-typed command with the band open submits the
-                    // HIGHLIGHTED match — Enter selects, the opencode/Claude
-                    // gesture — with any arguments after the token kept.
+                    // A partly-typed token with the band open submits with the
+                    // HIGHLIGHTED match spliced in — Enter selects, the
+                    // opencode/Claude gesture.
                     if let Some((name, _)) = ed.dropdown().and_then(|m| m.get(ed.selected).cloned()) {
-                        let mut parts = line.splitn(2, char::is_whitespace);
-                        let _token = parts.next().unwrap_or("");
-                        let rest = parts.next().unwrap_or("").trim().to_string();
-                        line = match rest.is_empty() {
-                            true => name,
-                            false => format!("{name} {rest}"),
-                        };
+                        line = splice_completion(&line, &name);
                     }
                     ed.buf = LineBuffer::default();
                     if !line.trim().is_empty() {
@@ -519,7 +613,7 @@ impl crate::cli::observe::TailSink for TailEvents {
 /// Rank `candidates` for `token`: exact-prefix matches first, then subsequence
 /// matches (`/ro` finds `/readonly`), both in their given (stable) order — so a
 /// partly-typed command is one Enter away.
-pub(crate) fn rank(token: &str, candidates: &[(String, String)]) -> Vec<(String, String)> {
+pub(crate) fn rank(token: &str, candidates: &[(String, String)], counts: &std::collections::HashMap<String, usize>) -> Vec<(String, String)> {
     let mut prefix = Vec::new();
     let mut fuzzy = Vec::new();
     for (name, about) in candidates {
@@ -532,8 +626,29 @@ pub(crate) fn rank(token: &str, candidates: &[(String, String)]) -> Vec<(String,
             fuzzy.push((name.clone(), about.clone()));
         }
     }
+    // Frecency: what this folder's sittings actually use rises within each band
+    // (a stable sort, so equally-used entries keep the registry's order).
+    let boost = |v: &mut Vec<(String, String)>| v.sort_by_key(|(n, _)| std::cmp::Reverse(counts.get(n).copied().unwrap_or(0)));
+    boost(&mut prefix);
+    boost(&mut fuzzy);
     prefix.extend(fuzzy);
     prefix
+}
+
+/// Put the band's selected `name` into `text`: an `@` completion replaces the
+/// LAST token (the one the band matched, mid-sentence or not); a command
+/// completion replaces the leading token and keeps any arguments after it.
+fn splice_completion(text: &str, name: &str) -> String {
+    let last = text.rsplit(char::is_whitespace).next().unwrap_or("");
+    if name.starts_with('@') && last.starts_with('@') && text.len() > last.len() {
+        return format!("{}{name}", &text[..text.len() - last.len()]);
+    }
+    let mut parts = text.splitn(2, char::is_whitespace);
+    let _token = parts.next().unwrap_or("");
+    match parts.next().map(str::trim).filter(|r| !r.is_empty()) {
+        Some(rest) => format!("{name} {rest}"),
+        None => name.to_string(),
+    }
 }
 
 fn is_subsequence(needle: &str, hay: &str) -> bool {
@@ -589,6 +704,17 @@ impl LineSource for UiLines {
             }
             Ok(Out::End) | Err(_) => None,
         }
+    }
+}
+
+/// The model's `ask.user`, put to the person in the surface's answer box.
+pub(crate) struct UiQuestion(pub(crate) Arc<UiHandle>);
+
+impl crate::caps::ask::Asker for UiQuestion {
+    fn ask(&self, question: &str) -> Option<String> {
+        let (reply, answer) = channel();
+        self.0.events.send(Event::Question { text: question.to_string(), reply }).ok()?;
+        answer.recv().ok().flatten()
     }
 }
 

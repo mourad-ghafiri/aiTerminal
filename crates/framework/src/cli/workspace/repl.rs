@@ -69,6 +69,10 @@ pub(crate) struct Repl<T: crate::ai::Transport> {
     /// The last prompt and answer, for /retry and /save.
     last_prompt: Option<String>,
     last_answer: Option<String>,
+    /// Whether streamed reasoning is shown — /thinking flips it per sitting.
+    show_reasoning: bool,
+    /// The transcript as it stood before /undo (plus the prompt), for /redo.
+    undone: Option<(crate::ai::Transcript, Option<String>)>,
     /// How an inline `@…` run executes — see [`InlineExec`].
     inline_exec: Box<dyn InlineExec>,
 }
@@ -121,6 +125,7 @@ impl<T: crate::ai::Transport> Repl<T> {
         // One cancel for the sitting, re-armed per turn — Esc trips it mid-stream.
         let cancel = crate::ai::CancelToken::new();
         let client = client.with_cancel(cancel.clone());
+        let show_reasoning = cfg.ai_show_reasoning;
         Repl {
             ws,
             cfg,
@@ -143,6 +148,8 @@ impl<T: crate::ai::Transport> Repl<T> {
             served: String::new(),
             last_prompt: None,
             last_answer: None,
+            show_reasoning,
+            undone: None,
             inline_exec: Box::new(InProcess),
         }
     }
@@ -187,23 +194,113 @@ impl<T: crate::ai::Transport> Repl<T> {
         }
     }
 
-    /// Ask to resume: fold the folder's most recent conversation into the next
-    /// turn's grounding.
-    pub(crate) fn resume_last(&mut self) {
-        let Some(dir) = self.session_dir.as_ref().map(|d| d.join("chat")) else {
-            self.note("nothing to resume \u{2014} this folder has no conversations yet");
-            return;
-        };
-        let mut logs: Vec<_> = std::fs::read_dir(&dir).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+    /// This folder's conversations, newest LAST (so `/resume <n>` numbers are
+    /// stable as new sittings appear) — this sitting's own empty log excluded.
+    fn session_logs(&self) -> Vec<std::path::PathBuf> {
+        let Some(dir) = self.session_dir.as_ref().map(|d| d.join("chat")) else { return Vec::new() };
+        let mut logs: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+            .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "md")).collect())
+            .unwrap_or_default();
         logs.sort();
-        // The newest BEFORE this sitting's own (empty) log.
-        let latest = logs.iter().rev().find(|p| Some(*p) != self.chat_log.as_ref());
-        match latest.and_then(|p| std::fs::read_to_string(p).ok()) {
+        logs.retain(|p| Some(p) != self.chat_log.as_ref());
+        logs
+    }
+
+    /// `/sessions` — the folder's conversations: number, stamp, first prompt line.
+    fn sessions(&mut self) {
+        let logs = self.session_logs();
+        if logs.is_empty() {
+            return self.note("no conversations in this folder yet");
+        }
+        let (a, dim, r) = (accent(), muted(), reset());
+        self.say(&format!("{dim}conversations here ({}):{r}", logs.len()));
+        let lines: Vec<String> = logs
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let stamp = p.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
+                let first = std::fs::read_to_string(p)
+                    .ok()
+                    .and_then(|t| t.lines().find(|l| !l.trim().is_empty()).map(|l| l.chars().take(72).collect::<String>()))
+                    .unwrap_or_default();
+                format!("  {a}{}{r} {dim}{stamp}{r}  {first}", i + 1)
+            })
+            .collect();
+        for line in lines {
+            self.say(&line);
+        }
+        self.note("fold one into your next message:  /resume <n>");
+    }
+
+    /// Ask to resume: fold a conversation into the next turn's grounding — the
+    /// most recent by default, or the `/sessions` number given.
+    pub(crate) fn resume_last(&mut self) {
+        self.resume(None);
+    }
+
+    fn resume(&mut self, pick: Option<usize>) {
+        let logs = self.session_logs();
+        let chosen = match pick {
+            Some(n) if n >= 1 && n <= logs.len() => logs.get(n - 1),
+            Some(n) => {
+                self.note(&format!("no conversation {n} \u{2014} /sessions lists {}", logs.len()));
+                return;
+            }
+            None => logs.last(),
+        };
+        match chosen.and_then(|p| std::fs::read_to_string(p).ok()) {
             Some(text) if !text.trim().is_empty() => {
                 self.pending.push(format!("## Earlier conversation in this folder (resumed)\n{}", text.trim()));
                 self.note("resumed \u{2014} the earlier conversation rides into your next message");
             }
             _ => self.note("nothing to resume \u{2014} this folder has no conversations yet"),
+        }
+    }
+
+    /// `/undo` — take back the last exchange: the transcript is cut at the last
+    /// user turn and the tail parked for `/redo`. The chat log is append-only,
+    /// so the record says what happened instead of rewriting it.
+    fn undo(&mut self) {
+        let Some(t) = self.transcript.as_mut() else {
+            return self.note("nothing to undo \u{2014} the conversation has not started");
+        };
+        let Some(at) = t.turns().iter().rposition(|x| matches!(x, crate::ai::Turn::User(_))) else {
+            return self.note("nothing to undo");
+        };
+        // Snapshot the whole conversation for /redo, then cut at the last user
+        // turn; undoing the FIRST exchange empties it, and the next turn rebuilds
+        // its grounding fresh.
+        let snapshot = t.clone();
+        let _ = t.split_off(at);
+        if t.turns().is_empty() {
+            self.transcript = None;
+        }
+        self.undone = Some((snapshot, self.last_prompt.take()));
+        self.last_answer = None;
+        self.say(&format!("{}\u{21a9} undone \u{2014} the last exchange left the conversation (/redo restores it){}", muted(), reset()));
+    }
+
+    /// `/redo` — restore what `/undo` took back, one level deep.
+    fn redo(&mut self) {
+        let Some((snapshot, prompt)) = self.undone.take() else {
+            return self.note("nothing to redo");
+        };
+        self.transcript = Some(snapshot);
+        self.last_prompt = prompt;
+        self.note("\u{21aa} restored \u{2014} the exchange is back in the conversation");
+    }
+
+    /// `/export [path]` — the WHOLE conversation (the sitting's redacted log),
+    /// written through the same guarded path as every file the workspace writes.
+    fn export(&mut self, path: Option<String>) {
+        let Some(text) = self.chat_log.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).filter(|t| !t.trim().is_empty()) else {
+            return self.note("nothing to export yet \u{2014} the conversation is empty");
+        };
+        let path = path.unwrap_or_else(|| format!("conversation-{}.md", corelib::datetime::format(now_unix() as i64, "%Y%m%d-%H%M%S", 0)));
+        let pairs = vec![("path".to_string(), path.clone()), ("content".to_string(), text)];
+        match crate::caps::run("fs.write", &pairs, &self.runner.ctx) {
+            Ok(_) => self.note(&format!("exported \u{2014} {path}")),
+            Err(e) => self.say(&self.guard.mask(&e)),
         }
     }
 
@@ -278,7 +375,16 @@ impl<T: crate::ai::Transport> Repl<T> {
                 }
                 self.note("the stored trust answer was forgotten \u{2014} the next `@workspace` asks again");
             }
-            Route::Resume => self.resume_last(),
+            Route::Sessions => self.sessions(),
+            Route::Resume(pick) => self.resume(pick),
+            Route::Undo => self.undo(),
+            Route::Redo => self.redo(),
+            Route::Export(path) => self.export(path),
+            Route::Thinking => {
+                self.show_reasoning = !self.show_reasoning;
+                let state = if self.show_reasoning { "shown" } else { "hidden" };
+                self.note(&format!("reasoning {state} for this sitting"));
+            }
             Route::Init => super::init::run(self),
             Route::Prompt(body) => self.turn(&body),
             Route::Bang(cmd) => self.bang(&cmd),
@@ -391,7 +497,7 @@ impl<T: crate::ai::Transport> Repl<T> {
                     RunView::new(Box::new(super::ui::AppendWriter::new(ui.events.clone())), None, markdown_opts(true))
                         .composed(Box::new(super::ui::TailEvents(ui.events.clone()))),
                 );
-                let obs = CliObserver::new(view.clone()).with_reasoning(self.cfg.ai_show_reasoning).with_panel({
+                let obs = CliObserver::new(view.clone()).with_reasoning(self.show_reasoning).with_panel({
                     let pulse = ui.pulse.clone();
                     Arc::new(move || pulse.turn_started())
                 });
@@ -399,7 +505,7 @@ impl<T: crate::ai::Transport> Repl<T> {
             }
             None => {
                 let view = SharedView::new(RunView::new(Box::new(std::io::stdout()), None, markdown_opts(out_is_tty())).quiet());
-                let obs = CliObserver::new(view.clone()).with_reasoning(self.cfg.ai_show_reasoning).with_motivation(&self.cfg);
+                let obs = CliObserver::new(view.clone()).with_reasoning(self.show_reasoning).with_motivation(&self.cfg);
                 (view, obs)
             }
         }
@@ -443,7 +549,7 @@ impl<T: crate::ai::Transport> Repl<T> {
         }
         // The turn's media: `@path` attachments from the line itself, plus any
         // pasted images the accepted line carried (the `<#image_N>` tokens).
-        let (prompt, mut media, file_ctx) = crate::cli::attach::collect_attachments(text);
+        let (prompt, mut media, file_ctx) = crate::cli::attach::collect_attachments_in(&self.ws.root, text);
         if let Some(ui) = &self.ui {
             media.extend(ui.take_media());
         }

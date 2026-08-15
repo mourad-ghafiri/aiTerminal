@@ -39,7 +39,12 @@ pub(crate) const BUILTINS: &[SlashCommand] = &[
     SlashCommand { name: "/skills", about: "the skills the overlay serves, project-first" },
     SlashCommand { name: "/keys", about: "the key table" },
     SlashCommand { name: "/trust", about: "re-open the project trust question" },
-    SlashCommand { name: "/resume", about: "reload the folder's last conversation" },
+    SlashCommand { name: "/sessions", about: "this folder's conversations; /resume <n> folds one in" },
+    SlashCommand { name: "/resume", about: "reload a conversation (latest, or /resume <n>)" },
+    SlashCommand { name: "/undo", about: "take back the last exchange" },
+    SlashCommand { name: "/redo", about: "restore what /undo took back" },
+    SlashCommand { name: "/export", about: "write the whole conversation to a file (guarded)" },
+    SlashCommand { name: "/thinking", about: "toggle showing the model's reasoning" },
     SlashCommand { name: "/exit", about: "leave workspace mode" },
 ];
 
@@ -66,7 +71,13 @@ pub(crate) enum Route {
     Keys,
     Readonly,
     Trust,
-    Resume,
+    Sessions,
+    /// Reload a conversation: the latest (`None`) or a numbered one.
+    Resume(Option<usize>),
+    Undo,
+    Redo,
+    Export(Option<String>),
+    Thinking,
     Exit,
     /// A custom prompt command: its body, with the rest of the line spliced in.
     Prompt(String),
@@ -119,7 +130,12 @@ pub(crate) fn route(line: &str, prompts: &[crate::ai::defs::Prompt], agents: &[S
             "/keys" => Route::Keys,
             "/readonly" | "/plan" => Route::Readonly,
             "/trust" => Route::Trust,
-            "/resume" | "/continue" => Route::Resume,
+            "/sessions" => Route::Sessions,
+            "/resume" | "/continue" => Route::Resume(rest.parse().ok()),
+            "/undo" => Route::Undo,
+            "/redo" => Route::Redo,
+            "/export" => Route::Export((!rest.is_empty()).then(|| rest.to_string())),
+            "/thinking" => Route::Thinking,
             "/exit" | "/quit" => Route::Exit,
             other => match prompts.iter().find(|p| format!("/{}", p.name) == other) {
                 Some(p) => Route::Prompt(splice(&p.body, rest)),

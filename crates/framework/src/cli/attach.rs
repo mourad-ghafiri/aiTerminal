@@ -26,6 +26,12 @@ fn media_type_of(path: &std::path::Path) -> Option<&'static str> {
 /// The `@` is dropped from the prompt so the model reads a plain path. Pure over
 /// the filesystem — no model, no network.
 pub(crate) fn collect_attachments(prompt: &str) -> (String, Vec<crate::ai::ImageData>, String) {
+    collect_attachments_in(&std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")), prompt)
+}
+
+/// [`collect_attachments`], with relative `@paths` resolved against `base` — the
+/// workspace passes its ROOT, because the GUI process's own cwd is nowhere near it.
+pub(crate) fn collect_attachments_in(base: &std::path::Path, prompt: &str) -> (String, Vec<crate::ai::ImageData>, String) {
     let mut media = Vec::new();
     let mut file_ctx = String::new();
     let mut out: Vec<String> = Vec::new();
@@ -35,7 +41,14 @@ pub(crate) fn collect_attachments(prompt: &str) -> (String, Vec<crate::ai::Image
             out.push(token.to_string());
             continue;
         };
-        let path = std::path::Path::new(path_str);
+        let joined;
+        let path = match std::path::Path::new(path_str).is_absolute() {
+            true => std::path::Path::new(path_str),
+            false => {
+                joined = base.join(path_str);
+                joined.as_path()
+            }
+        };
         if !path.is_file() {
             out.push(token.to_string()); // not a file — leave the token as typed
             continue;

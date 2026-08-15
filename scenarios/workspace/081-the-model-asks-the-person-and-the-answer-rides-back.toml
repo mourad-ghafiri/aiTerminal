@@ -1,0 +1,23 @@
+name = "ask.user puts a question to the person, and their answer rides back to the model"
+tags = ["workspace", "ai"]
+
+# The interaction seam as a tool: instead of guessing, the model asks; the
+# person's words become the tool's result and ground the next step.
+
+[setup]
+home = "ws-ask-user"
+user_answer = "use the staging bucket"
+
+[[step]]
+model_says_in_turn = ["@tool ask.user {\"question\":\"which bucket should deploys use?\"}", "Configured for the staging bucket."]
+
+[[step]]
+type = ["set up the deploy target"]
+
+[[step]]
+open = "now"
+
+# The follow-up request carries the human's answer as the tool's result.
+[[step]]
+turn = 2
+expect_request_contains = ["use the staging bucket"]

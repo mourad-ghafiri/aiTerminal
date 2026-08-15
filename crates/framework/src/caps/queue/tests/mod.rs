@@ -9,7 +9,7 @@ fn svc() -> (QueueObj, CapCtx, PathBuf) {
         remote_enabled: true,
         origin: "terminal://ai/".into(),
         sandbox: None,
-        memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk),
+        memory_dir: None, approver: std::sync::Arc::new(crate::guard::NobodyToAsk), asker: std::sync::Arc::new(crate::caps::ask::NobodyToAnswer),
     };
     (QueueObj, ctx, dir)
 }

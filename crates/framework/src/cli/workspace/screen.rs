@@ -42,6 +42,9 @@ pub(crate) enum PanelState {
     Editing(EditView),
     Working { label: String, draft: String, steering: Option<String> },
     Ask { act: String, reason: String },
+    /// The model asked the human a question (`ask.user`); the editor is the
+    /// answer box until Enter sends or Esc declines.
+    Question { text: String, view: EditView },
 }
 
 /// The whole UI, as data.
