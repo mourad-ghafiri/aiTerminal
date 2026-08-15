@@ -88,11 +88,97 @@ pub(crate) fn run_core(root: std::path::PathBuf, handle: Arc<ui::UiHandle>) {
 
     let input: repl::SharedInput = Arc::new(Mutex::new(Box::new(ui::UiLines(handle.clone()))));
     let asker = Arc::new(ui::UiAsk(handle.clone()));
-    let mut repl = repl::Repl::new(ws, cfg, settings, client, guard, runner, input, session_dir).with_ui(handle);
+    let inline = Box::new(ChildInline { root: root.clone(), events: handle.events.clone() });
+    let mut repl = repl::Repl::new(ws, cfg, settings, client, guard, runner, input, session_dir)
+        .with_ui(handle)
+        .with_inline_exec(inline);
     // The loop's approver: the guard's confirm renders as the amber ask-block and
     // is answered from the keyboard. Same rule, same words, one keyboard owner.
     repl.runner.ctx.approver = asker;
     repl.drive();
+}
+
+/// Inline `@flow`/`@job`/`@loop`/`@agent`/`@mcp` runs for the native surface:
+/// the command runs as a child of our own binary (`aiTerminal ai …`) in the
+/// workspace root, and every line it prints lands in the conversation as an
+/// ordinary append — the run is VISIBLE, embedded between its dim rules.
+///
+/// The guard boundary is unchanged: the child rebuilds the same guard from the
+/// same config in the same root, exactly as `ai flow` typed in a shell would.
+/// Its stdin is closed, so a `confirm`-tier act refuses just like any headless
+/// run — the human's yes lives in the conversation's own turns, not here. Piped
+/// stdio also means the CLI's plain, animation-free output — clean sequential
+/// lines, not a repainting board. Esc trips the sitting's cancel and the child
+/// is killed, never orphaned.
+struct ChildInline {
+    root: std::path::PathBuf,
+    events: std::sync::mpsc::Sender<ui::Event>,
+}
+
+impl repl::InlineExec for ChildInline {
+    fn run(&self, argv: &[String], cancel: &crate::ai::CancelToken) -> i32 {
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => {
+                let _ = self.events.send(ui::Event::Append(format!("cannot find our own binary to run this: {e}")));
+                return 2;
+            }
+        };
+        let child = std::process::Command::new(exe)
+            .arg("ai")
+            .args(argv)
+            .current_dir(&self.root)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn();
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = self.events.send(ui::Event::Append(format!("the run could not start: {e}")));
+                return 2;
+            }
+        };
+        let mut readers = Vec::new();
+        for pipe in [
+            child.stdout.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
+            child.stderr.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let events = self.events.clone();
+            readers.push(std::thread::spawn(move || forward_lines(pipe, &events)));
+        }
+        let code = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status.code().unwrap_or(1),
+                Ok(None) if cancel.is_cancelled() => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break 130;
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(60)),
+                Err(_) => break 1,
+            }
+        };
+        for r in readers {
+            let _ = r.join();
+        }
+        code
+    }
+}
+
+/// Every line a reader yields becomes an [`ui::Event::Append`] — the Screen's
+/// door (`sanitize`/`wrap_styled`) makes it honest, like all committed content.
+fn forward_lines(pipe: impl std::io::Read, events: &std::sync::mpsc::Sender<ui::Event>) {
+    use std::io::BufRead;
+    for line in std::io::BufReader::new(pipe).lines() {
+        let Ok(line) = line else { return };
+        if events.send(ui::Event::Append(line)).is_err() {
+            return;
+        }
+    }
 }
 
 /// The banner's facts for a root — what the native surface opens on. Read-only:

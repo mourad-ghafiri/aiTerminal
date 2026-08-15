@@ -69,6 +69,27 @@ pub(crate) struct Repl<T: crate::ai::Transport> {
     /// The last prompt and answer, for /retry and /save.
     last_prompt: Option<String>,
     last_answer: Option<String>,
+    /// How an inline `@…` run executes — see [`InlineExec`].
+    inline_exec: Box<dyn InlineExec>,
+}
+
+/// How an inline `@flow`/`@job`/`@loop`/`@agent`/`@mcp` run executes — the seam
+/// that keeps the headless world hermetic while the GUI reroutes the run's
+/// output into the conversation. The command and its arguments are the same
+/// either way; only WHERE its stdio lands differs.
+pub(crate) trait InlineExec: Send {
+    /// Run the command to completion; watch `cancel` — Esc mid-run must stop it.
+    fn run(&self, argv: &[String], cancel: &crate::ai::CancelToken) -> i32;
+}
+
+/// The default: in-process, the exact dispatch the CLI's `ai` verb uses, output
+/// on the process's own stdio — what the scenario worlds drive and observe.
+struct InProcess;
+
+impl InlineExec for InProcess {
+    fn run(&self, argv: &[String], _cancel: &crate::ai::CancelToken) -> i32 {
+        crate::cli::ai(argv)
+    }
 }
 
 /// How a handled line leaves the loop.
@@ -122,7 +143,15 @@ impl<T: crate::ai::Transport> Repl<T> {
             served: String::new(),
             last_prompt: None,
             last_answer: None,
+            inline_exec: Box::new(InProcess),
         }
+    }
+
+    /// Swap how inline `@…` runs execute — the GUI installs a child-process
+    /// executor so the run's output lands in the conversation.
+    pub(crate) fn with_inline_exec(mut self, exec: Box<dyn InlineExec>) -> Repl<T> {
+        self.inline_exec = exec;
+        self
     }
 
     /// Attach the compositor loop: everything this REPL shows goes through it.
@@ -460,24 +489,27 @@ impl<T: crate::ai::Transport> Repl<T> {
     /// `@flow …` / `@job …` / `@loop …` / `@agent` / `@mcp` — the real command,
     /// inline; its outcome becomes part of the conversation.
     fn inline(&mut self, argv: &[String]) {
-        // The real command owns the screen (a flow paints its own live board); the
-        // panel withdraws behind an opening rule and returns after the closing one,
-        // so the conversation reads as one document with the run embedded.
+        // The run is embedded in the conversation: an opening rule, its output as
+        // ordinary appends (the executor decides where stdio lands), a footer with
+        // the exit — so the conversation reads as one document with the run in it.
         let (dim, r) = (muted(), reset());
+        let verb = argv.first().map(String::as_str).unwrap_or("");
         self.say(&format!("{dim}\u{2500}\u{2500} @{} {}\u{2500}\u{2500}{r}", argv.join(" "), "\u{2500}".repeat(8)));
-        // Suspend/Resume frame the run for the renderer (the native surface acks
-        // at once and keeps drawing; the run's footer lands as ordinary appends).
+        // A working moment like any turn: the spinner runs and Esc trips the
+        // cancel, which the executor watches (the child is killed, not orphaned).
         if let Some(ui) = &self.ui {
-            let (ack, freed) = std::sync::mpsc::channel();
-            let _ = ui.events.send(super::ui::Event::Suspend(ack));
-            let _ = freed.recv_timeout(std::time::Duration::from_secs(2));
+            self.cancel.reset();
+            let base = format!("running @{verb}");
+            let waiting = crate::cli::observe::SharedWaiting::new(crate::cli::observe::Motivated::label(&base, &self.cfg));
+            ui.pulse.begin(self.cancel.clone(), waiting);
+            let _ = ui.events.send(super::ui::Event::Working { label: base });
         }
-        let code = crate::cli::ai(argv);
+        let code = self.inline_exec.run(argv, &self.cancel);
         if let Some(ui) = &self.ui {
-            let _ = ui.events.send(super::ui::Event::Resume);
+            ui.pulse.end();
         }
         let glyph = if code == 0 { "\u{2713}" } else { "\u{2717}" };
-        self.say(&format!("{dim}\u{2500}\u{2500} {glyph} @{} \u{b7} exit {code} {}\u{2500}\u{2500}{r}", argv.first().map(String::as_str).unwrap_or(""), "\u{2500}".repeat(8)));
+        self.say(&format!("{dim}\u{2500}\u{2500} {glyph} @{verb} \u{b7} exit {code} {}\u{2500}\u{2500}{r}", "\u{2500}".repeat(8)));
         self.pending.push(format!("[I ran `@{}` in this workspace; it exited {code}]", argv.join(" ")));
     }
 

@@ -68,19 +68,6 @@ fn keys_during_a_run_draft_then_steer_and_esc_cancels() {
 }
 
 #[test]
-fn suspend_stops_painting_until_resume_and_acks_through_the_shell() {
-    let (mut ui, _rx) = state();
-    let (ack, freed) = channel();
-    assert!(!ui.update(Event::Suspend(ack)), "a suspend is not a frame");
-    assert!(ui.suspended);
-    let pending = ui.take_pending_ack().expect("the shell acks after clearing");
-    let _ = pending.send(());
-    assert!(freed.recv().is_ok());
-    assert!(ui.update(Event::Resume), "resume repaints the whole frame");
-    assert!(!ui.suspended);
-}
-
-#[test]
 fn idle_carries_the_working_draft_into_the_editor() {
     let (mut ui, _rx) = state();
     ui.update(Event::Working { label: "t".into() });

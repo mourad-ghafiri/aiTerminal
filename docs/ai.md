@@ -771,7 +771,7 @@ and the product's whole `@` language works mid-conversation.
 | --- | --- |
 | `/command` | a slash command (below) — plus every prompt file as `/<name>` |
 | `!cmd` | ONE shell command, judged by the guard, its output shown and folded into the next turn |
-| `@flow …` / `@job …` / `@loop …` / `@agent` / `@mcp` | the real command, run inline — framed by dim rules, its exit folded into the conversation and into the model's context |
+| `@flow …` / `@job …` / `@loop …` / `@agent` / `@mcp` | the real command, run inline — its output streams into the conversation between dim rules, Esc stops it, and its exit feeds the model's next turn |
 | `@<agent> task` | one run of that agent (project overlay first), its answer folded in |
 | `@<path>` | attach a file, exactly as everywhere else |
 | anything else | a conversation turn |
@@ -795,8 +795,11 @@ turn runs the bar becomes a working row — spinner, the muse's aside,
 `esc interrupts` — and anything you type meanwhile becomes the **draft** of your
 next message, waiting in the bar when the answer lands. A guard `confirm` arrives
 as an amber ask-block answered with y/N. Tool moments are marked by kind,
-flow-style: `⚙` native · `⌁` MCP · `✧` delegate · `◆` memory — and inline
-`@flow`/`@job`/`@loop` runs are framed by dim rules in the conversation.
+flow-style: `⚙` native · `⌁` MCP · `✧` delegate · `◆` memory — and an inline
+`@flow`/`@job`/`@loop` run is embedded between dim rules, its output streaming
+into the conversation line by line (in the app it runs as a child of our own
+binary with stdin closed, so a guard `confirm` refuses exactly as headless runs
+do, and Esc kills the run rather than orphaning it).
 
 | Key | Does |
 | --- | --- |

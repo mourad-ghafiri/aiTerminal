@@ -34,10 +34,6 @@ pub(crate) enum Event {
     /// The trust gate's question, whole. The native surface raises it as a real
     /// modal; a renderer without one falls back to the ask panel.
     Gate { question: String, reply: Sender<bool> },
-    /// An inline run is about to start: the renderer acks when it is ready for
-    /// the run's framing (the native surface never stops, so it acks at once).
-    Suspend(Sender<()>),
-    Resume,
 }
 
 /// What the loop hands outward: accepted input lines, or the end of the sitting.
@@ -175,11 +171,8 @@ pub(crate) struct UiState {
     lines: Sender<Out>,
     ask_reply: Option<Sender<bool>>,
     ask_prev: Option<PanelState>,
-    /// A Suspend's ack, waiting for the renderer to say it is ready.
-    pending_ack: Option<Sender<()>>,
     /// The two-line banner the anchored era opens with.
     compact: Vec<String>,
-    pub(crate) suspended: bool,
 }
 
 impl UiState {
@@ -191,9 +184,7 @@ impl UiState {
             lines,
             ask_reply: None,
             ask_prev: None,
-            pending_ack: None,
             compact,
-            suspended: false,
         }
     }
 
@@ -261,17 +252,6 @@ impl UiState {
                 self.ask_prev = Some(self.screen.panel.clone());
                 self.ask_reply = Some(reply);
                 self.screen.panel = PanelState::Ask { act: "opening this folder's project overlay".into(), reason: question };
-                true
-            }
-            Event::Suspend(ack) => {
-                // The ack waits until the WRITER has cleared the screen — the shell
-                // sends it, so the child never races our last frame.
-                self.suspended = true;
-                self.pending_ack = Some(ack);
-                false
-            }
-            Event::Resume => {
-                self.suspended = false;
                 true
             }
             Event::Key(key) => self.on_key(key),
@@ -424,11 +404,6 @@ impl UiState {
     #[cfg(test)]
     pub(crate) fn pulse_for_tests(&self) -> Arc<Pulse> {
         self.pulse.clone()
-    }
-
-    /// The ack a Suspend left for the shell, once the screen is handed over.
-    pub(crate) fn take_pending_ack(&mut self) -> Option<Sender<()>> {
-        self.pending_ack.take()
     }
 
     /// A line leaves the loop: echoed into the log, the splash anchored, sent out.

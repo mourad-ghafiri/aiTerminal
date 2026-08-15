@@ -1,0 +1,21 @@
+name = "an inline @flow run is framed, and its outcome feeds the next turn"
+tags = ["workspace", "flow"]
+
+# `@flow` mid-conversation is the REAL command, run through the inline seam: the
+# run executes to completion, and the conversation's next message carries what
+# happened — so "did it work?" has an answer grounded in the actual exit.
+
+[setup]
+home = "ws-inline-flow"
+
+[[step]]
+model_says_in_turn = ["The flow listing ran and exited cleanly."]
+
+[[step]]
+type = ["@flow", "did that run work?"]
+
+[[step]]
+open = "now"
+
+[[step]]
+expect_request_contains = ["I ran `@flow` in this workspace; it exited 0", "did that run work?"]

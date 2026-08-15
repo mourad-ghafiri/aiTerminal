@@ -154,3 +154,21 @@ fn shift_tab_arrives_as_backtab_from_its_escape() {
     assert_eq!(parse_key(b"\n"), Some((Key::Ctrl('j'), 1)));
     assert_eq!(parse_key(b"\r"), Some((Key::Enter, 1)));
 }
+
+// ── inline runs: the line forwarder the GUI's child executor reads through ──
+
+#[test]
+fn forward_lines_turns_a_runs_output_into_appends_and_stops_when_nobody_listens() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let output = std::io::Cursor::new("node a \u{2713}\nnode b \u{2717}\n".as_bytes().to_vec());
+    super::forward_lines(output, &tx);
+    let mut lines = Vec::new();
+    while let Ok(super::ui::Event::Append(line)) = rx.try_recv() {
+        lines.push(line);
+    }
+    assert_eq!(lines, vec!["node a \u{2713}", "node b \u{2717}"]);
+
+    // A dropped receiver ends the forwarder instead of spinning on send errors.
+    let (tx, _) = std::sync::mpsc::channel();
+    super::forward_lines(std::io::Cursor::new("unheard\n".as_bytes().to_vec()), &tx);
+}

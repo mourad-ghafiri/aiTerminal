@@ -217,13 +217,6 @@ impl ChatSurface {
             }
             state.update(ev);
         }
-        // An inline run's Suspend waited for the ANSI loop to stop painting; the
-        // native surface never stops, so the ack answers at once and the run's
-        // opening rule + exit footer land in the conversation as Appends.
-        if let Some(ack) = state.take_pending_ack() {
-            let _ = ack.send(());
-            moved = true;
-        }
         // The working row breathes: tick + fresh muse label.
         if matches!(state.screen.panel, PanelState::Working { .. }) {
             self.tick = self.tick.wrapping_add(1);
