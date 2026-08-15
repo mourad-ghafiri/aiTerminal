@@ -244,11 +244,7 @@ impl<T: crate::ai::Transport> Repl<T> {
     }
 
     /// Ask to resume: fold a conversation into the next turn's grounding — the
-    /// most recent by default, or the `/sessions` number given.
-    pub(crate) fn resume_last(&mut self) {
-        self.resume(None);
-    }
-
+    /// most recent by default (`None`), or the `/sessions` number given.
     fn resume(&mut self, pick: Option<usize>) {
         let logs = self.session_logs();
         let chosen = match pick {
