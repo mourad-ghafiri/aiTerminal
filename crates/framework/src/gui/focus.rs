@@ -100,10 +100,7 @@ impl GuiApp {
     /// Snapshot the focused pane's pid + OSC-7 cwd into the shared focus state and wake the
     /// status worker, so the top bar reflects the new tab/pane (path + user@host) at once.
     pub(in crate::gui) fn notify_focus_changed(&self) {
-        let (pid, cwd) = match self.tabs.active().focused_content().and_then(Pane::session) {
-            Some(s) => (s.pty.pid().unwrap_or(0), s.cwd()),
-            _ => (0, None),
-        };
+        let (pid, cwd) = self.tabs.active().focused_content().map(Pane::observed).unwrap_or((0, None));
         let (lock, cvar) = &*self.focus;
         {
             let mut st = lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -117,7 +114,18 @@ impl GuiApp {
     /// per frame, and wake the status worker so the path updates immediately — not on the
     /// next poll. A no-op unless the focused session's `cwd_seq` moved.
     pub(in crate::gui) fn poll_focus_cwd(&mut self) {
-        let Some(seq) = self.tabs.active().focused_content().and_then(Pane::session).map(Session::cwd_seq) else { return };
+        // A workspace pane watches its PARKED shell's cwd — a `cd` behind the
+        // conversation still updates the bar; a parked-less one has a constant
+        // folder the focus-change notify already sent.
+        let Some(seq) = self
+            .tabs
+            .active()
+            .focused_content()
+            .and_then(|p| p.session().or_else(|| p.parked()))
+            .map(Session::cwd_seq)
+        else {
+            return;
+        };
         if seq != self.last_cwd_seq {
             self.last_cwd_seq = seq;
             self.notify_focus_changed();

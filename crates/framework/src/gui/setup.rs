@@ -22,17 +22,6 @@ impl PaneFactory {
         PaneFactory { config, default_zoom, dirty, guard }
     }
 
-    /// The frame-dirty flag, for surfaces built outside the factory's own paths.
-    pub fn dirty(&self) -> DirtyFlag {
-        self.dirty.clone()
-    }
-
-    /// A workspace pane over `root` — a sitting with no shell behind it (a
-    /// bare restore); the live path wraps an existing pane instead.
-    pub fn workspace_pane(&self, root: std::path::PathBuf) -> Pane {
-        Pane::workspace(chat::ChatSurface::open(root, self.dirty.clone()), self.default_zoom)
-    }
-
     /// The pane shown at startup — a fresh shell; a spawn failure is fatal (the
     /// window would be empty).
     pub fn initial_pane(&self) -> Pane {

@@ -757,11 +757,14 @@ was, scrollback and processes included. Because it is a pane, everything
 composes: **Cmd+T, splits, tab chords, the switcher and every app shortcut
 keep working**; split first and ⌘J in the new pane for a conversation beside
 your shell; several workspaces can run at once (different folders, different
-tabs); Cmd+W closes one like any split. Quitting persists a workspace pane by
-its folder — parked shell included — and reopening restores both. A model is
-NOT required to open: browsing, `/help`, `!` and `/mcp` all work; only a
-prompt answers with the setup hint. (Outside aiTerminal, `ai workspace` says
-where the feature lives and exits clean.)
+tabs); Cmd+W closes one like any split. **Launch is always terminal mode**: a
+quit while a workspace shows persists the SHELL parked behind it (or a
+terminal at that folder), never the sitting — the chat log is on disk and ⌘J
+re-opens the conversation. The app's own bottom bar keeps naming the folder
+throughout: a focused workspace reports its root (and its parked shell's
+`cd`s). A model is NOT required to open: browsing, `/help`, `!` and `/mcp`
+all work; only a prompt answers with the setup hint. (Outside aiTerminal,
+`ai workspace` says where the feature lives and exits clean.)
 
 Ask, follow up, and the conversation remembers — one transcript carries the whole sitting, compacted
 automatically when the window demands it. Every answer renders live as Markdown with

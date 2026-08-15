@@ -46,18 +46,22 @@ const CONTENT_SAVE_LINES: usize = 1000;
 /// buffer content WITH styling (ANSI escapes), so the reopened pane silently
 /// shows exactly the session you left, colors included.
 fn snapshot_pane(p: &Pane, sel_band: (u8, u8, u8)) -> Toml {
-    // A workspace pane persists as its root (a live sitting can't be resurrected;
-    // its chat log is on disk) — plus the PARKED shell behind it, whole, so the
-    // restored pane still has your terminal to come back to.
+    // LAUNCH IS ALWAYS TERMINAL MODE: a workspace pane persists as the SHELL it
+    // parked (a live sitting can't be resurrected; its chat log is on disk) —
+    // and with none parked, as a plain terminal at the workspace's root, so the
+    // folder survives even though the conversation doesn't.
     if let Some(chat) = p.chat() {
-        let mut kvs = vec![
-            ("kind".into(), Toml::Str("workspace".into())),
-            ("zoom".into(), Toml::Float(p.zoom as f64)),
-            ("root".into(), Toml::Str(chat.root().display().to_string())),
-        ];
-        if let Some(shell) = p.parked() {
-            kvs.push(("shell".into(), snapshot_terminal(shell, sel_band)));
-        }
+        let mut kvs = match p.parked() {
+            Some(shell) => {
+                let Toml::Table(kvs) = snapshot_terminal(shell, sel_band) else { unreachable!("snapshot_terminal returns a table") };
+                kvs
+            }
+            None => vec![
+                ("kind".into(), Toml::Str("terminal".into())),
+                ("cwd".into(), Toml::Str(chat.root().display().to_string())),
+            ],
+        };
+        kvs.insert(1, ("zoom".into(), Toml::Float(p.zoom as f64)));
         return Toml::Table(kvs);
     }
     let Some(session) = p.session() else { return Toml::Table(vec![("kind".into(), Toml::Str("terminal".into()))]) };
@@ -93,23 +97,6 @@ fn snapshot_terminal(session: &Session, sel_band: (u8, u8, u8)) -> Toml {
 /// TOML → one pane, rebuilt through the factory: a terminal relaunches in its saved
 /// cwd with the saved buffer content replayed above the fresh prompt.
 fn restore_pane(factory: &PaneFactory, t: &Toml) -> Option<Pane> {
-    // A saved workspace pane re-opens a fresh sitting over its root — with its
-    // parked shell rebuilt behind it when one was saved.
-    if t.get("kind").and_then(|v| v.as_str()) == Some("workspace") {
-        let root = t.get("root").and_then(|v| v.as_str()).map(expand_tilde)?;
-        let mut pane = match t.get("shell").and_then(|shell| restore_pane(factory, shell)) {
-            Some(mut shell_pane) => {
-                let chat = crate::gui::chat::ChatSurface::open(std::path::PathBuf::from(&root), factory.dirty());
-                shell_pane.wrap_workspace(chat);
-                shell_pane
-            }
-            None => factory.workspace_pane(std::path::PathBuf::from(root)),
-        };
-        if let Some(z) = t.get("zoom").and_then(|v| v.as_num()) {
-            pane.zoom = z as f32;
-        }
-        return Some(pane);
-    }
     if t.get("kind").and_then(|v| v.as_str()) != Some("terminal") {
         return None;
     }

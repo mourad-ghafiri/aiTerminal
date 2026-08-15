@@ -434,9 +434,6 @@ impl Pane {
     fn terminal(s: Session, zoom: f32) -> Pane {
         Pane { zoom, content: PaneContent::Terminal(s) }
     }
-    fn workspace(chat: chat::ChatSurface, zoom: f32) -> Pane {
-        Pane { zoom, content: PaneContent::Workspace { chat: Box::new(chat), parked: None } }
-    }
     /// Show a workspace IN THIS PANE: the current shell parks behind it.
     fn wrap_workspace(&mut self, chat: chat::ChatSurface) {
         let old = std::mem::replace(&mut self.content, PaneContent::Workspace { chat: Box::new(chat), parked: None });
@@ -472,6 +469,23 @@ impl Pane {
         match &mut self.content {
             PaneContent::Terminal(s) => Some(s),
             PaneContent::Workspace { .. } => None,
+        }
+    }
+    /// What the status worker observes of this pane: the shell's pid and the
+    /// folder in play. A workspace reports its parked shell's pid and cwd — and
+    /// with none parked, its own ROOT (empty host = local): the bottom bar keeps
+    /// naming the folder the conversation is about.
+    pub(crate) fn observed(&self) -> (i32, Option<(String, String)>) {
+        match &self.content {
+            PaneContent::Terminal(s) => (s.pty.pid().unwrap_or(0), s.cwd()),
+            PaneContent::Workspace { chat, parked } => {
+                let pid = parked.as_ref().and_then(|s| s.pty.pid()).unwrap_or(0);
+                let cwd = parked
+                    .as_ref()
+                    .and_then(Session::cwd)
+                    .or_else(|| Some((String::new(), chat.root().display().to_string())));
+                (pid, cwd)
+            }
         }
     }
     /// The shell parked behind a workspace — persistence saves it whole.
