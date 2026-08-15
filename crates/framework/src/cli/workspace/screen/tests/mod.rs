@@ -1,7 +1,7 @@
 use super::*;
 
 fn editing(text: &str) -> PanelState {
-    PanelState::Editing(EditView { rows: text.split('\n').map(str::to_string).collect(), dropdown: None, selected: 0 })
+    PanelState::Editing(EditView { rows: text.split('\n').map(str::to_string).collect(), ..Default::default() })
 }
 
 #[test]

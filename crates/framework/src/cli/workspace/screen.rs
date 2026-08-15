@@ -26,6 +26,8 @@ pub(crate) struct Status {
 #[derive(Clone, Default)]
 pub(crate) struct EditView {
     pub rows: Vec<String>,
+    /// The caret's `(row, column)` within `rows` — the renderer draws it there.
+    pub cursor: (usize, usize),
     /// `None` = closed. `Some(matches)` = the band is open at constant height, so
     /// the box never moves while matches filter.
     pub dropdown: Option<Vec<(String, String)>>,

@@ -15,44 +15,50 @@
 
 use super::*;
 use super::render::render_grid;
-use crate::cli::workspace::screen::{PanelState, Screen};
+use crate::cli::workspace::screen::PanelState;
 use crate::cli::workspace::ui::{Event as ChatEvent, Out, Pulse, UiHandle, UiState};
 use crate::mdedit::key::Key as ChatKey;
 
-/// The braille spinner, shared look with the CLI surfaces.
-const FRAMES: [char; 10] = ['\u{280b}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283c}', '\u{2834}', '\u{2826}', '\u{2827}', '\u{2807}', '\u{280f}'];
+pub(crate) mod panel;
+pub(crate) mod welcome;
+
 /// The streaming tail's bounded height, in rows.
 const TAIL_ROWS: u16 = 12;
 /// The surface's outer padding, in pixels.
 const PAD: f32 = 10.0;
 
-/// The overlay's rectangles, computed per frame — pure, testable geometry.
+/// The surface's rectangles — pure, testable geometry. Band and tail are NOT
+/// here: they are floating overlays anchored to the panel, with zero say over
+/// the layout — that absence is the determinism guarantee.
 #[derive(Debug, PartialEq)]
 pub(crate) struct ChatRects {
     pub content: Rect,
-    pub tail: Rect,
-    pub bar: Rect,
-    pub band: Rect,
-    pub status: Rect,
+    pub panel: Rect,
 }
 
-/// Lay the surface out INSIDE `area` — the panes region, so the app's own
-/// chrome (status bar, tab strip) stays visible around it: the workspace status
-/// strip at the area's bottom, the input bar above it, the band above that
-/// (when open), the streaming tail above that, content fills the rest.
-pub(crate) fn layout(area: Rect, cell_h: f32, band_rows: usize, tail_rows: usize) -> ChatRects {
+/// Lay the surface out INSIDE `area` (the panes region — the app's own chrome
+/// stays visible around it). The result depends ONLY on the area, the font and
+/// the input's row count: a welcome screen centers the panel; an anchored
+/// conversation pins it to the bottom with the content above. Nothing else —
+/// not the completion band, not the streaming tail, not the panel's mode — can
+/// move a rect.
+pub(crate) fn layout(area: Rect, cell_h: f32, input_rows: usize, welcome: bool) -> ChatRects {
     let pad = PAD;
-    let status_h = cell_h + 8.0;
-    let bar_h = cell_h + 16.0;
-    let band_h = band_rows as f32 * (cell_h + 4.0);
-    let tail_h = tail_rows as f32 * cell_h;
-    let (left, inner_w) = (area.x + pad, area.w - 2.0 * pad);
-    let status = Rect::new(left, area.y + area.h - pad - status_h, inner_w, status_h);
-    let bar = Rect::new(left, status.y - 4.0 - bar_h, inner_w, bar_h);
-    let band = Rect::new(left, bar.y - band_h, inner_w, band_h);
-    let tail = Rect::new(left, band.y - tail_h, inner_w, tail_h);
-    let content = Rect::new(left, area.y + pad, inner_w, (tail.y - area.y - 2.0 * pad).max(cell_h));
-    ChatRects { content, tail, bar, band, status }
+    // The panel grows with the draft, to a third of the area.
+    let max_rows = ((area.h / 3.0 / cell_h.max(1.0)).floor() as usize).max(3);
+    let ph = panel::panel_height(cell_h, input_rows.clamp(1, max_rows));
+    if welcome {
+        // The home: the panel centered (a dialog's width), the mark above it.
+        let pw = (area.w - 2.0 * pad).min(760.0).max(320.0_f32.min(area.w));
+        let px = (area.x + (area.w - pw) * 0.5).round();
+        let py = (area.y + (area.h - ph) * 0.55).round();
+        let content = Rect::new(area.x + pad, area.y + pad, area.w - 2.0 * pad, cell_h);
+        ChatRects { content, panel: Rect::new(px, py, pw, ph) }
+    } else {
+        let panel = Rect::new(area.x + pad, area.y + area.h - pad - ph, area.w - 2.0 * pad, ph);
+        let content = Rect::new(area.x + pad, area.y + pad, area.w - 2.0 * pad, (panel.y - 8.0 - area.y - pad).max(cell_h));
+        ChatRects { content, panel }
+    }
 }
 
 /// Translate a GUI key event into the chat's key language. `None` = not ours
@@ -98,6 +104,8 @@ pub(crate) struct ChatSurface {
     root: std::path::PathBuf,
     /// The trust gate, raised as a real modal above the surface while open.
     gate: super::gate::Gate,
+    /// The opening screen's facts, drawn natively while the splash holds.
+    facts: Option<crate::cli::workspace::banner::Facts>,
     state: Option<UiState>,
     /// Events from the worker, queued by the waking forwarder.
     inbox: Arc<Mutex<Vec<ChatEvent>>>,
@@ -119,6 +127,7 @@ impl ChatSurface {
             open: false,
             root: std::path::PathBuf::new(),
             gate: super::gate::Gate::new(),
+            facts: None,
             state: None,
             inbox: Arc::new(Mutex::new(Vec::new())),
             pulse: None,
@@ -184,16 +193,9 @@ impl ChatSurface {
                 }
             });
         }
-        // The banner opens the conversation — through the same Append door as
-        // everything else, so it wraps at the width the surface really has.
-        {
-            let facts = crate::cli::workspace::banner_facts(&self.root);
-            let mut inbox = self.inbox.lock().unwrap_or_else(|e| e.into_inner());
-            for line in crate::cli::workspace::banner::render(&facts, usize::MAX) {
-                inbox.push(ChatEvent::Append(line));
-            }
-            inbox.push(ChatEvent::Append(String::new()));
-        }
+        // The opening screen is drawn natively (gui::chat::welcome) while the
+        // splash holds; the first real conversation line anchors it away.
+        self.facts = Some(crate::cli::workspace::banner_facts(&self.root));
         // The Repl core, exactly as the headless world drives it.
         let worker_handle = handle.clone();
         self.worker = Some(thread::spawn(move || {
@@ -218,7 +220,6 @@ impl ChatSurface {
         let cols = (((area_w - 2.0 * PAD) / cell_w.max(1.0)).floor() as u16).max(20);
         if self.content.cols() != cols {
             self.content.resize(cols, self.content.rows());
-            self.tail.resize(cols, TAIL_ROWS);
         }
         state.screen.cols = cols as usize;
         let drained: Vec<ChatEvent> = std::mem::take(&mut *self.inbox.lock().unwrap_or_else(|e| e.into_inner()));
@@ -249,9 +250,15 @@ impl ChatSurface {
             self.fed += 1;
             moved = true;
         }
-        // The tail is replaced wholesale when it changed.
+        // The tail is replaced wholesale when it changed; its term is sized to
+        // the floating card's inner width and the rows it actually shows.
         if state.screen.tail != self.last_tail {
             self.last_tail = state.screen.tail.clone();
+            let shown = self.last_tail.len().clamp(1, TAIL_ROWS as usize) as u16;
+            let inner_cols = (((area_w - 2.0 * PAD - 27.0) / cell_w.max(1.0)).floor() as u16).max(10);
+            if (self.tail.cols(), self.tail.rows()) != (inner_cols, shown) {
+                self.tail.resize(inner_cols, shown);
+            }
             self.tail.feed(b"\x1b[2J\x1b[H");
             for (i, row) in self.last_tail.iter().enumerate() {
                 if i > 0 {
@@ -328,102 +335,49 @@ impl ChatSurface {
     /// Draw the whole surface INSIDE `area` (the panes region) — the app's own
     /// status bar and tab strip stay visible around it. Called after the panes.
     pub(crate) fn draw(&mut self, surface: &mut Surface, cache: &mut GlyphCache, theme: &Theme, base_px: f32, area: Rect, cursor_style: CursorStyle) {
-        use corelib::gfx::text::draw_text;
         let Some(state) = self.state.as_ref() else { return };
         surface.fill_rect(area, theme.bg);
         let m = cache.metrics(base_px);
-        let (band_rows, tail_rows) = (band_len(&state.screen), self.last_tail.len().min(TAIL_ROWS as usize));
-        let r = layout(area, m.cell_h, band_rows, tail_rows);
+        let welcome = state.screen.splash.is_some();
+        let r = layout(area, m.cell_h, panel::input_rows(&state.screen.panel), welcome);
 
-        // The conversation's height follows the rect (the width was already set by
-        // pump, BEFORE content wrapped and fed) — then the pane renderer draws it.
-        let rows = ((r.content.h / m.cell_h).floor() as u16).max(4);
-        if self.content.rows() != rows {
-            let cols = self.content.cols();
-            self.content.resize(cols, rows);
-        }
-        render_grid(surface, &self.content, theme, cache, base_px, r.content.x, r.content.y, false, cursor_style, None, None);
-        if tail_rows > 0 {
-            render_grid(surface, &self.tail, theme, cache, base_px, r.tail.x, r.tail.y, false, cursor_style, None, None);
-        }
-
-        let ink = if state.screen.status.plan { theme.warn } else { theme.accent };
-        match &state.screen.panel {
-            PanelState::Editing(view) => {
-                surface.fill_rounded_rect(r.bar, 8.0, theme.surface);
-                surface.fill_rect(Rect::new(r.bar.x, r.bar.y, r.bar.w, 2.0), ink);
-                let baseline = r.bar.y + (r.bar.h - m.cell_h) * 0.5 + m.ascent;
-                let x = draw_text(surface, cache, "\u{276f} ", base_px, r.bar.x + 12.0, baseline, ink, r.bar.x + r.bar.w - 12.0, true);
-                let right = r.bar.x + r.bar.w - 12.0;
-                let caret_w = m.cell_w.max(4.0);
-                // The caret sits where typing BEGINS: right after the chevron on an
-                // empty line (the placeholder rides behind it), after the text
-                // otherwise (end-of-text in v1 — the row/col caret is a follow-up).
-                let caret_x = match view.rows.iter().all(|t| t.is_empty()) {
-                    true => {
-                        let hint = "ask \u{b7} / commands \u{b7} @ agents & flows \u{b7} ! shell";
-                        draw_text(surface, cache, hint, base_px, x + caret_w + 6.0, baseline, theme.muted, right, false);
-                        x
-                    }
-                    false => draw_text(surface, cache, &view.rows.join("  \u{23ce}  "), base_px, x, baseline, theme.fg, right, false) + 1.0,
-                };
-                surface.fill_rect(Rect::new(caret_x, baseline - m.ascent, caret_w, m.cell_h), ink);
-                // The completion band, constant height while open.
-                if let Some(matches) = &view.dropdown {
-                    for i in 0..band_rows {
-                        let y = r.band.y + i as f32 * (m.cell_h + 4.0);
-                        if let Some((name, about)) = matches.get(i) {
-                            let selected = i == view.selected;
-                            if selected {
-                                surface.fill_rounded_rect(Rect::new(r.band.x, y, r.band.w, m.cell_h + 4.0), 4.0, theme.surface);
-                            }
-                            let ncolor = if selected { ink } else { theme.muted };
-                            let nx = draw_text(surface, cache, name, base_px, r.band.x + 16.0, y + m.ascent + 2.0, ncolor, r.band.x + r.band.w, selected);
-                            draw_text(surface, cache, about, base_px, nx + 16.0, y + m.ascent + 2.0, theme.muted, r.band.x + r.band.w - 8.0, false);
-                        }
-                    }
+        match welcome {
+            true => {
+                if let Some(facts) = &self.facts {
+                    welcome::draw_welcome(surface, cache, theme, base_px, area, r.panel, facts);
                 }
             }
-            PanelState::Working { label, draft, steering } => {
-                let baseline = r.bar.y + (r.bar.h - m.cell_h) * 0.5 + m.ascent;
-                let right = r.bar.x + r.bar.w - 12.0;
-                let spin = FRAMES[self.tick % FRAMES.len()].to_string();
-                let x = draw_text(surface, cache, &spin, base_px, r.bar.x + 12.0, baseline, theme.accent, right, true);
-                let mut line = format!(" {label} \u{b7} esc interrupts \u{b7} enter sends a note");
-                if let Some(s) = steering {
-                    line.push_str(&format!("  \u{21b3} steering: {s}"));
-                } else if !draft.trim().is_empty() {
-                    line.push_str(&format!("  \u{21b3} {draft}"));
+            false => {
+                // The conversation: height follows its FIXED rect (width was set
+                // by pump before content wrapped and fed).
+                let rows = ((r.content.h / m.cell_h).floor() as u16).max(4);
+                if self.content.rows() != rows {
+                    let cols = self.content.cols();
+                    self.content.resize(cols, rows);
                 }
-                draw_text(surface, cache, &line, base_px, x, baseline, theme.muted, right, false);
+                render_grid(surface, &self.content, theme, cache, base_px, r.content.x, r.content.y, false, cursor_style, None, None);
+                // The streaming tail: a floating card above the panel — an answer
+                // being written — with zero say over the layout.
+                let shown = self.last_tail.len().min(TAIL_ROWS as usize);
+                if shown > 0 {
+                    let th = shown as f32 * m.cell_h + 12.0;
+                    let tr = Rect::new(r.panel.x, r.panel.y - 6.0 - th, r.panel.w, th);
+                    surface.fill_rounded_rect(tr, 8.0, theme.surface);
+                    surface.fill_rect(Rect::new(tr.x, tr.y + 2.0, 3.0, tr.h - 4.0), theme.accent);
+                    render_grid(surface, &self.tail, theme, cache, base_px, tr.x + 15.0, tr.y + 6.0, false, cursor_style, None, None);
+                }
             }
-            PanelState::Ask { act, reason } => {
-                surface.fill_rounded_rect(r.bar, 8.0, theme.surface);
-                surface.fill_rect(Rect::new(r.bar.x, r.bar.y, r.bar.w, 2.0), theme.warn);
-                let baseline = r.bar.y + (r.bar.h - m.cell_h) * 0.5 + m.ascent;
-                let line = format!("\u{26a0} the guard asks before {act} \u{2014} {reason}   [y/N]");
-                draw_text(surface, cache, &line, base_px, r.bar.x + 12.0, baseline, theme.warn, r.bar.x + r.bar.w - 12.0, false);
-            }
-            PanelState::Hidden => {}
         }
 
-        // The status strip.
-        let s = &state.screen.status;
-        let baseline = r.status.y + m.ascent;
-        let mode = if s.plan { "plan" } else { "build" };
-        let mut line = format!("{} \u{b7} {mode}", s.root);
-        if let Some(p) = &s.persona {
-            line.push_str(&format!(" \u{b7} @{p}"));
+        panel::draw_panel(surface, cache, theme, base_px, r.panel, &state.screen.panel, &state.screen.status, self.tick);
+
+        // The completion band: a floating popup above the panel, windowed so the
+        // selection is always visible — it overlays, it never reflows.
+        if let PanelState::Editing(view) = &state.screen.panel {
+            if let Some(matches) = &view.dropdown {
+                draw_band(surface, cache, theme, base_px, r.panel, matches, view.selected);
+            }
         }
-        if !s.model.is_empty() {
-            line.push_str(&format!(" \u{b7} {}", s.model));
-        }
-        if s.tokens.0 + s.tokens.1 > 0 {
-            line.push_str(&format!(" \u{b7} {} in / {} out \u{b7} ${:.3}", s.tokens.0, s.tokens.1, s.cost));
-        }
-        line.push_str(if s.overlay_on { " \u{b7} \u{25cf} overlay" } else { " \u{b7} \u{25cb} global" });
-        line.push_str(" \u{b7} shift+tab plan \u{b7} /help \u{b7} esc closes");
-        draw_text(surface, cache, &line, base_px, r.status.x + 4.0, baseline, theme.muted, r.status.x + r.status.w, false);
 
         // The trust gate rides above everything the surface draws.
         if let Some(gs) = self.gate.state_mut() {
@@ -432,10 +386,30 @@ impl ChatSurface {
     }
 }
 
-fn band_len(screen: &Screen) -> usize {
-    match &screen.panel {
-        PanelState::Editing(view) => view.dropdown.as_ref().map(|m| m.len().clamp(1, 6)).unwrap_or(0),
-        _ => 0,
+/// The completion popup: elevated, bordered, at most eight rows with the
+/// selection windowed into view — name bright, about muted.
+fn draw_band(surface: &mut Surface, cache: &mut GlyphCache, theme: &Theme, base_px: f32, panel: Rect, matches: &[(String, String)], selected: usize) {
+    use corelib::gfx::text::draw_text;
+    if matches.is_empty() {
+        return;
+    }
+    let m = cache.metrics(base_px);
+    let shown = matches.len().min(8);
+    let start = selected.saturating_sub(shown - 1).min(matches.len() - shown);
+    let row_h = m.cell_h + 6.0;
+    let h = shown as f32 * row_h + 8.0;
+    let r = Rect::new(panel.x, panel.y - 6.0 - h, panel.w, h);
+    surface.fill_rounded_rect(r, 8.0, theme.surface);
+    super::frame::draw_frame(surface, r, theme.muted, 1.0);
+    for (i, (name, about)) in matches.iter().enumerate().skip(start).take(shown) {
+        let y = r.y + 4.0 + (i - start) as f32 * row_h;
+        let sel = i == selected;
+        if sel {
+            surface.fill_rounded_rect(Rect::new(r.x + 4.0, y, r.w - 8.0, row_h), 6.0, theme.bg);
+        }
+        let color = if sel { theme.accent } else { theme.fg };
+        let nx = draw_text(surface, cache, name, base_px, r.x + 14.0, y + 3.0 + m.ascent, color, r.x + r.w - 8.0, sel);
+        draw_text(surface, cache, about, base_px, nx + 16.0, y + 3.0 + m.ascent, theme.muted, r.x + r.w - 10.0, false);
     }
 }
 

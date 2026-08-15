@@ -26,35 +26,44 @@ fn content_text(s: &ChatSurface) -> Vec<String> {
 }
 
 #[test]
-fn layout_stacks_status_bar_band_tail_bottom_up_and_content_fills_the_rest() {
-    let r = layout(Rect::new(0.0, 0.0, 800.0, 600.0), 16.0, 3, 5);
-    // Bottom-up: status hugs the bottom pad, the bar sits above it, the band
-    // above the bar, the tail above the band, content owns the top.
-    assert_eq!(r.status.y + r.status.h, 600.0 - 10.0);
-    assert_eq!(r.bar.y + r.bar.h + 4.0, r.status.y);
-    assert_eq!(r.band.y + r.band.h, r.bar.y);
-    assert_eq!(r.tail.y + r.tail.h, r.band.y);
+fn layout_pins_the_panel_to_the_bottom_and_content_fills_the_rest() {
+    let area = Rect::new(0.0, 0.0, 800.0, 600.0);
+    let r = layout(area, 16.0, 1, false);
+    assert_eq!(r.panel.y + r.panel.h, 600.0 - 10.0, "the panel hugs the area's bottom pad");
     assert_eq!(r.content.y, 10.0);
-    assert!(r.content.y + r.content.h <= r.tail.y);
-    // Everything spans the padded width.
-    for rect in [&r.content, &r.tail, &r.band, &r.bar, &r.status] {
+    assert_eq!(r.content.y + r.content.h + 8.0, r.panel.y, "clear air between content and the panel");
+    for rect in [&r.content, &r.panel] {
         assert_eq!(rect.x, 10.0);
         assert_eq!(rect.w, 800.0 - 20.0);
     }
 }
 
 #[test]
-fn layout_with_no_band_and_no_tail_gives_them_zero_height() {
-    let r = layout(Rect::new(0.0, 0.0, 800.0, 600.0), 16.0, 0, 0);
-    assert_eq!(r.band.h, 0.0);
-    assert_eq!(r.tail.h, 0.0);
-    assert_eq!(r.tail.y + r.tail.h, r.bar.y);
+fn the_content_rect_is_a_function_of_the_input_rows_and_nothing_else() {
+    // THE determinism guarantee: the completion band and the streaming tail are
+    // overlays with no say over the layout — the conversation cannot jump when a
+    // popup opens or a delta streams. Only a growing draft moves anything, and
+    // by exactly one cell per row.
+    let area = Rect::new(0.0, 0.0, 800.0, 600.0);
+    let one = layout(area, 16.0, 1, false);
+    let three = layout(area, 16.0, 3, false);
+    assert_eq!(one.content.h - three.content.h, 2.0 * 16.0);
+    assert_eq!(three.panel.h - one.panel.h, 2.0 * 16.0);
+    assert_eq!(one.content.y, three.content.y);
+    // A runaway draft is capped at a third of the area.
+    let huge = layout(area, 16.0, 500, false);
+    assert!(huge.panel.h <= 600.0 / 3.0 + 3.0 * 16.0, "the panel cannot swallow the conversation");
+    assert!(huge.content.h >= 16.0);
 }
 
 #[test]
-fn layout_never_collapses_content_below_one_cell() {
-    let r = layout(Rect::new(0.0, 0.0, 300.0, 120.0), 16.0, 6, 12);
-    assert!(r.content.h >= 16.0);
+fn the_welcome_centers_the_panel_like_a_home_screen() {
+    let area = Rect::new(0.0, 40.0, 1200.0, 700.0);
+    let r = layout(area, 16.0, 1, true);
+    assert!(r.panel.w <= 760.0, "a dialog's width, not a banner's");
+    let mid = area.x + area.w * 0.5;
+    assert!((r.panel.x + r.panel.w * 0.5 - mid).abs() < 1.0, "horizontally centered");
+    assert!(r.panel.y > area.y + 100.0 && r.panel.y + r.panel.h < area.y + area.h - 100.0, "vertically floating");
 }
 
 #[test]
@@ -62,14 +71,13 @@ fn layout_respects_an_offset_area_so_the_apps_chrome_survives() {
     // The panes area starts below a top tab strip and ends above the status bar;
     // every rect must stay inside it — nothing may paint over the chrome.
     let area = Rect::new(0.0, 40.0, 800.0, 500.0);
-    let r = layout(area, 16.0, 2, 3);
-    for rect in [&r.content, &r.tail, &r.band, &r.bar, &r.status] {
-        assert!(rect.y >= area.y, "a rect rose above the area: {rect:?}");
-        assert!(rect.y + rect.h <= area.y + area.h + 0.01, "a rect sank below the area: {rect:?}");
-        assert_eq!(rect.x, area.x + 10.0);
+    for welcome in [false, true] {
+        let r = layout(area, 16.0, 2, welcome);
+        for rect in [&r.content, &r.panel] {
+            assert!(rect.y >= area.y, "a rect rose above the area: {rect:?}");
+            assert!(rect.y + rect.h <= area.y + area.h + 0.01, "a rect sank below the area: {rect:?}");
+        }
     }
-    assert_eq!(r.status.y + r.status.h, area.y + area.h - 10.0, "the strip hugs the AREA's bottom, not the window's");
-    assert_eq!(r.content.y, area.y + 10.0);
 }
 
 #[test]

@@ -155,7 +155,7 @@ impl Editor {
     fn view(&self) -> EditView {
         let dropdown = self.dropdown();
         let selected = self.selected.min(dropdown.as_ref().map(|m| m.len().saturating_sub(1)).unwrap_or(0));
-        EditView { rows: self.buf.rows(), dropdown, selected }
+        EditView { rows: self.buf.rows(), cursor: self.buf.row_col(), dropdown, selected }
     }
 
     fn completions(&self) -> Vec<String> {

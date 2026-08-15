@@ -752,9 +752,9 @@ The workspace is a **native surface of the app itself** — drawn by the same
 engine that draws every pane, not an ANSI TUI fighting the terminal from inside
 one. Press **⌘J** (action `workspace`, rebindable), or type `@workspace` in any
 pane: the CLI stages a private OSC the host answers by opening the surface over
-that pane's folder. It opens on a banner — the aiTerminal mark, the folder, what
-the overlay adds, the pool and its strategy — with the input bar at the bottom.
-⌘J (or `Esc` on an empty idle bar) puts your terminal back exactly as it was; the
+that pane's folder. It opens on its home screen — the mark, the folder, what the
+overlay adds, the pool and its strategy — with the input panel centered beneath.
+⌘J (or `Esc` on an empty idle panel) puts your terminal back exactly as it was; the
 sitting keeps running, and the same key returns to the conversation where it
 stood. A model is NOT required to open: browsing, `/help`, `!` and `/mcp` all
 work; only a prompt answers with the setup hint. (Outside aiTerminal,
@@ -785,21 +785,31 @@ last conversation back in.
 
 ### The chrome
 
-A rounded **input bar** anchors the bottom of the surface, the conversation
-scrolls above it, and one dim status row states the sitting: root · build/plan ·
-persona · serving model · tokens and cost · overlay dot. The bar's top rule states
-the mode — accent for build, amber for plan. Typing `/` or `@` opens the
-**completion band** above the bar (fuzzy-ranked: prefix matches first, then
-subsequences, ↑/↓ select, Tab accepts, Enter runs the highlighted match); while a
-turn runs the bar becomes a working row — spinner, the muse's aside,
-`esc interrupts` — and anything you type meanwhile becomes the **draft** of your
-next message, waiting in the bar when the answer lands. A guard `confirm` arrives
-as an amber ask-block answered with y/N. Tool moments are marked by kind,
-flow-style: `⚙` native · `⌁` MCP · `✧` delegate · `◆` memory — and an inline
-`@flow`/`@job`/`@loop` run is embedded between dim rules, its output streaming
-into the conversation line by line (in the app it runs as a child of our own
-binary with stdin closed, so a guard `confirm` refuses exactly as headless runs
-do, and Esc kills the run rather than orphaning it).
+A fresh open is a **home screen**: the mark, the folder and what its overlay
+adds, centered, with the **input panel** floating beneath — your first message
+anchors the conversation and pins the panel to the bottom for the sitting.
+
+The panel is ONE shape for every state: a left accent bar whose color states the
+mode (accent = build, amber = plan and the guard's ask), an elevated surface,
+your draft as real lines with a true caret (it grows with Shift+Enter up to a
+third of the surface), and a **meta row inside the panel's bottom** — root ·
+build/plan · persona · serving model on the left, tokens · cost · overlay dot on
+the right. While a turn runs the meta row carries the spinner and the muse's
+aside (`esc interrupts · enter steers`) and anything you type becomes the
+**draft** of your next message; a guard `confirm` turns the panel amber and asks
+in place.
+
+Typing `/` or `@` opens the **completion popup** floating above the panel
+(fuzzy-ranked: prefix matches first, then subsequences; ↑/↓ select, Tab accepts,
+Enter runs the highlighted match), and a streaming answer's tail rides a
+floating card there too. Both are overlays: **the layout is deterministic** —
+nothing but a window resize or a growing draft can move the conversation. Tool
+moments are marked by kind, flow-style: `⚙` native · `⌁` MCP · `✧` delegate ·
+`◆` memory — and an inline `@flow`/`@job`/`@loop` run is embedded between dim
+rules, its output streaming into the conversation line by line (in the app it
+runs as a child of our own binary with stdin closed, so a guard `confirm`
+refuses exactly as headless runs do, and Esc kills the run rather than orphaning
+it).
 
 | Key | Does |
 | --- | --- |

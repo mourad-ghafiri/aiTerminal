@@ -210,7 +210,8 @@ pub(crate) fn draw_gate(
 
 /// Word-wrap `text` into rows no wider than `max_w` at `px` — a word that alone
 /// exceeds the width keeps its row (draw_text clips it; nothing is dropped).
-fn wrap_to(cache: &mut GlyphCache, text: &str, px: f32, max_w: f32) -> Vec<String> {
+/// Shared with the welcome screen — the two faces wrap the same way.
+pub(in crate::gui) fn wrap_to(cache: &mut GlyphCache, text: &str, px: f32, max_w: f32) -> Vec<String> {
     use corelib::gfx::text::measure_text;
     let mut rows = Vec::new();
     let mut row = String::new();
