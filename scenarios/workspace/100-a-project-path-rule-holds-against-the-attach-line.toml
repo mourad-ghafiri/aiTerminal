@@ -1,0 +1,36 @@
+name = "a project's deny-read path rule holds even against the human's own @attach"
+tags = ["workspace", "guard"]
+
+# The strongest claim the guard can make: the OVERLAY tightened the rules, and a
+# file the project says may not be read never enters a model request — not even
+# when the person attaches it by hand.
+
+[setup]
+home = "ws-attach-guard"
+
+[[step]]
+project_file = ".aiTerminal/config.toml"
+body = "[[guard.path]]\npattern = \"\\\\.pem$\"\nrule = \"deny\"\n"
+
+[[step]]
+project_file = "server.pem"
+body = "THE-PRIVATE-MATERIAL"
+
+[[step]]
+project_file = "notes.txt"
+body = "plain project notes"
+
+[[step]]
+model_says_in_turn = ["I read the notes; the key file was refused by the guard."]
+
+[[step]]
+type = ["@server.pem @notes.txt what are these?"]
+
+[[step]]
+open = "now"
+
+[[step]]
+expect_request_contains = ["plain project notes"]
+
+[[step]]
+expect_request_excludes = ["THE-PRIVATE-MATERIAL"]

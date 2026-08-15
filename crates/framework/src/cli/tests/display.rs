@@ -1,5 +1,5 @@
 use crate::cli::agentloop::MAX_ATTACHMENTS;
-use crate::cli::attach::{TEXT_ATTACH_MAX, collect_attachments};
+use crate::cli::attach::{collect_attachments_in, TEXT_ATTACH_MAX};
 use crate::cli::format::{cost_segment, human_bytes, human_cost, human_tokens, outcome_exit, run_footer_with};
 use crate::cli::live::{clamp_tail, erase_seq};
 use crate::cli::media::{diagram_output, is_open_diagram_fence};
@@ -402,7 +402,7 @@ fn attachments_collect_media_inline_text_and_skip_junk() {
     std::fs::write(dir.join("blob.bin"), [0u8, 1, 2, 3]).unwrap();
     let p = |n: &str| dir.join(n).display().to_string();
     let prompt = format!("look at @{} and @{} and @{} and @{} and @/no/such/file plus user@host", p("shot.png"), p("doc.pdf"), p("notes.txt"), p("blob.bin"));
-    let (clean, media, file_ctx) = collect_attachments(&prompt);
+    let (clean, media, file_ctx) = collect_attachments_in(std::path::Path::new("."), &crate::guard::Guard::from_toml(""), &prompt);
     // Media: the image + the pdf, base64-encoded with the right types.
     assert_eq!(media.len(), 2);
     assert_eq!(media[0].media_type, "image/png");
@@ -429,7 +429,7 @@ fn attachments_are_capped_in_count() {
         std::fs::write(&f, format!("file number {i}")).unwrap();
         prompt.push_str(&format!(" @{}", f.display()));
     }
-    let (_, media, file_ctx) = collect_attachments(&prompt);
+    let (_, media, file_ctx) = collect_attachments_in(std::path::Path::new("."), &crate::guard::Guard::from_toml(""), &prompt);
     assert!(media.is_empty());
     let count = file_ctx.matches("## Attached file:").count();
     assert_eq!(count, MAX_ATTACHMENTS, "attachment count bounded");
@@ -443,7 +443,7 @@ fn attachments_truncate_large_text_files() {
     std::fs::create_dir_all(&dir).unwrap();
     let big = "x".repeat(TEXT_ATTACH_MAX + 1000);
     std::fs::write(dir.join("big.log"), &big).unwrap();
-    let (_, media, file_ctx) = collect_attachments(&format!("@{}", dir.join("big.log").display()));
+    let (_, media, file_ctx) = collect_attachments_in(std::path::Path::new("."), &crate::guard::Guard::from_toml(""), &format!("@{}", dir.join("big.log").display()));
     assert!(media.is_empty());
     assert!(file_ctx.contains("(truncated)"));
     assert!(file_ctx.len() < big.len(), "inlined text is capped");
@@ -528,5 +528,25 @@ fn a_refill_attempt_is_not_repeated_while_one_is_in_flight() {
     assert!(!crate::motivation::refill::attempted_recently(&stamp), "no stamp, no suppression");
     std::fs::write(&stamp, b"").unwrap();
     assert!(crate::motivation::refill::attempted_recently(&stamp), "a fresh stamp suppresses the next attempt");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_guarded_path_never_attaches_even_when_the_human_types_it() {
+    // The guard's path rules hold against the attach line itself: a deny rule
+    // (or a confirm, with nobody to ask at this seam) keeps the file's content
+    // out of the request; an unguarded neighbour still attaches.
+    let dir = std::env::temp_dir().join(format!("tt-attach-guard-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("secret.pem"), "THE-PRIVATE-MATERIAL").unwrap();
+    std::fs::write(dir.join("notes.txt"), "plain notes").unwrap();
+    let guard = crate::guard::Guard::from_toml("[[guard.path]]\npattern = \"\\\\.pem$\"\nrule = \"deny\"\n");
+    let prompt = format!("@{} @{} explain", dir.join("secret.pem").display(), dir.join("notes.txt").display());
+    let (clean, media, file_ctx) = collect_attachments_in(std::path::Path::new("."), &guard, &prompt);
+    assert!(!file_ctx.contains("THE-PRIVATE-MATERIAL"), "the guarded file's content never enters the request");
+    assert!(file_ctx.contains("plain notes"), "the unguarded neighbour still attaches");
+    assert!(media.is_empty());
+    assert!(clean.contains("@") && clean.contains("secret.pem"), "the refused token stays as typed: {clean}");
     let _ = std::fs::remove_dir_all(&dir);
 }

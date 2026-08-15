@@ -25,13 +25,13 @@ fn media_type_of(path: &std::path::Path) -> Option<&'static str> {
 /// text files inline into the context (fenced, size-capped, skipped if binary).
 /// The `@` is dropped from the prompt so the model reads a plain path. Pure over
 /// the filesystem — no model, no network.
-pub(crate) fn collect_attachments(prompt: &str) -> (String, Vec<crate::ai::ImageData>, String) {
-    collect_attachments_in(&std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")), prompt)
-}
-
-/// [`collect_attachments`], with relative `@paths` resolved against `base` — the
-/// workspace passes its ROOT, because the GUI process's own cwd is nowhere near it.
-pub(crate) fn collect_attachments_in(base: &std::path::Path, prompt: &str) -> (String, Vec<crate::ai::ImageData>, String) {
+///
+/// EVERY attach is a read the guard judges first — the same `Act::Read` the
+/// model's `fs.read` passes. A `Deny` refuses; a `Confirm` refuses too (this
+/// seam has nobody to ask, the headless posture). The token stays as typed and
+/// the guard's own sentence says why — a path rule protects the request even
+/// against the human's own attach line.
+pub(crate) fn collect_attachments_in(base: &std::path::Path, guard: &crate::guard::Guard, prompt: &str) -> (String, Vec<crate::ai::ImageData>, String) {
     let mut media = Vec::new();
     let mut file_ctx = String::new();
     let mut out: Vec<String> = Vec::new();
@@ -51,6 +51,11 @@ pub(crate) fn collect_attachments_in(base: &std::path::Path, prompt: &str) -> (S
         };
         if !path.is_file() {
             out.push(token.to_string()); // not a file — leave the token as typed
+            continue;
+        }
+        if let Err(why) = guard.permit(crate::guard::Act::Read(path)) {
+            eprintln!("aiTerminal: not attaching {path_str} \u{2014} {why}");
+            out.push(token.to_string());
             continue;
         }
         // Bound the COUNT too: N × (raw + base64 + request copy) peaks fast.

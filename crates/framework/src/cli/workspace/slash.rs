@@ -47,6 +47,7 @@ pub(crate) const BUILTINS: &[SlashCommand] = &[
     SlashCommand { name: "/thinking", about: "toggle showing the model's reasoning" },
     SlashCommand { name: "/learn", about: "distill this sitting into a skill or memory" },
     SlashCommand { name: "/changes", about: "what changed in the project this sitting (git)" },
+    SlashCommand { name: "/guard", about: "the active protections; /guard <cmd> asks for a verdict without running it" },
     SlashCommand { name: "/exit", about: "leave workspace mode" },
 ];
 
@@ -82,6 +83,8 @@ pub(crate) enum Route {
     Thinking,
     Learn,
     Changes,
+    /// The guard's briefing (`None`) or a dry-run verdict on an act.
+    Guard(Option<String>),
     Exit,
     /// A custom prompt command: its body, with the rest of the line spliced in.
     Prompt(String),
@@ -142,6 +145,7 @@ pub(crate) fn route(line: &str, prompts: &[crate::ai::defs::Prompt], agents: &[S
             "/thinking" => Route::Thinking,
             "/learn" => Route::Learn,
             "/changes" => Route::Changes,
+            "/guard" => Route::Guard((!rest.is_empty()).then(|| rest.to_string())),
             "/exit" | "/quit" => Route::Exit,
             other => match prompts.iter().find(|p| format!("/{}", p.name) == other) {
                 Some(p) => Route::Prompt(splice(&p.body, rest)),

@@ -388,6 +388,20 @@ impl<T: crate::ai::Transport> Repl<T> {
             Route::Redo => self.redo(),
             Route::Export(path) => self.export(path),
             Route::Learn => self.turn(LEARN_PROMPT),
+            Route::Guard(act) => match act {
+                None => {
+                    let (dim, r) = (muted(), reset());
+                    for line in self.guard.briefing().lines() {
+                        self.say(&format!("{dim}{line}{r}"));
+                    }
+                    self.say(&format!("{dim}{}{r}", overlay_line_for(&self.ws, true)));
+                    self.note("a verdict without running anything:  /guard <command> \u{b7} /guard read <path> \u{b7} /guard write <path>");
+                }
+                Some(act) => {
+                    let line = verdict_line(&self.guard, &act);
+                    self.say(&line);
+                }
+            },
             Route::Changes => self.bang("git status --short && git diff --stat"),
             Route::Thinking => {
                 self.show_reasoning = !self.show_reasoning;
@@ -583,7 +597,7 @@ impl<T: crate::ai::Transport> Repl<T> {
         }
         // The turn's media: `@path` attachments from the line itself, plus any
         // pasted images the accepted line carried (the `<#image_N>` tokens).
-        let (prompt, mut media, file_ctx) = crate::cli::attach::collect_attachments_in(&self.ws.root, text);
+        let (prompt, mut media, file_ctx) = crate::cli::attach::collect_attachments_in(&self.ws.root, &self.guard, text);
         if let Some(ui) = &self.ui {
             media.extend(ui.take_media());
         }
@@ -908,6 +922,30 @@ impl crate::ai::Steer for PulseSteer {
     fn take(&mut self) -> Option<String> {
         let raw = self.0.as_ref()?.take_steer()?;
         Some(self.1.hide(&raw))
+    }
+}
+
+/// The guard's dry-run verdict on a typed act, in the guard's own words —
+/// `read <path>` / `write <path>` judge the path acts, anything else is judged
+/// as a command line. Nothing here executes; it is the question, never the act.
+pub(crate) fn verdict_line(guard: &crate::guard::Guard, act: &str) -> String {
+    use crate::guard::{Act, Decision};
+    let (what, decision) = match act.split_once(char::is_whitespace) {
+        Some(("read", rest)) if !rest.trim().is_empty() => {
+            let p = rest.trim();
+            (format!("reading {p}"), guard.judge(Act::Read(std::path::Path::new(p))))
+        }
+        Some(("write", rest)) if !rest.trim().is_empty() => {
+            let p = rest.trim();
+            (format!("writing {p}"), guard.judge(Act::Write(std::path::Path::new(p))))
+        }
+        _ => (format!("running `{act}`"), guard.judge(Act::Run(act))),
+    };
+    let (a, dim, w, r) = (accent(), muted(), crate::cli::style::warn(), reset());
+    match decision {
+        Decision::Allow => format!("{a}\u{2713} {what} is allowed{r}"),
+        Decision::Confirm { reason } => format!("{w}\u{26a0} {what} would ask you first{r} {dim}\u{2014} {reason}{r}"),
+        Decision::Deny { reason } => format!("{w}\u{2717} {what} is denied{r} {dim}\u{2014} {reason}{r}"),
     }
 }
 

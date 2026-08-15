@@ -886,12 +886,25 @@ first request carries a compact map of the project's shape, and once per
 sitting a nudge reminds the model to persist what proved durable — facts as
 memories, methods as skills. What one sitting learns, the next one has.
 
-The guard owns the boundary end to end. Every model action goes through the same
-tool pipeline as every agent run — deny is deny, everywhere. What workspace mode
-ADDS is a human: a `confirm`-tier rule, spent as a refusal in headless runs, here
-pauses the stream and asks you, once, for that act. A project's `[guard]` rules can
-only tighten (deny/confirm/read-only/secret); allow-tier rules from a repo are
-dropped and named. Conversation logs are stored redacted, like everything at rest.
+The guard owns the boundary end to end — EVERY workspace path crosses it. Model
+tool calls run through the one pipeline (`Act::Read`/`Write`/`Run` judged, every
+result redacted on egress, MCP included); `!` and `/changes` are judged commands
+with masked output; `/save`, `/export` and `/learn`-written skills go through the
+guarded, workspace-confined write; **`@path` attachments ask the guard's path
+rules before a byte is read — a denied file never enters a request, even typed
+by your own hand**; turn text, grounding, steer notes and `ask.user` answers are
+hidden before a model sees them; memories are scrubbed on write; the chat log is
+redacted at rest (and `/export` and `memory.sessions` read only that). Inline
+runs rebuild the same guard in the same root, with fixed argv and no shell.
+
+What workspace mode ADDS is a human: a `confirm`-tier rule, spent as a refusal
+in headless runs, here pauses the stream and asks you, once, for that act — and
+ONLY the local keyboard can answer; no steered or remote text ever approves.
+A project's `[guard]` rules can only tighten (deny/confirm/read-only/secret);
+allow-tier rules from a repo are dropped and named. And the guard is
+consultable: `/guard` shows your active protections, `/guard <command>` (or
+`/guard read <path>`, `/guard write <path>`) answers with the guard's own
+verdict — the question, never the act.
 
 ## Exit codes & scripting
 

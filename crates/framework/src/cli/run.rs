@@ -1,6 +1,6 @@
 use crate::cli::agentloop::args::ai_loop_cmd;
 use crate::cli::agents::{ai_agent_cmd, run_agent_cli, wire_sigint};
-use crate::cli::attach::collect_attachments;
+use crate::cli::attach::collect_attachments_in;
 use crate::cli::flow::show::ai_flow_cmd;
 use crate::cli::format::run_footer_with;
 use crate::cli::jobs::args::ai_job_cmd;
@@ -82,11 +82,6 @@ pub fn ai(args: &[String]) -> i32 {
 fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
     use std::io::Write;
 
-    // `@<path>` tokens attach files: images/PDFs ride the request (vision/document),
-    // text files inline into the context below.
-    let (prompt, media, file_ctx) = collect_attachments(prompt);
-    let prompt = prompt.as_str();
-
     let cfg = crate::config::Config::load();
     let settings = cfg.ai_settings();
     if settings.resolve_key().is_none() {
@@ -101,6 +96,15 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
         eprintln!("aiTerminal: {}", crate::ai::setup_hint(&settings));
         return 2;
     }
+
+    // The guard FIRST — attachments and grounding both pass through it.
+    let registry = crate::plugin::load_registry(&cfg);
+    let guard = crate::guard::build(&cfg, &registry);
+    // `@<path>` tokens attach files: images/PDFs ride the request (vision/document),
+    // text files inline into the context below — every read judged by the guard.
+    let attach_base = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let (prompt, media, file_ctx) = collect_attachments_in(&attach_base, &guard, prompt);
+    let prompt = prompt.as_str();
 
     // Ground on cwd + shell + the host's redacted terminal-session file (the focused
     // pane's recent commands + output), so `@ai go into it` / `@<agent>` can resolve
@@ -137,8 +141,6 @@ fn ai_run(as_command: bool, agent: Option<String>, prompt: &str) -> i32 {
     );
     // Secrets leave as placeholders — and come back as themselves at whatever seam
     // touches this machine. This is the egress point for the grounding preamble.
-    let registry = crate::plugin::load_registry(&cfg);
-    let guard = crate::guard::build(&cfg, &registry);
     let ctx = guard.hide(&ctx);
     // The PROMPT too, not just the grounding around it. What somebody typed is text off
     // this machine like any other — a pasted key in a question is a key a model receives.

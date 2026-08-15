@@ -191,3 +191,22 @@ fn the_repo_map_groups_by_top_dir_and_stays_bounded() {
     assert!(super::repo_map(&dir.join("empty-nowhere")).is_empty(), "an empty folder maps to nothing");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── /guard: the dry-run verdict, in the guard's own words ──────────────────
+
+#[test]
+fn the_guard_verdict_answers_without_running_anything() {
+    use crate::cli::workspace::repl::verdict_line;
+    let guard = crate::guard::Guard::from_toml(
+        "[[guard.command]]\npattern = \"^touch-the-config\"\nrule = \"confirm\"\n[[guard.command]]\npattern = \"^drop-the-db\"\nrule = \"deny\"\n[[guard.path]]\npattern = \"\\\\.pem$\"\nrule = \"deny\"\n",
+    );
+    assert!(verdict_line(&guard, "echo hello").contains("allowed"));
+    let confirm = verdict_line(&guard, "touch-the-config now");
+    assert!(confirm.contains("would ask you first"), "{confirm}");
+    let deny = verdict_line(&guard, "drop-the-db now");
+    assert!(deny.contains("denied"), "{deny}");
+    let read = verdict_line(&guard, "read /keys/server.pem");
+    assert!(read.contains("reading") && read.contains("denied"), "{read}");
+    let write = verdict_line(&guard, "write notes.txt");
+    assert!(write.contains("writing"), "{write}");
+}

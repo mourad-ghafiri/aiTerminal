@@ -4,7 +4,7 @@
 /// its output in the job's log, and stamps the record when it exits. Shared by
 /// `@ai --bg`, `@flow --bg` and `@loop --bg`; `@job` has its own record-driven path.
 use crate::cli::agents::{available_agents_hint, build_agent_spec, run_agent_streaming};
-use crate::cli::attach::collect_attachments;
+use crate::cli::attach::collect_attachments_in;
 use crate::cli::run::{instructions_preamble, memory_preamble, outcome_label, record_session_run, session_preamble};
 use crate::cli::runner::context_settings;
 
@@ -89,7 +89,6 @@ pub(crate) fn unix_now() -> u64 {
 /// Run `prompt` through `agent` with the full live chrome; when `log` is set the
 /// streamed answer is ALSO written there (the foreground-tracked job's record).
 pub(crate) fn run_prompt_as_agent(agent: &str, prompt: &str, mut log: Option<std::fs::File>) -> i32 {
-    let (prompt, media, file_ctx) = collect_attachments(prompt);
     let cfg = crate::config::Config::load();
     crate::i18n::install(cfg.i18n_catalog());
     let settings = cfg.ai_settings();
@@ -101,6 +100,9 @@ pub(crate) fn run_prompt_as_agent(agent: &str, prompt: &str, mut log: Option<std
     }
     let registry = crate::plugin::load_registry(&cfg);
     let guard = std::sync::Arc::new(crate::guard::build(&cfg, &registry));
+    // Attachments AFTER the guard exists: every `@path` read is judged first.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let (prompt, media, file_ctx) = collect_attachments_in(&cwd, &guard, prompt);
     if build_agent_spec(agent, context_settings(&cfg), &guard).is_none() {
         return job_setup_error(&mut log, &format!("no agent '{agent}' \u{2014} {}", available_agents_hint()));
     }

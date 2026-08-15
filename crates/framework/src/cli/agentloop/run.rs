@@ -1,7 +1,7 @@
 use crate::cli::agentloop::args::LoopSpec;
 use crate::cli::agentloop::{LoopOutcome, LoopState, drive_loop, run_check, run_reviewer};
 use crate::cli::agents::{SigintWatch, available_agents_hint, build_agent_spec, wire_sigint};
-use crate::cli::attach::collect_attachments;
+use crate::cli::attach::collect_attachments_in;
 use crate::cli::format::run_footer_with;
 use crate::cli::jobs::shell::guard_refusal;
 use crate::cli::jobs::spawn::cwd_string;
@@ -34,16 +34,16 @@ pub(crate) fn run_loop_cli(spec: LoopSpec, resume: Option<String>) -> i32 {
         },
         None => None,
     };
-    // `@<path>` attachments work in loops too (images/PDFs + inlined text files).
-    let (goal, media, file_ctx) = collect_attachments(prior.as_ref().map_or(spec.goal.as_str(), |p| p.goal.as_str()));
+    let registry = crate::plugin::load_registry(&cfg);
+    let guard = std::sync::Arc::new(crate::guard::build(&cfg, &registry));
+    // `@<path>` attachments work in loops too — judged by the guard like every read.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let (goal, media, file_ctx) = collect_attachments_in(&cwd, &guard, prior.as_ref().map_or(spec.goal.as_str(), |p| p.goal.as_str()));
     let goal = match file_ctx.is_empty() {
         true => goal,
         false => format!("{goal}\n{file_ctx}"),
     };
     let goal = goal.as_str();
-
-    let registry = crate::plugin::load_registry(&cfg);
-    let guard = std::sync::Arc::new(crate::guard::build(&cfg, &registry));
     let workspace = std::env::current_dir().ok();
     let session = crate::ai::Session::for_cwd();
     let agent_name = prior.as_ref().map_or_else(
