@@ -510,8 +510,16 @@ impl<T: crate::ai::Transport> Repl<T> {
                 let _ = ui.events.send(super::ui::Event::Working { label: base.to_string() });
                 // The view never touches the terminal: commits become Append events,
                 // the in-progress block becomes Tail events, the loop draws both.
+                // The surface's own facts, not the process's: answers lay out at
+                // the conversation's real width, and diagrams are NATIVE because
+                // this renderer composites OSC 1338/1339 itself.
+                let md = crate::cli::style::MdOptions {
+                    style: crate::cli::style::md_style(),
+                    width: ui.pulse.cols().saturating_sub(2).clamp(24, 400),
+                    native: true,
+                };
                 let view = SharedView::new(
-                    RunView::new(Box::new(super::ui::AppendWriter::new(ui.events.clone())), None, markdown_opts(true))
+                    RunView::new(Box::new(super::ui::AppendWriter::new(ui.events.clone())), None, Some(md))
                         .composed(Box::new(super::ui::TailEvents(ui.events.clone()))),
                 );
                 let obs = CliObserver::new(view.clone()).with_reasoning(self.show_reasoning).with_panel({

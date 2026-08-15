@@ -24,7 +24,7 @@ impl TerminalSink {
                 crate::cli::observe::WAIT,
                 &crate::config::Config::load(),
             ))),
-            live: err_is_tty().then(|| LiveMarkdown::new(md_style(), md_width(), term_rows().saturating_sub(2))),
+            live: err_is_tty().then(|| LiveMarkdown::new(md_style(), md_width(), term_rows().saturating_sub(2), crate::cli::media::is_native_terminal())),
             raw: String::new(),
             show_reasoning,
         }
@@ -79,6 +79,8 @@ pub(crate) struct LiveMarkdown {
     max_rows: usize,
     /// Screen lines the current tail occupies (what the next erase must undo).
     painted: usize,
+    /// Whether the surface composites native placements — the caller's fact.
+    native: bool,
     /// Composed mode: the workspace compositor owns the screen — this renderer
     /// COMMITS blocks and exposes [`pending_rows`](Self::pending_rows), and never
     /// writes a cursor movement of its own. Direct mode (every non-workspace
@@ -173,8 +175,8 @@ pub(crate) fn clamp_tail(rendered: &str, max_rows: usize) -> (String, usize) {
 }
 
 impl LiveMarkdown {
-    pub(crate) fn new(style: corelib::md::Style, width: usize, max_rows: usize) -> Self {
-        LiveMarkdown { sr: corelib::md::StreamRenderer::new(style, width, &[DIAGRAM_LANG]), style, width, max_rows: if max_rows == 0 { 40 } else { max_rows }, painted: 0, composed: false }
+    pub(crate) fn new(style: corelib::md::Style, width: usize, max_rows: usize, native: bool) -> Self {
+        LiveMarkdown { sr: corelib::md::StreamRenderer::new(style, width, &[DIAGRAM_LANG]), style, width, max_rows: if max_rows == 0 { 40 } else { max_rows }, painted: 0, composed: false, native }
     }
 
     /// Switch to composed mode: commits only, no cursor writes, tail exposed as rows.
@@ -200,8 +202,8 @@ impl LiveMarkdown {
     /// allowed) remote images can resolve. A live tail exists only on a terminal — it is
     /// built from `err_is_tty()`/`out_is_tty()` and is `None` off one — so the host is
     /// always there to draw for.
-    fn write_chunk(w: &mut dyn std::io::Write, c: corelib::md::Chunk) {
-        write_media_chunk(w, c, Path::new("."), true);
+    fn write_chunk(&self, w: &mut dyn std::io::Write, c: corelib::md::Chunk) {
+        write_media_chunk(w, c, Path::new("."), self.native);
     }
 
     /// Render the in-progress block for the live tail (a placeholder for an open diagram fence
@@ -240,7 +242,7 @@ impl LiveMarkdown {
         }
         self.painted = 0;
         for c in self.sr.push(delta) {
-            Self::write_chunk(w, c);
+            self.write_chunk(w, c);
         }
         self.paint(w);
         let _ = w.flush();
@@ -275,7 +277,7 @@ impl LiveMarkdown {
         }
         self.painted = 0;
         for c in self.sr.finish() {
-            Self::write_chunk(w, c);
+            self.write_chunk(w, c);
         }
         let _ = w.flush();
     }

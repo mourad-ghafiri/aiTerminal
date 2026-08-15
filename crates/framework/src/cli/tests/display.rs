@@ -105,7 +105,7 @@ fn human_cost_and_cost_segment_format() {
 /// A recorded run: the observer, and the bytes that reached the screen.
 fn observer(markdown: bool) -> (CliObserver, Recorder) {
     let screen = Recorder::default();
-    let md = markdown.then(|| (corelib::md::Style::default(), 80));
+    let md = markdown.then(|| crate::cli::style::MdOptions { style: corelib::md::Style::default(), width: 80, native: false });
     (CliObserver::new(SharedView::new(RunView::new(Box::new(screen.clone()), None, md))), screen)
 }
 
@@ -307,7 +307,7 @@ fn a_trace_line_survives_the_repaint_that_follows_it() {
     use crate::ai::AgentObserver;
     use crate::flow::board::ToolTrace;
     let screen = Recorder::default();
-    let view = SharedView::new(RunView::new(Box::new(screen.clone()), None, Some((corelib::md::Style::default(), 80))));
+    let view = SharedView::new(RunView::new(Box::new(screen.clone()), None, Some(crate::cli::style::MdOptions { style: corelib::md::Style::default(), width: 80, native: false })));
     let mut obs = CliObserver::new(view.clone());
     obs.on_delta("Looking at it");
     view.tool("\u{2699} fs.list     . \u{b7} 0ms \u{b7} 5 entries");
@@ -330,7 +330,7 @@ fn a_committed_turn_keeps_its_words_above_what_comes_next() {
     use crate::ai::AgentObserver;
     use crate::flow::board::ToolTrace;
     let screen = Recorder::default();
-    let view = SharedView::new(RunView::new(Box::new(screen.clone()), None, Some((corelib::md::Style::default(), 80))));
+    let view = SharedView::new(RunView::new(Box::new(screen.clone()), None, Some(crate::cli::style::MdOptions { style: corelib::md::Style::default(), width: 80, native: false })));
     let mut obs = CliObserver::new(view.clone());
     obs.on_delta("Let me read the file.");
     obs.on_commit("Let me read the file.");
@@ -350,7 +350,7 @@ fn a_call_reported_while_it_runs_is_replaced_by_what_it_returned() {
     // twice would be worse than the silence it replaced.
     use crate::flow::board::ToolTrace;
     let screen = Recorder::default();
-    let view = SharedView::new(RunView::new(Box::new(screen.clone()), None, Some((corelib::md::Style::default(), 80))));
+    let view = SharedView::new(RunView::new(Box::new(screen.clone()), None, Some(crate::cli::style::MdOptions { style: corelib::md::Style::default(), width: 80, native: false })));
     view.tool_started("\u{22ef} sys.run     cargo test --workspace");
     view.tool_finished("\u{2699} sys.run     cargo test --workspace \u{b7} 4.1s \u{b7} 48 lines");
     let rows = screen_of(&screen.text());
@@ -378,7 +378,7 @@ fn a_job_log_keeps_the_text_and_none_of_the_cursor_arithmetic() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("run.log");
     let file = std::fs::File::create(&path).unwrap();
-    let view = SharedView::new(RunView::new(Box::new(Recorder::default()), Some(file), Some((corelib::md::Style::default(), 80))));
+    let view = SharedView::new(RunView::new(Box::new(Recorder::default()), Some(file), Some(crate::cli::style::MdOptions { style: corelib::md::Style::default(), width: 80, native: false })));
     let mut obs = CliObserver::new(view.clone());
     obs.on_delta("A short answer.\n");
     view.tool("\u{2699} fs.read x \u{b7} 1ms \u{b7} 12B");
@@ -451,21 +451,24 @@ fn attachments_truncate_large_text_files() {
 }
 
 #[test]
-fn diagram_draws_as_text_art_off_our_terminal() {
-    // Not our GUI terminal (TERM_PROGRAM unset) → the picture in box art, never the
-    // syntax, and never a native OSC the other terminal couldn't read.
-    std::env::remove_var("TERM_PROGRAM");
-    let out = diagram_output("flowchart TD\n A[Start] --> B[End]");
+fn diagram_draws_as_text_art_off_a_native_surface() {
+    // A non-native surface (a foreign terminal, a pipe) → the picture in box art,
+    // never the syntax, and never a native OSC the surface couldn't read. The
+    // caller STATES the surface now — no env involved.
+    let out = diagram_output("flowchart TD\n A[Start] --> B[End]", false);
     assert!(out.contains("Start") && out.contains("End"), "the labels are drawn: {out:?}");
     assert!(out.contains('▼'), "an arrowhead is drawn: {out:?}");
     assert!(!out.contains("-->"), "no diagram syntax reaches the user: {out:?}");
-    assert!(!out.contains("\x1b]1338"), "no native OSC off our terminal");
+    assert!(!out.contains("\x1b]1338"), "no native OSC off a native surface");
+    // And a surface that declares itself native gets the real placement — even
+    // with no TERM_PROGRAM anywhere in the environment (the workspace's case).
+    let native = diagram_output("flowchart TD\n A[Start] --> B[End]", true);
+    assert!(native.starts_with("\x1b]1338;"), "a declared-native surface gets the placement: {native:?}");
 }
 
 #[test]
 fn an_unreadable_diagram_still_falls_back_to_a_box() {
-    std::env::remove_var("TERM_PROGRAM");
-    let out = diagram_output("this is not a diagram at all");
+    let out = diagram_output("this is not a diagram at all", true);
     assert!(out.contains("diagram") && out.contains('╭'), "fallback box: {out:?}");
     assert!(out.contains("this is not a diagram at all"));
 }

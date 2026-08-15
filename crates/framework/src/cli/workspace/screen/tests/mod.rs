@@ -82,3 +82,20 @@ fn the_storm_the_model_stays_honest_through_500_mutations() {
         }
     }
 }
+
+#[test]
+fn the_picture_sequences_pass_the_door_whole_and_count_no_width() {
+    // A native diagram placement survives sanitize byte-for-byte…
+    let osc = format!("\x1b]1338;4;{}\x07", corelib::codec::base64_encode(b"flowchart TD\n A-->B"));
+    assert_eq!(sanitize(&osc), osc, "the placement is the conversation's to composite");
+    let img = "\x1b]1339;3;YWJj\x07";
+    assert_eq!(sanitize(img), img);
+    // …while every other OSC still dies at the door.
+    assert_eq!(sanitize("\x1b]0;title\x07text"), "text");
+    assert_eq!(sanitize("\x1b]52;c;c2VjcmV0\x07after"), "after", "clipboard OSC never rides");
+    // And the wrapper carries a placement uncounted — it paints pixels, not columns.
+    let line = format!("{osc}tail");
+    let rows = wrap_styled(&line, 4);
+    assert_eq!(rows.len(), 1, "an OSC costs no columns: {rows:?}");
+    assert!(rows[0].starts_with("\x1b]1338;"));
+}

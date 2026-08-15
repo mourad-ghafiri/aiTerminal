@@ -116,13 +116,24 @@ pub(crate) fn sanitize(line: &str) -> String {
                         }
                     }
                 } else if chars.peek() == Some(&']') {
-                    // An OSC (title, hyperlink …) runs to BEL or ST — swallow it whole.
+                    // An OSC runs to BEL or ST. The two PICTURE sequences — 1338
+                    // (native diagram) and 1339 (native image) — pass through
+                    // WHOLE: the conversation's own terminal composites them.
+                    // Every other OSC (title, hyperlink, clipboard …) is
+                    // swallowed, exactly as before.
+                    let mut body = String::new();
                     let mut last = ' ';
                     for c in chars.by_ref() {
                         if c == '\u{7}' || (last == '\u{1b}' && c == '\\') {
                             break;
                         }
+                        body.push(c);
                         last = c;
+                    }
+                    if body.starts_with("]1338;") || body.starts_with("]1339;") {
+                        out.push('\u{1b}');
+                        out.push_str(&body);
+                        out.push('\u{7}');
                     }
                 } else {
                     // Any other escape flavour: drop the introducer and one payload char.
@@ -160,6 +171,20 @@ pub(crate) fn wrap_styled(line: &str, max: usize) -> Vec<String> {
                 if c.is_ascii_alphabetic() {
                     break;
                 }
+            }
+            continue;
+        }
+        if c == '\u{1b}' && chars.peek() == Some(&']') {
+            // A surviving OSC (a native placement) rides whole and countless —
+            // it paints pixels, not columns.
+            row.push(c);
+            let mut last = ' ';
+            for c in chars.by_ref() {
+                row.push(c);
+                if c == '\u{7}' || (last == '\u{1b}' && c == '\\') {
+                    break;
+                }
+                last = c;
             }
             continue;
         }

@@ -60,6 +60,9 @@ pub(crate) struct Pulse {
     waiting: Mutex<Option<crate::cli::observe::SharedWaiting>>,
     started: Mutex<Option<Instant>>,
     steer: Mutex<Option<String>>,
+    /// The surface's content width in columns, published by the renderer each
+    /// frame — what an answer's markdown is laid out at. 0 = not yet known.
+    cols: std::sync::atomic::AtomicU16,
 }
 
 impl Pulse {
@@ -76,6 +79,19 @@ impl Pulse {
         *self.waiting.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.started.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
+    /// The renderer states its width; the worker lays answers out at it.
+    pub(crate) fn set_cols(&self, cols: u16) {
+        self.cols.store(cols, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The surface's width for markdown layout (a sane default until published).
+    pub(crate) fn cols(&self) -> usize {
+        match self.cols.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => 100,
+            c => c as usize,
+        }
+    }
+
     pub(crate) fn take_steer(&self) -> Option<String> {
         self.steer.lock().unwrap_or_else(|e| e.into_inner()).take()
     }

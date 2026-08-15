@@ -125,6 +125,17 @@ pub(crate) fn term_rows() -> usize {
 }
 
 /// Markdown render options when writing to a TTY; `None` (raw text) when piped.
-pub(crate) fn markdown_opts(is_tty: bool) -> Option<(corelib::md::Style, usize)> {
-    is_tty.then(|| (md_style(), md_width()))
+/// How markdown renders on a surface: the palette, the wrap width, and whether
+/// the surface composites native placements (OSC 1338/1339) or needs box art.
+/// The CALLER states its surface — the env sniff below serves only the default
+/// CLI case (a child inside one of our panes).
+#[derive(Clone)]
+pub(crate) struct MdOptions {
+    pub style: corelib::md::Style,
+    pub width: usize,
+    pub native: bool,
+}
+
+pub(crate) fn markdown_opts(is_tty: bool) -> Option<MdOptions> {
+    is_tty.then(|| MdOptions { style: md_style(), width: md_width(), native: crate::cli::media::is_native_terminal() })
 }

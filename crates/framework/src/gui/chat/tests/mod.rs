@@ -246,3 +246,25 @@ fn a_drag_selects_exactly_the_cells_under_it_and_a_click_outside_clears() {
     s.mouse_down(Point::new(500.0, 500.0));
     assert!(s.selection.is_none());
 }
+
+#[test]
+fn a_native_diagram_in_an_answer_becomes_a_real_placement_in_the_conversation() {
+    // The whole native path, end to end at the model level: the committed line
+    // carries an OSC 1338, the Screen door lets it through, and the conversation's
+    // own terminal records the placement and reserves its rows.
+    let mut s = surface();
+    let osc = format!("\x1b]1338;4;{}\x07", corelib::codec::base64_encode(b"flowchart TD\n A[Start]-->B[Ship]"));
+    inject(&s, ChatEvent::Append("before the picture".into()));
+    inject(&s, ChatEvent::Append(osc));
+    inject(&s, ChatEvent::Append("after the picture".into()));
+    assert!(s.pump(420.0, 10.0));
+    assert_eq!(s.content.placements().len(), 1, "the diagram is a native placement");
+    assert_eq!(s.content.placements()[0].rows, 4, "…with its reserved rows");
+    let text = content_text(&s).join("\n");
+    assert!(text.contains("before the picture") && text.contains("after the picture"));
+    // A resize drops the Term's placements by design — the surface rebuilds the
+    // conversation from the model, so the picture SURVIVES any new geometry.
+    assert!(s.pump(600.0, 10.0), "a width change refeeds");
+    assert_eq!(s.content.placements().len(), 1, "the placement survives a resize");
+    assert!(content_text(&s).join("\n").contains("after the picture"), "…and so does every line");
+}

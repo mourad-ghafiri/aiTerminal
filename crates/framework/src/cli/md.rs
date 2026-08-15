@@ -86,15 +86,18 @@ pub(crate) fn print_markdown(text: &str, base: &Path) {
 /// terminal gets and what a pipe gets are both things a test can read back.
 pub(crate) fn write_markdown(w: &mut dyn std::io::Write, text: &str, base: &Path, tty: bool) {
     let style = if tty { md_style() } else { corelib::md::Style { enabled: false, ..corelib::md::Style::default() } };
+    // Native placements only when this terminal really is ours — the CLI's env
+    // sniff, computed once at the boundary.
+    let native = tty && crate::cli::media::is_native_terminal();
     let mut sr = corelib::md::StreamRenderer::new(style, md_width(), &[DIAGRAM_LANG]);
     // The whole document is in hand, so every reference and footnote resolves wherever
     // it is defined — including below the text that uses it.
     sr.seed(corelib::md::scan_defs(text));
     for c in sr.push(text) {
-        write_chunk(w, c, base, tty);
+        write_chunk(w, c, base, native);
     }
     for c in sr.finish() {
-        write_chunk(w, c, base, tty);
+        write_chunk(w, c, base, native);
     }
 }
 

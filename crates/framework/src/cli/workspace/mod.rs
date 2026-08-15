@@ -132,6 +132,9 @@ impl repl::InlineExec for ChildInline {
             .arg("ai")
             .args(argv)
             .current_dir(&self.root)
+            // The child's output lands in OUR engine — say so, so its diagrams
+            // emit native placements (which the Screen door now lets through).
+            .env("TERM_PROGRAM", corelib::brand::NAME)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

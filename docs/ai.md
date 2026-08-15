@@ -837,8 +837,12 @@ The surface is drawn by **the app's own engine** — the same pixel surface, gly
 cache and VT engine that draw every pane. It occupies the panes area only: the
 app's own bottom bar (folder · cpu · memory) and the tab strip stay visible
 around it, even under the trust modal. The conversation lives in a headless
-terminal of its own, so Markdown, colors and native diagrams render exactly as
-they do in a pane, with real scrollback (wheel and PageUp/PageDown). Underneath,
+terminal of its own with real scrollback (wheel and PageUp/PageDown), and every
+answer goes through the product's one markdown engine, laid out at the surface's
+REAL width — with **mermaid diagrams and images composited natively** (the
+surface declares itself native to the renderer; no environment sniffing), inline
+runs included, and every picture surviving any resize because the conversation
+rebuilds from its model. Underneath,
 one state machine folds every key and every streamed line from one queue into one
 model (the single-model discipline opencode's Bubble Tea foundation uses) — and
 because the app owns every pixel, there is no second painter left to race.

@@ -28,7 +28,7 @@ const POLL: std::time::Duration = std::time::Duration::from_millis(300);
 pub(crate) enum LogSink {
     /// The renderer, and the folder the log lives in — so a relative image inside a
     /// transcript resolves the way the document meant it.
-    Drawn { md: Box<corelib::md::StreamRenderer>, base: PathBuf },
+    Drawn { md: Box<corelib::md::StreamRenderer>, base: PathBuf, native: bool },
     Verbatim,
 }
 
@@ -43,15 +43,17 @@ impl LogSink {
         LogSink::Drawn {
             md: Box::new(corelib::md::StreamRenderer::new(md_style(), md_width(), &[DIAGRAM_LANG])),
             base: path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            // Native placements only when this terminal really is ours.
+            native: crate::cli::media::is_native_terminal(),
         }
     }
 
     /// Another slice of the log — everything appended since the last call.
     pub(crate) fn feed(&mut self, w: &mut dyn Write, text: &str) {
         match self {
-            LogSink::Drawn { md, base } => {
+            LogSink::Drawn { md, base, native } => {
                 for c in md.push(text) {
-                    write_chunk(w, c, base, true);
+                    write_chunk(w, c, base, *native);
                 }
             }
             LogSink::Verbatim => {
@@ -63,9 +65,9 @@ impl LogSink {
 
     /// The log is not going to grow again: commit whatever block was still open.
     pub(crate) fn close(&mut self, w: &mut dyn Write) {
-        if let LogSink::Drawn { md, base } = self {
+        if let LogSink::Drawn { md, base, native } = self {
             for c in md.finish() {
-                write_chunk(w, c, base, true);
+                write_chunk(w, c, base, *native);
             }
         }
         let _ = w.flush();

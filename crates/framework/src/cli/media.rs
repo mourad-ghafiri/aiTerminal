@@ -15,15 +15,12 @@ pub(crate) const DIAGRAM_LANG: &str = "mermaid";
 /// `tty` is what the caller knows about its own stream, not a guess: off a terminal there
 /// is no host to place pixels for, so a diagram is drawn in box characters and an image
 /// keeps its `▣ alt` placeholder.
-pub(crate) fn write_chunk(w: &mut dyn std::io::Write, c: corelib::md::Chunk, base: &Path, tty: bool) {
+pub(crate) fn write_chunk(w: &mut dyn std::io::Write, c: corelib::md::Chunk, base: &Path, native: bool) {
     let bytes = match c {
         corelib::md::Chunk::Text(t) => t,
-        corelib::md::Chunk::Diagram(src) => match tty {
-            true => diagram_output(&src),
-            false => diagram_text(&src),
-        },
-        corelib::md::Chunk::Image { src, fallback, .. } => match tty {
-            true => image_output(&src, &fallback, base),
+        corelib::md::Chunk::Diagram(src) => diagram_output(&src, native),
+        corelib::md::Chunk::Image { src, fallback, .. } => match native {
+            true => image_output(&src, &fallback, base, true),
             false => fallback,
         },
     };
@@ -66,8 +63,8 @@ pub(crate) fn diagram_rows(source: &str) -> usize {
 /// Turn a diagram's source into terminal output: a native `OSC 1338` placement (with a
 /// reserved row count from the pure layout) when our GUI can draw it, else a clean boxed
 /// fallback (other terminals / pipes). No jargon is ever shown to the user.
-pub(crate) fn diagram_output(source: &str) -> String {
-    if is_native_terminal() && corelib::mermaid::parse(source).is_some() {
+pub(crate) fn diagram_output(source: &str, native: bool) -> String {
+    if native && corelib::mermaid::parse(source).is_some() {
         let rows = diagram_rows(source);
         return format!("\x1b]1338;{rows};{}\x07", corelib::codec::base64_encode(source.as_bytes()));
     }
@@ -98,8 +95,8 @@ pub(crate) fn diagram_text(source: &str) -> String {
 ///
 /// `base` is the document's own directory, so a README's `img/logo.png` resolves the way
 /// the document meant it.
-pub(crate) fn image_output(src: &str, fallback: &str, base: &Path) -> String {
-    if !is_native_terminal() {
+pub(crate) fn image_output(src: &str, fallback: &str, base: &Path, native: bool) -> String {
+    if !native {
         return fallback.to_string();
     }
     match image_placement(src, base) {

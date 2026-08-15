@@ -232,12 +232,21 @@ impl ChatSurface {
         }
         let Some(state) = self.state.as_mut() else { return false };
         let cols = (((area_w - 2.0 * PAD) / cell_w.max(1.0)).floor() as u16).max(20);
+        let mut moved = false;
         if self.content.cols() != cols {
-            self.content.resize(cols, self.content.rows());
+            // A new width rebuilds the conversation from the model — a repaint's
+            // worth of change by definition.
+            let rows = self.content.rows();
+            refeed(&mut self.content, cols, rows, &state.screen.log);
+            self.fed = state.screen.log.len();
+            moved = true;
         }
         state.screen.cols = cols as usize;
+        if let Some(pulse) = &self.pulse {
+            pulse.set_cols(cols);
+        }
         let drained: Vec<ChatEvent> = std::mem::take(&mut *self.inbox.lock().unwrap_or_else(|e| e.into_inner()));
-        let mut moved = !drained.is_empty();
+        moved |= !drained.is_empty();
         for ev in drained {
             // The trust gate never enters the conversation's state machine here —
             // it becomes a real modal above the surface (the confirm pattern).
@@ -452,7 +461,8 @@ impl ChatSurface {
                 let rows = ((r.content.h / m.cell_h).floor() as u16).max(4);
                 if self.content.rows() != rows {
                     let cols = self.content.cols();
-                    self.content.resize(cols, rows);
+                    refeed(&mut self.content, cols, rows, &state.screen.log);
+                    self.fed = state.screen.log.len();
                 }
                 self.content_rect = r.content;
                 self.cell = (m.cell_w, m.cell_h);
@@ -484,6 +494,18 @@ impl ChatSurface {
         if let Some(gs) = self.gate.state_mut() {
             super::gate::draw_gate(surface, cache, theme, base_px, area, gs);
         }
+    }
+}
+
+/// Rebuild the conversation term from the model after a resize. The Term drops
+/// its diagram placements on ANY resize by design (panes re-emit after a
+/// SIGWINCH; nobody re-emits here) — but the LOG is the single source of truth,
+/// so replaying it restores every line and every placement at the new geometry.
+fn refeed(term: &mut Term, cols: u16, rows: u16, log: &[String]) {
+    *term = Term::new(cols.max(1), rows.max(1));
+    for line in log {
+        term.feed(line.as_bytes());
+        term.feed(b"\r\n");
     }
 }
 
@@ -538,6 +560,9 @@ pub fn render_chat_proof(out_path: &str) -> std::io::Result<()> {
         inbox.push(ChatEvent::Append("\u{2500}\u{2500}".into()));
         inbox.push(ChatEvent::Append("\x1b[36m\u{276f}\x1b[0m what does the guard confirm?".into()));
         inbox.push(ChatEvent::Append("A \x1b[33mconfirm\x1b[0m-tier rule pauses the stream and asks you, once, for that act.".into()));
+        // A native mermaid placement, exactly as an answer emits it.
+        let diagram = "flowchart LR\n  Guard[the guard] --> Ask{confirm?}\n  Ask -->|yes| Run[the tool runs]\n  Ask -->|no| Stop[refused]";
+        inbox.push(ChatEvent::Append(format!("\x1b]1338;7;{}\x07", corelib::codec::base64_encode(diagram.as_bytes()))));
         inbox.push(ChatEvent::Status(crate::cli::workspace::screen::Status {
             root: "~/project".into(),
             model: "claude-sonnet".into(),

@@ -73,13 +73,13 @@ pub(crate) trait TailSink: Send {
 }
 
 impl RunView {
-    pub(crate) fn new(screen: Box<dyn Write + Send>, log: Option<std::fs::File>, md: Option<(corelib::md::Style, usize)>) -> RunView {
+    pub(crate) fn new(screen: Box<dyn Write + Send>, log: Option<std::fs::File>, md: Option<crate::cli::style::MdOptions>) -> RunView {
         RunView {
             quiet: None,
             tail_sink: None,
             screen,
             log,
-            live: md.map(|(style, width)| LiveMarkdown::new(style, width, term_rows().saturating_sub(2))),
+            live: md.map(|opts| LiveMarkdown::new(opts.style, opts.width, term_rows().saturating_sub(2), opts.native)),
             shown: String::new(),
             printed: false,
         }
